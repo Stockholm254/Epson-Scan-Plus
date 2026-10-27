@@ -213,6 +213,9 @@ struct FilmFrame: Identifiable, Codable {
   var sourcePath: String? = nil
   var scanDPI: Int? = nil
   var sourceBits: Int? = nil
+  /// `scanPath` and `sourcePath` relative to the project folder, written only in saved projects.
+  var scanFile: String? = nil
+  var sourceFile: String? = nil
   var captureRect: NormalRect { scanRect ?? rect }
   var hasFullResolution: Bool {
     sourcePath != nil || (scanPath != nil && captureRect.contains(rect))
@@ -232,6 +235,36 @@ struct DeskProject: Codable {
   var frames: [FilmFrame]
   var scanBackendID: String? = nil
   var overviewInputGamma: Double? = nil
+  /// `overviewPath` relative to the project folder.
+  var overviewFile: String? = nil
+}
+
+/// A project names its files by absolute path, which older versions read, and relative to its
+/// folder, so the folder can be moved or renamed.
+enum ProjectFiles {
+  /// `path` relative to `folder`, when it lies inside it.
+  static func relative(_ path: String, to folder: URL) -> String? {
+    let base = folder.resolvingSymlinksInPath().standardizedFileURL.path
+    let file = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+    guard file.hasPrefix(base + "/") else { return nil }
+    return String(file.dropFirst(base.count + 1))
+  }
+  /// The file inside the folder under its relative name, else the saved absolute path, else, for
+  /// an older project that was moved, the same trailing path components inside the folder.
+  static func resolve(_ path: String, relative: String?, in folder: URL) -> String {
+    let files = FileManager.default
+    if let relative {
+      let inside = folder.appendingPathComponent(relative).path
+      if files.fileExists(atPath: inside) { return inside }
+    }
+    if files.fileExists(atPath: path) { return path }
+    let parts = URL(fileURLWithPath: path).pathComponents
+    for n in stride(from: min(3, parts.count - 1), through: 1, by: -1) {
+      let inside = folder.appendingPathComponent(parts.suffix(n).joined(separator: "/")).path
+      if files.fileExists(atPath: inside) { return inside }
+    }
+    return path
+  }
 }
 
 enum DeskError: LocalizedError {

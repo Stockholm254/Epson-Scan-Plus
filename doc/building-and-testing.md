@@ -20,7 +20,7 @@ bash build.sh
 离线批量导出工程中已正式扫描/导入的画面，不调用扫描仪：
 
 ```sh
-"../Epson Scan plus.app/Contents/MacOS/EpsonScanPlus" --export-project /absolute/Session.filmdesk --output /absolute/export/directory --format tiff
+"../Epson Scan plus.app/Contents/MacOS/EpsonScanPlus" --export-project /absolute/Session.filmdesk --output /absolute/export/directory --format tiff --color-space srgb
 ```
 
 `--rotation 0|1|2|3` 可在离线导出时覆盖方向，`--mirror` 启用水平镜像（均不改工程）。正常启动支持 `--library PATH`、`--project FILE` 或 `--image FILE`。

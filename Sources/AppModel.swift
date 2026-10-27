@@ -143,7 +143,7 @@ final class AppModel: ObservableObject {
     commitSingleCrop(r)
   }
   func recalculateWhiteBalance() {
-    change {
+    change("重算白平衡") {
       $0.autoWhiteBalance = true
       $0.manualBalance = nil
       $0.neutralSample = nil
@@ -151,7 +151,7 @@ final class AppModel: ObservableObject {
     status = "已重算白平衡 · 独立校正通道亮暗范围"
   }
   func adjustBase(_ channel: Int, value: Double) {
-    change {
+    change("片基微调") {
       var fine = $0.baseFine ?? .zero
       switch channel {
       case 0: fine.r = value
@@ -263,6 +263,7 @@ final class AppModel: ObservableObject {
       frames = []
       thumbnails = [:]
       selectedID = nil
+      clearEdits()
       let root = try makeSession()
       // Uncompressed: a 600 dpi preview writes in a tenth of a second, as PNG it takes two.
       let url = root.appendingPathComponent("overview.tif")
@@ -313,6 +314,7 @@ final class AppModel: ObservableObject {
         }
       }
       DispatchQueue.main.async {
+        self.clearEdits()
         self.frames = found
         self.selectedID = found.first?.id
         self.detectingFrames = false
@@ -364,6 +366,7 @@ final class AppModel: ObservableObject {
     renderQueue.async {
       let detected = FrameDetector.detect(overview, physicalMM: size, format: format)
       DispatchQueue.main.async {
+        self.recordEdit("收紧片边")
         var changed = 0
         for old in snapshot where old.sourcePath == nil {
           guard let index = self.frames.firstIndex(where: { $0.id == old.id }),
@@ -405,6 +408,7 @@ final class AppModel: ObservableObject {
       abs(old.x - rect.x) + abs(old.y - rect.y) + abs(old.width - rect.width)
         + abs(old.height - rect.height) > 0.000001
     else { return }
+    recordEdit("画面范围", key: "画面范围-\(id)")
     if frames[i].scanPath != nil && frames[i].scanRect == nil { frames[i].scanRect = old }
     if frames[i].initialRect == nil { frames[i].initialRect = old }
     frames[i].rect = rect
@@ -416,6 +420,7 @@ final class AppModel: ObservableObject {
   }
   func addFrame(_ rect: NormalRect) {
     guard rect.width > 0.008, rect.height > 0.008 else { return }
+    recordEdit("添加画面")
     var f = FilmFrame(
       name: String(format: "%02d", frames.count + 1), rect: rect, format: format.rawValue)
     if let selected, let path = selected.sourcePath {
@@ -434,6 +439,7 @@ final class AppModel: ObservableObject {
   }
   func removeSelected() {
     guard let i = selectedIndex, !isWorking else { return }
+    recordEdit("删除画面")
     thumbnails[frames[i].id] = nil
     frames.remove(at: i)
     selectedID = frames.first?.id
@@ -450,19 +456,23 @@ final class AppModel: ObservableObject {
     guard !isWorking, let i = frames.firstIndex(where: { $0.id == id }),
       frames[i].enabled != enabled
     else { return }
+    recordEdit(enabled ? "勾选" : "取消勾选", key: "勾选-\(id)")
     frames[i].enabled = enabled
     saveProject()
     focusCanvas()
   }
   func setAllEnabled(_ enabled: Bool) {
     guard !isWorking, !frames.isEmpty else { return }
+    recordEdit(enabled ? "全选" : "全不选")
     for i in frames.indices { frames[i].enabled = enabled }
     saveProject()
     focusCanvas()
     status = enabled ? "已勾选全部 \(frames.count) 张 · 用于扫描 / 导出" : "已取消全部勾选 · 当前照片仍保留"
   }
-  func change(_ mutation: (inout Adjustments) -> Void) {
+  /// `name` is the edit as the Edit menu shows it; steps of one control are undone together.
+  func change(_ name: String = "调整", _ mutation: (inout Adjustments) -> Void) {
     guard let i = selectedIndex else { return }
+    recordEdit(name, key: "\(name)-\(frames[i].id)")
     // The roll's measured base belongs to the film, so even a reset keeps it.
     let rollBase = frames[i].adjustments.rollBase, rollSlopes = frames[i].adjustments.rollSlopes
     mutation(&frames[i].adjustments)
@@ -470,6 +480,75 @@ final class AppModel: ObservableObject {
     frames[i].adjustments.rollSlopes = rollSlopes
     refresh()
     saveProject()
+  }
+  /// The tone and colour settings back to their defaults. How the file is encoded, which way the
+  /// frame faces and the roll's own estimates are not settings, so they stay.
+  func resetAdjustments() {
+    change("重置调整") {
+      let kept = $0
+      $0 = Adjustments()
+      $0.inputGamma = kept.inputGamma
+      $0.inputIsNegative = kept.inputIsNegative
+      $0.rotation = kept.rotation
+      $0.flipHorizontal = kept.flipHorizontal
+    }
+  }
+
+  // MARK: Undo
+
+  /// The window's: edits to the frames and the film preset are undone from the Edit menu.
+  weak var undoManager: UndoManager?
+  private struct EditState {
+    var frames: [FilmFrame], selectedID: UUID?, profile: FilmProfile, filmName: String
+  }
+  private var lastEdit: (key: String, at: Date)?
+  private var editState: EditState { EditState(frames: frames, selectedID: selectedID, profile: profile, filmName: filmName) }
+  /// Called before an edit. Repeats of one control within a second, a fader being dragged, are one step.
+  private func recordEdit(_ name: String, key: String? = nil, filmName shown: String? = nil) {
+    guard let undoManager, !undoManager.isUndoing, !undoManager.isRedoing else { return }
+    let key = key ?? name, now = Date()
+    defer { lastEdit = (key, now) }
+    if let lastEdit, lastEdit.key == key, now.timeIntervalSince(lastEdit.at) < 1, undoManager.canUndo { return }
+    // Without event grouping (tests, the command line) each edit is a group of its own.
+    let grouping = !undoManager.groupsByEvent
+    if grouping { undoManager.beginUndoGrouping() }
+    var state = editState
+    if let shown { state.filmName = shown }
+    undoManager.registerUndo(withTarget: self) { $0.restore(state, name: name) }
+    undoManager.setActionName(name)
+    if grouping { undoManager.endUndoGrouping() }
+  }
+  private func restore(_ state: EditState, name: String) {
+    let undoing = undoManager?.isUndoing == true
+    let current = editState
+    undoManager?.registerUndo(withTarget: self) { $0.restore(current, name: name) }
+    undoManager?.setActionName(name)
+    lastEdit = nil
+    // What the user edits comes back. Scans, and the film base and slopes the app measures, stay
+    // as they are now; a removed frame comes back, an added one goes.
+    frames = state.frames.map { old in
+      guard var f = frames.first(where: { $0.id == old.id }) else { return old }
+      let rollBase = f.adjustments.rollBase ?? old.adjustments.rollBase
+      let rollSlopes = f.adjustments.rollSlopes ?? old.adjustments.rollSlopes
+      (f.name, f.rect, f.initialRect, f.enabled, f.format) = (old.name, old.rect, old.initialRect, old.enabled, old.format)
+      f.adjustments = old.adjustments
+      (f.adjustments.rollBase, f.adjustments.rollSlopes) = (rollBase, rollSlopes)
+      return f
+    }
+    selectedID = state.selectedID.flatMap { id in frames.contains { $0.id == id } ? id : nil } ?? frames.first?.id
+    (profile, filmName) = (state.profile, state.filmName)
+    editRegionLock = nil
+    status = (undoing ? "已撤销：" : "已重做：") + name
+    updateRollBase()
+    updateRollSlopes()
+    refresh()
+    updateThumbnails()
+    saveProject()
+  }
+  /// A new preview, frame list or scan: earlier edits no longer apply to what is there.
+  func clearEdits() {
+    undoManager?.removeAllActions(withTarget: self)
+    lastEdit = nil
   }
   /// Measures the film base between the frames on the current overview and shares it with
   /// them. Only for overviews whose values match the frames' scans: this app's 48-bit
@@ -493,6 +572,7 @@ final class AppModel: ObservableObject {
     orient(mirrored ? "水平镜像" : "取消水平镜像") { $0.flipHorizontal = mirrored }
   }
   private func orient(_ action: String, _ mutation: (inout Adjustments) -> Void) {
+    recordEdit(action)
     if syncOrientation {
       guard !frames.isEmpty else { return }
       for i in frames.indices { mutation(&frames[i].adjustments) }
@@ -507,6 +587,7 @@ final class AppModel: ObservableObject {
   }
   func applyToRoll() {
     guard let s = selected else { return }
+    recordEdit("同步到本卷")
     for i in frames.indices {
       let own = frames[i].adjustments
       frames[i].adjustments = s.adjustments
@@ -527,6 +608,8 @@ final class AppModel: ObservableObject {
           $0.lowercased().replacingOccurrences(of: " ", with: "") == q
         }
       } ?? FilmProfile.builtins.last!
+    // The name typed over is the preset shown before it.
+    recordEdit("胶片预设", filmName: profile.name)
     // A film calibrated on this scanner is used without having to pick it.
     profile = calibrated(for: found) ?? found
     updateRollSlopes()
@@ -539,6 +622,7 @@ final class AppModel: ObservableObject {
     film.offsets != nil ? nil : profiles.last { $0.offsets != nil && $0.name == film.name + " · V850" }
   }
   func chooseProfile(_ p: FilmProfile) {
+    recordEdit("胶片预设")
     filmName = p.name
     profile = p
     updateRollSlopes()
@@ -966,6 +1050,8 @@ final class AppModel: ObservableObject {
   /// Either way the new scans refine the roll's slope estimate, and then go to Exports.
   private func endBatch() {
     batchDPI = nil
+    // New scans are bound to the frames as they are now.
+    if scanBatch.completed > 0 { clearEdits() }
     let exports = autoExportIDs
     autoExportIDs = []
     if scanBatch.completed > 0 { updateRollSlopes { [weak self] in self?.exportScans(exports) } }
@@ -1039,6 +1125,7 @@ final class AppModel: ObservableObject {
       let root = try makeSession()
       let src = root.appendingPathComponent("Originals")
       try FileManager.default.createDirectory(at: src, withIntermediateDirectories: true)
+      clearEdits()
       frames = []
       thumbnails = [:]
       for (idx, url) in urls.enumerated() {
@@ -1110,6 +1197,10 @@ final class AppModel: ObservableObject {
     let format = ExportFormat(rawValue: exportType) ?? .tiff
     let quality = preferences.jpegQuality
     let sharpening = preferences.sharpening
+    let space = preferences.exportColorSpace, template = preferences.exportNameTemplate
+    let roll = sessionURL?.lastPathComponent ?? "", overviewPath = overviewURL?.path ?? ""
+    let previewDPI = Int(overviewDPI)
+    let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
     renderQueue.async {
       do {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -1119,17 +1210,29 @@ final class AppModel: ObservableObject {
           let safeName = String(
             f.name.map { ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") ? $0 : "_" }.prefix(
               40))
-          let file = "\(p.id)_\(safeName)_\(UUID().uuidString.prefix(6)).\(format.fileExtension)"
-          let url = directory.appendingPathComponent(file)
+          let source = f.hasFullResolution ? (f.scanPath ?? f.sourcePath ?? "") : overviewPath
+          let scanned = (try? FileManager.default.attributesOfItem(atPath: source))?[.creationDate] as? Date
+          let dpi = f.hasFullResolution ? (f.scanDPI ?? previewDPI) : previewDPI
+          let stem = ExportNaming.name(template, film: p.id, name: p.name, frame: safeName, roll: roll, date: scanned)
+          // Never over an earlier export: a second one gets a number.
+          var url = directory.appendingPathComponent(stem).appendingPathExtension(format.fileExtension)
+          var n = 1
+          while FileManager.default.fileExists(atPath: url.path) {
+            n += 1
+            url = directory.appendingPathComponent("\(stem)-\(n)").appendingPathExtension(format.fileExtension)
+          }
+          let metadata = ExportMetadata(
+            title: "\(p.name) · \(f.name)",
+            description: "\(p.name) · 第 \(f.name) 张 · \(dpi) dpi" + (f.hasFullResolution ? "" : " · 预览")
+              + (f.sourcePath == nil ? " · EPSON Perfection V800/V850" : ""),
+            keywords: [p.name, f.format, "胶片扫描"],
+            scanner: f.sourcePath == nil ? ("EPSON", "Perfection V800/V850") : nil, scanned: scanned,
+            software: "Epson Scan plus" + (version.map { " " + $0 } ?? ""))
           try ImagePipeline.shared.export(
-            image, settings: f.adjustments, profile: p, url: url, format: format,
-            dpi: f.hasFullResolution ? (f.scanDPI ?? Int(self.overviewDPI)) : Int(self.overviewDPI),
-            quality: quality, sharpener: sharpener)
+            image, settings: f.adjustments, profile: p, url: url, format: format, dpi: dpi,
+            quality: quality, sharpener: sharpener, colorSpace: space, metadata: metadata)
           let sidecar = ExportRecord(
-            profile: p, frame: f,
-            source: f.hasFullResolution
-              ? (f.scanPath ?? f.sourcePath ?? "") : (self.overviewURL?.path ?? ""),
-            isPreview: !f.hasFullResolution)
+            profile: p, frame: f, source: source, isPreview: !f.hasFullResolution, colorSpace: space.title)
           let encoder = JSONEncoder()
           encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
           try encoder.encode(sidecar).write(
@@ -1239,13 +1342,20 @@ final class AppModel: ObservableObject {
     var frame: FilmFrame
     var source: String
     var isPreview: Bool
+    var colorSpace: String? = nil
   }
   func saveProject() {
     guard let root = sessionURL, let overviewURL else { return }
-    let project = DeskProject(
+    var saved = frames
+    for i in saved.indices {
+      saved[i].scanFile = saved[i].scanPath.flatMap { ProjectFiles.relative($0, to: root) }
+      saved[i].sourceFile = saved[i].sourcePath.flatMap { ProjectFiles.relative($0, to: root) }
+    }
+    var project = DeskProject(
       overviewPath: overviewURL.path, overviewDPI: overviewDPI, physicalWidthMM: physicalMM.width,
       physicalHeightMM: physicalMM.height, filmName: filmName, profile: profile, scanDPI: dpi,
-      frames: frames, scanBackendID: overviewBackendID, overviewInputGamma: overviewInputGamma)
+      frames: saved, scanBackendID: overviewBackendID, overviewInputGamma: overviewInputGamma)
+    project.overviewFile = ProjectFiles.relative(overviewURL.path, to: root)
     do {
       let e = JSONEncoder()
       e.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -1266,12 +1376,21 @@ final class AppModel: ObservableObject {
       let p = try JSONDecoder().decode(DeskProject.self, from: Data(contentsOf: url))
       guard p.version == 1 else { throw DeskError.message("不支持的工程版本。") }
       try p.profile.validate()
-      let cg = try ImagePipeline.shared.load(
-        URL(fileURLWithPath: p.overviewPath), maxDimension: 2200)
-      sessionURL = url.deletingLastPathComponent()
-      overviewURL = URL(fileURLWithPath: p.overviewPath)
+      // Files are found where the project folder is now, wherever it was saved.
+      let folder = url.deletingLastPathComponent()
+      let overviewPath = ProjectFiles.resolve(p.overviewPath, relative: p.overviewFile, in: folder)
+      let cg = try ImagePipeline.shared.load(URL(fileURLWithPath: overviewPath), maxDimension: 2200)
+      sessionURL = folder
+      overviewURL = URL(fileURLWithPath: overviewPath)
       overview = cg
-      frames = p.frames
+      frames = p.frames.map { saved in
+        var f = saved
+        f.scanPath = f.scanPath.map { ProjectFiles.resolve($0, relative: f.scanFile, in: folder) }
+        f.sourcePath = f.sourcePath.map { ProjectFiles.resolve($0, relative: f.sourceFile, in: folder) }
+        (f.scanFile, f.sourceFile) = (nil, nil)
+        return f
+      }
+      clearEdits()
       profile = p.profile
       filmName = p.filmName
       dpi = p.scanDPI
@@ -1285,7 +1404,7 @@ final class AppModel: ObservableObject {
       updateRollSlopes()
       refresh()
       updateThumbnails()
-      status = "已打开工程"
+      status = overviewPath == p.overviewPath ? "已打开工程" : "已打开工程 · 工程文件夹已移动，按新位置读取文件"
     } catch { errorText = error.localizedDescription }
   }
   func openEpson() {

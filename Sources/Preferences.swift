@@ -10,7 +10,7 @@ enum ExportFormat: String, CaseIterable, Identifiable {
     switch self {
     case .tiff: return "TIFF · 16-bit"
     case .tiff8: return "TIFF · 8-bit"
-    case .jpeg: return "JPEG · sRGB"
+    case .jpeg: return "JPEG"
     case .png: return "PNG · 16-bit"
     }
   }
@@ -31,6 +31,50 @@ enum ExportFormat: String, CaseIterable, Identifiable {
   var sixteenBit: Bool { self == .tiff || self == .png }
 }
 
+/// Colour spaces for exports. Raw values are stored in settings and taken by `--color-space`.
+enum ExportColorSpace: String, CaseIterable, Identifiable {
+  case sRGB = "srgb", displayP3 = "p3", adobeRGB = "adobe", proPhoto = "prophoto"
+  var id: String { rawValue }
+  var title: String {
+    switch self {
+    case .sRGB: return "sRGB"
+    case .displayP3: return "Display P3"
+    case .adobeRGB: return "Adobe RGB (1998)"
+    case .proPhoto: return "ProPhoto RGB"
+    }
+  }
+  var space: CGColorSpace {
+    switch self {
+    case .sRGB: return CGColorSpace(name: CGColorSpace.sRGB)!
+    case .displayP3: return CGColorSpace(name: CGColorSpace.displayP3)!
+    case .adobeRGB: return CGColorSpace(name: CGColorSpace.adobeRGB1998)!
+    case .proPhoto: return CGColorSpace(name: CGColorSpace.rommrgb)!
+    }
+  }
+}
+
+/// Export file names from a template: {film} the preset's short name, {name} the film's name,
+/// {frame} the frame number, {roll} the project folder, {date} the scan date (yyyyMMdd).
+enum ExportNaming {
+  static let standard = "{film}_{frame}"
+  static func name(_ template: String, film: String, name: String, frame: String, roll: String, date: Date?) -> String {
+    let day = date.map {
+      let f = DateFormatter()
+      f.locale = Locale(identifier: "en_US_POSIX")
+      f.dateFormat = "yyyyMMdd"
+      return f.string(from: $0)
+    } ?? ""
+    var result = template.trimmingCharacters(in: .whitespaces).isEmpty ? standard : template
+    for (token, value) in [("{film}", film), ("{name}", name), ("{frame}", frame), ("{roll}", roll), ("{date}", day)] {
+      result = result.replacingOccurrences(of: token, with: value)
+    }
+    // No folders, hidden files or characters Finder shows as a slash.
+    let safe = result.map { "/:\\".contains($0) || $0.isNewline ? "_" : $0 }
+    let trimmed = String(safe).trimmingCharacters(in: CharacterSet(charactersIn: " ."))
+    return trimmed.isEmpty ? "frame" : String(trimmed.prefix(120))
+  }
+}
+
 /// App-wide settings. The app keeps them in UserDefaults; without `defaults` (tests, the
 /// command-line exporter) they live only in memory and never touch the user's settings.
 final class Preferences: ObservableObject {
@@ -41,6 +85,10 @@ final class Preferences: ObservableObject {
   @Published var libraryPath: String? { didSet { defaults?.set(libraryPath, forKey: "libraryPath") } }
   @Published var exportFormat: ExportFormat { didSet { defaults?.set(exportFormat.rawValue, forKey: "exportFormat") } }
   @Published var jpegQuality: Double { didSet { defaults?.set(jpegQuality, forKey: "jpegQuality") } }
+  @Published var exportColorSpace: ExportColorSpace {
+    didSet { defaults?.set(exportColorSpace.rawValue, forKey: "exportColorSpace") }
+  }
+  @Published var exportNameTemplate: String { didSet { defaults?.set(exportNameTemplate, forKey: "exportNameTemplate") } }
   @Published var sheet: ContactSheet.Layout {
     didSet { defaults?.set(try? JSONEncoder().encode(sheet), forKey: "contactSheet") }
   }
@@ -70,6 +118,8 @@ final class Preferences: ObservableObject {
     self.defaults = defaults
     libraryPath = defaults?.string(forKey: "libraryPath")
     exportFormat = defaults?.string(forKey: "exportFormat").flatMap(ExportFormat.init(rawValue:)) ?? .tiff
+    exportColorSpace = defaults?.string(forKey: "exportColorSpace").flatMap(ExportColorSpace.init(rawValue:)) ?? .sRGB
+    exportNameTemplate = defaults?.string(forKey: "exportNameTemplate") ?? ExportNaming.standard
     let quality = defaults?.double(forKey: "jpegQuality") ?? 0
     jpegQuality = quality > 0 ? min(1, max(0.5, quality)) : 0.97
     sheet = defaults?.data(forKey: "contactSheet").flatMap { try? JSONDecoder().decode(ContactSheet.Layout.self, from: $0) }

@@ -7,6 +7,8 @@ private let panelColor = Color(red: 0.135, green: 0.14, blue: 0.145)
 struct ContentView: View {
   @ObservedObject var m: AppModel
   @State var showInfo = false
+  /// The window's, which the Edit menu's Undo and Redo use.
+  @Environment(\.undoManager) private var undoManager
   var body: some View {
     VStack(spacing: 0) {
       toolbar
@@ -44,6 +46,8 @@ struct ContentView: View {
       }
       m.refresh()
     }
+    .onAppear { m.undoManager = undoManager }
+    .onChange(of: undoManager) { _, new in m.undoManager = new }
   }
   var toolbar: some View {
     HStack(spacing: 16) {
@@ -242,7 +246,7 @@ struct ContentView: View {
         HStack {
           sectionTitle("调整", symbol: "slider.horizontal.3")
           Spacer()
-          Button("重置") { m.change { $0 = Adjustments() } }.font(.system(size: 11))
+          Button("重置") { m.resetAdjustments() }.font(.system(size: 11))
         }
         HistogramView(values: m.histogram).frame(height: 65).padding(4).background(LCDGlass())
         Toggle("负片去色罩 / 反相", isOn: bool(\.inputIsNegative)).toggleStyle(LEDToggleStyle())
@@ -254,7 +258,7 @@ struct ContentView: View {
             Label("取片基", systemImage: "eyedropper")
           }
           Button("自动片基") {
-            m.change {
+            m.change("自动片基") {
               $0.base = nil
               $0.baseFine = nil
             }
@@ -264,7 +268,7 @@ struct ContentView: View {
           HStack {
             Text("片基微调 · EV").font(.system(size: 11, weight: .medium))
             Spacer()
-            Button("归零") { m.change { $0.baseFine = nil } }.font(.system(size: 10))
+            Button("归零") { m.change("片基微调") { $0.baseFine = nil } }.font(.system(size: 10))
           }
           ForEach(0..<3, id: \.self) { channel in baseSlider(channel) }
           if let base = m.toneAnalysis?.base ?? m.settings.base ?? m.settings.rollBase {
@@ -304,7 +308,7 @@ struct ContentView: View {
             isOn: Binding(
               get: { m.settings.autoWhiteBalance },
               set: { v in
-                m.change {
+                m.change("自动白平衡") {
                   $0.autoWhiteBalance = v
                   $0.manualBalance = nil
                   $0.neutralSample = nil
@@ -349,7 +353,7 @@ struct ContentView: View {
         CurveEditor(
           curves: Binding(
             get: { m.settings.curves ?? ToneCurves() },
-            set: { value in m.change { $0.curves = value.isIdentity ? nil : value } }),
+            set: { value in m.change("曲线") { $0.curves = value.isIdentity ? nil : value } }),
           histogram: m.histogram)
         Divider()
         sharpeningControl
@@ -389,7 +393,7 @@ struct ContentView: View {
           }
           Fader(
             title: "锐化强度",
-            value: Binding(get: { strength }, set: { v in m.change { $0.sharpening = v } }),
+            value: Binding(get: { strength }, set: { v in m.change("锐化") { $0.sharpening = v } }),
             range: 0...1, detent: imported ? 0 : Sharpening.defaultStrength)
         }
         Text(imported ? "导入的图像默认不锐化，它们可能来自其他扫描仪或相机。" : "按扫描仪实测 MTF 在线性扫描数据上反卷积；默认温和，推到 0 关闭。")
@@ -591,7 +595,7 @@ struct ContentView: View {
       Fader(
         title: title,
         value: Binding(
-          get: { m.settings[keyPath: key] }, set: { v in m.change { $0[keyPath: key] = v } }),
+          get: { m.settings[keyPath: key] }, set: { v in m.change(title) { $0[keyPath: key] = v } }),
         range: range, detent: Adjustments()[keyPath: key])
     }
   }

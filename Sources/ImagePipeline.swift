@@ -45,8 +45,13 @@ final class ImagePipeline {
   // Exposure (tone.x, in EV) is a print exposure: a shift of log exposure, 0.30103 per stop,
   // applied before the levels and clipping so −EV recovers highlights. Positive input scales the
   // linear value instead, through its encoding gamma.
-  let kernel: CIColorKernel? = CIColorKernel(
-    source: """
+  let kernel: CIColorKernel? = CIColorKernel(source: ImagePipeline.negativeSource)
+  /// The same without the final clip: colours the saturation control pushes past sRGB stay, for
+  /// exports into a wider colour space.
+  let extendedKernel: CIColorKernel? = CIColorKernel(
+    source: ImagePipeline.negativeSource.replacingOccurrences(
+      of: "return vec4(clamp(q,0.0,1.0),1.0);", with: "return vec4(q,1.0);"))
+  private static let negativeSource = """
       kernel vec4 negative(__sample p, vec3 base, vec3 slope, vec3 gain, vec3 balance, vec4 levels, vec4 tone, vec4 color, float inverted) {
         vec3 v = max(p.rgb, vec3(0.000001));
         vec3 e = log(max(base,vec3(0.000001))/v) * (color.w / 2.302585093) / slope;
@@ -61,7 +66,7 @@ final class ImagePipeline {
         q = mix(vec3(l),q,tone.w);
         return vec4(clamp(q,0.0,1.0),1.0);
       }
-      """)
+      """
   /// Tone curves as a lookup: each channel reads its own row entry from a `n` × 1 table.
   let curveKernel: CIKernel? = CIKernel(
     source: """
@@ -354,10 +359,10 @@ final class ImagePipeline {
   /// `sharpener` deconvolves the scan in linear light first; tone statistics use the scan as is.
   func output(
     _ image: CGImage, settings s: Adjustments, profile: FilmProfile, analysis: ToneAnalysis? = nil,
-    sharpener: Sharpener? = nil
+    sharpener: Sharpener? = nil, extendedRange: Bool = false
   ) throws -> CIImage {
     let a = analysis ?? analyze(image, settings: s, profile: profile)
-    guard let kernel else { throw DeskError.message("图像处理内核初始化失败。") }
+    guard let kernel = extendedRange ? extendedKernel : kernel else { throw DeskError.message("图像处理内核初始化失败。") }
     let source = try sharpener.map { try sharpen(image, with: $0) } ?? image
     let ci = CIImage(cgImage: source, options: [.colorSpace: NSNull()])
     func v(_ c: RGB) -> CIVector { CIVector(x: c.r, y: c.g, z: c.b) }
@@ -414,25 +419,47 @@ final class ImagePipeline {
   }
   func export(
     _ image: CGImage, settings: Adjustments, profile: FilmProfile, url: URL, format: ExportFormat,
-    dpi: Int, quality: Double = 0.97, sharpener: Sharpener? = nil
+    dpi: Int, quality: Double = 0.97, sharpener: Sharpener? = nil, colorSpace: ExportColorSpace = .sRGB,
+    metadata: ExportMetadata? = nil
   ) throws {
-    let ci = try output(image, settings: settings, profile: profile, sharpener: sharpener)
-    guard
-      let cg = context.createCGImage(
-        ci, from: ci.extent, format: format.sixteenBit ? .RGBA16 : .RGBA8, colorSpace: outputSpace)
-    else { throw DeskError.message("无法创建导出文件。") }
-    try write(cg, to: url, format: format, dpi: dpi, quality: quality)
+    let wide = colorSpace != .sRGB
+    let ci = try output(image, settings: settings, profile: profile, sharpener: sharpener, extendedRange: wide)
+    let cg: CGImage?
+    if wide {
+      // Rendered unclipped as extended sRGB, then converted by ColorSync into the wider space.
+      cg = context.createCGImage(ci, from: ci.extent, format: .RGBAf, colorSpace: CGColorSpace(name: CGColorSpace.extendedSRGB)!)
+        .flatMap { converted($0, to: colorSpace.space, bitsPerComponent: format.sixteenBit ? 16 : 8) }
+    } else {
+      cg = context.createCGImage(ci, from: ci.extent, format: format.sixteenBit ? .RGBA16 : .RGBA8, colorSpace: outputSpace)
+    }
+    guard let cg else { throw DeskError.message("无法创建导出文件。") }
+    try write(cg, to: url, format: format, dpi: dpi, quality: quality, metadata: metadata)
   }
-  func write(_ image: CGImage, to url: URL, format: ExportFormat, dpi: Int, quality: Double = 0.97) throws {
+  /// `image` in `space`, with colours outside it clipped there rather than before.
+  func converted(_ image: CGImage, to space: CGColorSpace, bitsPerComponent: Int) -> CGImage? {
+    guard
+      let ctx = CGContext(
+        data: nil, width: image.width, height: image.height, bitsPerComponent: bitsPerComponent, bytesPerRow: 0,
+        space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+    else { return nil }
+    ctx.interpolationQuality = .none
+    ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+    return ctx.makeImage()
+  }
+  func write(
+    _ image: CGImage, to url: URL, format: ExportFormat, dpi: Int, quality: Double = 0.97,
+    metadata: ExportMetadata? = nil
+  ) throws {
     guard
       let dest = CGImageDestinationCreateWithURL(
         url as CFURL, format.type.identifier as CFString, 1, nil)
     else { throw DeskError.message("无法创建导出文件。") }
-    let properties: [CFString: Any] = [
+    var properties: [CFString: Any] = [
       kCGImagePropertyDPIWidth: dpi, kCGImagePropertyDPIHeight: dpi,
       kCGImageDestinationLossyCompressionQuality: quality,
       kCGImagePropertyTIFFDictionary: [kCGImagePropertyTIFFCompression: 5],
     ]
+    if let metadata { properties.merge(metadata.properties) { _, new in new } }
     CGImageDestinationAddImage(dest, image, properties as CFDictionary)
     guard CGImageDestinationFinalize(dest) else { throw DeskError.message("图像写入失败。") }
   }
@@ -518,6 +545,46 @@ final class ImagePipeline {
         colorSpace: image.colorSpace ?? outputSpace)
     else { return image }
     return result
+  }
+}
+
+/// What an export says about itself, for Lightroom, Photos and Finder: the film, the frame, the
+/// scanner and when it was scanned. The picture's own capture date is not known, so it is not set.
+struct ExportMetadata {
+  var title: String
+  var description: String
+  var keywords: [String]
+  /// Nil for imported files: the app does not know what scanned them.
+  var scanner: (make: String, model: String)?
+  var scanned: Date?
+  var software: String
+  var properties: [CFString: Any] {
+    let f = DateFormatter()
+    f.locale = Locale(identifier: "en_US_POSIX")
+    f.dateFormat = "yyyy:MM:dd HH:mm:ss"
+    let date = scanned.map { f.string(from: $0) }
+    var tiff: [CFString: Any] = [
+      kCGImagePropertyTIFFCompression: 5, kCGImagePropertyTIFFSoftware: software,
+      kCGImagePropertyTIFFImageDescription: description,
+    ]
+    if let scanner { (tiff[kCGImagePropertyTIFFMake], tiff[kCGImagePropertyTIFFModel]) = (scanner.make, scanner.model) }
+    if let date { tiff[kCGImagePropertyTIFFDateTime] = date }
+    var exif: [CFString: Any] = [kCGImagePropertyExifUserComment: description]
+    if let date { exif[kCGImagePropertyExifDateTimeDigitized] = date }
+    let iptc: [CFString: Any] = [
+      kCGImagePropertyIPTCObjectName: title, kCGImagePropertyIPTCCaptionAbstract: description,
+      kCGImagePropertyIPTCKeywords: keywords, kCGImagePropertyIPTCOriginatingProgram: "Epson Scan plus",
+      kCGImagePropertyIPTCProgramVersion: software.replacingOccurrences(of: "Epson Scan plus ", with: ""),
+      kCGImagePropertyIPTCSource: scanner.map { "\($0.make) \($0.model)" } ?? "Epson Scan plus",
+    ]
+    let png: [CFString: Any] = [
+      kCGImagePropertyPNGTitle: title, kCGImagePropertyPNGDescription: description,
+      kCGImagePropertyPNGSoftware: software,
+    ]
+    return [
+      kCGImagePropertyTIFFDictionary: tiff, kCGImagePropertyExifDictionary: exif,
+      kCGImagePropertyIPTCDictionary: iptc, kCGImagePropertyPNGDictionary: png,
+    ]
   }
 }
 

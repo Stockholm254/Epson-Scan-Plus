@@ -248,6 +248,21 @@ extension ContentView {
             range: 0.6...1, detent: 0.97)
         }
       }
+      labeled("色彩空间") {
+        Picker("", selection: Binding(get: { m.preferences.exportColorSpace }, set: { m.preferences.exportColorSpace = $0 })) {
+          ForEach(ExportColorSpace.allCases) { Text($0.title).tag($0) }
+        }.labelsHidden()
+      }
+      if m.preferences.exportColorSpace != .sRGB {
+        note(
+          "转换后嵌入 ICC 配置文件；饱和度推到 sRGB 以外的颜色会保留。"
+            + (m.preferences.exportColorSpace == .proPhoto && !format.wrappedValue.sixteenBit ? "ProPhoto 请配合 16-bit 格式，8-bit 容易出现色阶断层。" : ""))
+      }
+      labeled("文件名") {
+        TextField(ExportNaming.standard, text: Binding(get: { m.preferences.exportNameTemplate }, set: { m.preferences.exportNameTemplate = $0 }))
+          .textFieldStyle(.roundedBorder).font(.system(size: 11, design: .monospaced))
+      }
+      note("{film} 预设简称　{name} 胶片名　{frame} 片号　{roll} 工程文件夹　{date} 扫描日期。同名文件已存在时自动加序号，不会覆盖。导出文件写入胶片、片号、扫描仪和扫描日期等元数据。")
       HStack {
         Button("导出当前…") { m.exportImages(all: false) }.disabled(m.selected == nil || m.isWorking)
         Button("导出勾选…") { m.exportImages(all: true) }.disabled(m.enabledCount == 0 || m.isWorking)

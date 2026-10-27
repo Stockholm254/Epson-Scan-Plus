@@ -10,7 +10,7 @@ enum ExportCommand {
     }
     guard let path = argument("--export-project"), let folder = argument("--output") else {
       fputs(
-        "--export-project FILE --output DIRECTORY [--format tiff|tiff8|jpeg|png] [--rotation 0|1|2|3]\n",
+        "--export-project FILE --output DIRECTORY [--format tiff|tiff8|jpeg|png] [--color-space srgb|p3|adobe|prophoto] [--rotation 0|1|2|3]\n",
         stderr)
       exit(1)
     }
@@ -22,6 +22,13 @@ enum ExportCommand {
       exit(1)
     }
     model.exportType = (argument("--format").flatMap(ExportFormat.init(rawValue:)) ?? .tiff).rawValue
+    if let space = argument("--color-space") {
+      guard let chosen = ExportColorSpace(rawValue: space) else {
+        fputs("--color-space takes srgb, p3, adobe or prophoto\n", stderr)
+        exit(1)
+      }
+      model.preferences.exportColorSpace = chosen
+    }
     var items = model.frames.filter { $0.enabled && $0.hasFullResolution }
     if let r = argument("--rotation"), let value = Int(r) {
       for i in items.indices { items[i].adjustments.rotation = ((value % 4) + 4) % 4 }
