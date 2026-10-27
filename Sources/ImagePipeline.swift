@@ -460,16 +460,28 @@ final class ImagePipeline {
     guard let cg else { throw DeskError.message("无法创建导出文件。") }
     try write(cg, to: url, format: format, dpi: dpi, quality: quality, metadata: metadata)
   }
-  /// `image` in `space`, with colours outside it clipped there rather than before.
+  /// `image` in `space`, with colours outside it clipped there rather than before; without alpha.
   func converted(_ image: CGImage, to space: CGColorSpace, bitsPerComponent: Int) -> CGImage? {
     guard
       let ctx = CGContext(
         data: nil, width: image.width, height: image.height, bitsPerComponent: bitsPerComponent, bytesPerRow: 0,
-        space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        space: space, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
     else { return nil }
     ctx.interpolationQuality = .none
     ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
     return ctx.makeImage()
+  }
+  /// `image` without its alpha channel, the values unchanged. Rendered images are opaque, so the
+  /// channel only made TIFF and PNG files a third larger, and some apps took them as transparent.
+  func opaque(_ image: CGImage) -> CGImage {
+    switch image.alphaInfo {
+    case .none, .noneSkipLast, .noneSkipFirst: return image
+    default: break
+    }
+    guard let space = image.colorSpace, space.model == .rgb,
+      let opaque = converted(image, to: space, bitsPerComponent: image.bitsPerComponent > 8 ? 16 : 8)
+    else { return image }
+    return opaque
   }
   func write(
     _ image: CGImage, to url: URL, format: ExportFormat, dpi: Int, quality: Double = 0.97,
@@ -482,10 +494,15 @@ final class ImagePipeline {
     var properties: [CFString: Any] = [
       kCGImagePropertyDPIWidth: dpi, kCGImagePropertyDPIHeight: dpi,
       kCGImageDestinationLossyCompressionQuality: quality,
-      kCGImagePropertyTIFFDictionary: [kCGImagePropertyTIFFCompression: 5],
     ]
     if let metadata { properties.merge(metadata.properties) { _, new in new } }
-    CGImageDestinationAddImage(dest, image, properties as CFDictionary)
+    // LZW roughly halves an 8-bit TIFF; a 16-bit scan only grows with it (a 2400 dpi 35 mm frame
+    // 53.5 MB against 44.7 MB), so like the originals it is left uncompressed.
+    var tiff = properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any] ?? [:]
+    tiff[kCGImagePropertyTIFFCompression] = format == .tiff ? 1 : 5
+    properties[kCGImagePropertyTIFFDictionary] = tiff
+    // Written as RGB: ImageIO stores an image with a skipped alpha as three samples per pixel.
+    CGImageDestinationAddImage(dest, opaque(image), properties as CFDictionary)
     guard CGImageDestinationFinalize(dest) else { throw DeskError.message("图像写入失败。") }
   }
   /// The overview as a contact print: every frame positive with its own settings, kept in scan
@@ -589,8 +606,7 @@ struct ExportMetadata {
     f.dateFormat = "yyyy:MM:dd HH:mm:ss"
     let date = scanned.map { f.string(from: $0) }
     var tiff: [CFString: Any] = [
-      kCGImagePropertyTIFFCompression: 5, kCGImagePropertyTIFFSoftware: software,
-      kCGImagePropertyTIFFImageDescription: description,
+      kCGImagePropertyTIFFSoftware: software, kCGImagePropertyTIFFImageDescription: description,
     ]
     if let scanner { (tiff[kCGImagePropertyTIFFMake], tiff[kCGImagePropertyTIFFModel]) = (scanner.make, scanner.model) }
     if let date { tiff[kCGImagePropertyTIFFDateTime] = date }

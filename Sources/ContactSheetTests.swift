@@ -147,8 +147,9 @@ enum ContactSheetTests {
     let tiff = try compose(.tiff, "sheet-grid.tif")
     let gridExpected = ContactSheet.geometry(count: 4, cell: ContactSheet.cell(for: sizes), layout: model.preferences.sheet).size
     let tiffInfo = pipe.info(tiff)
-    try check(tiffInfo.width == Int(gridExpected.width) && tiffInfo.height == Int(gridExpected.height) && tiffInfo.bits == 16,
-      "grid contact sheet: \(tiffInfo.width) × \(tiffInfo.height) 16-bit TIFF")
+    try check(tiffInfo.width == Int(gridExpected.width) && tiffInfo.height == Int(gridExpected.height) && tiffInfo.bits == 16
+      && !pipe.storesAlpha(tiff) && !pipe.storesAlpha(jpeg),
+      "grid contact sheet: \(tiffInfo.width) × \(tiffInfo.height) 16-bit TIFF, RGB without alpha")
     model.composeContactSheet(ids: [], to: roll.appendingPathComponent("empty.jpg"), format: .jpeg)
     let deadline = Date().addingTimeInterval(5)
     while model.exporting && Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.02)) }

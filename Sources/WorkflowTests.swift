@@ -178,6 +178,27 @@ enum WorkflowTests {
       try check(zip(p, reference).allSatisfy { abs($0 - $1) < 1.5 / 255 }, "a colour inside sRGB looks the same in \(space.title)")
     }
     try check(zip(try pixel(.displayP3, .jpeg), reference).allSatisfy { abs($0 - $1) < 3 / 255 }, "also in a Display P3 JPEG")
+    var withAlpha = [String]()
+    for format in ExportFormat.allCases {
+      for space in [ExportColorSpace.sRGB, .proPhoto] where pipe.storesAlpha(try exported(space, format)) {
+        withAlpha.append("\(format.title) \(space.title)")
+      }
+    }
+    try check(withAlpha.isEmpty && zip(try pixel(.sRGB, .png), reference).allSatisfy { abs($0 - $1) < 1.5 / 255 },
+      "exports are RGB without an alpha channel, in every format and colour space, their colours unchanged" + (withAlpha.isEmpty ? "" : ": \(withAlpha)"))
+    var compression = [ExportFormat: Int]()
+    for format in [ExportFormat.tiff, .tiff8] {
+      let url = root.appendingPathComponent("compressed-\(format.rawValue).tif")
+      try? FileManager.default.removeItem(at: url)
+      try pipe.export(
+        plain, settings: straight, profile: FilmProfile.builtins[0], url: url, format: format, dpi: 2400,
+        metadata: ExportMetadata(title: "t", description: "d", keywords: [], scanner: nil, scanned: nil, software: "Epson Scan plus"))
+      let props = CGImageSourceCopyPropertiesAtIndex(CGImageSourceCreateWithURL(url as CFURL, nil)!, 0, nil) as? [CFString: Any] ?? [:]
+      let tiff = props[kCGImagePropertyTIFFDictionary] as? [CFString: Any] ?? [:]
+      if tiff[kCGImagePropertyTIFFSoftware] as? String == "Epson Scan plus" { compression[format] = tiff[kCGImagePropertyTIFFCompression] as? Int }
+    }
+    try check(compression == [.tiff: 1, .tiff8: 5],
+      "16-bit TIFF is written uncompressed (LZW only makes scans bigger), 8-bit with LZW, with the metadata either way: \(compression)")
 
     // Metadata and names.
     let tagged = root.appendingPathComponent("tagged.jpg")
@@ -209,5 +230,15 @@ enum WorkflowTests {
     let files = (try? FileManager.default.contentsOfDirectory(atPath: out.path))?.filter { $0.hasSuffix(".tif") }.sorted() ?? []
     let id = FilmProfile.builtins[0].id
     try check(files == ["\(id)_01-2.tif", "\(id)_01.tif"], "a second export of a frame gets a number, never overwriting: \(files)")
+  }
+}
+
+extension ImagePipeline {
+  /// Whether the file has an alpha channel, as an app reading it sees.
+  func storesAlpha(_ url: URL) -> Bool {
+    guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+      let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+    else { return false }
+    return ![.none, .noneSkipLast, .noneSkipFirst].contains(image.alphaInfo)
   }
 }

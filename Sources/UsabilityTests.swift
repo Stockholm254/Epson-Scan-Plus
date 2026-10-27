@@ -55,7 +55,7 @@ enum UsabilityTests {
       String(format: "a 35 mm frame at 2400 dpi is %d × %d pixels, %.1f MB as a 48-bit original", plan.width, plan.height, plan.originalBytes / 36e6))
     try check(abs(plan.seconds / 36 - 44.7) < 0.5 && ScanPlan.duration(plan.seconds) == "约 27 分钟" && !plan.measured,
       String(format: "until this scanner has been timed, a frame takes about %.0f s, as measured on the V850: a roll %@", plan.seconds / 36, ScanPlan.duration(plan.seconds)))
-    try check(plan.rescans == 3 && plan.exportBytes == plan.originalBytes / 6 * 8 && plan.fits,
+    try check(plan.rescans == 3 && plan.exportBytes == plan.originalBytes && plan.fits,
       "it counts frames scanned before and the automatic exports' space")
     let text = plan.summary
     try check(["2216 × 3378", "48-bit", "其中 3 张已扫描过", "约 27 分钟", "粗略估计", "TIFF · 16-bit", "可用空间"].allSatisfy(text.contains),

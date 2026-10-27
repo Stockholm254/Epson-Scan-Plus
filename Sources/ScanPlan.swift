@@ -87,12 +87,13 @@ struct ScanPlan: Equatable {
 }
 
 extension ExportFormat {
-  /// Exports are written with an alpha channel; JPEG at the default quality is about 0.3 B/px.
+  /// As measured on a 2400 dpi 35 mm frame: 16-bit TIFF uncompressed, 8-bit TIFF with LZW,
+  /// PNG, and JPEG at the default quality.
   var estimatedBytesPerPixel: Double {
     switch self {
-    case .tiff: return 8
-    case .tiff8: return 4
-    case .png: return 5
+    case .tiff: return 6
+    case .tiff8: return 1.9
+    case .png: return 5.1
     case .jpeg: return 0.3
     }
   }
