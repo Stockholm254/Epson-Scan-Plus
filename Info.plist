@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleName</key><string>Epson Scan plus</string>
+<key>CFBundleDisplayName</key><string>Epson Scan plus</string>
+<key>CFBundleExecutable</key><string>EpsonScanPlus</string>
+<key>CFBundleIdentifier</key><string>local.filmdesk.mac</string>
+<key>CFBundleVersion</key><string>13</string>
+<key>CFBundleShortVersionString</key><string>0.4.6</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>LSMinimumSystemVersion</key><string>14.0</string>
+<key>NSHighResolutionCapable</key><true/>
+<key>NSCameraUsageDescription</key><string>Epson Scan plus 需要访问连接的扫描仪来预览和扫描胶片。</string>
+<key>NSPrincipalClass</key><string>NSApplication</string>
+</dict></plist>

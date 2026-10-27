@@ -1,0 +1,11 @@
+{
+  "id": "my-film",
+  "name": "自定义胶片",
+  "aliases": ["my film"],
+  "iso": 0,
+  "process": "C-41",
+  "sourceURL": "",
+  "publication": "请替换为真实技术文档编号与页码",
+  "slopes": {"r": 0.55, "g": 0.55, "b": 0.55},
+  "notes": "仅为通用占位参数，不是对某种胶片的测量。替换为经过核验的数据后使用。"
+}

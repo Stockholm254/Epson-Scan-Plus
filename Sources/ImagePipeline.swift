@@ -1,0 +1,549 @@
+import AppKit
+import CoreImage
+import Foundation
+import ImageIO
+import UniformTypeIdentifiers
+
+struct Raster {
+  let width: Int
+  let height: Int
+  var bytes: [UInt8]
+  func pixel(_ x: Int, _ y: Int) -> RGB {
+    let p = (min(height - 1, max(0, y)) * width + min(width - 1, max(0, x))) * 4
+    return RGB(
+      r: Double(bytes[p]) / 255, g: Double(bytes[p + 1]) / 255, b: Double(bytes[p + 2]) / 255)
+  }
+}
+
+/// Float RGBA samples, top row first; see `ImagePipeline.samples`.
+struct Samples {
+  let width: Int
+  let height: Int
+  var values: [Float]
+  func pixel(_ x: Int, _ y: Int) -> RGB {
+    let p = (min(height - 1, max(0, y)) * width + min(width - 1, max(0, x))) * 4
+    return RGB(r: Double(values[p]), g: Double(values[p + 1]), b: Double(values[p + 2]))
+  }
+}
+
+struct ToneAnalysis {
+  var base: RGB
+  var balance: RGB
+  var low: Double
+  var high: Double
+  var gain: RGB = .one
+}
+
+final class ImagePipeline {
+  // The input and kernel operate on encoded scanner values, without implicit ICC transforms.
+  // inputGamma is explicit because a 16-bit TIFF is not necessarily linear sensor data.
+  let context = CIContext(options: [
+    .workingColorSpace: NSNull(), .outputColorSpace: NSNull(), .cacheIntermediates: false,
+  ])
+  let outputSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+  static let shared = ImagePipeline()
+  // Exposure (tone.x, in EV) is a print exposure: a shift of log exposure, 0.30103 per stop,
+  // applied before the levels and clipping so −EV recovers highlights. Positive input scales the
+  // linear value instead, through its encoding gamma.
+  let kernel: CIColorKernel? = CIColorKernel(
+    source: """
+      kernel vec4 negative(__sample p, vec3 base, vec3 slope, vec3 gain, vec3 balance, vec4 levels, vec4 tone, vec4 color, float inverted) {
+        vec3 v = max(p.rgb, vec3(0.000001));
+        vec3 e = log(max(base,vec3(0.000001))/v) * (color.w / 2.302585093) / slope;
+        vec3 q = (e * gain + balance + vec3(tone.x * 0.30103) - vec3(levels.x)) / max(levels.y-levels.x,0.001);
+        if (inverted < 0.5) { q = v * pow(2.0, tone.x / max(color.w, 0.1)); }
+        q = (q - vec3(levels.z)) / max(levels.w-levels.z,0.01);
+        q += vec3(color.x * 0.12 + color.y * 0.05, -color.y * 0.10, -color.x * 0.12 + color.y * 0.05);
+        q = (q-vec3(0.5))*tone.z+vec3(0.5);
+        q = clamp(q,0.0,1.0);
+        q = pow(q,vec3(1.0/max(tone.y,0.1)));
+        float l = dot(q,vec3(0.2126,0.7152,0.0722));
+        q = mix(vec3(l),q,tone.w);
+        return vec4(clamp(q,0.0,1.0),1.0);
+      }
+      """)
+  /// Tone curves as a lookup: each channel reads its own row entry from a `n` × 1 table.
+  let curveKernel: CIKernel? = CIKernel(
+    source: """
+      kernel vec4 curves(sampler image, sampler table, float n) {
+        vec4 p = sample(image, samplerCoord(image));
+        vec3 at = clamp(p.rgb, 0.0, 1.0) * (n - 1.0) + 0.5;
+        return vec4(sample(table, samplerTransform(table, vec2(at.r, 0.5))).r,
+                    sample(table, samplerTransform(table, vec2(at.g, 0.5))).g,
+                    sample(table, samplerTransform(table, vec2(at.b, 0.5))).b, p.a);
+      }
+      """)
+  func applyCurves(_ curves: ToneCurves, to image: CIImage) -> CIImage {
+    guard !curves.isIdentity, let curveKernel else { return image }
+    let n = 1024
+    let entries = curves.table(n)
+    let table = CIImage(
+      bitmapData: entries.withUnsafeBufferPointer { Data(buffer: $0) }, bytesPerRow: n * 16,
+      size: CGSize(width: n, height: 1), format: .RGBAf, colorSpace: nil)
+    return curveKernel.apply(
+      extent: image.extent, roiCallback: { index, rect in index == 0 ? rect : table.extent },
+      arguments: [image, table, Float(n)]) ?? image
+  }
+
+  func load(_ url: URL, maxDimension: Int? = nil) throws -> CGImage {
+    guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+      throw DeskError.message("无法读取图像：\(url.lastPathComponent)")
+    }
+    if let maxDimension {
+      let opts: [CFString: Any] = [
+        kCGImageSourceCreateThumbnailFromImageAlways: true,
+        kCGImageSourceThumbnailMaxPixelSize: maxDimension,
+        kCGImageSourceCreateThumbnailWithTransform: true,
+        kCGImageSourceShouldCacheImmediately: true,
+      ]
+      if let image = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary) {
+        return image
+      }
+    }
+    guard
+      let image = CGImageSourceCreateImageAtIndex(
+        src, 0, [kCGImageSourceShouldCache: false] as CFDictionary)
+    else { throw DeskError.message("不支持的图像格式。") }
+    if let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
+      let orientation = props[kCGImagePropertyOrientation] as? Int, orientation != 1
+    {
+      let ci = CIImage(cgImage: image, options: [.colorSpace: NSNull()]).oriented(
+        forExifOrientation: Int32(orientation))
+      if let upright = context.createCGImage(
+        ci, from: ci.extent, format: image.bitsPerComponent > 8 ? .RGBA16 : .RGBA8,
+        colorSpace: image.colorSpace ?? outputSpace)
+      {
+        return upright
+      }
+    }
+    return image
+  }
+  func info(_ url: URL) -> (width: Int, height: Int, bits: Int, dpi: Double) {
+    guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+      let p = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any]
+    else { return (0, 0, 0, 0) }
+    return (
+      (p[kCGImagePropertyPixelWidth] as? Int) ?? 0, (p[kCGImagePropertyPixelHeight] as? Int) ?? 0,
+      (p[kCGImagePropertyDepth] as? Int) ?? 0, (p[kCGImagePropertyDPIWidth] as? Double) ?? 0
+    )
+  }
+  func crop(_ image: CGImage, rect: NormalRect) throws -> CGImage {
+    let r = rect.pixels(CGSize(width: image.width, height: image.height))
+    guard r.width >= 2, r.height >= 2, let result = image.cropping(to: r) else {
+      throw DeskError.message("裁切范围太小。")
+    }
+    return result
+  }
+  func raster(_ image: CGImage, maxDimension: Int = 600) -> Raster {
+    let scale = min(1, Double(maxDimension) / Double(max(image.width, image.height)))
+    let w = max(1, Int(Double(image.width) * scale))
+    let h = max(1, Int(Double(image.height) * scale))
+    var bytes = [UInt8](repeating: 0, count: w * h * 4)
+    let ci = CIImage(cgImage: image, options: [.colorSpace: NSNull()]).transformed(
+      by: CGAffineTransform(scaleX: scale, y: scale))
+    bytes.withUnsafeMutableBytes { p in
+      context.render(
+        ci, toBitmap: p.baseAddress!, rowBytes: w * 4,
+        bounds: CGRect(x: 0, y: 0, width: w, height: h), format: .RGBA8, colorSpace: nil)
+    }
+    // CIContext render(toBitmap:) preserves CGImage's top-row-first byte order.
+    return Raster(width: w, height: h, bytes: bytes)
+  }
+  /// Float samples for statistics and picking: a linear scan keeps only a few 8-bit codes in a
+  /// negative's dense areas, which would quantize film base, end points and neutral samples.
+  func samples(_ image: CGImage, maxDimension: Int) -> Samples {
+    let scale = min(1, Double(maxDimension) / Double(max(image.width, image.height)))
+    let w = max(1, Int(Double(image.width) * scale))
+    let h = max(1, Int(Double(image.height) * scale))
+    var values = [Float](repeating: 0, count: w * h * 4)
+    let ci = CIImage(cgImage: image, options: [.colorSpace: NSNull()]).transformed(
+      by: CGAffineTransform(scaleX: scale, y: scale))
+    values.withUnsafeMutableBytes { p in
+      context.render(
+        ci, toBitmap: p.baseAddress!, rowBytes: w * 16,
+        bounds: CGRect(x: 0, y: 0, width: w, height: h), format: .RGBAf, colorSpace: nil)
+    }
+    return Samples(width: w, height: h, values: values)
+  }
+  /// The roll's film base: unexposed film between neighbouring frames on the overview, shared by
+  /// every frame of the strip. Nil unless the gaps are even and no denser than the frames' thinnest film.
+  func rollBase(_ overview: CGImage, frames: [FilmFrame]) -> RGB? {
+    let s = samples(overview, maxDimension: max(overview.width, overview.height))
+    let size = CGSize(width: s.width, height: s.height)
+    var gap = [[Double](), [Double](), [Double]()], inside = [[Double](), [Double](), [Double]()]
+    func collect(_ r: CGRect, into values: inout [[Double]], step: Int = 1) {
+      guard r.width >= 1, r.height >= 1 else { return }
+      for y in stride(from: Int(r.minY), to: Int(r.maxY), by: step) {
+        for x in stride(from: Int(r.minX), to: Int(r.maxX), by: step) {
+          let p = s.pixel(x, y).values
+          for c in 0..<3 { values[c].append(p[c]) }
+        }
+      }
+    }
+    let rects = frames.map { $0.rect.pixels(size) }
+    for (i, a) in rects.enumerated() {
+      collect(a.insetBy(dx: a.width * 0.1, dy: a.height * 0.1), into: &inside, step: 3)
+      for b in rects[(i + 1)...] {
+        // Neighbours side by side or one above the other, with a narrow gap between them.
+        let (l, r) = a.minX <= b.minX ? (a, b) : (b, a), (t, u) = a.minY <= b.minY ? (a, b) : (b, a)
+        let gapX = r.minX - l.maxX, overlapY = min(a.maxY, b.maxY) - max(a.minY, b.minY)
+        let gapY = u.minY - t.maxY, overlapX = min(a.maxX, b.maxX) - max(a.minX, b.minX)
+        if gapX >= 2, gapX < 0.12 * min(l.width, r.width), overlapY > 0.6 * min(a.height, b.height) {
+          collect(CGRect(x: l.maxX + gapX * 0.3, y: max(a.minY, b.minY) + overlapY * 0.15,
+            width: gapX * 0.4, height: overlapY * 0.7), into: &gap)
+        } else if gapY >= 2, gapY < 0.12 * min(t.height, u.height), overlapX > 0.6 * min(a.width, b.width) {
+          collect(CGRect(x: max(a.minX, b.minX) + overlapX * 0.15, y: t.maxY + gapY * 0.3,
+            width: overlapX * 0.7, height: gapY * 0.4), into: &gap)
+        }
+      }
+    }
+    guard gap[0].count >= 30, !inside[0].isEmpty else { return nil }
+    let base = RGB(gap.map { quantile($0, 0.5) })
+    // Unexposed film is the thinnest film on the roll, and it is even.
+    let thinnest = inside.map { quantile($0, 0.99) }
+    let even = (0..<3).allSatisfy { (quantile(gap[$0], 0.9) - quantile(gap[$0], 0.1)) / max(1e-6, base.values[$0]) < 0.25 }
+    guard even, (0..<3).allSatisfy({ base.values[$0] > thinnest[$0] * 0.97 }) else { return nil }
+    return base
+  }
+  func quantile(_ a: [Double], _ p: Double) -> Double {
+    let v = a.sorted()
+    return v.isEmpty ? 0 : v[min(v.count - 1, Int(Double(v.count - 1) * p))]
+  }
+
+  /// The pixels colour statistics use, as density above the film base, with the base found.
+  func densities(_ image: CGImage, settings: Adjustments, maxDimension: Int = 300) -> (base: RGB, density: [[Double]]) {
+    densities(samples(image, maxDimension: maxDimension), settings: settings)
+  }
+  func densities(_ r: Samples, settings: Adjustments) -> (base: RGB, density: [[Double]]) {
+    var pixels = [[Double]]()
+    // Statistics are deliberately separate from the export crop. Ignore the outer
+    // 5% on each side, including residual film-base/holder edges in older projects.
+    // Never feed the expanded crop/film-base editing context into these statistics.
+    let marginX = max(1, Int(ceil(Double(r.width) * 0.05)))
+    let marginY = max(1, Int(ceil(Double(r.height) * 0.05)))
+    for y in marginY..<max(marginY + 1, r.height - marginY) {
+      for x in marginX..<max(marginX + 1, r.width - marginX) {
+        let p = r.pixel(x, y).values
+        // Clipped light (leaks, clear film) carries no density.
+        if p.min()! < 0.995 && p.max()! > 0 { pixels.append(p.map { max(1e-6, $0) }) }
+      }
+    }
+    // A picked base wins, then the roll's base from between the frames, then this frame's thinnest film.
+    let base = settings.base ?? settings.rollBase
+      ?? RGB((0..<3).map { c in max(0.001, quantile(pixels.map { $0[c] }, 0.995)) })
+    // Only near-opaque areas, over 3.0 D above the base in every channel (holder, frame lines),
+    // are left out, so a linear scan's densest highlights stay in the statistics.
+    var density = [[Double](), [Double](), [Double]()]
+    for p in pixels {
+      let d = (0..<3).map { log10(max(0.0001, base.values[$0]) / p[$0]) * settings.inputGamma }
+      guard d.contains(where: { $0 < 3 }) else { continue }
+      for c in 0..<3 { density[c].append(d[c]) }
+    }
+    if density[0].isEmpty {
+      density = (0..<3).map { c in pixels.map { log10(max(0.0001, base.values[c]) / $0[c]) * settings.inputGamma } }
+    }
+    return (base, density)
+  }
+
+  /// The slopes a frame converts with, and whether they fix each channel's contrast: a calibrated
+  /// preset first, then the roll's own estimate, then the preset's data-sheet slopes. Only the
+  /// generic preset without a roll estimate leaves channel contrast to per-frame stretching.
+  static func slopes(_ s: Adjustments, _ p: FilmProfile) -> (slopes: RGB, fixed: Bool) {
+    if p.offsets != nil { return (p.slopes, true) }
+    if let roll = s.rollSlopes { return (roll, true) }
+    return (p.slopes, p.setsChannelContrast)
+  }
+
+  /// Channel slopes for a whole roll from local density gradients, after the gray-edge idea in
+  /// colour constancy: shading (light falling off across a surface, texture, folds, waves) changes
+  /// every channel's log exposure alike, so where green density changes, red and blue change in
+  /// the ratio of their slopes. Scene colour that goes with brightness, such as a blue sky over
+  /// darker ground, does not enter as it does in global statistics, and the median over every edge
+  /// of the roll keeps colour edges from pulling it. Green keeps the preset's slope. Nil for fewer
+  /// than two frames, too few edges, or an implausible result.
+  func rollSlopes(_ frames: [(image: CGImage, settings: Adjustments)], greenSlope: Double) -> RGB? {
+    guard frames.count >= 2 else { return nil }
+    var ratios = [[Double](), [Double]()]
+    for f in frames {
+      let s = samples(f.image, maxDimension: 240), w = s.width, h = s.height
+      let base = densities(s, settings: f.settings).base
+      // Density per channel, smoothed by a 3×3 box against grain and noise.
+      var b = [[Double]](repeating: [Double](repeating: 0, count: w * h), count: 3)
+      for c in 0..<3 {
+        let lit = max(0.0001, base.values[c]), gamma = f.settings.inputGamma
+        var d = [Double](repeating: 0, count: w * h), row = [Double](repeating: 0, count: w * h)
+        for i in 0..<(w * h) { d[i] = log10(lit / max(1e-6, Double(s.values[i * 4 + c]))) * gamma }
+        for y in 0..<h {
+          for x in 0..<w {
+            let l = max(0, x - 1), r = min(w - 1, x + 1)
+            row[y * w + x] = (d[y * w + l] + d[y * w + x] + d[y * w + r]) / 3
+          }
+        }
+        for y in 0..<h {
+          let u = max(0, y - 1), v = min(h - 1, y + 1)
+          for x in 0..<w { b[c][y * w + x] = (row[u * w + x] + row[y * w + x] + row[v * w + x]) / 3 }
+        }
+      }
+      // Gradients over 2 px each way, inside the same 5% margins as the colour statistics.
+      let mx = Int(ceil(Double(w) * 0.05)) + 3, my = Int(ceil(Double(h) * 0.05)) + 3
+      guard w > 2 * mx, h > 2 * my else { continue }
+      let (red, green, blue) = (b[0], b[1], b[2])
+      for y in my..<(h - my) {
+        for x in mx..<(w - mx) {
+          let i = y * w + x
+          // Near the base the film's toe flattens; near opaque only noise is left.
+          guard min(red[i], green[i], blue[i]) > 0.05, max(red[i], green[i], blue[i]) < 2.6 else { continue }
+          let gx = green[i + 2] - green[i - 2], gy = green[i + 2 * w] - green[i - 2 * w]
+          let m = gx * gx + gy * gy
+          guard m > 0.03 * 0.03 else { continue }
+          ratios[0].append(((red[i + 2] - red[i - 2]) * gx + (red[i + 2 * w] - red[i - 2 * w]) * gy) / m)
+          ratios[1].append(((blue[i + 2] - blue[i - 2]) * gx + (blue[i + 2 * w] - blue[i - 2 * w]) * gy) / m)
+        }
+      }
+    }
+    guard ratios[0].count >= 500 else { return nil }
+    let k = ratios.map { quantile($0, 0.5) }
+    guard k.allSatisfy({ $0 > 0.5 && $0 < 2 }) else { return nil }
+    return RGB(r: greenSlope * k[0], g: greenSlope, b: greenSlope * k[1])
+  }
+
+  func analyze(_ image: CGImage, settings: Adjustments, profile: FilmProfile) -> ToneAnalysis {
+    let (base, density) = densities(image, settings: settings)
+    let (slopes, fixed) = Self.slopes(settings, profile)
+    let e = (0..<3).map { c in density[c].map { $0 / slopes.values[c] } }
+    // Independent robust endpoints correct color crossover, not just a single median offset.
+    // They are scene statistics, not an ICC calibration; manual neutral/temperature remain available.
+    let channelLow = e.map { quantile($0, 0.01) }
+    let channelHigh = e.map { quantile($0, 0.99) }
+    let spans = (0..<3).map { max(0.05, channelHigh[$0] - channelLow[$0]) }
+    let commonSpan = quantile(spans, 0.5)
+    var gain = RGB.one
+    var balance = RGB.zero
+    if let sample = settings.neutralSample {
+      let d = (0..<3).map {
+        log10(max(0.0001, base.values[$0]) / max(0.0001, sample.values[$0])) * settings.inputGamma
+          / slopes.values[$0]
+      }
+      let mean = d.reduce(0, +) / 3
+      balance = RGB(d.map { mean - $0 })
+    } else if let manual = settings.manualBalance {
+      balance = manual
+    } else if settings.autoWhiteBalance {
+      // Fixed slopes (calibrated, roll estimate or a film's data sheet) supply each channel's
+      // contrast, so auto white balance only aligns the channels' black points. The generic preset
+      // without a roll estimate stretches each channel to the scene's own contrast instead.
+      if !fixed {
+        gain = RGB(spans.map { clamp(commonSpan / $0, 0.5, 2) })
+      }
+      balance = RGB((0..<3).map { -channelLow[$0] * gain.values[$0] })
+    } else if let offsets = profile.offsets {
+      // A calibrated preset knows where this film and scanner put a neutral.
+      balance = RGB(offsets.values.map { -$0 })
+    }
+    var lows = [Double]()
+    var highs = [Double]()
+    for c in 0..<3 {
+      lows.append(quantile(e[c], 0.005) * gain.values[c] + balance.values[c])
+      highs.append(quantile(e[c], 0.995) * gain.values[c] + balance.values[c])
+    }
+    let low = settings.autoLevels ? (lows.min() ?? 0) : 0
+    let high = settings.autoLevels ? max(low + 0.05, highs.max() ?? 2) : 3.6
+    return ToneAnalysis(base: base, balance: balance, low: low, high: high, gain: gain)
+  }
+
+  /// `sharpener` deconvolves the scan in linear light first; tone statistics use the scan as is.
+  func output(
+    _ image: CGImage, settings s: Adjustments, profile: FilmProfile, analysis: ToneAnalysis? = nil,
+    sharpener: Sharpener? = nil
+  ) throws -> CIImage {
+    let a = analysis ?? analyze(image, settings: s, profile: profile)
+    guard let kernel else { throw DeskError.message("图像处理内核初始化失败。") }
+    let source = try sharpener.map { try sharpen(image, with: $0) } ?? image
+    let ci = CIImage(cgImage: source, options: [.colorSpace: NSNull()])
+    func v(_ c: RGB) -> CIVector { CIVector(x: c.r, y: c.g, z: c.b) }
+    let fine = s.baseFine ?? .zero
+    let effectiveBase = RGB(
+      (0..<3).map { max(0.0001, a.base.values[$0]) * pow(2, fine.values[$0]) })
+    let args: [Any] = [
+      ci, v(effectiveBase), v(Self.slopes(s, profile).slopes), v(a.gain), v(a.balance),
+      CIVector(x: a.low, y: a.high, z: s.black, w: s.white),
+      CIVector(x: s.exposure, y: s.midtone, z: s.contrast, w: s.saturation),
+      CIVector(x: s.warmth, y: s.tint, z: 0, w: s.inputGamma), s.inputIsNegative ? 1.0 : 0.0,
+    ]
+    guard var result = kernel.apply(extent: ci.extent, arguments: args) else {
+      throw DeskError.message("图像处理失败。")
+    }
+    if let curves = s.curves { result = applyCurves(curves, to: result) }
+    if s.rotation % 4 != 0 {
+      let orientation: Int32 = [1, 6, 3, 8][((s.rotation % 4) + 4) % 4]
+      result = result.oriented(forExifOrientation: orientation)
+    }
+    if s.flipHorizontal == true {
+      result = result.transformed(by: CGAffineTransform(scaleX: -1, y: 1))
+    }
+    return result.transformed(
+      by: CGAffineTransform(translationX: -result.extent.minX, y: -result.extent.minY))
+  }
+  func preview(_ image: CGImage, settings: Adjustments, profile: FilmProfile) throws -> CGImage {
+    let ci = try output(image, settings: settings, profile: profile)
+    guard
+      let cg = context.createCGImage(ci, from: ci.extent, format: .RGBA8, colorSpace: outputSpace)
+    else { throw DeskError.message("无法生成预览。") }
+    return cg
+  }
+  func render(
+    _ image: CGImage, settings: Adjustments, profile: FilmProfile, analysis: ToneAnalysis?,
+    negative: Bool, sharpener: Sharpener? = nil
+  ) -> CGImage? {
+    var ci: CIImage
+    if negative {
+      ci = CIImage(cgImage: image, options: [.colorSpace: NSNull()])
+      ci = ci.oriented(forExifOrientation: [1, 6, 3, 8][((settings.rotation % 4) + 4) % 4])
+      if settings.flipHorizontal == true {
+        ci = ci.transformed(by: CGAffineTransform(scaleX: -1, y: 1))
+      }
+    } else {
+      guard
+        let output = try? output(
+          image, settings: settings, profile: profile, analysis: analysis, sharpener: sharpener)
+      else { return nil }
+      ci = output
+    }
+    ci = ci.transformed(by: CGAffineTransform(translationX: -ci.extent.minX, y: -ci.extent.minY))
+    return context.createCGImage(ci, from: ci.extent, format: .RGBA8, colorSpace: outputSpace)
+  }
+  func export(
+    _ image: CGImage, settings: Adjustments, profile: FilmProfile, url: URL, format: ExportFormat,
+    dpi: Int, quality: Double = 0.97, sharpener: Sharpener? = nil
+  ) throws {
+    let ci = try output(image, settings: settings, profile: profile, sharpener: sharpener)
+    guard
+      let cg = context.createCGImage(
+        ci, from: ci.extent, format: format.sixteenBit ? .RGBA16 : .RGBA8, colorSpace: outputSpace)
+    else { throw DeskError.message("无法创建导出文件。") }
+    try write(cg, to: url, format: format, dpi: dpi, quality: quality)
+  }
+  func write(_ image: CGImage, to url: URL, format: ExportFormat, dpi: Int, quality: Double = 0.97) throws {
+    guard
+      let dest = CGImageDestinationCreateWithURL(
+        url as CFURL, format.type.identifier as CFString, 1, nil)
+    else { throw DeskError.message("无法创建导出文件。") }
+    let properties: [CFString: Any] = [
+      kCGImagePropertyDPIWidth: dpi, kCGImagePropertyDPIHeight: dpi,
+      kCGImageDestinationLossyCompressionQuality: quality,
+      kCGImagePropertyTIFFDictionary: [kCGImagePropertyTIFFCompression: 5],
+    ]
+    CGImageDestinationAddImage(dest, image, properties as CFDictionary)
+    guard CGImageDestinationFinalize(dest) else { throw DeskError.message("图像写入失败。") }
+  }
+  /// The overview as a contact print: every frame positive with its own settings, kept in scan
+  /// orientation so it stays under its frame box, on the overview inverted with the first frame's
+  /// base and settings. Unexposed film base prints black and the holder prints as white paper.
+  func contactPrint(_ overview: CGImage, frames: [FilmFrame], profile: FilmProfile) -> CGImage? {
+    func upright(_ s: Adjustments) -> Adjustments {
+      var s = s
+      s.rotation = 0
+      s.flipHorizontal = nil
+      return s
+    }
+    guard let first = frames.first, let firstCrop = try? crop(overview, rect: first.rect) else {
+      return nil
+    }
+    let s0 = upright(first.adjustments)
+    let analysis = analyze(firstCrop, settings: s0, profile: profile)
+    let w = overview.width, h = overview.height
+    guard let paper = try? output(overview, settings: s0, profile: profile, analysis: analysis),
+      let background = context.createCGImage(paper, from: paper.extent, format: .RGBA8, colorSpace: outputSpace),
+      let ctx = CGContext(
+        data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: outputSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+    else { return nil }
+    ctx.draw(background, in: CGRect(x: 0, y: 0, width: w, height: h))
+    for f in frames {
+      guard let frameCrop = try? crop(overview, rect: f.rect),
+        let positive = try? preview(frameCrop, settings: upright(f.adjustments), profile: profile)
+      else { continue }
+      let r = f.rect.pixels(CGSize(width: w, height: h))
+      ctx.draw(positive, in: CGRect(x: r.minX, y: CGFloat(h) - r.maxY, width: r.width, height: r.height))
+    }
+    return ctx.makeImage()
+  }
+  func savePNG(_ image: CGImage, to url: URL) throws {
+    guard
+      let dest = CGImageDestinationCreateWithURL(
+        url as CFURL, UTType.png.identifier as CFString, 1, nil)
+    else { throw DeskError.message("不能保存预览。") }
+    CGImageDestinationAddImage(dest, image, nil)
+    guard CGImageDestinationFinalize(dest) else { throw DeskError.message("不能保存预览。") }
+  }
+  /// Uncompressed, like the scans in Originals.
+  func saveTIFF(_ image: CGImage, to url: URL, dpi: Int) throws {
+    guard
+      let dest = CGImageDestinationCreateWithURL(
+        url as CFURL, UTType.tiff.identifier as CFString, 1, nil)
+    else { throw DeskError.message("不能保存预览。") }
+    let properties: [CFString: Any] = [
+      kCGImagePropertyDPIWidth: dpi, kCGImagePropertyDPIHeight: dpi,
+      kCGImagePropertyTIFFDictionary: [kCGImagePropertyTIFFCompression: 1],
+    ]
+    CGImageDestinationAddImage(dest, image, properties as CFDictionary)
+    guard CGImageDestinationFinalize(dest) else { throw DeskError.message("不能保存预览。") }
+  }
+  /// The whole file decoded into memory now, not again on every draw or crop.
+  func loadDecoded(_ url: URL) throws -> CGImage {
+    let image = try load(url)
+    guard let data = image.dataProvider?.data, let provider = CGDataProvider(data: data),
+      let space = image.colorSpace,
+      let decoded = CGImage(
+        width: image.width, height: image.height, bitsPerComponent: image.bitsPerComponent,
+        bitsPerPixel: image.bitsPerPixel, bytesPerRow: image.bytesPerRow, space: space,
+        bitmapInfo: image.bitmapInfo, provider: provider, decode: nil, shouldInterpolate: false,
+        intent: .defaultIntent)
+    else { throw DeskError.message("无法读取图像：\(url.lastPathComponent)") }
+    return decoded
+  }
+  /// `image` no larger than `maxDimension`, Lanczos-filtered, in its own depth and colour space.
+  func scaled(_ image: CGImage, maxDimension: Int) -> CGImage {
+    let scale = Double(maxDimension) / Double(max(image.width, image.height))
+    guard scale < 1, let filter = CIFilter(name: "CILanczosScaleTransform") else { return image }
+    filter.setValue(CIImage(cgImage: image, options: [.colorSpace: NSNull()]), forKey: kCIInputImageKey)
+    filter.setValue(scale, forKey: kCIInputScaleKey)
+    filter.setValue(1.0, forKey: kCIInputAspectRatioKey)
+    let size = CGRect(
+      x: 0, y: 0, width: max(1, (Double(image.width) * scale).rounded()),
+      height: max(1, (Double(image.height) * scale).rounded()))
+    guard let output = filter.outputImage,
+      let result = context.createCGImage(
+        output, from: size, format: image.bitsPerComponent > 8 ? .RGBA16 : .RGBA8,
+        colorSpace: image.colorSpace ?? outputSpace)
+    else { return image }
+    return result
+  }
+}
+
+/// The overview file at full resolution and scaled copies, decoded once and shared by the render
+/// queues: a 600 dpi preview takes about half a second to decode, too slow for every refresh.
+final class OverviewCache {
+  private let lock = NSLock()
+  private var url: URL?
+  private var full: CGImage?
+  private var scaled = [Int: CGImage]()
+  /// A preview just scanned, already in memory.
+  func keep(_ image: CGImage, for url: URL) {
+    lock.lock()
+    defer { lock.unlock() }
+    (self.url, full, scaled) = (url, image, [:])
+  }
+  func image(_ url: URL, maxDimension: Int? = nil) throws -> CGImage {
+    lock.lock()
+    defer { lock.unlock() }
+    if url != self.url { (self.url, full, scaled) = (url, nil, [:]) }
+    let image = try full ?? ImagePipeline.shared.loadDecoded(url)
+    full = image
+    guard let maxDimension, maxDimension < max(image.width, image.height) else { return image }
+    if let copy = scaled[maxDimension] { return copy }
+    let copy = ImagePipeline.shared.scaled(image, maxDimension: maxDimension)
+    scaled[maxDimension] = copy
+    return copy
+  }
+}
