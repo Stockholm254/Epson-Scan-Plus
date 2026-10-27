@@ -155,6 +155,45 @@ enum SmokeTests {
           horizontal.count == expected,
           "horizontal 120 \(frameHeight) mm detects \(expected) frames")
       }
+      // A 135 strip at a 38 mm pitch whose holder window also lights 10 mm of fogged film past the
+      // last frame, with a dark, flat fourth frame: the window no longer spaces the cuts, and the
+      // last frame does not take the fog.
+      do {
+        let sw = 600, sh = 1000, ppm = 4
+        let top = 40, lead = 6, pitch = 38 * ppm, frameLength = 36 * ppm
+        let stripEnd = top + lead + 5 * pitch + frameLength + 10 * ppm
+        var bytes = [UInt8](repeating: 0, count: sw * sh * 4)
+        for y in 0..<sh {
+          for x in 0..<sw {
+            let i = (y * sw + x) * 4
+            bytes[i + 3] = 255
+            guard x >= 80 && x < 80 + 26 * ppm && y >= top && y < stripEnd else { continue }
+            let row = y - top - lead, k = row / pitch
+            var c = (210, 130, 70)  // film base
+            if row >= 0 && k < 6 && row % pitch < frameLength && x >= 80 + ppm && x < 80 + 25 * ppm {
+              c = k == 3 ? (100, 60, 35) : (130 + (x / 9 + y / 17) % 70, 45 + (x / 9 + y / 17) % 65, 20 + (x / 9 + y / 17) % 30)
+            } else if row >= 5 * pitch + frameLength + 2 * ppm {
+              c = (235, 170, 110)  // fogged film
+            }
+            (bytes[i], bytes[i + 1], bytes[i + 2]) = (UInt8(c.0), UInt8(c.1), UInt8(c.2))
+          }
+        }
+        let strip = CGImage(
+          width: sw, height: sh, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: sw * 4,
+          space: CGColorSpace(name: CGColorSpace.sRGB)!,
+          bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+          provider: CGDataProvider(data: Data(bytes) as CFData)!, decode: nil,
+          shouldInterpolate: false, intent: .defaultIntent)!
+        let found = FrameDetector.detect(strip, physicalMM: CGSize(width: 150, height: 250), format: .auto)
+        let tops = found.map { $0.rect.y * 250 }, lengths = found.map { $0.rect.height * 250 }
+        let expected = (0..<6).map { Double(top + lead + $0 * pitch) / Double(ppm) }
+        // Trimming takes about half a millimetre off each end of these sharp synthetic frames.
+        try check(
+          found.count == 6 && lengths.allSatisfy { abs($0 - 35.5) < 1.1 } && lengths.max()! - lengths.min()! < 0.6
+            && zip(tops, expected).allSatisfy { abs($0 - $1) < 1 },
+          "135 frames keep their pitch and length past a fogged strip end and a flat frame: "
+            + lengths.map { String(format: "%.1f", $0) }.joined(separator: " ") + " mm")
+      }
       if let index = CommandLine.arguments.firstIndex(of: "--overview"),
         index + 1 < CommandLine.arguments.count
       {

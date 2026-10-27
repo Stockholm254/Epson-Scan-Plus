@@ -142,7 +142,36 @@ enum FrameDetector {
           }
         }
       }
-      let cuts = findCuts(count).cuts
+      // 135 advances by one fixed pitch of about 38 mm. Fitting every gap of the strip at once keeps
+      // a dark, flat frame, or a holder window that lights more than the film, from pulling single
+      // cuts out of place; the end frames are one pitch long, not whatever the window leaves.
+      func pitchCuts(_ n: Int) -> [Int]? {
+        func gap(_ t: Int) -> Double {
+          texture[max(0, t - 1)...min(length - 1, t + 1)].reduce(0, +) / 3 * 30 - brightness[t] * 0.04
+        }
+        let scale = Double(pxPerMM)
+        var best = (score: Double.infinity, first: 0, pitch: 0.0)
+        for pitchMM in stride(from: 36.8, through: 39.6, by: 0.1) {
+          let pitch = pitchMM * scale
+          let lo = Int(pitch * 0.85), hi = Int(Double(length) - pitch * Double(n - 2) - pitch * 0.85)
+          guard lo <= hi else { continue }
+          for first in lo...hi {
+            let score = (0..<(n - 1)).reduce(0.0) { $0 + gap(first + Int((Double($1) * pitch).rounded())) }
+            if score < best.score { best = (score, first, pitch) }
+          }
+        }
+        guard best.pitch > 0 else { return nil }
+        // Then each cut settles on its own gap, within about a millimetre.
+        let radius = max(2, Int(scale.rounded()))
+        let inner = (0..<(n - 1)).map { k -> Int in
+          let expected = best.first + Int((Double(k) * best.pitch).rounded())
+          return (max(1, expected - radius)...min(length - 2, expected + radius)).min { gap($0) < gap($1) } ?? expected
+        }
+        // A little over one pitch: gaps vary, and trimming finds the frame's own edge.
+        let reach = Int((best.pitch + 1.5 * scale).rounded())
+        return [max(0, inner[0] - reach)] + inner + [min(length, inner[n - 2] + reach)]
+      }
+      let cuts = (is135 && count > 1 ? pitchCuts(count) : nil) ?? findCuts(count).cuts
       // Estimate the holder sides from the entire strip. A dark subject in one
       // frame must not move that frame's lateral aperture edge into the scene.
       let stripInterior = FilmEdges.contentBounds(raster, within: box)
@@ -174,7 +203,7 @@ enum FrameDetector {
             let values = gapSamples.map { $0.values[c] }.sorted()
             return values[values.count / 2]
           })
-      for i in 0..<count {
+      var bounds = (0..<count).map { i -> CGRect in
         let start = CGFloat(cuts[i])
         let end = CGFloat(cuts[i + 1])
         let candidate: CGRect =
@@ -185,7 +214,40 @@ enum FrameDetector {
           : CGRect(
             x: box.minX + start, y: stripInterior.minY, width: end - start,
             height: stripInterior.height)
-        let r = FilmEdges.contentBounds(raster, within: candidate, base: gapBase, trimDark: false)
+        return FilmEdges.contentBounds(raster, within: candidate, base: gapBase, trimDark: false)
+      }
+      // The end frames meet the holder window, not a gap, on their outer side, so nothing there
+      // stops the trimming: keep them as long as the strip's other frames.
+      if is135 && count > 2 {
+        let lengths = bounds.dropFirst().dropLast().map { vertical ? $0.height : $0.width }.sorted()
+        let limit = lengths[lengths.count / 2] + 0.3 * pxPerMM
+        let first = bounds[0], last = bounds[count - 1]
+        if vertical {
+          if first.height > limit { bounds[0] = CGRect(x: first.minX, y: first.maxY - limit, width: first.width, height: limit) }
+          if last.height > limit { bounds[count - 1].size.height = limit }
+        } else {
+          if first.width > limit { bounds[0] = CGRect(x: first.maxX - limit, y: first.minY, width: limit, height: first.height) }
+          if last.width > limit { bounds[count - 1].size.width = limit }
+        }
+      }
+      // Frames of one strip share the film's sides. A side more than about half a millimetre off
+      // the strip's had dark scenery trimmed away as film base: it takes the strip's side.
+      if is135 && count > 2 {
+        func median(_ values: [CGFloat]) -> CGFloat { values.sorted()[values.count / 2] }
+        let tolerance = 0.6 * pxPerMM
+        let low = median(bounds.map { vertical ? $0.minX : $0.minY })
+        let high = median(bounds.map { vertical ? $0.maxX : $0.maxY })
+        for i in bounds.indices {
+          let r = bounds[i]
+          var a = vertical ? r.minX : r.minY, b = vertical ? r.maxX : r.maxY
+          if abs(a - low) > tolerance { a = low }
+          if abs(b - high) > tolerance { b = high }
+          bounds[i] = vertical
+            ? CGRect(x: a, y: r.minY, width: b - a, height: r.height)
+            : CGRect(x: r.minX, y: a, width: r.width, height: b - a)
+        }
+      }
+      for r in bounds {
         let normal = NormalRect(
           CGRect(
             x: r.minX / CGFloat(w), y: r.minY / CGFloat(h), width: r.width / CGFloat(w),
