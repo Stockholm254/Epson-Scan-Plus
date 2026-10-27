@@ -95,9 +95,10 @@ enum HardwareTest {
           else { throw DeskError.message("Unexpected export dimensions/depth") }
           var precision = ""
           if sane {
+            // Any film in the holder: how many frames it holds is reported, not required.
             guard raw.bits == 16, frame.adjustments.inputGamma == 1,
               frame.captureRect.contains(frame.rect), model.singleView,
-              model.frames.count == 18, model.scanBatch.completed == 1
+              !model.frames.isEmpty, model.scanBatch.completed == 1
             else { throw DeskError.message("RGB48/gamma/coverage/batch verification failed") }
             let image = try ImagePipeline.shared.load(URL(fileURLWithPath: path))
             let data = image.dataProvider!.data! as Data
