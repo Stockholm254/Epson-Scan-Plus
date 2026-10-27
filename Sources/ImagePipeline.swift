@@ -471,20 +471,24 @@ final class ImagePipeline {
     ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
     return ctx.makeImage()
   }
-  /// `image` turned `turns` quarter turns clockwise, its pixels copied as they are.
-  func turned(_ image: CGImage, quarterTurns turns: Int) -> CGImage? {
+  /// `image` turned `turns` quarter turns clockwise and then mirrored left to right, as a frame's
+  /// rotation and mirror show it; its pixels copied as they are.
+  func turned(_ image: CGImage, quarterTurns turns: Int, mirrored: Bool = false) -> CGImage? {
     let t = ((turns % 4) + 4) % 4
-    guard t != 0 else { return image }
+    guard t != 0 || mirrored else { return image }
     let w = image.width, h = image.height
-    let size = t == 2 ? (w, h) : (h, w)
+    let size = t == 2 || t == 0 ? (w, h) : (h, w)
     let space = image.colorSpace.flatMap { $0.supportsOutput ? $0 : nil } ?? outputSpace
     guard
       let ctx = CGContext(
         data: nil, width: size.0, height: size.1, bitsPerComponent: image.bitsPerComponent > 8 ? 16 : 8, bytesPerRow: 0,
         space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
     else { return nil }
+    // The transform concatenated last applies first: the turn, then the mirror.
+    if mirrored { ctx.concatenate(CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: CGFloat(size.0), ty: 0)) }
     // In the context's upward y: a clockwise turn on screen takes (u, v) to (v, w - u).
     switch t {
+    case 0: break
     case 1: ctx.concatenate(CGAffineTransform(a: 0, b: -1, c: 1, d: 0, tx: 0, ty: CGFloat(w)))
     case 2: ctx.concatenate(CGAffineTransform(a: -1, b: 0, c: 0, d: -1, tx: CGFloat(w), ty: CGFloat(h)))
     default: ctx.concatenate(CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: CGFloat(h), ty: 0))

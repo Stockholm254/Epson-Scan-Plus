@@ -199,6 +199,22 @@ struct ContentView: View {
         Text(String(format: "%.1f×", m.zoom)).font(.system(size: 10, design: .monospaced))
           .foregroundStyle(.secondary).help("相对适合窗口的缩放倍率")
         if !m.singleView {
+          Button {
+            m.turnRoll(clockwise: false)
+          } label: {
+            Image(systemName: "rotate.left")
+          }.help("全卷逆时针旋转 90°：改变每张在单张视图和导出中的方向；转过 90° 的画面在横排的灯箱上也正立").disabled(m.frames.isEmpty)
+          Button {
+            m.turnRoll(clockwise: true)
+          } label: {
+            Image(systemName: "rotate.right")
+          }.help("全卷顺时针旋转 90°：改变每张在单张视图和导出中的方向；转过 90° 的画面在横排的灯箱上也正立").disabled(m.frames.isEmpty)
+          Button {
+            m.mirrorRoll()
+          } label: {
+            Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
+              .foregroundStyle(m.contactMirrored ? accent : Color(white: 0.85))
+          }.buttonStyle(HardwareKeyStyle(latched: m.contactMirrored)).help("全卷水平镜像：修正胶片正反面放反").disabled(m.frames.isEmpty)
           Picker("显示", selection: $m.contactPositive) {
             Text("原片").tag(false)
             Text("反相").tag(true)

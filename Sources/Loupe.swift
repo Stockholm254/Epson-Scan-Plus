@@ -50,9 +50,8 @@ final class LoupeRenderer {
     else { return nil }
     return (queue, pipeline)
   }()
-  /// Uploaded images, kept while the same image is passed in.
-  private var textures = [Int: (image: CGImage, texture: MTLTexture)]()
-  private lazy var blank: MTLTexture? = gpu.flatMap { texture(for: nil, slot: -1, queue: $0.queue) }
+  private let textures = TextureCache()
+  private lazy var blank: MTLTexture? = gpu.flatMap { textures.texture(for: nil, slot: -1, queue: $0.queue) }
 
   /// The loupe and its shadow over `frame` (canvas points) at `scale` pixels per point; nil without Metal.
   func render(frame: CGRect, scale: CGFloat, pose: Pose, scene: Scene, samples: Int = 4) -> CGImage? {
@@ -61,9 +60,9 @@ final class LoupeRenderer {
     let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: w, height: h, mipmapped: false)
     descriptor.usage = .shaderWrite
     guard let output = gpu.queue.device.makeTexture(descriptor: descriptor),
-      let table = texture(for: scene.table, slot: 0, queue: gpu.queue) ?? blank,
-      let film = texture(for: scene.film, slot: 1, queue: gpu.queue) ?? blank,
-      let detail = texture(for: scene.detail, slot: 2, queue: gpu.queue) ?? blank,
+      let table = textures.texture(for: scene.table, slot: 0, queue: gpu.queue) ?? blank,
+      let film = textures.texture(for: scene.film, slot: 1, queue: gpu.queue) ?? blank,
+      let detail = textures.texture(for: scene.detail, slot: 2, queue: gpu.queue) ?? blank,
       let commands = gpu.queue.makeCommandBuffer(), let encoder = commands.makeComputeCommandEncoder()
     else { return nil }
     func rect(_ r: CGRect, _ present: Bool) -> SIMD4<Float> {
@@ -92,44 +91,7 @@ final class LoupeRenderer {
     commands.commit()
     commands.waitUntilCompleted()
     guard commands.status == .completed else { return nil }
-    var bytes = [UInt8](repeating: 0, count: w * h * 4)
-    output.getBytes(&bytes, bytesPerRow: w * 4, from: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0)
-    guard let provider = CGDataProvider(data: Data(bytes) as CFData) else { return nil }
-    return CGImage(
-      width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
-      space: CGColorSpace(name: CGColorSpace.sRGB)!,
-      bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
-      provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
-  }
-
-  /// sRGB with mipmaps, so the shader reads linear light and can blur by level.
-  private func texture(for image: CGImage?, slot: Int, queue: MTLCommandQueue) -> MTLTexture? {
-    if let image, let kept = textures[slot], kept.image === image { return kept.texture }
-    if slot >= 0 && image == nil { textures[slot] = nil; return nil }
-    let w = min(8192, image?.width ?? 1), h = min(8192, image?.height ?? 1)
-    let descriptor = MTLTextureDescriptor.texture2DDescriptor(
-      pixelFormat: .rgba8Unorm_srgb, width: w, height: h, mipmapped: true)
-    descriptor.usage = .shaderRead
-    guard let texture = queue.device.makeTexture(descriptor: descriptor) else { return nil }
-    var bytes = [UInt8](repeating: 255, count: w * h * 4)
-    if let image {
-      guard
-        let ctx = CGContext(
-          data: &bytes, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
-          space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-      else { return nil }
-      ctx.interpolationQuality = .high
-      ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
-    }
-    texture.replace(region: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0, withBytes: bytes, bytesPerRow: w * 4)
-    if let commands = queue.makeCommandBuffer(), let blit = commands.makeBlitCommandEncoder() {
-      blit.generateMipmaps(for: texture)
-      blit.endEncoding()
-      commands.commit()
-      commands.waitUntilCompleted()
-    }
-    if let image, slot >= 0 { textures[slot] = (image, texture) }
-    return texture
+    return TextureCache.image(output)
   }
 
   private struct Parameters {
@@ -139,12 +101,39 @@ final class LoupeRenderer {
     var style: Int32, samples: Int32, pad: Int32
   }
 
-  /// Canvas points, y down, z up towards the viewer. The loupe's shape is a profile turned
-  /// about its axis, in units of the base radius. Light is computed linear and written as
-  /// premultiplied sRGB.
-  private static let source = """
+  /// The room both the loupe and the scan head stand in, and how light is written out. Canvas
+  /// points, y down, z up towards the viewer.
+  static let lighting = """
     #include <metal_stdlib>
     using namespace metal;
+    constant float3 kLight = float3(-0.28, -0.40, 0.87);
+    // The room: a dim ceiling, a large softbox up to the left and a smaller window to the right.
+    static float panel(float3 d, float3 L, float2 extent, float rough) {
+      float c = dot(d, L);
+      if (c <= 0.0) return 0.0;
+      float3 u = normalize(cross(L, float3(0, 0, 1))), v = cross(u, L);
+      float2 x = abs(float2(dot(d, u), dot(d, v)) / c);
+      float soft = 0.015 + rough * 0.9;
+      float2 inside = 1.0 - smoothstep(extent - soft, extent + soft, x);
+      return inside.x * inside.y;
+    }
+    static float3 room(float3 d, float rough) {
+      float3 c = float3(0.03 + 0.05 * saturate(d.z));
+      float energy = 1.0 / (1.0 + rough * 4.0);
+      c += float3(1.0, 0.98, 0.94) * 3.2 * energy * panel(d, normalize(kLight), float2(0.30, 0.20), rough);
+      c += float3(0.85, 0.9, 1.0) * 1.1 * energy * panel(d, normalize(float3(0.5, -0.1, 0.86)), float2(0.10, 0.22), rough);
+      c += float3(0.3) * energy * panel(d, float3(0, 0, 1), float2(0.7, 0.7), rough);
+      return c;
+    }
+    static float encode(float v) {
+      v = clamp(v, 0.0, 1.0);
+      return v <= 0.0031308 ? 12.92 * v : 1.055 * pow(v, 1.0 / 2.4) - 0.055;
+    }
+    """
+
+  /// The loupe's shape is a profile turned about its axis, in units of the base radius. Light is
+  /// computed linear and written as premultiplied sRGB.
+  private static let source = lighting + """
     struct Loupe {
       float4 film; float4 detail; float4 eye;
       float2 size; float2 origin; float2 canvas; float2 center;
@@ -152,7 +141,6 @@ final class LoupeRenderer {
       int style; int samples; int pad;
     };
     constexpr sampler smooth(coord::normalized, filter::linear, mip_filter::linear, address::clamp_to_edge);
-    constant float3 kLight = float3(-0.28, -0.40, 0.87);
 
     static float box(float2 p, float2 lo, float2 hi, float r) {
       float2 q = abs(p - (lo + hi) * 0.5) - (hi - lo) * 0.5 + r;
@@ -228,24 +216,6 @@ final class LoupeRenderer {
         if (all(uv >= 0.0) && all(uv <= 1.0)) return film.sample(smooth, uv, level(lod)).rgb;
       }
       return tableAt(table, t, p, lod);
-    }
-    // The room: a dim ceiling, a large softbox up to the left and a smaller window to the right.
-    static float panel(float3 d, float3 L, float2 extent, float rough) {
-      float c = dot(d, L);
-      if (c <= 0.0) return 0.0;
-      float3 u = normalize(cross(L, float3(0, 0, 1))), v = cross(u, L);
-      float2 x = abs(float2(dot(d, u), dot(d, v)) / c);
-      float soft = 0.015 + rough * 0.9;
-      float2 inside = 1.0 - smoothstep(extent - soft, extent + soft, x);
-      return inside.x * inside.y;
-    }
-    static float3 room(float3 d, float rough) {
-      float3 c = float3(0.03 + 0.05 * saturate(d.z));
-      float energy = 1.0 / (1.0 + rough * 4.0);
-      c += float3(1.0, 0.98, 0.94) * 3.2 * energy * panel(d, normalize(kLight), float2(0.30, 0.20), rough);
-      c += float3(0.85, 0.9, 1.0) * 1.1 * energy * panel(d, normalize(float3(0.5, -0.1, 0.86)), float2(0.10, 0.22), rough);
-      c += float3(0.3) * energy * panel(d, float3(0, 0, 1), float2(0.7, 0.7), rough);
-      return c;
     }
     // Looking down, a reflection sees the lit table; looking up, the room.
     static float3 environment(texture2d<float> table, constant Loupe& t, float3 d, float3 from, float rough) {
@@ -352,10 +322,6 @@ final class LoupeRenderer {
       }
       return float4(0, 0, 0, shadow(P, t, top));
     }
-    static float encode(float v) {
-      v = clamp(v, 0.0, 1.0);
-      return v <= 0.0031308 ? 12.92 * v : 1.055 * pow(v, 1.0 / 2.4) - 0.055;
-    }
     kernel void loupe(texture2d<float, access::write> out [[texture(0)]], texture2d<float> table [[texture(1)]],
                       texture2d<float> film [[texture(2)]], texture2d<float> detail [[texture(3)]],
                       constant Loupe& t [[buffer(0)]], uint2 gid [[thread_position_in_grid]]) {
@@ -400,12 +366,11 @@ final class LoupeView: NSView {
   var radius: CGFloat { canvas?.loupeRadius(for: style) ?? 70 }
   /// The viewer sits in front of the table, looking down: the loupe shows its front, more so
   /// the further back it lies.
-  private var eye: SIMD3<Float> {
-    let b = canvas?.bounds ?? bounds
-    return SIMD3(Float(b.midX), Float(b.maxY), Float(max(b.width, b.height) * 2.0))
-  }
+  private var eye: SIMD3<Float> { canvas?.viewer ?? SIMD3(Float(bounds.midX), Float(bounds.maxY), Float(max(bounds.width, bounds.height) * 2)) }
+  /// In its rest down the right of the table, or by the corner when the table is too narrow for one.
   var parkedCenter: CGPoint {
     guard let canvas else { return .zero }
+    if let rest = canvas.loupeRest { return CGPoint(x: rest.midX, y: rest.midY) }
     let glass = LightTable.glassRect(in: canvas.bounds), r = radius
     return CGPoint(x: glass.maxX - r - 20, y: glass.maxY - r - 20)
   }
@@ -522,7 +487,7 @@ final class LoupeView: NSView {
       menu.addItem(item)
     }
     menu.addItem(.separator())
-    let back = NSMenuItem(title: "放回灯箱边", action: #selector(park), keyEquivalent: "")
+    let back = NSMenuItem(title: "放回原位", action: #selector(park), keyEquivalent: "")
     back.target = self
     menu.addItem(back)
     let hide = NSMenuItem(title: "收起看片镜", action: #selector(putAway), keyEquivalent: "")

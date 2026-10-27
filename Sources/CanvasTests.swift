@@ -4,6 +4,18 @@ import Foundation
 /// The canvas from the keyboard and mouse: tool keys, delete while picking points, and the light
 /// table lying across; and a project opened only to read from.
 enum CanvasTests {
+  /// Scans by being told, so a test can say how far it has got.
+  private final class HeadScanner: ScannerController {
+    override func scan(rect: NormalRect, dpi: Int, directory: URL, name: String) throws {
+      busy = true
+      progress = 0
+    }
+    func finish() {
+      busy = false
+      progress = 1
+      onFinished?(DeskError.message("stopped by the test"))
+    }
+  }
   static func run(folder: URL) throws {
     func check(_ value: Bool, _ label: String) throws {
       guard value else { throw DeskError.message("FAIL: " + label) }; print("PASS: " + label)
@@ -77,7 +89,8 @@ enum CanvasTests {
     try check(try Data(contentsOf: projectURL) == saved && reader.frames[0].adjustments.exposure == 0.5,
       "a project opened only to read from, as the command-line export opens it, is left as it was")
 
-    let model = AppModel(libraryURL: roll)
+    let scanner = HeadScanner()
+    let model = AppModel(libraryURL: roll, scanner: scanner)
     model.loadProject(projectURL)
     for _ in 0..<40 where model.rendering { settle(0.1) }
     let canvas = FilmCanvasView(frame: NSRect(x: 0, y: 0, width: 900, height: 600))
@@ -174,5 +187,95 @@ enum CanvasTests {
     model.singleView = false
     key("\u{7F}", code: 51)
     try check(model.frames.count == 3, "otherwise delete removes the selected frame, as before")
+
+    // The loupe's rest: a strip of glass down the right, clear of the film.
+    model.useTool(.select)
+    model.singleView = false
+    model.preferences.showLoupe = true
+    canvas.updateLoupe()
+    settle()
+    guard let rest = canvas.loupeRest else { throw DeskError.message("FAIL: the light table keeps a rest for the loupe") }
+    let parked = canvas.loupe.center ?? .zero, r = canvas.loupe.radius
+    try check(canvas.imageRect.maxX <= rest.minX && rest.contains(parked)
+      && parked.x - r >= rest.minX && parked.x + r <= rest.maxX && canvas.loupe.center == canvas.loupe.parkedCenter,
+      String(format: "the loupe rests in a strip of its own down the right (%.0f pt wide), clear of the film", rest.width))
+    let beside = canvas.imageRect
+    model.preferences.showLoupe = false
+    try check(canvas.loupeRest == nil && canvas.imageRect.width > beside.width, "put away, the film takes the strip back")
+    model.preferences.showLoupe = true
+
+    // The whole roll turned and mirrored from the contact view, and the table with it.
+    let mirroredMark = pipe.turned(marked, quarterTurns: 1, mirrored: true)!
+    try check(mark(pipe.turned(marked, quarterTurns: 0, mirrored: true)!) == (3, 2, 2, 0) && mark(mirroredMark) == (2, 3, 0, 0)
+      && QuarterTurn(1, mirrored: true).shown(CGPoint(x: 0, y: 0)) == CGPoint(x: 0, y: 0)
+      && (0..<4).allSatisfy { t in let q = QuarterTurn(t, mirrored: true), b = q.overview(q.shown(p)); return abs(b.x - p.x) < 1e-12 && abs(b.y - p.y) < 1e-12 },
+      "a mirrored table turns first and then mirrors, as a frame does, in pixels and coordinates alike")
+    model.syncOrientation = false
+    model.turnRoll(clockwise: false)
+    try check(model.frames.allSatisfy { $0.adjustments.rotation == 3 } && model.contactTurn == 3,
+      "the contact view's key turns every frame, not only the selected one, and the table follows")
+    model.turnRoll(clockwise: true)
+    model.turnRoll(clockwise: true)
+    model.mirrorRoll()
+    try check(model.frames.allSatisfy { $0.adjustments.rotation == 1 && $0.adjustments.flipHorizontal == true }
+      && model.contactTurn == 1 && model.contactMirrored && canvas.turn == QuarterTurn(1, mirrored: true),
+      "and mirrors the whole roll, the table mirrored with it")
+    for _ in 0..<40 where model.rendering { settle(0.1) }
+    let mirroredStrip = model.frames.map { canvas.screen($0.rect.cg) }
+    let second = CGPoint(x: mirroredStrip[1].midX, y: mirroredStrip[1].midY)
+    canvas.mouseDown(with: event(.leftMouseDown, second))
+    canvas.mouseUp(with: event(.leftMouseUp, second))
+    try check(model.selectedID == model.frames[1].id && zip(mirroredStrip, mirroredStrip.dropFirst()).allSatisfy { $1.minX > $0.maxX - 1 },
+      "a mirrored table still picks the frame under the mouse, the strip now reading from the left")
+    model.mirrorRoll()
+    try check(!model.contactMirrored && model.frames.allSatisfy { $0.adjustments.flipHorizontal == false }, "mirroring again undoes it")
+
+    // The scan head over the frame being scanned.
+    for _ in 0..<40 where model.rendering { settle(0.1) }
+    model.select(model.frames[1].id)
+    for _ in 0..<40 where model.rendering { settle(0.1) }
+    model.scanSelected()
+    scanner.progress = 0.5
+    canvas.updateScanHead()
+    settle()
+    let scanned = model.frames[1].rect
+    func onCanvas(_ y: Double) -> CGPoint { canvas.canvasPoint(overview: CGPoint(x: scanned.x + scanned.width / 2, y: scanned.y + scanned.height * y))! }
+    guard let headPose = canvas.scanHead.pose else { throw DeskError.message("FAIL: a scan shows the scan head") }
+    let line = headPose.line, middle = CGPoint(x: (line.0.x + line.1.x) / 2, y: (line.0.y + line.1.y) / 2)
+    try check(model.scanningFrame?.id == model.frames[1].id && !canvas.scanHead.isHidden
+      && hypot(middle.x - onCanvas(0.5).x, middle.y - onCanvas(0.5).y) < 0.5 && headPose.length > canvas.screen(scanned.cg).height,
+      "while a frame is scanned the head lies across it, at the line the scanner has reached")
+    var lit = 0, lamp = 0
+    if let image = canvas.scanHead.image {
+      let w = image.width, h = image.height
+      var px = [UInt8](repeating: 0, count: w * h * 4)
+      let read = CGContext(data: &px, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+        space: pipe.outputSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+      read.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+      for i in 0..<(w * h) where px[i * 4 + 3] > 0 {
+        lit += 1
+        if px[i * 4] > 235 && px[i * 4 + 1] > 235 && px[i * 4 + 2] > 235 { lamp += 1 }
+      }
+    }
+    try check(lit > 1000 && lamp > 20, "it is rendered with its lamp alight: \(lit) pixels drawn, \(lamp) of them at full brightness")
+    scanner.progress = 0.8
+    canvas.updateScanHead()
+    for _ in 0..<40 where canvas.scanHead.progress < 0.799 { settle(0.05) }
+    let later = canvas.scanHead.pose!.line, laterMiddle = CGPoint(x: (later.0.x + later.1.x) / 2, y: (later.0.y + later.1.y) / 2)
+    let ahead = (laterMiddle.x - middle.x) * headPose.travel.dx + (laterMiddle.y - middle.y) * headPose.travel.dy
+    let reached = onCanvas(canvas.scanHead.progress)
+    try check(abs(canvas.scanHead.progress - 0.8) < 0.002 && ahead > 0 && hypot(laterMiddle.x - reached.x, laterMiddle.y - reached.y) < 0.5,
+      String(format: "and glides on as the scan goes, %.0f pt further along", ahead))
+    model.singleView = true
+    model.refresh()
+    for _ in 0..<40 where model.rendering { settle(0.1) }
+    canvas.scanHead.renderNow()
+    let single = canvas.scanHead.pose
+    try check(single != nil && single!.length > headPose.length * 1.5 && !canvas.scanHead.isHidden,
+      "in single view it passes over the frame shown there, at its size")
+    model.singleView = false
+    scanner.finish()
+    canvas.updateScanHead()
+    try check(model.scanningFrame == nil && canvas.scanHead.isHidden && canvas.scanHead.pose == nil, "and goes when the scan ends")
   }
 }

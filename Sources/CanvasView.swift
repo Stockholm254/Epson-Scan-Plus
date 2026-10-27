@@ -18,25 +18,31 @@ struct ScanCanvas: NSViewRepresentable {
     view.applyFocusRequest()
     view.needsDisplay = true
     view.updateLoupe()
+    view.updateScanHead()
   }
 }
 
-/// The light table's quarter turn, between the overview's normalised coordinates, where frames
-/// live, and those of the picture as the table shows it.
+/// How the light table lays the overview: a quarter turn, then a mirror, as a frame is turned
+/// and mirrored. Between the overview's normalised coordinates, where frames live, and those of
+/// the picture as the table shows it.
 struct QuarterTurn: Equatable {
   /// Clockwise, 0–3.
   var turns: Int
-  init(_ turns: Int) { self.turns = ((turns % 4) + 4) % 4 }
-  var sideways: Bool { turns % 2 == 1 }
-  func shown(_ p: CGPoint) -> CGPoint {
-    switch turns {
-    case 1: return CGPoint(x: 1 - p.y, y: p.x)
-    case 2: return CGPoint(x: 1 - p.x, y: 1 - p.y)
-    case 3: return CGPoint(x: p.y, y: 1 - p.x)
-    default: return p
-    }
+  var mirrored: Bool
+  init(_ turns: Int, mirrored: Bool = false) {
+    self.turns = ((turns % 4) + 4) % 4
+    self.mirrored = mirrored
   }
-  func overview(_ p: CGPoint) -> CGPoint { QuarterTurn(4 - turns).shown(p) }
+  var sideways: Bool { turns % 2 == 1 }
+  var isIdentity: Bool { turns == 0 && !mirrored }
+  private var settings: Adjustments {
+    var s = Adjustments()
+    s.rotation = turns
+    s.flipHorizontal = mirrored ? true : nil
+    return s
+  }
+  func shown(_ p: CGPoint) -> CGPoint { ImageGeometry.display(p, settings: settings) }
+  func overview(_ p: CGPoint) -> CGPoint { ImageGeometry.raw(p, settings: settings) }
   func shown(_ r: CGRect) -> CGRect {
     let a = shown(CGPoint(x: r.minX, y: r.minY)), b = shown(CGPoint(x: r.maxX, y: r.maxY))
     return CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y))
@@ -46,6 +52,8 @@ struct QuarterTurn: Equatable {
 final class FilmCanvasView: NSView {
   /// Lies on the light table in the contact view.
   let loupe = LoupeView()
+  /// Passes over the frame being scanned.
+  let scanHead = ScanHeadView()
   override init(frame: NSRect) {
     super.init(frame: frame)
     setUp()
@@ -61,6 +69,9 @@ final class FilmCanvasView: NSView {
     loupe.canvas = self
     loupe.isHidden = true
     addSubview(loupe)
+    scanHead.canvas = self
+    scanHead.isHidden = true
+    addSubview(scanHead, positioned: .below, relativeTo: loupe)
   }
   override var wantsDefaultClipping: Bool { true }
   var lastViewportRevision = -1
@@ -107,29 +118,44 @@ final class FilmCanvasView: NSView {
     needsDisplay = true
   }
   /// The contact view's turn; single view always shows the frame as it is.
-  var turn: QuarterTurn { QuarterTurn(model?.contactTurn ?? 0) }
+  var turn: QuarterTurn { QuarterTurn(model?.contactTurn ?? 0, mirrored: model?.contactMirrored ?? false) }
   /// Holds its source, so a new picture can never be taken for it.
-  private var turnedImage: (source: CGImage, turns: Int, image: CGImage)?
+  private var turnedImage: (source: CGImage, turn: QuarterTurn, image: CGImage)?
   /// The picture as the canvas shows it: the model's, turned with the table.
   var shown: CGImage? {
     guard let cg = model?.displayed else { return nil }
-    let t = turn.turns
-    guard t != 0 else { return cg }
-    if let cached = turnedImage, cached.source === cg, cached.turns == t { return cached.image }
-    guard let image = ImagePipeline.shared.turned(cg, quarterTurns: t) else { return cg }
+    let t = turn
+    guard !t.isIdentity else { return cg }
+    if let cached = turnedImage, cached.source === cg, cached.turn == t { return cached.image }
+    guard let image = ImagePipeline.shared.turned(cg, quarterTurns: t.turns, mirrored: t.mirrored) else { return cg }
     turnedImage = (cg, t, image)
     return image
   }
+  private static let inset: CGFloat = 28
+  /// Points per pixel of the shown picture that fit the canvas, leaving `reserve` on the right.
+  private func fitScale(reserving reserve: CGFloat) -> CGFloat {
+    guard let cg = shown else { return 1 }
+    return min(
+      max(1, bounds.width - 2 * Self.inset - reserve) / CGFloat(cg.width),
+      max(1, bounds.height - 2 * Self.inset) / CGFloat(cg.height))
+  }
+  /// In the contact view, a strip of glass down the right where the loupe rests clear of the film.
+  var loupeRest: CGRect? {
+    guard let model, !model.singleView, model.preferences.showLoupe, model.displayed != nil else { return nil }
+    let glass = LightTable.glassRect(in: bounds)
+    // Wide enough for the loupe at the scale the film would have without it; with it the film
+    // is smaller, and so is the loupe.
+    let width = 2 * loupeRadius(model.preferences.loupeStyle, scale: fitScale(reserving: 0)) + 36
+    guard glass.width > width * 3 else { return nil }
+    return CGRect(x: glass.maxX - width, y: glass.minY, width: width, height: glass.height)
+  }
   var imageRect: CGRect {
     guard let cg = shown else { return .zero }
-    let inset: CGFloat = 28
-    let scale =
-      min(
-        max(1, bounds.width - 2 * inset) / CGFloat(cg.width),
-        max(1, bounds.height - 2 * inset) / CGFloat(cg.height)) * CGFloat(model?.zoom ?? 1)
+    let reserve = loupeRest.map { bounds.maxX - $0.minX - Self.inset } ?? 0
+    let scale = fitScale(reserving: reserve) * CGFloat(model?.zoom ?? 1)
     let size = CGSize(width: CGFloat(cg.width) * scale, height: CGFloat(cg.height) * scale)
     return CGRect(
-      x: (bounds.width - size.width) / 2 + pan.x, y: (bounds.height - size.height) / 2 + pan.y,
+      x: (bounds.width - reserve - size.width) / 2 + pan.x, y: (bounds.height - size.height) / 2 + pan.y,
       width: size.width, height: size.height)
   }
   /// A canvas point in the shown picture's normalised coordinates.
@@ -265,6 +291,7 @@ final class FilmCanvasView: NSView {
         p.lineWidth = 1.5
         p.stroke()
       }
+      if let rest = loupeRest { drawLoupeRest(rest) }
     }
     if model.singleView, model.tool == .it8, let frame = model.selected { drawIT8(model.it8Marks, settings: frame.adjustments) }
     if model.tool == .loupe, let hover, imageRect.contains(hover) {
@@ -295,6 +322,19 @@ final class FilmCanvasView: NSView {
         at: CGPoint(x: c.x - 4, y: c.y - 7),
         withAttributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .bold), .foregroundColor: NSColor.black])
     }
+  }
+  /// A ring printed on the glass where the loupe rests, so it can be put back by eye.
+  private func drawLoupeRest(_ rest: CGRect) {
+    let r = loupe.radius + 6, c = CGPoint(x: rest.midX, y: rest.midY)
+    let ink = NSColor(calibratedRed: 0.42, green: 0.39, blue: 0.35, alpha: 0.32)
+    ink.setStroke()
+    let ring = NSBezierPath(ovalIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
+    ring.lineWidth = 0.8
+    ring.stroke()
+    let label = "看片镜" as NSString
+    let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: ink.withAlphaComponent(0.6)]
+    let size = label.size(withAttributes: attributes)
+    label.draw(at: CGPoint(x: c.x - size.width / 2, y: c.y + r + 6), withAttributes: attributes)
   }
   /// The lit light table, shaded by Metal when available. Leaves the glass as the clip, so the
   /// scan and frames stay on it.
@@ -428,9 +468,13 @@ final class FilmCanvasView: NSView {
   }
   /// The loupe at the film's scale, as the table shows it before zooming in.
   func loupeRadius(for style: LoupeStyle) -> CGFloat {
-    guard let model, model.displayed != nil, model.physicalMM.height > 0 else { return 70 }
+    let reserve = loupeRest.map { bounds.maxX - $0.minX - Self.inset } ?? 0
+    return loupeRadius(style, scale: fitScale(reserving: reserve))
+  }
+  private func loupeRadius(_ style: LoupeStyle, scale: CGFloat) -> CGFloat {
+    guard let model, let cg = shown, model.physicalMM.height > 0 else { return 70 }
     let shownHeight = turn.sideways ? model.physicalMM.width : model.physicalMM.height
-    let pointsPerMM = imageRect.height / CGFloat(max(0.01, model.zoom)) / max(1, shownHeight)
+    let pointsPerMM = scale * CGFloat(cg.height) / max(1, shownHeight)
     return min(110, max(44, CGFloat(style.baseMM / 2) * pointsPerMM))
   }
   func updateLoupe() {
@@ -456,6 +500,7 @@ final class FilmCanvasView: NSView {
     guard let model else { return h.finalize() }
     h.combine(model.displayed.map(ObjectIdentifier.init))
     h.combine(turn.turns)
+    h.combine(turn.mirrored)
     let r = imageRect
     for v in [r.minX, r.minY, r.width, r.height] { h.combine(v) }
     h.combine(model.singleView)
@@ -471,27 +516,75 @@ final class FilmCanvasView: NSView {
     return h.finalize()
   }
   private func tableDrawn() {
-    guard !snapshotting, !loupe.isHidden else { return }
+    guard !snapshotting else { return }
     let key = tableKey
-    if key != drawnKey {
-      drawnKey = key
-      loupe.setNeedsRender()
-    }
+    guard key != drawnKey else { return }
+    drawnKey = key
+    if !loupe.isHidden { loupe.setNeedsRender() }
+    if !scanHead.isHidden { scanHead.setNeedsRender() }
   }
-  /// The table as drawn, without the loupe: what its skirt and lens look through.
-  func loupeScene() -> LoupeRenderer.Scene {
+  /// The canvas as drawn, without the loupe or the scan head: what they stand on and look through.
+  func tableSnapshot() -> CGImage? {
     let key = tableKey
     if snapshot?.key != key, bounds.width >= 1, bounds.height >= 1,
       let rep = bitmapImageRepForCachingDisplay(in: bounds)
     {
       snapshotting = true
       loupe.drawingSuppressed = true
+      scanHead.drawingSuppressed = true
       cacheDisplay(in: bounds, to: rep)
       loupe.drawingSuppressed = false
+      scanHead.drawingSuppressed = false
       snapshotting = false
       snapshot = rep.cgImage.map { (key, $0) }
     }
-    var scene = LoupeRenderer.Scene(table: snapshot?.image, canvas: bounds.size)
+    return snapshot?.image
+  }
+  /// The viewer, in front of the table and well above it, for the overlays' perspective.
+  var viewer: SIMD3<Float> { SIMD3(Float(bounds.midX), Float(bounds.maxY), Float(max(bounds.width, bounds.height) * 2)) }
+  /// A point of the overview on the canvas: on the (turned) table, or in the single frame.
+  func canvasPoint(overview p: CGPoint) -> CGPoint? {
+    guard let model else { return nil }
+    let d: CGPoint
+    if model.singleView {
+      guard let s = model.singleViewPoint(p) else { return nil }
+      d = s
+    } else {
+      d = turn.shown(p)
+    }
+    let b = imageRect
+    return CGPoint(x: b.minX + d.x * b.width, y: b.minY + d.y * b.height)
+  }
+  func updateScanHead() {
+    guard let model else { return }
+    scanHead.follow(frame: model.scanningFrame?.id, progress: ScanBatchProgress.normalized(model.scanner.progress))
+  }
+  /// Where the head is over `frame` at `progress`: across the frame, a little past each side,
+  /// at the line the scanner has reached. The V850 reads the bed from its top down.
+  func scanHeadPose(frame id: UUID, progress: Double) -> ScanHeadRenderer.Pose? {
+    guard let model, let frame = model.frames.first(where: { $0.id == id }) else { return nil }
+    if model.singleView {
+      guard model.selectedID == id else { return nil }
+    } else {
+      guard model.contactFrames.contains(where: { $0.id == id }) else { return nil }
+    }
+    let r = frame.rect, y = r.y + r.height * clamp(progress), margin = r.width * 0.12
+    guard let a = canvasPoint(overview: CGPoint(x: r.x - margin, y: y)),
+      let b = canvasPoint(overview: CGPoint(x: r.x + r.width + margin, y: y)),
+      let top = canvasPoint(overview: CGPoint(x: r.x + r.width / 2, y: r.y)),
+      let bottom = canvasPoint(overview: CGPoint(x: r.x + r.width / 2, y: r.y + r.height))
+    else { return nil }
+    let length = hypot(b.x - a.x, b.y - a.y), span = hypot(bottom.x - top.x, bottom.y - top.y)
+    guard length > 4, span > 4 else { return nil }
+    let width = min(46, max(12, span * 0.15))
+    return ScanHeadRenderer.Pose(
+      a: a, axis: CGVector(dx: (b.x - a.x) / length, dy: (b.y - a.y) / length),
+      travel: CGVector(dx: (bottom.x - top.x) / span, dy: (bottom.y - top.y) / span),
+      length: length, width: width, height: width * 0.62, gap: width * 0.32, eye: viewer)
+  }
+  /// The table as drawn, without the loupe: what its skirt and lens look through.
+  func loupeScene() -> LoupeRenderer.Scene {
+    var scene = LoupeRenderer.Scene(table: tableSnapshot(), canvas: bounds.size)
     if let shown {
       scene.film = shown
       scene.filmRect = imageRect
@@ -510,13 +603,13 @@ final class FilmCanvasView: NSView {
     return scene
   }
   private var loupeDetail: (key: String, id: UUID, rect: NormalRect, positive: Bool, image: CGImage)?
-  private var turnedLoupeDetail: (key: String, turns: Int, image: CGImage)?
+  private var turnedLoupeDetail: (key: String, turn: QuarterTurn, image: CGImage)?
   /// The frame under the lens, turned with the table.
   private func turnedDetail(_ key: String, _ image: CGImage) -> CGImage {
-    let t = turn.turns
-    guard t != 0 else { return image }
-    if let cached = turnedLoupeDetail, cached.key == key, cached.turns == t { return cached.image }
-    guard let turned = ImagePipeline.shared.turned(image, quarterTurns: t) else { return image }
+    let t = turn
+    guard !t.isIdentity else { return image }
+    if let cached = turnedLoupeDetail, cached.key == key, cached.turn == t { return cached.image }
+    guard let turned = ImagePipeline.shared.turned(image, quarterTurns: t.turns, mirrored: t.mirrored) else { return image }
     turnedLoupeDetail = (key, t, turned)
     return turned
   }

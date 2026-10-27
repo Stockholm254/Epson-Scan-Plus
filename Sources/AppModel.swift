@@ -100,6 +100,20 @@ final class AppModel: ObservableObject {
     let turns = contactFrames.map { (($0.adjustments.rotation % 4) + 4) % 4 }
     return turns.filter { $0 == 3 }.count > turns.filter { $0 == 1 }.count ? 3 : 1
   }
+  /// The light table shows the film mirrored when most frames are, as the strips would lie flipped.
+  var contactMirrored: Bool {
+    let frames = contactFrames
+    return !singleView && frames.filter { $0.adjustments.flipHorizontal == true }.count * 2 > frames.count
+  }
+  /// The frame the scanner is reading now, and how far it has got.
+  var scanningFrame: FilmFrame? { currentScan.flatMap { id in frames.first { $0.id == id } } }
+  /// Where a point of the overview is shown in single view, normalised to the picture there.
+  func singleViewPoint(_ p: CGPoint) -> CGPoint? {
+    guard singleView, let frame = selected else { return nil }
+    let region = canvasRegion ?? frame.rect
+    let raw = CGPoint(x: (p.x - region.x) / region.width, y: (p.y - region.y) / region.height)
+    return ImageGeometry.display(raw, settings: frame.adjustments)
+  }
   /// One line on the canvas while a tool is active: where to click, and how to leave it.
   var toolHint: String? {
     switch tool {
@@ -610,9 +624,17 @@ final class AppModel: ObservableObject {
     let mirrored = settings.flipHorizontal != true
     orient(mirrored ? "水平镜像" : "取消水平镜像") { $0.flipHorizontal = mirrored }
   }
-  private func orient(_ action: String, _ mutation: (inout Adjustments) -> Void) {
+  /// The contact view's keys: always the whole roll, whether or not single view syncs.
+  func turnRoll(clockwise: Bool) {
+    orient(clockwise ? "顺时针旋转 90°" : "逆时针旋转 90°", roll: true) { $0.turn(clockwise: clockwise) }
+  }
+  func mirrorRoll() {
+    let mirrored = !contactMirrored
+    orient(mirrored ? "水平镜像" : "取消水平镜像", roll: true) { $0.flipHorizontal = mirrored }
+  }
+  private func orient(_ action: String, roll: Bool = false, _ mutation: (inout Adjustments) -> Void) {
     recordEdit(action)
-    if syncOrientation {
+    if syncOrientation || roll {
       guard !frames.isEmpty else { return }
       for i in frames.indices { mutation(&frames[i].adjustments) }
       status = "已对全部 \(frames.count) 张\(action)"
