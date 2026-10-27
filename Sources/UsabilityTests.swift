@@ -1,14 +1,21 @@
+import CoreGraphics
 import Foundation
 
 /// Telling the tools apart, what the canvas says while one is active, and what a batch scan will
 /// take before it starts.
 enum UsabilityTests {
-  /// Starts a scan and stays busy, so a test sees whether a batch began.
+  /// Starts a scan and stays busy, so a test sees whether a batch began, until told to finish.
   private final class IdleScanner: ScannerController {
     var requests = 0
     override func scan(rect: NormalRect, dpi: Int, directory: URL, name: String) throws {
       requests += 1
       busy = true
+    }
+    func finish(_ file: URL) {
+      onScan?(file)
+      busy = false
+      progress = 1
+      onFinished?(nil)
     }
   }
 
@@ -93,5 +100,15 @@ enum UsabilityTests {
     model.requestScanSelected()
     try check(asked == nil && scanner.requests == 1 && model.scanBatch.isActive,
       "one frame with room to spare starts without asking")
+    // The scan comes back: its time goes into the rate for this backend and resolution.
+    let ctx = CGContext(data: nil, width: 400, height: 300, bitsPerComponent: 16, bytesPerRow: 0,
+      space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+    let file = folder.appendingPathComponent("usability-scan.tif")
+    try ImagePipeline.shared.saveTIFF(ctx.makeImage()!, to: file, dpi: 2400)
+    try check(model.preferences.scanRates.isEmpty, "nothing is timed before a scan finishes")
+    scanner.finish(file)
+    let key = ScanPlan.rateKey(backend: scanner.backendID, dpi: 2400)
+    try check(model.preferences.scanRates.keys.sorted() == [key] && model.frames[0].scanPath == file.path,
+      "a finished scan is timed for the next estimate, under its backend and resolution: \(model.preferences.scanRates)")
   }
 }
