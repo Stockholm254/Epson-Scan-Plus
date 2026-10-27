@@ -162,11 +162,18 @@ enum LoupeTests {
       settle(0.1)
     }
     let shown = canvas.loupeScene()
-    try check(shown.detail != nil && shown.detailRect == target, "the lens reads the frame under it at the frame's own resolution"
-      + (shown.detail == nil ? " (none)" : " (\(shown.detailRect) for \(target))"))
+    try check(shown.detail != nil && shown.detailRect == target, "the lens reads the frame under it at the frame's own resolution")
+    guard let before = shown.detail else { throw DeskError.message("FAIL: no picture of the frame to edit") }
     model.select(frames[1].id)
     model.change { $0.exposure += 0.5 }
-    try check(canvas.loupeScene().detail == nil, "after an edit, the old picture of the frame is not shown")
+    try check(canvas.loupeScene().detail === before, "after an edit the lens keeps its picture until the new one is ready")
+    for _ in 0..<50 where canvas.loupeScene().detail === before { settle(0.1) }
+    let edited = canvas.loupeScene().detail
+    try check(edited != nil && edited !== before, "and then asks for the edited frame by itself")
+    var moved = frames[1].rect
+    moved.x += 0.01
+    model.setRect(frames[1].id, rect: moved)
+    try check(canvas.loupeScene().detail == nil, "a moved frame box drops the old picture at once")
     loupe.mouseDown(with: event(.leftMouseDown, goal, clicks: 2))
     try check(loupe.center == loupe.parkedCenter && model.loupeCenter == nil, "a double-click puts the loupe back by the edge")
     canvas.setFrameSize(NSSize(width: 1000, height: 640))

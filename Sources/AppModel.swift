@@ -719,6 +719,7 @@ final class AppModel: ObservableObject {
     let negative = showNegative || tool == .base
     let full = tool == .loupe
     let sharpening = preferences.sharpening
+    let previewDPI = Int(overviewDPI)
     rendering = true
     let work = DispatchWorkItem { [weak self] in
       guard let self else { return }
@@ -758,7 +759,7 @@ final class AppModel: ObservableObject {
             : frame.rect.pixels(CGSize(width: info.width, height: info.height)).size
         }
         let summary =
-          "\(Int(pixels.width)) × \(Int(pixels.height)) · \(frame.hasFullResolution ? (frame.scanDPI.map{String($0)+" dpi"} ?? "源图") : "低清预览")"
+          "\(Int(pixels.width)) × \(Int(pixels.height)) · \(frame.hasFullResolution ? (frame.scanDPI.map{String($0)+" dpi"} ?? "源图") : previewDPI >= 600 ? "\(previewDPI) dpi 预览" : "低清预览")"
         DispatchQueue.main.async {
           guard self.revision == token else { return }
           self.displayed = output

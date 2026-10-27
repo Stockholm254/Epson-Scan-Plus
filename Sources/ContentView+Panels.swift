@@ -66,7 +66,7 @@ extension ContentView {
       }.font(.system(size: 11)).disabled(m.isWorking)
       Divider()
       sectionTitle("存储", symbol: "externaldrive")
-      Text(m.libraryURL.path).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
+      Text((m.libraryURL.path as NSString).abbreviatingWithTildeInPath).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
         .lineLimit(3).truncationMode(.middle).textSelection(.enabled)
       HStack {
         Button("选择…") { m.chooseLibrary() }

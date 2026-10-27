@@ -421,16 +421,20 @@ final class FilmCanvasView: NSView {
       scene.film = displayed
       scene.filmRect = imageRect
     }
-    // Only while the frame is still as it was rendered: not after a new preview or an edit.
-    if let model, let detail = loupeDetail,
-      let frame = model.contactFrames.first(where: { $0.id == detail.id }), model.loupeDetailKey(frame) == detail.key
+    // Not after a new preview, a moved frame box or a switch between raw and positive. After an
+    // edit it stays until the new picture arrives, so the lens never goes blank.
+    if let model, let detail = loupeDetail, detail.positive == model.contactPositive,
+      let frame = model.contactFrames.first(where: { $0.id == detail.id }), frame.rect == detail.rect
     {
       scene.detail = detail.image
       scene.detailRect = screen(frame.rect.cg)
+      if model.loupeDetailKey(frame) != detail.key {
+        DispatchQueue.main.async { [weak self] in self?.loupeMoved() }
+      }
     }
     return scene
   }
-  private var loupeDetail: (key: String, id: UUID, image: CGImage)?
+  private var loupeDetail: (key: String, id: UUID, rect: NormalRect, positive: Bool, image: CGImage)?
   private var loupeDetailRequest: String?
   /// Fetches the frame under the loupe at its own resolution, once per change to it.
   func loupeMoved() {
@@ -440,10 +444,11 @@ final class FilmCanvasView: NSView {
     let key = model.loupeDetailKey(frame)
     guard key != loupeDetailRequest, key != loupeDetail?.key else { return }
     loupeDetailRequest = key
+    let positive = model.contactPositive
     model.loupeDetail(for: frame) { [weak self] image in
       guard let self, self.loupeDetailRequest == key else { return }
       self.loupeDetailRequest = nil
-      self.loupeDetail = image.map { (key, frame.id, $0) }
+      self.loupeDetail = image.map { (key, frame.id, frame.rect, positive, $0) }
       self.loupe.setNeedsRender()
     }
   }
