@@ -219,8 +219,34 @@ final class FilmCanvasView: NSView {
         p.stroke()
       }
     }
+    if model.singleView, model.tool == .it8, let frame = model.selected { drawIT8(model.it8Marks, settings: frame.adjustments) }
     if model.tool == .loupe, let hover, imageRect.contains(hover) {
       drawLoupe(image: image, point: hover)
+    }
+  }
+  /// The IT8 target's marked points, and once four are set, where every patch will be read.
+  private func drawIT8(_ marks: [CGPoint], settings: Adjustments) {
+    let r = imageRect
+    func onScreen(_ raw: CGPoint) -> CGPoint {
+      let d = ImageGeometry.display(raw, settings: settings)
+      return CGPoint(x: r.minX + d.x * r.width, y: r.minY + d.y * r.height)
+    }
+    let half = max(2, IT8Layout.sampleRadius(marks) * min(r.width, r.height))
+    NSColor.white.withAlphaComponent(0.9).setStroke()
+    for (_, centre) in IT8Layout.centres(marks) {
+      let c = onScreen(centre)
+      let square = NSBezierPath(rect: CGRect(x: c.x - half, y: c.y - half, width: 2 * half, height: 2 * half))
+      square.lineWidth = 1
+      square.stroke()
+    }
+    let amber = NSColor(calibratedRed: 0.95, green: 0.71, blue: 0.38, alpha: 1)
+    for (i, mark) in marks.enumerated() {
+      let c = onScreen(mark)
+      amber.setFill()
+      NSBezierPath(ovalIn: CGRect(x: c.x - 8, y: c.y - 8, width: 16, height: 16)).fill()
+      ("\(i + 1)" as NSString).draw(
+        at: CGPoint(x: c.x - 4, y: c.y - 7),
+        withAttributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .bold), .foregroundColor: NSColor.black])
     }
   }
   /// The lit light table, shaded by Metal when available. Leaves the glass as the clip, so the
@@ -457,7 +483,7 @@ final class FilmCanvasView: NSView {
     guard let model, model.displayed != nil, !model.rendering else { return }
     let p = convert(event.locationInWindow, from: nil)
     guard bounds.contains(p), imageRect.contains(p) else { return }
-    if model.tool == .base || model.tool == .neutral || model.tool == .calibrate {
+    if model.tool == .base || model.tool == .neutral || model.tool == .calibrate || model.tool == .it8 {
       model.sample(normal(p))
       return
     }

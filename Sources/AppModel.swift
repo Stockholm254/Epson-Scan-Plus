@@ -112,7 +112,7 @@ final class AppModel: ObservableObject {
   func useTool(_ value: CanvasTool) {
     if value != tool { editRegionLock = nil }
     tool = value
-    if value == .loupe || value == .neutral || value == .calibrate { singleView = selected != nil }
+    if value == .loupe || value == .neutral || value == .calibrate || value == .it8 { singleView = selected != nil }
     if value == .base || value == .crop { fitView() }
     focusCanvas()
     refresh()
@@ -271,7 +271,7 @@ final class AppModel: ObservableObject {
       overviewCache.keep(cg, for: url)
       // Frame detection, statistics and the contact view work on at most 2200 px, as when a
       // project is opened; crops of single frames come from the full resolution.
-      overview = ImagePipeline.shared.scaled(cg, maxDimension: 2200)
+      overview = overviewWorkingCopy(ImagePipeline.shared.scaled(cg, maxDimension: 2200), backend: scanner.backendID)
       overviewURL = url
       physicalMM = size
       overviewDPI = dpi
@@ -633,7 +633,7 @@ final class AppModel: ObservableObject {
   /// Estimates channel slopes across each roll — the scanned frames, or each imported file — and
   /// shares them with its frames. They are the fallback when the preset is not calibrated.
   func updateRollSlopes(completion: (() -> Void)? = nil) {
-    let snapshot = frames, green = profile.slopes.g
+    let snapshot = frames, green = profile.slopes.g, toe = profile.toe
     rollSlopesRevision += 1
     let token = rollSlopesRevision
     renderQueue.async {
@@ -642,7 +642,9 @@ final class AppModel: ObservableObject {
         let inputs = members.compactMap { f in
           (try? self.source(for: f, maxDimension: 600)).map { (image: $0, settings: f.adjustments) }
         }
-        let slopes = ImagePipeline.shared.rollSlopes(inputs, greenSlope: green)
+        // The toe only bends from a measured film base, as in the conversion.
+        let measured = inputs.allSatisfy { ($0.settings.base ?? $0.settings.rollBase) != nil }
+        let slopes = ImagePipeline.shared.rollSlopes(inputs, greenSlope: green, toe: measured ? toe : nil)
         for f in members { result[f.id] = .some(slopes) }
       }
       DispatchQueue.main.async {
@@ -698,7 +700,10 @@ final class AppModel: ObservableObject {
   /// and applies it to the project. The current preset supplies the film and the green slope.
   func makeScannerPreset() {
     do {
-      let fit = try FilmCalibration.fit(calibrationPoints, greenSlope: profile.slopes.g)
+      let measured = calibrationPoints.allSatisfy { point in
+        frames.first { $0.id == point.frame }.map { ($0.adjustments.base ?? $0.adjustments.rollBase) != nil } ?? false
+      }
+      let fit = try FilmCalibration.fit(calibrationPoints, greenSlope: profile.slopes.g, curve: measured ? profile.dataSheetToe : nil)
       let made = FilmCalibration.profile(from: fit, basedOn: profile, points: calibrationPoints.count, scanner: scanner.name)
       try made.validate()
       keepProfile(made)
@@ -714,8 +719,85 @@ final class AppModel: ObservableObject {
     calibrationPoints = []
     if tool == .calibrate { useTool(.select) }
   }
-  /// `maxDimension` overrides the preview size, for statistics that need less.
-  func source(for frame: FilmFrame, full: Bool = false, maxDimension: Int? = nil) throws -> CGImage {
+
+  // MARK: Scanner calibration (IT8)
+
+  /// The target's reference data, while a scan of it is marked and measured.
+  @Published var it8Reference: IT8Reference?
+  /// Points clicked on the selected frame, in 0–1 of its raw image, in `IT8Layout.marks` order.
+  @Published var it8Marks = [CGPoint]()
+  /// The overview as statistics and the contact view use it: a 48-bit preview loses its stray light.
+  private func overviewWorkingCopy(_ image: CGImage, backend: String?) -> CGImage {
+    guard backend == "epson2-linear-v1", preferences.removeFlare, let offset = preferences.scannerCalibration?.offset else { return image }
+    return ImagePipeline.shared.removingFlare(offset, from: image)
+  }
+  func importIT8Reference() {
+    let panel = NSOpenPanel()
+    panel.allowedContentTypes = [.plainText, .text]
+    panel.message = "选择与色卡批号一致的 IT8.7/1 参考文件（如 MONT45.2022.07.txt）"
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    do {
+      let text = try String(contentsOf: url, encoding: .isoLatin1)
+      it8Reference = try IT8Reference.parse(text, name: url.deletingPathExtension().lastPathComponent)
+      status = "已读入参考文件「\(it8Reference!.name)」· \(it8Reference!.batch)"
+    } catch { errorText = error.localizedDescription }
+  }
+  func startIT8Marking() {
+    guard it8Reference != nil, selected != nil else { return }
+    it8Marks = []
+    useTool(.it8)
+    status = "在色卡上依次点：\(IT8Layout.marks.joined(separator: "、"))"
+  }
+  func undoIT8Mark() {
+    guard !it8Marks.isEmpty else { return }
+    it8Marks.removeLast()
+  }
+  /// Measures the scanner on the selected frame, a scan of the target, from the six points.
+  func measureIT8() {
+    guard let reference = it8Reference, let frame = selected, it8Marks.count == IT8Layout.marks.count else { return }
+    do {
+      let readings = try IT8Layout.sample(try source(for: frame, full: true, raw: true), marks: it8Marks)
+      let result = try ScannerCalibration.measure(readings, reference: reference)
+      preferences.scannerCalibration = result
+      it8Marks = []
+      useTool(.select)
+      reapplyScannerCalibration()
+      status = String(
+        format: "已标定扫描仪 · 杂散光 R %.2f%% · G %.2f%% · B %.2f%% · 灰阶误差 %.3f → %.3f D · 色块 ΔE 平均 %.1f",
+        result.flare.r * 100, result.flare.g * 100, result.flare.b * 100, result.grayErrorBefore, result.grayError,
+        result.meanDeltaE)
+    } catch { errorText = error.localizedDescription }
+  }
+  func removeScannerCalibration() {
+    preferences.scannerCalibration = nil
+    reapplyScannerCalibration()
+  }
+  /// The open project read again, so every frame, the film base and the thumbnails take the
+  /// calibration in or out.
+  func reapplyScannerCalibration() {
+    guard let project = sessionURL?.appendingPathComponent("Session.filmdesk"), FileManager.default.fileExists(atPath: project.path)
+    else { return }
+    saveProject()
+    let keep = selectedID
+    loadProject(project)
+    if let keep, frames.contains(where: { $0.id == keep }) { select(keep) }
+  }
+  /// `maxDimension` overrides the preview size, for statistics that need less. `raw` leaves the
+  /// scanner's stray light in, for measuring it.
+  func source(for frame: FilmFrame, full: Bool = false, maxDimension: Int? = nil, raw: Bool = false) throws -> CGImage {
+    let image = try uncorrectedSource(for: frame, full: full, maxDimension: maxDimension)
+    guard !raw, let offset = flareOffset(frame) else { return image }
+    return ImagePipeline.shared.removingFlare(offset, from: image)
+  }
+  /// The stray light to take out of a frame's readings: this app's linear scans and previews, while
+  /// a scanner calibration is in use. Imported files and older 24-bit scans keep what they read.
+  func flareOffset(_ frame: FilmFrame) -> RGB? {
+    guard preferences.removeFlare, let calibration = preferences.scannerCalibration, frame.sourcePath == nil,
+      frame.adjustments.inputGamma == 1
+    else { return nil }
+    return calibration.offset
+  }
+  private func uncorrectedSource(for frame: FilmFrame, full: Bool, maxDimension: Int?) throws -> CGImage {
     if let path = frame.scanPath, frame.hasFullResolution {
       let raw = try ImagePipeline.shared.load(
         URL(fileURLWithPath: path), maxDimension: full ? nil : maxDimension ?? 2200)
@@ -738,11 +820,13 @@ final class AppModel: ObservableObject {
       return (try pipe.load(URL(fileURLWithPath: path), maxDimension: 3000), .full)
     }
     if let path = frame.scanPath, frame.hasFullResolution {
-      return (try pipe.load(URL(fileURLWithPath: path), maxDimension: 3000), frame.captureRect)
+      let scan = try pipe.load(URL(fileURLWithPath: path), maxDimension: 3000)
+      return (flareOffset(frame).map { pipe.removingFlare($0, from: scan) } ?? scan, frame.captureRect)
     }
     guard let url = overviewURL else { throw DeskError.message("尚无图像。") }
     let region = editRegionLock ?? frame.rect.expanded(by: 0.14)
-    return (pipe.scaled(try pipe.crop(overviewCache.image(url), rect: region), maxDimension: 3000), region)
+    let context = pipe.scaled(try pipe.crop(overviewCache.image(url), rect: region), maxDimension: 3000)
+    return (flareOffset(frame).map { pipe.removingFlare($0, from: context) } ?? context, region)
   }
   /// The frame under the light table's loupe as the contact view shows it, positive or raw, but
   /// from the frame's own pixels: its scan, or the full-resolution preview.
@@ -886,6 +970,13 @@ final class AppModel: ObservableObject {
   }
   func sample(_ point: CGPoint) {
     guard let i = selectedIndex, !rendering else { return }
+    if tool == .it8 {
+      guard singleView, it8Marks.count < IT8Layout.marks.count else { return }
+      it8Marks.append(ImageGeometry.raw(point, settings: frames[i].adjustments))
+      status = it8Marks.count < IT8Layout.marks.count
+        ? "下一个：\(IT8Layout.marks[it8Marks.count]) 的中心" : "6 个点已就位 · 检查色块位置后点「生成标定」"
+      return
+    }
     let input: CGImage
     if singleView {
       guard let samplingInput else { return }
@@ -1379,7 +1470,8 @@ final class AppModel: ObservableObject {
       // Files are found where the project folder is now, wherever it was saved.
       let folder = url.deletingLastPathComponent()
       let overviewPath = ProjectFiles.resolve(p.overviewPath, relative: p.overviewFile, in: folder)
-      let cg = try ImagePipeline.shared.load(URL(fileURLWithPath: overviewPath), maxDimension: 2200)
+      let cg = overviewWorkingCopy(
+        try ImagePipeline.shared.load(URL(fileURLWithPath: overviewPath), maxDimension: 2200), backend: p.scanBackendID)
       sessionURL = folder
       overviewURL = URL(fileURLWithPath: overviewPath)
       overview = cg

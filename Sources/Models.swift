@@ -156,6 +156,22 @@ struct FilmProfile: Codable, Identifiable, Equatable {
   /// Calibrated presets only: each channel's neutral offset from green in log exposure, so a
   /// neutral reads the same in all channels. Used when auto white balance is off.
   var offsets: RGB? = nil
+  /// Each channel's toe width in log exposure, where the density curve bends towards the base:
+  /// D = D-min + slope · w · ln(1 + e^(x / w)), undone in the conversion. Only presets calibrated
+  /// on this scanner from neutrals reaching into the shadows have one; nil keeps the straight line.
+  var toe: RGB? = nil
+  /// The toes of the Kodak data sheets' Status M curves, traced from their vector drawings (RMS
+  /// under 0.03 D). Not applied as they are: on a V850 roll of Portra 160 the edges' channel ratios
+  /// near the base did not follow them, and converting with them tinted the roll pink. Calibration
+  /// takes green's from here and fits red's and blue's to the user's own neutrals.
+  static let dataSheetToes: [String: RGB] = [
+    "portra160": RGB(r: 0.160, g: 0.110, b: 0.150), "portra400": RGB(r: 0.165, g: 0.115, b: 0.145),
+    "ektar100": RGB(r: 0.130, g: 0.100, b: 0.075),
+  ]
+  /// This film's data-sheet toe, also for a preset calibrated from it ("portra160-v850-…").
+  var dataSheetToe: RGB? {
+    Self.dataSheetToes[id] ?? Self.dataSheetToes.first { id.hasPrefix($0.key + "-v850-") }?.value
+  }
   static let approximation = "使用官方特性曲线中段的人工读图近似；不是扫描仪 ICC 标定。片基与色阶由当前扫描估计。"
   static let builtins: [FilmProfile] = [
     FilmProfile(
@@ -189,8 +205,9 @@ struct FilmProfile: Codable, Identifiable, Equatable {
   var setsChannelContrast: Bool { id != "generic" }
   func validate() throws {
     guard id.range(of: "^[A-Za-z0-9_-]{1,64}$", options: .regularExpression) != nil, !name.isEmpty,
-      slopes.values.allSatisfy({ $0.isFinite && $0 >= 0.1 && $0 <= 2.0 })
-    else { throw DeskError.message("胶片配置无效：ID 须为字母、数字、短横线或下划线，通道斜率须在 0.1–2.0。") }
+      slopes.values.allSatisfy({ $0.isFinite && $0 >= 0.1 && $0 <= 2.0 }),
+      toe?.values.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 0.6 }) ?? true
+    else { throw DeskError.message("胶片配置无效：ID 须为字母、数字、短横线或下划线，通道斜率须在 0.1–2.0，趾部宽度须在 0–0.6。") }
     if !sourceURL.isEmpty {
       guard let u = URL(string: sourceURL), ["https", "http"].contains(u.scheme ?? "") else {
         throw DeskError.message("技术文档链接必须为 http/https。")
@@ -282,6 +299,7 @@ enum CanvasTool: String, CaseIterable {
   case neutral = "中性点"
   case loupe = "放大镜"
   case calibrate = "标定中性点"
+  case it8 = "IT8 色卡"
 }
 enum FilmFormat: String, CaseIterable {
   case auto = "自动"

@@ -110,6 +110,11 @@ final class Preferences: ObservableObject {
   @Published var customProfiles: [FilmProfile] {
     didSet { defaults?.set(try? JSONEncoder().encode(customProfiles), forKey: "customProfiles") }
   }
+  /// The scanner measured on an IT8 target, and whether conversion takes its stray light out.
+  @Published var scannerCalibration: ScannerCalibration? {
+    didSet { defaults?.set(scannerCalibration.flatMap { try? JSONEncoder().encode($0) }, forKey: "scannerCalibration") }
+  }
+  @Published var removeFlare: Bool { didSet { defaults?.set(removeFlare, forKey: "removeFlare") } }
   /// The scanner's measured MTF; sharpening stays off until a target has been measured.
   @Published var sharpening: SharpeningProfile? {
     didSet { defaults?.set(sharpening.flatMap { try? JSONEncoder().encode($0) }, forKey: "sharpening") }
@@ -125,6 +130,8 @@ final class Preferences: ObservableObject {
     sheet = defaults?.data(forKey: "contactSheet").flatMap { try? JSONDecoder().decode(ContactSheet.Layout.self, from: $0) }
       ?? ContactSheet.Layout()
     sharpening = defaults?.data(forKey: "sharpening").flatMap { try? JSONDecoder().decode(SharpeningProfile.self, from: $0) }
+    scannerCalibration = defaults?.data(forKey: "scannerCalibration").flatMap { try? JSONDecoder().decode(ScannerCalibration.self, from: $0) }
+    removeFlare = defaults?.object(forKey: "removeFlare") as? Bool ?? true
     customProfiles = defaults?.data(forKey: "customProfiles").flatMap { try? JSONDecoder().decode([FilmProfile].self, from: $0) } ?? []
     autoExport = defaults.map { $0.object(forKey: "autoExport") as? Bool ?? true } ?? false
     let dpi = defaults?.integer(forKey: "previewDPI") ?? 0

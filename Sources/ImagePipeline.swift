@@ -52,9 +52,10 @@ final class ImagePipeline {
     source: ImagePipeline.negativeSource.replacingOccurrences(
       of: "return vec4(clamp(q,0.0,1.0),1.0);", with: "return vec4(q,1.0);"))
   private static let negativeSource = """
-      kernel vec4 negative(__sample p, vec3 base, vec3 slope, vec3 gain, vec3 balance, vec4 levels, vec4 tone, vec4 color, float inverted) {
+      kernel vec4 negative(__sample p, vec3 base, vec3 slope, vec3 toe, vec3 gain, vec3 balance, vec4 levels, vec4 tone, vec4 color, float inverted) {
         vec3 v = max(p.rgb, vec3(0.000001));
         vec3 e = log(max(base,vec3(0.000001))/v) * (color.w / 2.302585093) / slope;
+        e += toe * log(max(vec3(1.0) - exp(-e / max(toe, vec3(0.000001))), vec3(0.02)));
         vec3 q = (e * gain + balance + vec3(tone.x * 0.30103) - vec3(levels.x)) / max(levels.y-levels.x,0.001);
         if (inverted < 0.5) { q = v * pow(2.0, tone.x / max(color.w, 0.1)); }
         q = (q - vec3(levels.z)) / max(levels.w-levels.z,0.01);
@@ -253,6 +254,12 @@ final class ImagePipeline {
   /// The slopes a frame converts with, and whether they fix each channel's contrast: a calibrated
   /// preset first, then the roll's own estimate, then the preset's data-sheet slopes. Only the
   /// generic preset without a roll estimate leaves channel contrast to per-frame stretching.
+  /// The preset's toe, when the frame's film base is measured (between the frames, or picked). A
+  /// base guessed from the frame's own thinnest area is already up the toe, and bending from there
+  /// would tint the shadows, so then the straight line is kept.
+  static func toe(_ s: Adjustments, _ p: FilmProfile) -> RGB {
+    (s.base ?? s.rollBase) != nil ? p.toe ?? .zero : .zero
+  }
   static func slopes(_ s: Adjustments, _ p: FilmProfile) -> (slopes: RGB, fixed: Bool) {
     if p.offsets != nil { return (p.slopes, true) }
     if let roll = s.rollSlopes { return (roll, true) }
@@ -266,7 +273,16 @@ final class ImagePipeline {
   /// darker ground, does not enter as it does in global statistics, and the median over every edge
   /// of the roll keeps colour edges from pulling it. Green keeps the preset's slope. Nil for fewer
   /// than two frames, too few edges, or an implausible result.
-  func rollSlopes(_ frames: [(image: CGImage, settings: Adjustments)], greenSlope: Double) -> RGB? {
+  /// With a `toe`, density steps near the base are smaller than the exposure steps behind them, by a
+  /// different amount per channel; a second pass weighs each edge by the toe's stretch there.
+  func rollSlopes(_ frames: [(image: CGImage, settings: Adjustments)], greenSlope: Double, toe: RGB? = nil) -> RGB? {
+    guard let first = rollSlopes(frames, greenSlope: greenSlope, stretchedBy: nil) else { return nil }
+    guard let toe, toe.values.contains(where: { $0 > 0 }) else { return first }
+    return rollSlopes(frames, greenSlope: greenSlope, stretchedBy: (first, toe)) ?? first
+  }
+  private func rollSlopes(
+    _ frames: [(image: CGImage, settings: Adjustments)], greenSlope: Double, stretchedBy toe: (slopes: RGB, widths: RGB)?
+  ) -> RGB? {
     guard frames.count >= 2 else { return nil }
     var ratios = [[Double](), [Double]()]
     for f in frames {
@@ -301,8 +317,16 @@ final class ImagePipeline {
           let gx = green[i + 2] - green[i - 2], gy = green[i + 2 * w] - green[i - 2 * w]
           let m = gx * gx + gy * gy
           guard m > 0.03 * 0.03 else { continue }
-          ratios[0].append(((red[i + 2] - red[i - 2]) * gx + (red[i + 2 * w] - red[i - 2 * w]) * gy) / m)
-          ratios[1].append(((blue[i + 2] - blue[i - 2]) * gx + (blue[i + 2 * w] - blue[i - 2 * w]) * gy) / m)
+          // Where shading changes every exposure alike, each channel's density step is its slope over
+          // the toe's stretch there; dividing that out leaves the ratio of slopes.
+          var weight = (r: 1.0, b: 1.0)
+          if let toe {
+            let g = FilmToe.stretch(green[i] / toe.slopes.g, width: toe.widths.g)
+            weight = (FilmToe.stretch(red[i] / toe.slopes.r, width: toe.widths.r) / g,
+                      FilmToe.stretch(blue[i] / toe.slopes.b, width: toe.widths.b) / g)
+          }
+          ratios[0].append(((red[i + 2] - red[i - 2]) * gx + (red[i + 2 * w] - red[i - 2 * w]) * gy) / m * weight.r)
+          ratios[1].append(((blue[i + 2] - blue[i - 2]) * gx + (blue[i + 2 * w] - blue[i - 2 * w]) * gy) / m * weight.b)
         }
       }
     }
@@ -315,7 +339,9 @@ final class ImagePipeline {
   func analyze(_ image: CGImage, settings: Adjustments, profile: FilmProfile) -> ToneAnalysis {
     let (base, density) = densities(image, settings: settings)
     let (slopes, fixed) = Self.slopes(settings, profile)
-    let e = (0..<3).map { c in density[c].map { $0 / slopes.values[c] } }
+    let toe = Self.toe(settings, profile)
+    func exposure(_ density: Double, _ c: Int) -> Double { FilmToe.exposure(density / slopes.values[c], width: toe.values[c]) }
+    let e = (0..<3).map { c in density[c].map { exposure($0, c) } }
     // Independent robust endpoints correct color crossover, not just a single median offset.
     // They are scene statistics, not an ICC calibration; manual neutral/temperature remain available.
     let channelLow = e.map { quantile($0, 0.01) }
@@ -326,8 +352,7 @@ final class ImagePipeline {
     var balance = RGB.zero
     if let sample = settings.neutralSample {
       let d = (0..<3).map {
-        log10(max(0.0001, base.values[$0]) / max(0.0001, sample.values[$0])) * settings.inputGamma
-          / slopes.values[$0]
+        exposure(log10(max(0.0001, base.values[$0]) / max(0.0001, sample.values[$0])) * settings.inputGamma, $0)
       }
       let mean = d.reduce(0, +) / 3
       balance = RGB(d.map { mean - $0 })
@@ -370,7 +395,7 @@ final class ImagePipeline {
     let effectiveBase = RGB(
       (0..<3).map { max(0.0001, a.base.values[$0]) * pow(2, fine.values[$0]) })
     let args: [Any] = [
-      ci, v(effectiveBase), v(Self.slopes(s, profile).slopes), v(a.gain), v(a.balance),
+      ci, v(effectiveBase), v(Self.slopes(s, profile).slopes), v(Self.toe(s, profile)), v(a.gain), v(a.balance),
       CIVector(x: a.low, y: a.high, z: s.black, w: s.white),
       CIVector(x: s.exposure, y: s.midtone, z: s.contrast, w: s.saturation),
       CIVector(x: s.warmth, y: s.tint, z: 0, w: s.inputGamma), s.inputIsNegative ? 1.0 : 0.0,

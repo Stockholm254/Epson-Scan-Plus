@@ -112,6 +112,41 @@ extension ContentView {
       note("拖动框内移动，拖动四角缩放。双击画面进入单张。")
       Divider()
       scannerSharpening
+      Divider()
+      scannerCalibration
+    }
+  }
+  var scannerCalibration: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      sectionTitle("扫描仪标定 · IT8", symbol: "squareshape.split.3x3")
+      if let c = m.preferences.scannerCalibration {
+        Text(c.reference).font(.system(size: 11)).lineLimit(2).truncationMode(.middle)
+        Text(String(format: "杂散光 R %.2f%% · G %.2f%% · B %.2f%%", c.flare.r * 100, c.flare.g * 100, c.flare.b * 100)).lcd()
+        note(String(
+          format: "灰阶最大误差 %.3f D，扣除杂散光后 %.3f D。色块按 3×3 矩阵拟合平均 ΔE %.1f（最大 %.1f）：这是对色卡反转片染料的评估，负片转换不用这个矩阵。",
+          c.grayErrorBefore, c.grayError, c.meanDeltaE, c.maxDeltaE))
+        Toggle("转换前扣除杂散光", isOn: Binding(get: { m.preferences.removeFlare }, set: { m.preferences.removeFlare = $0; m.reapplyScannerCalibration() }))
+          .toggleStyle(LEDToggleStyle()).font(.system(size: 11))
+      } else {
+        note("用 IT8.7/1 透射色卡测量扫描仪的杂散光：它会抬高底片密实处的读数，使高光发灰。测量后，本程序的线性扫描在转换前扣除它。")
+      }
+      HStack {
+        Button(m.it8Reference == nil ? "① 导入参考文件…" : "参考：\(m.it8Reference!.batch.isEmpty ? m.it8Reference!.name : m.it8Reference!.batch)") { m.importIT8Reference() }
+        if m.preferences.scannerCalibration != nil { Button("移除") { m.removeScannerCalibration() } }
+      }.font(.system(size: 11)).disabled(m.isWorking)
+      if m.it8Reference != nil {
+        HStack {
+          Button("② 在色卡上取点") { m.startIT8Marking() }.disabled(m.selected == nil || m.isWorking)
+          Text("\(m.it8Marks.count) / 6").lcd()
+          if !m.it8Marks.isEmpty { Button("退一步") { m.undoIT8Mark() } }
+        }.font(.system(size: 11))
+        if m.tool == .it8 && m.it8Marks.count < IT8Layout.marks.count {
+          note("下一个：\(IT8Layout.marks[m.it8Marks.count]) 的中心")
+        }
+        Button("③ 生成标定") { m.measureIT8() }.font(.system(size: 11))
+          .disabled(m.it8Marks.count < IT8Layout.marks.count || m.isWorking)
+      }
+      note("色卡放进 4×5 片夹，预览后用「画框」框出整张色卡，以 600 dpi 正式扫描，再在单张视图中按提示点 6 个点；点到第 4 个后会标出全部色块的位置，便于检查。参考文件须与色卡批号一致（MONT45 的 2022:07 批对应 MONT45.2022.07.txt）。")
     }
   }
   var scannerSharpening: some View {
@@ -200,7 +235,7 @@ extension ContentView {
         Button("生成 V850 预设") { m.makeScannerPreset() }.disabled(!ready)
         Button("清除") { m.clearCalibration() }.disabled(m.calibrationPoints.isEmpty)
       }
-      note("先在「预设」中选好胶片，再点选同一种胶片上明暗不同的中性灰（灰卡、白墙、灰色水泥）：至少 2 个，建议 3 个以上；可以跨画面、跨卷取点。")
+      note("先在「预设」中选好胶片，再点选同一种胶片上明暗不同的中性灰（灰卡、白墙、灰色水泥）：至少 2 个，建议 3 个以上；可以跨画面、跨卷取点。取 4 个以上、其中有很暗的（如灰卡欠曝 2–3 档，绿色密度低于 0.25 D）时，还会标定红、蓝通道的暗部趾部，转换时据此还原暗部的层次和颜色。")
     }
   }
   var customPresets: some View {

@@ -577,6 +577,7 @@ struct ContentView: View {
     case .neutral: return "eyedropper.halffull"
     case .calibrate: return "scope"
     case .loupe: return "magnifyingglass"
+    case .it8: return "squareshape.split.3x3"
     }
   }
   func bool(_ key: WritableKeyPath<Adjustments, Bool>) -> Binding<Bool> {

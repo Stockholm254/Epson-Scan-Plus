@@ -31,11 +31,12 @@ enum RollCurveTests {
         provider: CGDataProvider(data: Data(bytes: samples, count: samples.count * 2) as CFData)!, decode: nil,
         shouldInterpolate: false, intent: .defaultIntent)!
     }
-    /// Grey scenes on that film: log exposure from `low` to `high` across the frame.
-    func neutral(_ low: Double, _ high: Double) -> CGImage {
+    /// Grey scenes on that film: log exposure from `low` to `high` across the frame, bent by `toe`
+    /// near the base when given, as a real film's curve is.
+    func neutral(_ low: Double, _ high: Double, toe: RGB? = nil) -> CGImage {
       image16(200, 140) { x, y in
         let l = low + (high - low) * (Double(x) / 199 * 0.8 + Double(y % 7) / 6 * 0.2)
-        return RGB((0..<3).map { base.values[$0] * pow(10, -truth.values[$0] * l) })
+        return RGB((0..<3).map { base.values[$0] * pow(10, -truth.values[$0] * FilmToe.density(l, width: toe?.values[$0] ?? 0)) })
       }
     }
     var linear = Adjustments()
@@ -83,6 +84,18 @@ enum RollCurveTests {
     try check(ImagePipeline.slopes(withRoll, portra) == (withRoll.rollSlopes!, true), "the roll estimate wins over the data sheet")
     try check(ImagePipeline.slopes(linear, portra) == (portra.slopes, true), "without an estimate the data sheet sets channel contrast")
     try check(!ImagePipeline.slopes(linear, generic).fixed, "only generic without an estimate stretches each frame")
+
+    // On a film with a toe (Portra 160's data sheet, as a calibrated preset could have), the
+    // estimate weighs each edge by the toe's stretch there.
+    let sheet = portra.dataSheetToe
+    let toeRoll = [neutral(0.05, 0.9, toe: sheet), neutral(0.4, 1.5, toe: sheet), neutral(1.0, 2.0, toe: sheet)]
+      .map { (image: $0, settings: linear) }
+    guard let bent = pipe.rollSlopes(toeRoll, greenSlope: truth.g, toe: sheet),
+      let straight = pipe.rollSlopes(toeRoll, greenSlope: truth.g)
+    else { throw DeskError.message("FAIL: channel slopes estimated on a roll with a toe") }
+    try check(abs(bent.r / truth.r - 1) < 0.03 && abs(bent.b / truth.b - 1) < 0.03,
+      String(format: "with the film's toe the roll estimate still recovers the slopes: R %.3f · B %.3f (straight line R %.3f · B %.3f, true %.2f · %.2f)",
+        bent.r, bent.b, straight.r, straight.b, truth.r, truth.b))
 
     // What the estimate is for: a grey ramp converted with it stays grey.
     func cast(_ settings: Adjustments) throws -> Double {
