@@ -57,6 +57,7 @@ final class AppModel: ObservableObject {
   private var currentScanReceivedFile = false
   private var scanBatchID = UUID()
   private var activeScanDPI = 2400
+  private var scanStarted: Date?
   private var cancelRequested = false
   private var revision = 0
   private let renderQueue = DispatchQueue(label: "FilmDesk.render", qos: .userInitiated)
@@ -90,6 +91,21 @@ final class AppModel: ObservableObject {
   var enabledCount: Int { frames.filter(\.enabled).count }
   var hasScanTargets: Bool { frames.contains { $0.enabled && $0.sourcePath == nil } }
   var editingSingle: Bool { singleView && (tool == .crop || tool == .base) }
+  /// One line on the canvas while a tool is active: where to click, and how to leave it.
+  var toolHint: String? {
+    switch tool {
+    case .select: return nil
+    case .crop: return singleView ? "拖动四角裁切 · 方向键微调 · 回车完成 · Esc 退出" : "在灯箱上拖出新的画框 · Esc 退出"
+    case .base: return "点未曝光的橙色片基（片间或片边），不要点景物或片夹 · Esc 退出"
+    case .neutral: return "点画面中应为中性灰的地方：灰卡、白墙、水泥 · Esc 退出"
+    case .loupe: return "把鼠标移到画面上放大查看 · Esc 退出"
+    case .calibrate: return "点选中性灰：灰卡、白墙、水泥等均匀处 · 已取 \(calibrationPoints.count) 个 · Esc 结束"
+    case .it8:
+      let n = it8Marks.count
+      guard n < IT8Layout.marks.count else { return "6 个点已就位 · 检查色块位置后点「生成标定」 · Esc 退出" }
+      return "点 \(IT8Layout.marks[n]) 的中心（第 \(n + 1) / \(IT8Layout.marks.count) 个） · Esc 退出"
+    }
+  }
   var canvasCrop: NormalRect? {
     guard let region = canvasRegion, let selected else { return nil }
     return ImageGeometry.transform(
@@ -1038,6 +1054,62 @@ final class AppModel: ObservableObject {
     guard !isWorking else { return }
     startScanBatch(frames.filter { $0.enabled && $0.sourcePath == nil }.map(\.id))
   }
+  /// The toolbar's and menu's scans. A batch first shows what it will take; a single frame only
+  /// when the disk is too full for it.
+  func requestScanEnabled() {
+    guard !isWorking else { return }
+    let targets = frames.filter { $0.enabled && $0.sourcePath == nil }
+    guard !targets.isEmpty else { return }
+    let plan = scanPlan(targets)
+    guard (targets.count == 1 && plan.fits) || confirmScan(plan, "扫描 \(plan.frames) 张 · \(plan.dpi) dpi？", "开始扫描") else { return }
+    scanEnabled()
+  }
+  func requestScanSelected() {
+    guard let selected, !isWorking else { return }
+    if selected.sourcePath == nil {
+      let plan = scanPlan([selected])
+      guard plan.fits || confirmScan(plan, "扫描第 \(selected.name) 张 · \(plan.dpi) dpi？", "开始扫描") else { return }
+    }
+    scanSelected()
+  }
+  /// Asks before a scan, with the plan's summary; true starts it. Tests answer for the user.
+  var confirmScan: (ScanPlan, String, String) -> Bool = { plan, title, button in
+    let answer = AppModel.scanAlert(plan, title: title, button: button).runModal()
+    return answer == (plan.fits ? .alertFirstButtonReturn : .alertSecondButtonReturn)
+  }
+  static func scanAlert(_ plan: ScanPlan, title: String, button: String) -> NSAlert {
+    let alert = NSAlert()
+    alert.messageText = plan.fits ? title : "磁盘空间不足"
+    alert.informativeText = plan.summary
+    if plan.fits {
+      alert.addButton(withTitle: button)
+      alert.addButton(withTitle: "取消")
+    } else {
+      // Not enough room: cancelling is the default.
+      alert.alertStyle = .critical
+      alert.addButton(withTitle: "取消")
+      alert.addButton(withTitle: "仍然扫描")
+    }
+    return alert
+  }
+  /// What scanning these frames would take at `dpi` (the chosen resolution by default).
+  func scanPlan(_ targets: [FilmFrame], dpi planDPI: Int? = nil, forSheet: Bool = false) -> ScanPlan {
+    let dpi = planDPI ?? self.dpi
+    return ScanPlan.make(
+      targets, physicalMM: physicalMM, dpi: dpi, bitsPerChannel: max(8, scanner.bits),
+      export: preferences.autoExport && !forSheet ? preferences.exportFormat : nil,
+      rate: preferences.scanRates[ScanPlan.rateKey(backend: scanner.backendID, dpi: dpi)],
+      available: Self.availableBytes(at: libraryURL))
+  }
+  /// Free space on the volume the library is on, from its nearest folder that exists.
+  static func availableBytes(at url: URL) -> Double? {
+    var folder = url
+    while !FileManager.default.fileExists(atPath: folder.path) && folder.pathComponents.count > 1 {
+      folder.deleteLastPathComponent()
+    }
+    return (try? folder.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
+      .volumeAvailableCapacityForImportantUsage.map(Double.init)
+  }
   func scanSelected() {
     guard let id = selectedID, !isWorking else { return }
     guard selected?.sourcePath == nil else {
@@ -1078,6 +1150,7 @@ final class AppModel: ObservableObject {
       currentScanReceivedFile = false
       scanBatch.beginFrame()
       activeScanDPI = batchDPI ?? dpi
+      scanStarted = Date()
       let captureRect: NormalRect
       if scanner.backendID == "epson2-linear-v1" {
         captureRect = NormalRect(x: frame.rect.x * physicalMM.width / scanner.physicalMM.width,
@@ -1175,6 +1248,11 @@ final class AppModel: ObservableObject {
     frames[i].sourcePath = nil
     frames[i].scanDPI = activeScanDPI
     frames[i].sourceBits = info.bits
+    if let started = scanStarted {
+      preferences.recordScan(backend: scanner.backendID, dpi: activeScanDPI, seconds: Date().timeIntervalSince(started),
+        megapixels: Double(info.width * info.height) / 1e6)
+      scanStarted = nil
+    }
     status = "第 \(frames[i].name) 张扫描完成 · \(info.bits*3)-bit 原始负片已存入 Originals"
       + (preferences.autoExport && pendingSheet == nil ? " · 整批扫完后正片导出到 Exports" : " · 正片请在「输出」导出")
     saveProject()
@@ -1360,8 +1438,10 @@ final class AppModel: ObservableObject {
       let ready = scanner.ready && !(scanner.backendID == "epson2-linear-v1" && overviewBackendID != scanner.backendID)
       let alert = NSAlert()
       if ready {
+        let plan = scanPlan(needScan, dpi: ContactSheet.scanDPI, forSheet: true)
         alert.messageText = "先以 1200 dpi 扫描 \(needScan.count) 张，再生成接触表？"
-        alert.informativeText = "接触表共 \(items.count) 张。尚未扫描或低于 1200 dpi 的画面会先扫描，结果保存为这些画面的原始文件；已有 1200 dpi 及以上扫描的画面直接使用。"
+        alert.informativeText = "接触表共 \(items.count) 张。尚未扫描或低于 1200 dpi 的画面会先扫描，结果保存为这些画面的原始文件；已有 1200 dpi 及以上扫描的画面直接使用。\n\n" + plan.summary
+        if !plan.fits { alert.alertStyle = .critical }
         alert.addButton(withTitle: "扫描并生成")
       } else {
         alert.messageText = "扫描仪未就绪"

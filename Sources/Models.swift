@@ -296,10 +296,43 @@ enum CanvasTool: String, CaseIterable {
   case select = "选择"
   case crop = "画框"
   case base = "片基"
-  case neutral = "中性点"
+  case neutral = "中性灰"
   case loupe = "放大镜"
   case calibrate = "标定中性点"
   case it8 = "IT8 色卡"
+
+  /// Each tool's SF Symbol. The two samplers differ in glyph and carry a label as well: the
+  /// film base is the orange mask, the neutral a grey in the picture.
+  var symbol: String {
+    switch self {
+    case .select: return "cursorarrow"
+    case .crop: return "crop"
+    case .base: return "eyedropper.full"
+    case .neutral: return "eyedropper"
+    case .calibrate: return "target"
+    case .loupe: return "magnifyingglass"
+    case .it8: return "squareshape.split.3x3"
+    }
+  }
+  /// Shown next to the symbol in the toolbar.
+  var label: String? {
+    switch self {
+    case .base: return "片基"
+    case .neutral: return "中性灰"
+    default: return nil
+    }
+  }
+  var help: String {
+    switch self {
+    case .select: return "选择：点选、移动画框，双击进入单张 · Esc"
+    case .crop: return "画框：在接触表上拖出新画框；单张中裁切"
+    case .base: return "取片基：点未曝光的橙色片基，作为去色罩的基准"
+    case .neutral: return "取中性灰：点画面中应为灰色的地方，校正白平衡"
+    case .loupe: return "放大镜：把鼠标处放大查看"
+    case .calibrate: return "标定中性点：点选灰卡等中性灰，生成本机预设"
+    case .it8: return "IT8 色卡：按提示点色卡上的 6 个点"
+    }
+  }
 }
 enum FilmFormat: String, CaseIterable {
   case auto = "自动"

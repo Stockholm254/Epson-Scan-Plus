@@ -119,6 +119,15 @@ final class Preferences: ObservableObject {
   @Published var sharpening: SharpeningProfile? {
     didSet { defaults?.set(sharpening.flatMap { try? JSONEncoder().encode($0) }, forKey: "sharpening") }
   }
+  /// Seconds per megapixel this computer's scanner has taken, by backend and resolution
+  /// (`ScanPlan.rateKey`), for the time a batch will take.
+  @Published var scanRates: [String: Double] { didSet { defaults?.set(scanRates, forKey: "scanRates") } }
+  /// Takes in one finished scan; the latest counts as much as all before it.
+  func recordScan(backend: String, dpi: Int, seconds: Double, megapixels: Double) {
+    guard let rate = ScanPlan.rate(seconds: seconds, megapixels: megapixels) else { return }
+    let key = ScanPlan.rateKey(backend: backend, dpi: dpi)
+    scanRates[key] = scanRates[key].map { ($0 + rate) / 2 } ?? rate
+  }
   init(defaults: UserDefaults? = nil) {
     self.defaults = defaults
     libraryPath = defaults?.string(forKey: "libraryPath")
@@ -140,6 +149,7 @@ final class Preferences: ObservableObject {
     loupeStyle = defaults?.string(forKey: "loupeStyle").flatMap(LoupeStyle.init(rawValue:)) ?? .pentax
     let left = defaults?.double(forKey: "leftWidth") ?? 0, right = defaults?.double(forKey: "rightWidth") ?? 0
     leftWidth = left > 0 ? min(Self.leftWidths.upperBound, max(Self.leftWidths.lowerBound, left)) : 230
+    scanRates = (defaults?.dictionary(forKey: "scanRates") as? [String: Double]) ?? [:]
     rightWidth = right > 0 ? min(Self.rightWidths.upperBound, max(Self.rightWidths.lowerBound, right)) : 258
   }
   var libraryURL: URL { libraryPath.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? Self.defaultLibraryURL }

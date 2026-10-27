@@ -95,7 +95,7 @@ struct ContentView: View {
         Label("预览", systemImage: "viewfinder")
       }.disabled(!m.scanner.ready || m.isWorking)
       Button {
-        m.scanEnabled()
+        m.requestScanEnabled()
       } label: {
         Label("扫描所选 \(m.enabledCount)", systemImage: "scanner")
       }.buttonStyle(HardwareKeyStyle(prominent: true)).disabled(
@@ -143,9 +143,12 @@ struct ContentView: View {
           Button {
             m.useTool(t)
           } label: {
-            Image(systemName: icon(t)).frame(width: 16, height: 14).foregroundStyle(
-              m.tool == t ? accent : Color(white: 0.85))
-          }.buttonStyle(HardwareKeyStyle(latched: m.tool == t)).controlSize(.small).help(t.rawValue)
+            HStack(spacing: 4) {
+              Image(systemName: t.symbol).frame(width: 16, height: 14)
+              if let label = t.label { Text(label).font(.system(size: 11)) }
+            }.foregroundStyle(m.tool == t ? accent : Color(white: 0.85))
+          }.buttonStyle(HardwareKeyStyle(latched: m.tool == t)).controlSize(.small).help(t.help)
+            .accessibilityLabel(t.rawValue)
         }
         Divider().frame(height: 18)
         Button {
@@ -168,16 +171,17 @@ struct ContentView: View {
                 .padding(7).background(.black.opacity(0.65), in: RoundedRectangle(cornerRadius: 5))
                 .foregroundStyle(accent)
             }
-            if m.tool == .calibrate {
-              Text("点选中性灰：灰卡、白墙、灰色水泥等均匀处 · 已取 \(m.calibrationPoints.count) 个").font(.system(size: 11))
-                .padding(7).background(.black.opacity(0.65), in: RoundedRectangle(cornerRadius: 5))
-            }
-            if m.editingSingle {
-              Text(m.tool == .base ? "在未曝光的橙色片基上取样" : "拖动四角裁切 · 方向键微调 · 回车完成").font(
-                .system(size: 11)
-              ).padding(7).background(.black.opacity(0.65), in: RoundedRectangle(cornerRadius: 5))
-            }
           }.padding(12).allowsHitTesting(false)
+        }
+        if let hint = m.toolHint, !m.rendering {
+          HStack(spacing: 6) {
+            Image(systemName: m.tool.symbol).foregroundStyle(accent)
+            Text(hint)
+          }.font(.system(size: 11)).foregroundStyle(Color(white: 0.92))
+            .padding(.horizontal, 11).padding(.vertical, 6)
+            .background(.black.opacity(0.72), in: Capsule())
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom).padding(14)
+            .allowsHitTesting(false).accessibilityLabel("工具提示")
         }
       }.frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
       HStack {
@@ -255,7 +259,7 @@ struct ContentView: View {
           Button {
             m.useTool(.base)
           } label: {
-            Label("取片基", systemImage: "eyedropper")
+            Label("取片基", systemImage: CanvasTool.base.symbol)
           }
           Button("自动片基") {
             m.change("自动片基") {
@@ -321,7 +325,7 @@ struct ContentView: View {
         Button {
           m.useTool(.neutral)
         } label: {
-          Label("选取中性灰", systemImage: "eyedropper.halffull")
+          Label("取中性灰", systemImage: CanvasTool.neutral.symbol)
         }.font(.system(size: 11))
         Button("重算白平衡") { m.recalculateWhiteBalance() }.font(.system(size: 11))
         Text("自动调色忽略外缘 5%，不改变导出范围。").font(.system(size: 10)).foregroundStyle(.secondary)
@@ -567,17 +571,6 @@ struct ContentView: View {
       Text(name).font(.system(size: 11)).foregroundStyle(.secondary)
       Spacer()
       content()
-    }
-  }
-  func icon(_ t: CanvasTool) -> String {
-    switch t {
-    case .select: return "cursorarrow"
-    case .crop: return "crop"
-    case .base: return "eyedropper"
-    case .neutral: return "eyedropper.halffull"
-    case .calibrate: return "scope"
-    case .loupe: return "magnifyingglass"
-    case .it8: return "squareshape.split.3x3"
     }
   }
   func bool(_ key: WritableKeyPath<Adjustments, Bool>) -> Binding<Bool> {

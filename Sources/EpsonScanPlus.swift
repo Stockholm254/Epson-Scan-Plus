@@ -50,9 +50,9 @@ struct EpsonScanPlusApp: App {
       CommandMenu("扫描") {
         Button("预览") { model.requestPreview() }.keyboardShortcut(
           "p", modifiers: [.command, .shift])
-        Button("扫描当前画面") { model.scanSelected() }.keyboardShortcut(
+        Button("扫描当前画面") { model.requestScanSelected() }.keyboardShortcut(
           "s", modifiers: [.command, .shift])
-        Button("扫描勾选画面") { model.scanEnabled() }
+        Button("扫描勾选画面") { model.requestScanEnabled() }
         Button("取消扫描") { model.cancel() }.keyboardShortcut(".")
       }
       CommandMenu("画面") {

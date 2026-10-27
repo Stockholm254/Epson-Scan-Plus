@@ -34,7 +34,9 @@ extension ContentView {
 
   var scanTab: some View {
     VStack(alignment: .leading, spacing: 18) {
-      sectionTitle("扫描仪", symbol: "scanner")
+      titled("扫描仪", symbol: "scanner", info:
+        "原始文件是未反相的负片，保留橙色色罩，作存档和重新转换用；去色罩的正片默认在扫完后导出到 Exports（见「输出」）。无损压缩对扫描数据几乎无效（LZW 反而变大），因此不压缩。\n\n整幅预览用于识别画面、接触表和看片镜。600 dpi 时每张 35 mm 约 850 像素，未正式扫描的画面也能看清细节；300 dpi 并不比 600 dpi 快多少，所以不提供。"
+          + (m.scanner.ready ? "\n\n" + m.scanner.captureNote : ""))
       HStack(alignment: .top, spacing: 8) {
         StatusLED(lamp: lampState.lamp, size: 7).padding(.top, 4)
         Text(m.scanner.name).font(.system(size: 12, weight: .medium)).fixedSize(horizontal: false, vertical: true)
@@ -57,15 +59,13 @@ extension ContentView {
         }
         labeled("原始文件") { Text("TIFF · 16-bit 线性").font(.system(size: 12)).foregroundStyle(.secondary) }
       }
-      note("原始文件是未反相的负片，保留橙色色罩，作存档和重新转换用；去色罩的正片默认在扫完后导出到 Exports（见「输出」）。无损压缩对扫描数据几乎无效（LZW 反而变大），因此不压缩。")
-      note("整幅预览用于识别画面、接触表和看片镜。600 dpi 时每张 35 mm 约 850 像素，未正式扫描的画面也能看清细节；300 dpi 并不比 600 dpi 快多少，所以不提供。")
-      if m.scanner.ready { note(m.scanner.captureNote) }
       HStack {
         Button("重新连接") { m.scanner.reconnect() }
         Button("Epson…") { m.openEpson() }
       }.font(.system(size: 11)).disabled(m.isWorking)
       Divider()
-      sectionTitle("存储", symbol: "externaldrive")
+      titled("存储", symbol: "externaldrive", info:
+        "每次预览或导入会在这里新建工程文件夹：原始负片在 Originals，自动导出的正片在 Exports。更改位置只影响之后新建的工程。")
       Text((m.libraryURL.path as NSString).abbreviatingWithTildeInPath).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
         .lineLimit(3).truncationMode(.middle).textSelection(.enabled)
       HStack {
@@ -77,9 +77,9 @@ extension ContentView {
         Button("当前工程：\(session.lastPathComponent)") { reveal(session) }.buttonStyle(.link).font(.system(size: 11))
           .lineLimit(1).truncationMode(.middle).help(session.path)
       }
-      note("每次预览或导入会在这里新建工程文件夹：原始负片在 Originals，自动导出的正片在 Exports。更改位置只影响之后新建的工程。")
       Divider()
-      sectionTitle("画面", symbol: "rectangle.dashed")
+      titled("画面", symbol: "rectangle.dashed", info:
+        "预览后自动识别画面。在接触表上拖动框内移动，拖动四角缩放；「手动画框」在灯箱上拖出新的画框。双击画面进入单张，在单张中可以细调裁切。「收紧现有边界」只收紧已有画面框，保留逐张调色和原始扫描。")
       labeled("规格") {
         Picker("", selection: $m.format) {
           ForEach(FilmFormat.allCases, id: \.self) { Text($0.rawValue).tag($0) }
@@ -109,7 +109,6 @@ extension ContentView {
           Image(systemName: "trash")
         }.disabled(m.selected == nil)
       }.disabled(m.isWorking)
-      note("拖动框内移动，拖动四角缩放。双击画面进入单张。")
       Divider()
       scannerSharpening
       Divider()
@@ -118,17 +117,18 @@ extension ContentView {
   }
   var scannerCalibration: some View {
     VStack(alignment: .leading, spacing: 10) {
-      sectionTitle("扫描仪标定 · IT8", symbol: "squareshape.split.3x3")
+      titled("扫描仪标定 · IT8", symbol: "squareshape.split.3x3", info:
+        "用 IT8.7/1 透射色卡测量扫描仪的杂散光：它会抬高底片密实处的读数，使高光发灰。测量后，本程序的线性扫描在转换前扣除它。\n\n色卡放进 4×5 片夹，预览后用「画框」框出整张色卡，以 600 dpi 正式扫描，再在单张视图中按提示点 6 个点；点到第 4 个后会标出全部色块的位置，便于检查。参考文件须与色卡批号一致（MONT45 的 2022:07 批对应 MONT45.2022.07.txt）。\n\n色块按 3×3 矩阵拟合的 ΔE 是对色卡反转片染料的评估，负片转换不用这个矩阵。")
       if let c = m.preferences.scannerCalibration {
         Text(c.reference).font(.system(size: 11)).lineLimit(2).truncationMode(.middle)
         Text(String(format: "杂散光 R %.2f%% · G %.2f%% · B %.2f%%", c.flare.r * 100, c.flare.g * 100, c.flare.b * 100)).lcd()
         note(String(
-          format: "灰阶最大误差 %.3f D，扣除杂散光后 %.3f D。色块按 3×3 矩阵拟合平均 ΔE %.1f（最大 %.1f）：这是对色卡反转片染料的评估，负片转换不用这个矩阵。",
+          format: "灰阶最大误差 %.3f D，扣除后 %.3f D · 色块 ΔE %.1f（最大 %.1f）",
           c.grayErrorBefore, c.grayError, c.meanDeltaE, c.maxDeltaE))
         Toggle("转换前扣除杂散光", isOn: Binding(get: { m.preferences.removeFlare }, set: { m.preferences.removeFlare = $0; m.reapplyScannerCalibration() }))
           .toggleStyle(LEDToggleStyle()).font(.system(size: 11))
       } else {
-        note("用 IT8.7/1 透射色卡测量扫描仪的杂散光：它会抬高底片密实处的读数，使高光发灰。测量后，本程序的线性扫描在转换前扣除它。")
+        note("尚未标定。")
       }
       HStack {
         Button(m.it8Reference == nil ? "① 导入参考文件…" : "参考：\(m.it8Reference!.batch.isEmpty ? m.it8Reference!.name : m.it8Reference!.batch)") { m.importIT8Reference() }
@@ -146,19 +146,19 @@ extension ContentView {
         Button("③ 生成标定") { m.measureIT8() }.font(.system(size: 11))
           .disabled(m.it8Marks.count < IT8Layout.marks.count || m.isWorking)
       }
-      note("色卡放进 4×5 片夹，预览后用「画框」框出整张色卡，以 600 dpi 正式扫描，再在单张视图中按提示点 6 个点；点到第 4 个后会标出全部色块的位置，便于检查。参考文件须与色卡批号一致（MONT45 的 2022:07 批对应 MONT45.2022.07.txt）。")
     }
   }
   var scannerSharpening: some View {
     VStack(alignment: .leading, spacing: 10) {
-      sectionTitle("扫描仪锐化", symbol: "scope")
+      titled("扫描仪锐化", symbol: "scope", info:
+        "导入一张分辨率标靶的扫描（需带实心方块，如 USAF 1951 或 Vlad 标靶），程序自动测量横向和竖向 MTF；扫描时让标靶略微倾斜 1–5°。\n\n之后在线性扫描数据上按实测 MTF 反卷积；强度在调整面板逐张设置。配置只适用于测量时的片夹与对焦高度。")
       if let p = m.preferences.sharpening {
         let ppi = p.effectivePPI
         Text("\(p.source) · \(Int(p.targetDPI)) dpi").font(.system(size: 11)).lineLimit(1).truncationMode(.middle)
         Text("横向约 \(Int(ppi.horizontal.rounded())) ppi · 竖向约 \(Int(ppi.vertical.rounded())) ppi").lcd()
         MTFChart(profile: p).frame(height: 110)
       } else {
-        note("尚未建立配置。导入一张分辨率标靶的扫描（需带实心方块，如 USAF 1951 或 Vlad 标靶），程序自动测量横向和竖向 MTF；扫描时让标靶略微倾斜 1–5°。")
+        note("尚未建立配置。")
       }
       HStack {
         Button(m.preferences.sharpening == nil ? "导入标靶…" : "重新导入…") { m.importSharpeningTarget() }
@@ -170,7 +170,6 @@ extension ContentView {
         Text(message).font(.system(size: 10)).foregroundStyle(m.measuringTarget ? Color.secondary : Color.orange)
           .fixedSize(horizontal: false, vertical: true)
       }
-      note("在线性扫描数据上按实测 MTF 反卷积；强度在调整面板逐张设置。配置只适用于测量时的片夹与对焦高度。")
     }
   }
 
@@ -221,12 +220,16 @@ extension ContentView {
       : m.calibrationPoints.isEmpty ? (picking ? "② 在单张画面上点选中性灰。" : "① 点「取中性点」开始。")
       : "② 继续点选更亮或更暗的中性灰，跨度需 0.3 D 以上。"
     return VStack(alignment: .leading, spacing: 8) {
-      Text("本机预设标定").font(.system(size: 11, weight: .medium))
+      HStack {
+        Text("本机预设标定").font(.system(size: 11, weight: .medium))
+        Spacer()
+        InfoButton(text: "先在「预设」中选好胶片，再点选同一种胶片上明暗不同的中性灰（灰卡、白墙、灰色水泥）：至少 2 个，建议 3 个以上；可以跨画面、跨卷取点。\n\n取 4 个以上、其中有很暗的（如灰卡欠曝 2–3 档，绿色密度低于 0.25 D）时，还会标定红、蓝通道的暗部趾部，转换时据此还原暗部的层次和颜色。")
+      }
       HStack(spacing: 8) {
         Button {
           m.useTool(picking ? .select : .calibrate)
         } label: {
-          Label(picking ? "完成取点" : "取中性点", systemImage: "scope").lineLimit(1).fixedSize()
+          Label(picking ? "完成取点" : "取中性点", systemImage: CanvasTool.calibrate.symbol).lineLimit(1).fixedSize()
         }.buttonStyle(HardwareKeyStyle(latched: picking)).disabled(m.selected == nil)
         Text(String(format: "%d 点 · %.2f D", m.calibrationPoints.count, span)).lcd()
       }
@@ -235,12 +238,15 @@ extension ContentView {
         Button("生成 V850 预设") { m.makeScannerPreset() }.disabled(!ready)
         Button("清除") { m.clearCalibration() }.disabled(m.calibrationPoints.isEmpty)
       }
-      note("先在「预设」中选好胶片，再点选同一种胶片上明暗不同的中性灰（灰卡、白墙、灰色水泥）：至少 2 个，建议 3 个以上；可以跨画面、跨卷取点。取 4 个以上、其中有很暗的（如灰卡欠曝 2–3 档，绿色密度低于 0.25 D）时，还会标定红、蓝通道的暗部趾部，转换时据此还原暗部的层次和颜色。")
     }
   }
   var customPresets: some View {
     VStack(alignment: .leading, spacing: 8) {
-      Text("本机预设").font(.system(size: 11, weight: .medium))
+      HStack {
+        Text("本机预设").font(.system(size: 11, weight: .medium))
+        Spacer()
+        InfoButton(text: "本机标定或导入的预设。删除只从列表中移除，已经使用它的工程保留自己的副本。")
+      }
       if m.preferences.customProfiles.isEmpty {
         note("还没有本机标定或导入的预设。")
       }
@@ -256,7 +262,6 @@ extension ContentView {
         }
       }
       Button("导入 JSON…") { m.importProfile() }.font(.system(size: 11))
-      note("删除只从列表中移除，已经使用它的工程保留自己的副本。")
     }
   }
 
@@ -268,7 +273,8 @@ extension ContentView {
       set: { m.exportType = $0.rawValue; m.preferences.exportFormat = $0 })
     let sheet = Binding(get: { m.preferences.sheet }, set: { m.preferences.sheet = $0 })
     return VStack(alignment: .leading, spacing: 18) {
-      sectionTitle("导出", symbol: "square.and.arrow.up")
+      titled("导出", symbol: "square.and.arrow.up", info:
+        "sRGB 以外的色彩空间在转换后嵌入 ICC 配置文件，饱和度推到 sRGB 以外的颜色会保留；ProPhoto 请配合 16-bit 格式。\n\n文件名：{film} 预设简称　{name} 胶片名　{frame} 片号　{roll} 工程文件夹　{date} 扫描日期。同名文件已存在时自动加序号，不会覆盖。导出文件写入胶片、片号、扫描仪和扫描日期等元数据。\n\n扫描保存的是保留色罩的原始负片（Originals）；打开自动导出时，去色罩的正片在整批扫完后按当前调整和上面的格式导出到工程的 Exports 文件夹。之后改了调整需要重新导出；为接触表进行的扫描不单独导出。")
       labeled("格式") {
         Picker("", selection: format) { ForEach(ExportFormat.allCases) { Text($0.title).tag($0) } }.labelsHidden()
       }
@@ -288,25 +294,23 @@ extension ContentView {
           ForEach(ExportColorSpace.allCases) { Text($0.title).tag($0) }
         }.labelsHidden()
       }
-      if m.preferences.exportColorSpace != .sRGB {
-        note(
-          "转换后嵌入 ICC 配置文件；饱和度推到 sRGB 以外的颜色会保留。"
-            + (m.preferences.exportColorSpace == .proPhoto && !format.wrappedValue.sixteenBit ? "ProPhoto 请配合 16-bit 格式，8-bit 容易出现色阶断层。" : ""))
+      if m.preferences.exportColorSpace == .proPhoto && !format.wrappedValue.sixteenBit {
+        Text("ProPhoto 请配合 16-bit 格式，8-bit 容易出现色阶断层。").font(.system(size: 10)).foregroundStyle(.orange)
+          .fixedSize(horizontal: false, vertical: true)
       }
       labeled("文件名") {
         TextField(ExportNaming.standard, text: Binding(get: { m.preferences.exportNameTemplate }, set: { m.preferences.exportNameTemplate = $0 }))
           .textFieldStyle(.roundedBorder).font(.system(size: 11, design: .monospaced))
       }
-      note("{film} 预设简称　{name} 胶片名　{frame} 片号　{roll} 工程文件夹　{date} 扫描日期。同名文件已存在时自动加序号，不会覆盖。导出文件写入胶片、片号、扫描仪和扫描日期等元数据。")
       HStack {
         Button("导出当前…") { m.exportImages(all: false) }.disabled(m.selected == nil || m.isWorking)
         Button("导出勾选…") { m.exportImages(all: true) }.disabled(m.enabledCount == 0 || m.isWorking)
       }.font(.system(size: 11))
       Toggle("扫描后自动导出正片", isOn: Binding(get: { m.preferences.autoExport }, set: { m.preferences.autoExport = $0 }))
         .toggleStyle(LEDToggleStyle()).font(.system(size: 11))
-      note("扫描保存的是保留色罩的原始负片（Originals）；去色罩的正片默认在整批扫完后按当前调整和上面的格式导出到工程的 Exports 文件夹。之后改了调整需要重新导出；为接触表进行的扫描不单独导出。")
       Divider()
-      sectionTitle("接触表", symbol: "square.grid.3x2")
+      titled("接触表", symbol: "square.grid.3x2", info:
+        "把勾选的画面排成一张 1200 dpi 图片，格式同上。尚未扫描或低于 1200 dpi 的画面会先以 1200 dpi 扫描，结果保存为这些画面的原始文件。")
       Picker("排列", selection: sheet.style) {
         Text("胶片条").tag(ContactSheet.Layout.Style.strips)
         Text("网格").tag(ContactSheet.Layout.Style.grid)
@@ -338,16 +342,42 @@ extension ContentView {
       } label: {
         Label("导出接触表…", systemImage: "square.grid.3x2")
       }.buttonStyle(HardwareKeyStyle(prominent: true)).disabled(m.enabledCount == 0 || m.isWorking)
-      note("把勾选的画面排成一张 1200 dpi 图片，格式同上。尚未扫描或低于 1200 dpi 的画面会先以 1200 dpi 扫描。")
     }
   }
 
+  /// A section title with its longer explanation behind an ⓘ.
+  func titled(_ text: String, symbol: String, info: String) -> some View {
+    HStack {
+      sectionTitle(text, symbol: symbol)
+      Spacer()
+      InfoButton(text: info)
+    }
+  }
   func note(_ text: String) -> some View {
     Text(text).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
   }
   func reveal(_ url: URL) {
     try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     NSWorkspace.shared.activateFileViewerSelecting([url])
+  }
+}
+
+/// A small ⓘ that opens a longer explanation, so the panel shows its controls and keeps the
+/// reading for when it is wanted.
+struct InfoButton: View {
+  let text: String
+  @State private var shown = false
+  var body: some View {
+    Button {
+      shown.toggle()
+    } label: {
+      Image(systemName: shown ? "info.circle.fill" : "info.circle").font(.system(size: 12))
+        .foregroundStyle(shown ? Hardware.amber : Color(white: 0.6))
+    }.buttonStyle(.plain).help("说明").accessibilityLabel("说明")
+      .popover(isPresented: $shown, arrowEdge: .trailing) {
+        Text(text).font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)
+          .frame(width: 300, alignment: .leading).padding(14).textSelection(.enabled)
+      }
   }
 }
 
