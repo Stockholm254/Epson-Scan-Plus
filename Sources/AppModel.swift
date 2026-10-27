@@ -91,6 +91,15 @@ final class AppModel: ObservableObject {
   var enabledCount: Int { frames.filter(\.enabled).count }
   var hasScanTargets: Bool { frames.contains { $0.enabled && $0.sourcePath == nil } }
   var editingSingle: Bool { singleView && (tool == .crop || tool == .base) }
+  /// Quarter turns clockwise the light table shows the overview with. Lying across only when the
+  /// holder stands upright; turned the way most frames are turned to stand up, and clockwise when
+  /// none are: as film lies in the V850's holder, a frame shot across then stands upright (every
+  /// frame turned in this computer's projects so far was turned clockwise).
+  var contactTurn: Int {
+    guard !singleView, preferences.contactLandscape, let d = displayed, d.height > d.width else { return 0 }
+    let turns = contactFrames.map { (($0.adjustments.rotation % 4) + 4) % 4 }
+    return turns.filter { $0 == 3 }.count > turns.filter { $0 == 1 }.count ? 3 : 1
+  }
   /// One line on the canvas while a tool is active: where to click, and how to leave it.
   var toolHint: String? {
     switch tool {
@@ -99,11 +108,13 @@ final class AppModel: ObservableObject {
     case .base: return "点未曝光的橙色片基（片间或片边），不要点景物或片夹 · Esc 退出"
     case .neutral: return "点画面中应为中性灰的地方：灰卡、白墙、水泥 · Esc 退出"
     case .loupe: return "把鼠标移到画面上放大查看 · Esc 退出"
-    case .calibrate: return "点选中性灰：灰卡、白墙、水泥等均匀处 · 已取 \(calibrationPoints.count) 个 · Esc 结束"
+    case .calibrate:
+      return "点选中性灰：灰卡、白墙、水泥等均匀处 · 已取 \(calibrationPoints.count) 个"
+        + (calibrationPoints.isEmpty ? "" : " · ⌫ 撤回上一点") + " · Esc 结束"
     case .it8:
-      let n = it8Marks.count
-      guard n < IT8Layout.marks.count else { return "6 个点已就位 · 检查色块位置后点「生成标定」 · Esc 退出" }
-      return "点 \(IT8Layout.marks[n]) 的中心（第 \(n + 1) / \(IT8Layout.marks.count) 个） · Esc 退出"
+      let n = it8Marks.count, undo = n > 0 ? " · ⌫ 撤回上一点" : ""
+      guard n < IT8Layout.marks.count else { return "6 个点已就位 · 检查色块位置后点「生成标定」" + undo + " · Esc 退出" }
+      return "点 \(IT8Layout.marks[n]) 的中心（第 \(n + 1) / \(IT8Layout.marks.count) 个）" + undo + " · Esc 退出"
     }
   }
   var canvasCrop: NormalRect? {
@@ -452,6 +463,18 @@ final class AppModel: ObservableObject {
     refresh()
     updateThumbnails()
     saveProject()
+  }
+  /// The delete key: while points are being picked it takes back the last one, and never removes
+  /// the frame they are picked on.
+  func deletePressed() {
+    switch tool {
+    case .it8: undoIT8Mark()
+    case .calibrate:
+      guard !calibrationPoints.isEmpty else { return }
+      calibrationPoints.removeLast()
+      status = "已撤回一个中性点 · 还有 \(calibrationPoints.count) 个"
+    default: removeSelected()
+    }
   }
   func removeSelected() {
     guard let i = selectedIndex, !isWorking else { return }
@@ -1515,8 +1538,11 @@ final class AppModel: ObservableObject {
     var isPreview: Bool
     var colorSpace: String? = nil
   }
+  /// A project opened only to read from, as the command-line export does: estimates made on the
+  /// way stay in memory, and the project file is left as it was.
+  var readOnly = false
   func saveProject() {
-    guard let root = sessionURL, let overviewURL else { return }
+    guard !readOnly, let root = sessionURL, let overviewURL else { return }
     var saved = frames
     for i in saved.indices {
       saved[i].scanFile = saved[i].scanPath.flatMap { ProjectFiles.relative($0, to: root) }

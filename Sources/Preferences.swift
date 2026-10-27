@@ -102,6 +102,8 @@ final class Preferences: ObservableObject {
   /// The loupe lying on the light table, and which one.
   @Published var showLoupe: Bool { didSet { defaults?.set(showLoupe, forKey: "showLoupe") } }
   @Published var loupeStyle: LoupeStyle { didSet { defaults?.set(loupeStyle.rawValue, forKey: "loupeStyle") } }
+  /// The light table turns an upright holder a quarter turn, so the strips run across a wide window.
+  @Published var contactLandscape: Bool { didSet { defaults?.set(contactLandscape, forKey: "contactLandscape") } }
   /// Side panel widths, as the user dragged them.
   @Published var leftWidth: Double { didSet { defaults?.set(leftWidth, forKey: "leftWidth") } }
   @Published var rightWidth: Double { didSet { defaults?.set(rightWidth, forKey: "rightWidth") } }
@@ -147,6 +149,7 @@ final class Preferences: ObservableObject {
     previewDPI = Self.previewResolutions.contains(dpi) ? dpi : 600
     showLoupe = defaults?.object(forKey: "showLoupe") as? Bool ?? true
     loupeStyle = defaults?.string(forKey: "loupeStyle").flatMap(LoupeStyle.init(rawValue:)) ?? .pentax
+    contactLandscape = defaults?.object(forKey: "contactLandscape") as? Bool ?? true
     let left = defaults?.double(forKey: "leftWidth") ?? 0, right = defaults?.double(forKey: "rightWidth") ?? 0
     leftWidth = left > 0 ? min(Self.leftWidths.upperBound, max(Self.leftWidths.lowerBound, left)) : 230
     scanRates = (defaults?.dictionary(forKey: "scanRates") as? [String: Double]) ?? [:]

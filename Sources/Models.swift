@@ -322,16 +322,29 @@ enum CanvasTool: String, CaseIterable {
     default: return nil
     }
   }
-  var help: String {
+  /// The key that picks the tool while the canvas has focus, as in other image editors.
+  var shortcut: String? {
     switch self {
-    case .select: return "选择：点选、移动画框，双击进入单张 · Esc"
-    case .crop: return "画框：在接触表上拖出新画框；单张中裁切"
-    case .base: return "取片基：点未曝光的橙色片基，作为去色罩的基准"
-    case .neutral: return "取中性灰：点画面中应为灰色的地方，校正白平衡"
-    case .loupe: return "放大镜：把鼠标处放大查看"
-    case .calibrate: return "标定中性点：点选灰卡等中性灰，生成本机预设"
-    case .it8: return "IT8 色卡：按提示点色卡上的 6 个点"
+    case .select: return "v"
+    case .crop: return "c"
+    case .base: return "b"
+    case .neutral: return "n"
+    case .loupe: return "z"
+    case .calibrate, .it8: return nil
     }
+  }
+  var help: String {
+    let what: String
+    switch self {
+    case .select: what = "选择：点选、移动画框，双击进入单张"
+    case .crop: what = "画框：在接触表上拖出新画框；单张中裁切"
+    case .base: what = "取片基：点未曝光的橙色片基，作为去色罩的基准"
+    case .neutral: what = "取中性灰：点画面中应为灰色的地方，校正白平衡"
+    case .loupe: what = "放大镜：把鼠标处放大查看"
+    case .calibrate: what = "标定中性点：点选灰卡等中性灰，生成本机预设"
+    case .it8: what = "IT8 色卡：按提示点色卡上的 6 个点"
+    }
+    return what + (shortcut.map { " · \($0.uppercased())" } ?? "")
   }
 }
 enum FilmFormat: String, CaseIterable {

@@ -21,6 +21,28 @@ struct ScanCanvas: NSViewRepresentable {
   }
 }
 
+/// The light table's quarter turn, between the overview's normalised coordinates, where frames
+/// live, and those of the picture as the table shows it.
+struct QuarterTurn: Equatable {
+  /// Clockwise, 0–3.
+  var turns: Int
+  init(_ turns: Int) { self.turns = ((turns % 4) + 4) % 4 }
+  var sideways: Bool { turns % 2 == 1 }
+  func shown(_ p: CGPoint) -> CGPoint {
+    switch turns {
+    case 1: return CGPoint(x: 1 - p.y, y: p.x)
+    case 2: return CGPoint(x: 1 - p.x, y: 1 - p.y)
+    case 3: return CGPoint(x: p.y, y: 1 - p.x)
+    default: return p
+    }
+  }
+  func overview(_ p: CGPoint) -> CGPoint { QuarterTurn(4 - turns).shown(p) }
+  func shown(_ r: CGRect) -> CGRect {
+    let a = shown(CGPoint(x: r.minX, y: r.minY)), b = shown(CGPoint(x: r.maxX, y: r.maxY))
+    return CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y))
+  }
+}
+
 final class FilmCanvasView: NSView {
   /// Lies on the light table in the contact view.
   let loupe = LoupeView()
@@ -84,8 +106,22 @@ final class FilmCanvasView: NSView {
     super.viewDidEndLiveResize()
     needsDisplay = true
   }
+  /// The contact view's turn; single view always shows the frame as it is.
+  var turn: QuarterTurn { QuarterTurn(model?.contactTurn ?? 0) }
+  /// Holds its source, so a new picture can never be taken for it.
+  private var turnedImage: (source: CGImage, turns: Int, image: CGImage)?
+  /// The picture as the canvas shows it: the model's, turned with the table.
+  var shown: CGImage? {
+    guard let cg = model?.displayed else { return nil }
+    let t = turn.turns
+    guard t != 0 else { return cg }
+    if let cached = turnedImage, cached.source === cg, cached.turns == t { return cached.image }
+    guard let image = ImagePipeline.shared.turned(cg, quarterTurns: t) else { return cg }
+    turnedImage = (cg, t, image)
+    return image
+  }
   var imageRect: CGRect {
-    guard let cg = model?.displayed else { return .zero }
+    guard let cg = shown else { return .zero }
     let inset: CGFloat = 28
     let scale =
       min(
@@ -96,16 +132,27 @@ final class FilmCanvasView: NSView {
       x: (bounds.width - size.width) / 2 + pan.x, y: (bounds.height - size.height) / 2 + pan.y,
       width: size.width, height: size.height)
   }
-  func normal(_ p: CGPoint) -> CGPoint {
+  /// A canvas point in the shown picture's normalised coordinates.
+  func shownNormal(_ p: CGPoint) -> CGPoint {
     let r = imageRect
     return CGPoint(
       x: clamp((p.x - r.minX) / max(1, r.width)), y: clamp((p.y - r.minY) / max(1, r.height)))
   }
+  /// A canvas point in the overview's (or single frame's) normalised coordinates.
+  func normal(_ p: CGPoint) -> CGPoint { turn.overview(shownNormal(p)) }
   func screen(_ r: CGRect) -> CGRect {
-    let b = imageRect
+    let b = imageRect, r = turn.shown(r)
     return CGRect(
       x: b.minX + r.minX * b.width, y: b.minY + r.minY * b.height, width: r.width * b.width,
       height: r.height * b.height)
+  }
+  /// The corners of a normalised rect on the canvas, in its own order: (min x, min y), (max x,
+  /// min y), (min x, max y), (max x, max y). On a turned table they are not where the screen
+  /// rect's corners of the same order are.
+  func corners(_ r: CGRect) -> [CGPoint] {
+    let b = imageRect
+    return [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.minX, y: r.maxY), CGPoint(x: r.maxX, y: r.maxY)]
+      .map { n in let d = turn.shown(n); return CGPoint(x: b.minX + d.x * b.width, y: b.minY + d.y * b.height) }
   }
   override func updateTrackingAreas() {
     if let tracking { removeTrackingArea(tracking) }
@@ -127,7 +174,7 @@ final class FilmCanvasView: NSView {
     // surround, so the bright glass does not skew exposure and colour judgement.
     let lightTable = model?.singleView != true
     if lightTable { drawLightTable() }
-    guard let model, let cg = model.displayed else {
+    guard let model, let cg = shown else {
       let text = "扫描预览" as NSString
       text.draw(
         at: CGPoint(x: bounds.midX - 30, y: bounds.midY),
@@ -328,7 +375,7 @@ final class FilmCanvasView: NSView {
     NSBezierPath(ovalIn: glass).addClip()
     NSColor.black.setFill()
     glass.fill()
-    let n = normal(point)
+    let n = shownNormal(point)
     let r = imageRect
     let factor = max(2, CGFloat(image.size.width) / max(1, r.width)) * 1.5
     let scaled = CGRect(
@@ -382,7 +429,8 @@ final class FilmCanvasView: NSView {
   /// The loupe at the film's scale, as the table shows it before zooming in.
   func loupeRadius(for style: LoupeStyle) -> CGFloat {
     guard let model, model.displayed != nil, model.physicalMM.height > 0 else { return 70 }
-    let pointsPerMM = imageRect.height / CGFloat(max(0.01, model.zoom)) / model.physicalMM.height
+    let shownHeight = turn.sideways ? model.physicalMM.width : model.physicalMM.height
+    let pointsPerMM = imageRect.height / CGFloat(max(0.01, model.zoom)) / max(1, shownHeight)
     return min(110, max(44, CGFloat(style.baseMM / 2) * pointsPerMM))
   }
   func updateLoupe() {
@@ -407,6 +455,7 @@ final class FilmCanvasView: NSView {
     h.combine(inLiveResize)
     guard let model else { return h.finalize() }
     h.combine(model.displayed.map(ObjectIdentifier.init))
+    h.combine(turn.turns)
     let r = imageRect
     for v in [r.minX, r.minY, r.width, r.height] { h.combine(v) }
     h.combine(model.singleView)
@@ -443,8 +492,8 @@ final class FilmCanvasView: NSView {
       snapshot = rep.cgImage.map { (key, $0) }
     }
     var scene = LoupeRenderer.Scene(table: snapshot?.image, canvas: bounds.size)
-    if let model, let displayed = model.displayed {
-      scene.film = displayed
+    if let shown {
+      scene.film = shown
       scene.filmRect = imageRect
     }
     // Not after a new preview, a moved frame box or a switch between raw and positive. After an
@@ -452,7 +501,7 @@ final class FilmCanvasView: NSView {
     if let model, let detail = loupeDetail, detail.positive == model.contactPositive,
       let frame = model.contactFrames.first(where: { $0.id == detail.id }), frame.rect == detail.rect
     {
-      scene.detail = detail.image
+      scene.detail = turnedDetail(detail.key, detail.image)
       scene.detailRect = screen(frame.rect.cg)
       if model.loupeDetailKey(frame) != detail.key {
         DispatchQueue.main.async { [weak self] in self?.loupeMoved() }
@@ -461,6 +510,16 @@ final class FilmCanvasView: NSView {
     return scene
   }
   private var loupeDetail: (key: String, id: UUID, rect: NormalRect, positive: Bool, image: CGImage)?
+  private var turnedLoupeDetail: (key: String, turns: Int, image: CGImage)?
+  /// The frame under the lens, turned with the table.
+  private func turnedDetail(_ key: String, _ image: CGImage) -> CGImage {
+    let t = turn.turns
+    guard t != 0 else { return image }
+    if let cached = turnedLoupeDetail, cached.key == key, cached.turns == t { return cached.image }
+    guard let turned = ImagePipeline.shared.turned(image, quarterTurns: t) else { return image }
+    turnedLoupeDetail = (key, t, turned)
+    return turned
+  }
   private var loupeDetailRequest: String?
   /// Fetches the frame under the loupe at its own resolution, once per change to it.
   func loupeMoved() {
@@ -499,11 +558,7 @@ final class FilmCanvasView: NSView {
         original = crop.cg
         draft = crop.cg
         let r = screen(crop.cg)
-        let corners = [
-          CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY),
-          CGPoint(x: r.minX, y: r.maxY), CGPoint(x: r.maxX, y: r.maxY),
-        ]
-        corner = corners.firstIndex { hypot($0.x - p.x, $0.y - p.y) < 13 }
+        corner = corners(crop.cg).firstIndex { hypot($0.x - p.x, $0.y - p.y) < 13 }
         if corner == nil && !r.contains(p) {
           dragID = nil
           original = nil
@@ -521,12 +576,7 @@ final class FilmCanvasView: NSView {
       return
     }
     if let f = model.frames.first(where: { $0.id == model.selectedID }) {
-      let r = screen(f.rect.cg)
-      let corners = [
-        CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.minX, y: r.maxY),
-        CGPoint(x: r.maxX, y: r.maxY),
-      ]
-      if let c = corners.firstIndex(where: { hypot($0.x - p.x, $0.y - p.y) < 10 }) {
+      if let c = corners(f.rect.cg).firstIndex(where: { hypot($0.x - p.x, $0.y - p.y) < 10 }) {
         corner = c
         dragID = f.id
         original = f.rect.cg
@@ -647,12 +697,17 @@ final class FilmCanvasView: NSView {
     {
       model?.navigate(event.keyCode == 123 ? -1 : 1)
     } else if event.keyCode == 51 {
-      model?.removeSelected()
+      model?.deletePressed()
     } else if event.keyCode == 53 {
       model?.useTool(.select)
       model?.fitView()
       pan = .zero
       needsDisplay = true
+    } else if event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+      let key = event.charactersIgnoringModifiers?.lowercased(),
+      let tool = CanvasTool.allCases.first(where: { $0.shortcut == key })
+    {
+      model?.useTool(tool)
     } else {
       super.keyDown(with: event)
     }

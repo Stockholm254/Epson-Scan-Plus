@@ -137,6 +137,14 @@ struct ContentView: View {
               m.preferences.showLoupe ? accent : Color(white: 0.85))
           }.buttonStyle(HardwareKeyStyle(latched: m.preferences.showLoupe)).controlSize(.small)
             .help("灯箱上的看片镜：拖到画面上放大细看，双击放回灯箱边，右键选择型号")
+          Button {
+            m.preferences.contactLandscape.toggle()
+            m.fitView()
+          } label: {
+            Label("横排", systemImage: "rectangle.landscape.rotate").font(.system(size: 11)).foregroundStyle(
+              m.preferences.contactLandscape ? accent : Color(white: 0.85))
+          }.buttonStyle(HardwareKeyStyle(latched: m.preferences.contactLandscape)).controlSize(.small)
+            .help("把竖放的片夹横过来摆在灯箱上，胶片条横向排开，更好地利用宽屏。方向跟随多数画面的旋转，都没有旋转时顺时针转")
         }
         Spacer()
         ForEach([CanvasTool.select, .crop, .base, .neutral, .loupe], id: \.self) { t in
@@ -273,6 +281,7 @@ struct ContentView: View {
             Text("片基微调 · EV").font(.system(size: 11, weight: .medium))
             Spacer()
             Button("归零") { m.change("片基微调") { $0.baseFine = nil } }.font(.system(size: 10))
+            InfoButton(text: "「取片基」只点未曝光的橙色片基（片间或片边），不点景物或片夹；「自动片基」按整卷片间的未曝光区或本张最薄处估计。\n\n微调按 EV 逐通道改变片基，不会被自动白平衡抵消。")
           }
           ForEach(0..<3, id: \.self) { channel in baseSlider(channel) }
           if let base = m.toneAnalysis?.base ?? m.settings.base ?? m.settings.rollBase {
@@ -282,9 +291,6 @@ struct ContentView: View {
             Text(m.settings.base != nil ? "片基来自手动取样" : m.settings.rollBase != nil ? "片基来自整卷片间未曝光区" : "片基按本张最薄的片区估计")
               .font(.system(size: 10)).foregroundStyle(.secondary)
           }
-          Text("微调不会被自动白平衡抵消。取样只选未曝光片基，不选景物或片夹。").font(.system(size: 10)).foregroundStyle(
-            .secondary
-          ).fixedSize(horizontal: false, vertical: true)
         }
         if m.singleView {
           Divider()
@@ -293,14 +299,13 @@ struct ContentView: View {
             Spacer()
             Button(m.tool == .crop ? "完成" : "微调") { m.useTool(m.tool == .crop ? .select : .crop) }
               .font(.system(size: 11))
+            InfoButton(text: m.selected?.scanPath != nil
+              ? "在原扫描范围内无损裁切。要扩大扫描区域，请回接触表调整画框并重扫。"
+              : "画框周围保留了片基，可在单张中细调裁切，不会跳回接触表。")
           }
           if m.tool == .crop, let crop = m.canvasCrop {
             ForEach(0..<4, id: \.self) { edge in cropStepper(edge, crop: crop) }
             Button("还原范围") { m.resetCrop() }.font(.system(size: 11))
-            Text(
-              m.selected?.scanPath != nil ? "原扫描范围内无损裁切；扩大扫描区域请回接触表调整并重扫。" : "保留周围片基供裁切；不会跳回接触表。"
-            ).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(
-              horizontal: false, vertical: true)
           }
         }
         Divider()
@@ -319,6 +324,7 @@ struct ContentView: View {
                 }
               })
           ).toggleStyle(LEDToggleStyle()).font(.system(size: 11))
+          InfoButton(text: "自动白平衡按画面估计，忽略外缘 5%（不改变导出范围）。「取中性灰」点画面中应为灰色的地方来校正，此时自动白平衡关闭；「重算白平衡」按当前设置重新估计。")
         }
         slider("冷暖", key: \.warmth, range: -1...1)
         slider("绿 / 洋红", key: \.tint, range: -1...1)
@@ -328,7 +334,6 @@ struct ContentView: View {
           Label("取中性灰", systemImage: CanvasTool.neutral.symbol)
         }.font(.system(size: 11))
         Button("重算白平衡") { m.recalculateWhiteBalance() }.font(.system(size: 11))
-        Text("自动调色忽略外缘 5%，不改变导出范围。").font(.system(size: 10)).foregroundStyle(.secondary)
         if m.settings.manualBalance != nil {
           Text("保留了旧版中性点；可点「重算白平衡」使用新版校正。").font(.system(size: 10)).foregroundStyle(accent)
             .fixedSize(horizontal: false, vertical: true)
@@ -338,17 +343,19 @@ struct ContentView: View {
           Text("色阶").font(.system(size: 12, weight: .medium))
           Spacer()
           Toggle("自动", isOn: bool(\.autoLevels)).toggleStyle(LEDToggleStyle()).font(.system(size: 11))
+          InfoButton(text: "自动：按画面的密度范围设定黑白两端。关闭后用黑点、白点和中间调手动设定。")
         }
         slider("黑点", key: \.black, range: 0...0.4)
         slider("白点", key: \.white, range: 0.6...1)
         slider("中间调", key: \.midtone, range: 0.4...2)
-        Text("自动：按画面的密度范围设定黑白两端。").font(.system(size: 10)).foregroundStyle(.secondary)
         Divider()
-        Text("影调").font(.system(size: 12, weight: .medium))
+        HStack {
+          Text("影调").font(.system(size: 12, weight: .medium))
+          Spacer()
+          InfoButton(text: "曝光像放大时的印放曝光一样调整密度，在裁切前生效；−EV 可以找回高光。")
+        }
         slider("曝光 · EV", key: \.exposure, range: -2...2, format: "%+.2f")
         slider("对比度", key: \.contrast, range: 0.5...1.6)
-        Text("曝光按印放曝光调整密度，在裁切前生效；−EV 可找回高光。").font(.system(size: 10))
-          .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         Divider()
         Text("色彩").font(.system(size: 12, weight: .medium))
         slider("饱和度", key: \.saturation, range: 0...1.8)
@@ -361,11 +368,14 @@ struct ContentView: View {
           histogram: m.histogram)
         Divider()
         sharpeningControl
-        DisclosureGroup("输入设置") {
+        DisclosureGroup {
           slider("输入 Gamma", key: \.inputGamma, range: 1...3)
-          Text("扫描编码未知时默认 2.2；线性扫描文件用 1.0。已反相的文件请关闭负片转换。").font(.system(size: 10)).foregroundStyle(
-            .secondary
-          ).fixedSize(horizontal: false, vertical: true)
+        } label: {
+          HStack {
+            Text("输入设置")
+            Spacer()
+            InfoButton(text: "本程序的 48-bit 扫描是线性的，输入 Gamma 为 1.0；编码未知的导入文件默认 2.2。已经反相的文件请关闭「负片去色罩 / 反相」。")
+          }
         }.font(.system(size: 11))
         Button {
           m.applyToRoll()
@@ -387,6 +397,9 @@ struct ContentView: View {
         if m.preferences.sharpening == nil {
           Text("未配置").font(.system(size: 10)).foregroundStyle(.secondary)
         }
+        InfoButton(text: m.preferences.sharpening == nil
+          ? "在「扫描」页的「扫描仪锐化」导入一张分辨率标靶的扫描，测出这台扫描仪的 MTF 后可用。"
+          : "按扫描仪实测的 MTF 在线性扫描数据上反卷积；默认温和，推到 0 关闭。导入的图像默认不锐化，它们可能来自其他扫描仪或相机。")
       }
       if m.preferences.sharpening != nil {
         VStack(spacing: 3) {
@@ -400,11 +413,6 @@ struct ContentView: View {
             value: Binding(get: { strength }, set: { v in m.change("锐化") { $0.sharpening = v } }),
             range: 0...1, detent: imported ? 0 : Sharpening.defaultStrength)
         }
-        Text(imported ? "导入的图像默认不锐化，它们可能来自其他扫描仪或相机。" : "按扫描仪实测 MTF 在线性扫描数据上反卷积；默认温和，推到 0 关闭。")
-          .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-      } else {
-        Text("在「设置 → 锐化」导入分辨率标靶扫描后可用。").font(.system(size: 10)).foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
       }
     }
   }

@@ -16,6 +16,7 @@ enum ExportCommand {
     }
     let url = URL(fileURLWithPath: path)
     let model = AppModel(libraryURL: url.deletingLastPathComponent())
+    model.readOnly = true
     model.loadProject(url)
     guard model.errorText == nil else {
       fputs("\(model.errorText!)\n", stderr)

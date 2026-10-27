@@ -19,6 +19,7 @@ enum RegressionTests {
     try LoupeTests.run(folder: folder)
     try WorkflowTests.run(folder: folder)
     try UsabilityTests.run(folder: folder)
+    try CanvasTests.run(folder: folder)
     let pipe = ImagePipeline.shared
     func check(_ value: Bool, _ label: String) throws {
       guard value else { throw DeskError.message("FAIL: " + label) }
