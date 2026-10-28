@@ -91,7 +91,7 @@ enum ContactSheetTests {
     let project = DeskProject(
       overviewPath: overviewURL.path, overviewDPI: 600, physicalWidthMM: 63.5, physicalHeightMM: 33.9,
       filmName: "Kodak Portra 160", profile: FilmProfile.builtins[0], scanDPI: 2400, frames: frames)
-    let projectURL = roll.appendingPathComponent("Session.filmdesk")
+    let projectURL = roll.appendingPathComponent("Session.epscan")
     try JSONEncoder().encode(project).write(to: projectURL)
     let model = AppModel(libraryURL: roll)
     model.loadProject(projectURL)

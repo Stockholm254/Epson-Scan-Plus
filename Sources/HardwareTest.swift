@@ -14,7 +14,7 @@ enum HardwareTest {
     let scanner: ScannerController = sane ? SaneScannerController() : ScannerController()
     // The SANE test runs with saved settings at their defaults, in a suite of its own and removed
     // afterwards, so it also covers the positives exported when the batch ends.
-    let suite = "local.filmdesk.mac.hardware-test"
+    let suite = "local.epscan.mac.hardware-test"
     let defaults = sane ? UserDefaults(suiteName: suite) : nil
     defaults?.removePersistentDomain(forName: suite)
     let model = AppModel(

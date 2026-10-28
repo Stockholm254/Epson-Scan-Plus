@@ -39,7 +39,7 @@ enum WorkflowTests {
         project.overviewFile = "overview.png"
         project.frames[0].scanFile = "Originals/01_scan.tiff"
       }
-      let url = dir.appendingPathComponent("Session.filmdesk")
+      let url = dir.appendingPathComponent("Session.epscan")
       try JSONEncoder().encode(project).write(to: url)
       return url
     }
@@ -116,13 +116,46 @@ enum WorkflowTests {
       let away = root.appendingPathComponent(name + "-elsewhere", isDirectory: true)
       try FileManager.default.moveItem(at: made.deletingLastPathComponent(), to: away)
       let opened = AppModel(libraryURL: root)
-      opened.loadProject(away.appendingPathComponent("Session.filmdesk"))
+      opened.loadProject(away.appendingPathComponent("Session.epscan"))
       let scan = opened.frames.first?.scanPath ?? ""
       let inside = scan.hasPrefix(away.resolvingSymlinksInPath().path) || scan.hasPrefix(away.path)
       try check(opened.errorText == nil && opened.overview != nil && inside,
         relative ? "a moved project finds its files by their relative names" : "an older moved project finds its files by name")
       try check(FileManager.default.fileExists(atPath: scan) && opened.status.contains("已移动"), "and says it was moved")
     }
+
+    // The name epscan: an older Session.filmdesk saves back to itself, new projects are
+    // Session.epscan, and the old settings come over once.
+    let older = try makeProject("older", relative: true)
+    let legacy = older.deletingLastPathComponent().appendingPathComponent("Session.filmdesk")
+    try FileManager.default.moveItem(at: older, to: legacy)
+    let reopened = AppModel(libraryURL: root)
+    reopened.loadProject(legacy)
+    reopened.saveProject()
+    let folderFiles = try FileManager.default.contentsOfDirectory(atPath: legacy.deletingLastPathComponent().path)
+    try check(reopened.errorText == nil && reopened.projectFileName == "Session.filmdesk" && !folderFiles.contains("Session.epscan"),
+      "a project from before the rename opens and saves back to its own Session.filmdesk")
+    let fresh = AppModel(libraryURL: root.appendingPathComponent("fresh-library"))
+    _ = try fresh.makeSession()
+    try check(fresh.projectFileName == "Session.epscan" && Preferences.defaultLibraryURL.lastPathComponent == "epscan"
+      && Preferences.legacyLibraryURL.lastPathComponent == "Film Desk",
+      "new projects are Session.epscan, in ~/Pictures/epscan; ~/Pictures/Film Desk is left as it is")
+    let oldDomain = "local.epscan.mac.migration-test-old", newSuite = "local.epscan.mac.migration-test-new"
+    UserDefaults.standard.removePersistentDomain(forName: oldDomain)
+    UserDefaults().removePersistentDomain(forName: newSuite)
+    UserDefaults.standard.setPersistentDomain(
+      ["libraryPath": "/Volumes/Film/Library", "jpegQuality": 0.9, "NSNavLastRootDirectory": "~/Desktop"], forName: oldDomain)
+    let target = UserDefaults(suiteName: newSuite)!
+    target.set(0.95, forKey: "jpegQuality")
+    Preferences.migrate(from: oldDomain, into: target)
+    let migrated = Preferences(defaults: target)
+    try check(migrated.libraryPath == "/Volumes/Film/Library" && migrated.jpegQuality == 0.95 && target.object(forKey: "NSNavLastRootDirectory") == nil,
+      "the old settings come over: a chosen library is kept, settings already made here win, window state stays behind")
+    UserDefaults.standard.setPersistentDomain(["libraryPath": "/elsewhere"], forName: oldDomain)
+    Preferences.migrate(from: oldDomain, into: target)
+    try check(Preferences(defaults: target).libraryPath == "/Volumes/Film/Library", "and only once")
+    UserDefaults.standard.removePersistentDomain(forName: oldDomain)
+    UserDefaults().removePersistentDomain(forName: newSuite)
 
     // Colour spaces: a red that the saturation control pushes beyond sRGB.
     var vivid = Adjustments()

@@ -242,7 +242,7 @@ enum RegressionTests {
       overviewPath: overviewURL.path, overviewDPI: 150, physicalWidthMM: 50.8,
       physicalHeightMM: 33.87, filmName: profile.name, profile: profile, scanDPI: 2400,
       frames: [contextFrame])
-    let projectURL = folder.appendingPathComponent("context.filmdesk")
+    let projectURL = folder.appendingPathComponent("context.epscan")
     try JSONEncoder().encode(project).write(to: projectURL)
     let editor = AppModel(libraryURL: folder)
     editor.loadProject(projectURL)
@@ -375,7 +375,7 @@ enum RegressionTests {
       DeskProject.self,
       from: Data(
         contentsOf:
-          previewModel.sessionURL!.appendingPathComponent("Session.filmdesk")))
+          previewModel.sessionURL!.appendingPathComponent("Session.epscan")))
     try check(
       savedDeselection.frames.allSatisfy { !$0.enabled }, "deselect all persists to the project")
     previewModel.setAllEnabled(true)
@@ -394,7 +394,7 @@ enum RegressionTests {
       DeskProject.self,
       from: Data(
         contentsOf:
-          previewModel.sessionURL!.appendingPathComponent("Session.filmdesk")))
+          previewModel.sessionURL!.appendingPathComponent("Session.epscan")))
     try check(
       savedSelection.frames.filter { !$0.enabled }.map(\.id) == [selectionBefore!],
       "current-frame selection persists to the project")

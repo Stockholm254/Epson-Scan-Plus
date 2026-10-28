@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 project_dir="$(cd "$(dirname "$0")" && pwd)"
-build_dir="${EPSON_SCAN_PLUS_BUILD_DIR:-${FILMDESK_BUILD_DIR:-$project_dir/.build}}"
-app_dir="${EPSON_SCAN_PLUS_APP_DIR:-${FILMDESK_APP_DIR:-$project_dir/../Epson Scan plus.app}}"
+build_dir="${EPSON_SCAN_PLUS_BUILD_DIR:-$project_dir/.build}"
+app_dir="${EPSON_SCAN_PLUS_APP_DIR:-$project_dir/../Epson Scan plus.app}"
 mkdir -p "$build_dir/module-cache" "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
 # Offline helper checks run first, so a cancel or watchdog regression never reaches the bundle.
 bash "$project_dir/ScannerHelper/test-fake-backend.sh"

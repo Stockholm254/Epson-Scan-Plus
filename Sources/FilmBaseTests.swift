@@ -91,7 +91,7 @@ enum FilmBaseTests {
         overviewPath: overviewURL.path, overviewDPI: 150, physicalWidthMM: 254, physicalHeightMM: 135.5,
         filmName: portra.name, profile: portra, scanDPI: 2400, frames: frames)
       p.scanBackendID = backend
-      let url = roll.appendingPathComponent("\(backend ?? "none").filmdesk")
+      let url = roll.appendingPathComponent("\(backend ?? "none").epscan")
       try JSONEncoder().encode(p).write(to: url)
       let model = AppModel(libraryURL: roll)
       model.loadProject(url)

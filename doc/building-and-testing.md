@@ -9,7 +9,7 @@ bash build.sh
 "../Epson Scan plus.app/Contents/MacOS/EpsonScanPlus" --self-test --test-output /tmp/EpsonScanPlus-tests
 ```
 
-可指定 `EPSON_SCAN_PLUS_BUILD_DIR` 与 `EPSON_SCAN_PLUS_APP_DIR`，旧的 `FILMDESK_BUILD_DIR` / `FILMDESK_APP_DIR` 仍可使用。当前构建目标为 arm64；无 npm、Python 或第三方 Swift 包依赖。`CIColorKernel(source:)` 在本机可运行，但属于 Apple 已弃用 API，后续应迁移为预编译 Metal 内核。
+可指定 `EPSON_SCAN_PLUS_BUILD_DIR` 与 `EPSON_SCAN_PLUS_APP_DIR`。当前构建目标为 arm64；无 npm、Python 或第三方 Swift 包依赖。`CIColorKernel(source:)` 在本机可运行，但属于 Apple 已弃用 API，后续应迁移为预编译 Metal 内核。
 
 自测可追加 `--overview /absolute/path/overview.png` 验证本次 18 格。下面的硬件测试会**实际驱动扫描仪**，以 48-bit 读取预览并扫描第 9 格（不足 9 格时取末格），检查采集精度、导出和整批结束后自动导出的正片，并报告整卷估计。它使用独立的临时设置，结束后删除。`--hardware-test` 是旧的 ICA 版本：
 
@@ -20,7 +20,7 @@ bash build.sh
 离线批量导出工程中已正式扫描/导入的画面，不调用扫描仪：
 
 ```sh
-"../Epson Scan plus.app/Contents/MacOS/EpsonScanPlus" --export-project /absolute/Session.filmdesk --output /absolute/export/directory --format tiff --color-space srgb
+"../Epson Scan plus.app/Contents/MacOS/EpsonScanPlus" --export-project /absolute/Session.epscan --output /absolute/export/directory --format tiff --color-space srgb
 ```
 
 `--rotation 0|1|2|3` 可在离线导出时覆盖方向，`--mirror` 启用水平镜像（均不改工程）。正常启动支持 `--library PATH`、`--project FILE` 或 `--image FILE`。
@@ -32,7 +32,7 @@ bash build.sh
 - 150 dpi 透扫预览 885 × 1455，自动识别三条 135 胶片，共 18 格。
 - 第 09 格 2400 dpi 正式扫描：2299 × 3483，每通道 8-bit。原始 TIFF 保留。
 - 完整转换并导出 TIFF 16-bit/通道、JPEG 8-bit/通道；另测了旋转后的尺寸与 DPI。
-- 同级 `FilmDesk Test Roll/2026-10-25_174913_6848/Final/` 是方向整理后的成片；`Exports/` 是旋转测试输出。工程保留 18 个裁切框，仅第 09 格已做正式扫描。
+- 同级 `epscan Test Roll/2026-10-25_174913_6848/Final/` 是方向整理后的成片；`Exports/` 是旋转测试输出。工程保留 18 个裁切框，仅第 09 格已做正式扫描。
 - 自动测试：坐标方向、裁切、正片直通、密度反相、旋转、TIFF 位深/DPI、JPEG、配置验证、工程读写、真实 18 格识别、120 的 6×4.5/6×6/6×7/6×9 合成样本。
 - 16-bit 输入的 1024 个不同灰阶经导出后仍有 1024 个，不是 8-bit 图扩展成 16-bit。
 - 0.2 回归：合成灰阶的通道偏色校正、片基微调不被自动算法抵消、中性点取样、四种旋转/镜像下坐标与实际像素对应、单张上下文稳定、16-bit 扫描后裁切/还原、越界重扫标记，以及旧工程读取。

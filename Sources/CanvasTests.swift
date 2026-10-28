@@ -73,7 +73,7 @@ enum CanvasTests {
     let project = DeskProject(
       overviewPath: overviewURL.path, overviewDPI: 150, physicalWidthMM: 135.5, physicalHeightMM: 254,
       filmName: "Kodak Portra 160", profile: FilmProfile.builtins[0], scanDPI: 2400, frames: frames)
-    let projectURL = roll.appendingPathComponent("turn.filmdesk")
+    let projectURL = roll.appendingPathComponent("turn.epscan")
     try JSONEncoder().encode(project).write(to: projectURL)
 
     // Opened only to read from, nothing it does writes the project back.

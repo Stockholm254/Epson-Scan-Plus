@@ -11,6 +11,7 @@ struct EpsonScanPlusApp: App {
     if args.contains("--hardware-test") { HardwareTest.run() }
     if args.contains("--sane-hardware-test") { HardwareTest.run(sane: true) }
     if args.contains("--export-project") { ExportCommand.run() }
+    Preferences.migrate(into: .standard)
     let preferences = Preferences(defaults: .standard)
     let library: URL
     if let i = args.firstIndex(of: "--library"), args.count > i + 1 {

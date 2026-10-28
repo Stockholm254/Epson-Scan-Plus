@@ -95,7 +95,7 @@ enum IT8Tests {
     let before = pipe.samples(try pipe.crop(scan, rect: NormalRect(x: 0.4, y: 0.4, width: 0.02, height: 0.02)), maxDimension: 10)
     let after = pipe.samples(try pipe.crop(cleaned, rect: NormalRect(x: 0.4, y: 0.4, width: 0.02, height: 0.02)), maxDimension: 10)
     try check(abs(Double(before.values[0] - after.values[0]) - calibration.offset.r) < 0.0005, "taking it out subtracts it from the raw reading")
-    let suite = "local.filmdesk.mac.it8-test"
+    let suite = "local.epscan.mac.it8-test"
     UserDefaults().removePersistentDomain(forName: suite)
     let saved = Preferences(defaults: UserDefaults(suiteName: suite)!)
     saved.scannerCalibration = calibration

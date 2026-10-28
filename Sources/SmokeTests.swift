@@ -8,7 +8,7 @@ enum SmokeTests {
       let pipe = ImagePipeline.shared
       let folder = URL(
         fileURLWithPath: CommandLine.arguments.drop(while: { $0 != "--test-output" }).dropFirst()
-          .first ?? NSTemporaryDirectory() + "FilmDesk-tests")
+          .first ?? NSTemporaryDirectory() + "epscan-tests")
       try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
       func check(_ success: Bool, _ message: String) throws {
         guard success else { throw DeskError.message("FAIL: " + message) }
@@ -218,7 +218,7 @@ enum SmokeTests {
           physicalHeightMM: 246.38, filmName: "Kodak Portra 160", profile: FilmProfile.builtins[0],
           scanDPI: 2400, frames: frames)
         let encoded = try enc.encode(project)
-        try encoded.write(to: folder.appendingPathComponent("Session.filmdesk"))
+        try encoded.write(to: folder.appendingPathComponent("Session.epscan"))
         let decoded = try JSONDecoder().decode(DeskProject.self, from: encoded)
         try check(
           decoded.frames.count == 18 && decoded.frames[0].rect == frames[0].rect,

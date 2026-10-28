@@ -79,7 +79,23 @@ enum ExportNaming {
 /// command-line exporter) they live only in memory and never touch the user's settings.
 final class Preferences: ObservableObject {
   static let defaultLibraryURL = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask)[0]
+    .appendingPathComponent("epscan")
+  /// Where versions before 0.4.9 kept their projects; left as it is, and still opened from.
+  static let legacyLibraryURL = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask)[0]
     .appendingPathComponent("Film Desk")
+  /// The settings of versions before 0.4.9, kept under their old identifier.
+  static let legacyDomain = "local.filmdesk.mac"
+  /// Brings settings over from `legacy` once: presets, calibrations, the chosen library and the
+  /// rest. Anything already set here wins; window and panel state is left behind.
+  static func migrate(from legacy: String = legacyDomain, into defaults: UserDefaults) {
+    let done = "migratedFrom." + legacy
+    guard !defaults.bool(forKey: done) else { return }
+    for (key, value) in UserDefaults.standard.persistentDomain(forName: legacy) ?? [:]
+    where !key.hasPrefix("NS") && defaults.object(forKey: key) == nil {
+      defaults.set(value, forKey: key)
+    }
+    defaults.set(true, forKey: done)
+  }
   private let defaults: UserDefaults?
   /// Where new previews and imports create their project folders; nil is the default library.
   @Published var libraryPath: String? { didSet { defaults?.set(libraryPath, forKey: "libraryPath") } }

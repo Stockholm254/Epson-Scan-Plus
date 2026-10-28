@@ -60,7 +60,7 @@ final class AppModel: ObservableObject {
   private var scanStarted: Date?
   private var cancelRequested = false
   private var revision = 0
-  private let renderQueue = DispatchQueue(label: "FilmDesk.render", qos: .userInitiated)
+  private let renderQueue = DispatchQueue(label: "epscan.render", qos: .userInitiated)
   private var renderWork: DispatchWorkItem?
   private var cancellables = Set<AnyCancellable>()
   private var quitAfterScan = false
@@ -282,8 +282,13 @@ final class AppModel: ObservableObject {
     sharpeningMessage = nil
     refresh()
   }
+  /// New projects save as `Session.epscan`; one opened from a file saves back to that file, so an
+  /// older `Session.filmdesk` is kept up to date rather than joined by a second copy.
+  static let projectFile = "Session.epscan"
+  private(set) var projectFileName = AppModel.projectFile
   func makeSession() throws -> URL {
     if let sessionURL { return sessionURL }
+    projectFileName = Self.projectFile
     let formatter = DateFormatter()
     formatter.dateFormat = "yyyy-MM-dd_HHmmss"
     let root = libraryURL.appendingPathComponent(
@@ -836,7 +841,7 @@ final class AppModel: ObservableObject {
   /// The open project read again, so every frame, the film base and the thumbnails take the
   /// calibration in or out.
   func reapplyScannerCalibration() {
-    guard let project = sessionURL?.appendingPathComponent("Session.filmdesk"), FileManager.default.fileExists(atPath: project.path)
+    guard let project = sessionURL?.appendingPathComponent(projectFileName), FileManager.default.fileExists(atPath: project.path)
     else { return }
     saveProject()
     let keep = selectedID
@@ -1579,14 +1584,17 @@ final class AppModel: ObservableObject {
       let e = JSONEncoder()
       e.outputFormatting = [.prettyPrinted, .sortedKeys]
       try e.encode(project).write(
-        to: root.appendingPathComponent("Session.filmdesk"), options: .atomic)
+        to: root.appendingPathComponent(projectFileName), options: .atomic)
     } catch { status = "工程保存失败：\(error.localizedDescription)" }
   }
   func openProject() {
     guard !isWorking else { return }
     let panel = NSOpenPanel()
     panel.allowedContentTypes = [.data]
-    panel.directoryURL = libraryURL
+    // Until this library has a project, the older one is where they are.
+    let fm = FileManager.default
+    panel.directoryURL = !fm.fileExists(atPath: libraryURL.path) && libraryURL == Preferences.defaultLibraryURL
+      && fm.fileExists(atPath: Preferences.legacyLibraryURL.path) ? Preferences.legacyLibraryURL : libraryURL
     guard panel.runModal() == .OK, let url = panel.url else { return }
     loadProject(url)
   }
@@ -1601,6 +1609,7 @@ final class AppModel: ObservableObject {
       let cg = overviewWorkingCopy(
         try ImagePipeline.shared.load(URL(fileURLWithPath: overviewPath), maxDimension: 2200), backend: p.scanBackendID)
       sessionURL = folder
+      projectFileName = url.lastPathComponent
       overviewURL = URL(fileURLWithPath: overviewPath)
       overview = cg
       frames = p.frames.map { saved in

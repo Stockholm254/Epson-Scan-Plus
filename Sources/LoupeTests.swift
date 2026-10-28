@@ -125,7 +125,7 @@ enum LoupeTests {
     let project = DeskProject(
       overviewPath: overviewURL.path, overviewDPI: 150, physicalWidthMM: 254, physicalHeightMM: 135.5,
       filmName: "Kodak Portra 160", profile: FilmProfile.builtins[0], scanDPI: 2400, frames: frames)
-    let projectURL = roll.appendingPathComponent("loupe.filmdesk")
+    let projectURL = roll.appendingPathComponent("loupe.epscan")
     try JSONEncoder().encode(project).write(to: projectURL)
     let model = AppModel(libraryURL: roll)
     model.loadProject(projectURL)
@@ -192,7 +192,7 @@ enum LoupeTests {
     window.close()
 
     // Settings.
-    let suite = "local.filmdesk.mac.loupe-test"
+    let suite = "local.epscan.mac.loupe-test"
     UserDefaults().removePersistentDomain(forName: suite)
     let defaults = UserDefaults(suiteName: suite)!
     let fresh = Preferences(defaults: defaults)
