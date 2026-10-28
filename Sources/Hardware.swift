@@ -132,11 +132,50 @@ struct LCDGlass: View {
   }
 }
 
+/// The system's Liquid Glass on macOS 26, found at run time: this app is built with an SDK from
+/// before it, but the system draws it all the same. Nil on earlier systems.
+enum SystemGlass {
+  static var viewClass: NSView.Type? { NSClassFromString("NSGlassEffectView") as? NSView.Type }
+}
+
+/// A pane of the system's Liquid Glass behind a plate: what lies under it shows through, lensed at
+/// its rim. It never takes the mouse.
+struct SystemGlassBackground: NSViewRepresentable {
+  var capsule: Bool
+  var radius: CGFloat
+  /// Darkens the glass a little, so light text stays legible over the bright light table.
+  var tint: NSColor
+  final class Host: NSView {
+    let glass: NSView?
+    var capsule = false, radius: CGFloat = 8
+    init() {
+      glass = SystemGlass.viewClass?.init(frame: .zero)
+      super.init(frame: .zero)
+      if let glass { addSubview(glass) }
+    }
+    required init?(coder: NSCoder) { nil }
+    override func layout() {
+      super.layout()
+      guard let glass else { return }
+      glass.frame = bounds
+      glass.setValue(Double(capsule ? bounds.height / 2 : radius), forKey: "cornerRadius")
+    }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+  }
+  func makeNSView(context: Context) -> Host { Host() }
+  func updateNSView(_ host: Host, context: Context) {
+    host.capsule = capsule
+    host.radius = radius
+    host.glass?.setValue(tint, forKey: "tintColor")
+    host.needsLayout = true
+  }
+}
+
 extension View {
   /// The plate under a control floating over the picture. Where the system has Liquid Glass
-  /// (macOS 26, built with its SDK) the picture shows through it and the system keeps the text
-  /// legible over the bright table and the dark surround alike; before, a dark translucent plate
-  /// with light text.
+  /// (macOS 26) the picture shows through it, lensed at its rim: with its SDK through SwiftUI,
+  /// which keeps the text legible by itself; built with an earlier one, the system's glass view
+  /// behind light text, a little darkened. Before macOS 26, a dark translucent plate.
   @ViewBuilder func floatingPlate<S: Shape>(_ shape: S, text: Color, opacity: Double) -> some View {
     #if compiler(>=6.2)
       if #available(macOS 26.0, *) {
@@ -145,7 +184,14 @@ extension View {
         foregroundStyle(text).background(.black.opacity(opacity), in: shape)
       }
     #else
-      foregroundStyle(text).background(.black.opacity(opacity), in: shape)
+      if SystemGlass.viewClass != nil {
+        foregroundStyle(text).background(
+          SystemGlassBackground(
+            capsule: shape is Capsule, radius: (shape as? RoundedRectangle)?.cornerSize.width ?? 8,
+            tint: NSColor(white: 0, alpha: opacity * 0.45)))
+      } else {
+        foregroundStyle(text).background(.black.opacity(opacity), in: shape)
+      }
     #endif
   }
   /// Amber segment-display text on dark glass.

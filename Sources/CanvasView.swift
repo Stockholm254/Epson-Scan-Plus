@@ -413,6 +413,7 @@ final class FilmCanvasView: NSView {
     guard let model else { return }
     let hidden = !model.preferences.showLoupe || model.displayed == nil
     loupe.style = model.preferences.loupeStyle
+    loupe.field = model.preferences.loupeField
     // A new view puts the loupe back on what it shows.
     if !hidden, loupeView != model.singleView {
       if loupeView != nil { storedLoupeCenter = nil }

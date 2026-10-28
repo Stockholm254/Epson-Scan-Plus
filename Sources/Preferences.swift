@@ -119,6 +119,8 @@ final class Preferences: ObservableObject {
   /// the loupe that lay beside the film by default now lies on it.
   @Published var showLoupe: Bool { didSet { defaults?.set(showLoupe, forKey: "loupeShown") } }
   @Published var loupeStyle: LoupeStyle { didSet { defaults?.set(loupeStyle.rawValue, forKey: "loupeStyle") } }
+  /// Looked into, filling a share of the canvas, or lying on the table at the film's scale.
+  @Published var loupeField: LoupeField { didSet { defaults?.set(loupeField.rawValue, forKey: "loupeField") } }
   /// The light table turns an upright holder a quarter turn, so the strips run across a wide window.
   @Published var contactLandscape: Bool { didSet { defaults?.set(contactLandscape, forKey: "contactLandscape") } }
   /// Side panel widths, as the user dragged them.
@@ -173,6 +175,7 @@ final class Preferences: ObservableObject {
     previewDPI = Self.previewResolutions.contains(dpi) ? dpi : 600
     showLoupe = defaults?.object(forKey: "loupeShown") as? Bool ?? false
     loupeStyle = defaults?.string(forKey: "loupeStyle").flatMap(LoupeStyle.init(rawValue:)) ?? .pentax
+    loupeField = defaults?.string(forKey: "loupeField").flatMap(LoupeField.init(rawValue:)) ?? .large
     contactLandscape = defaults?.object(forKey: "contactLandscape") as? Bool ?? true
     let left = defaults?.double(forKey: "leftWidth") ?? 0, right = defaults?.double(forKey: "rightWidth") ?? 0
     leftWidth = left > 0 ? min(Self.leftWidths.upperBound, max(Self.leftWidths.lowerBound, left)) : 230

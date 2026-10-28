@@ -84,7 +84,7 @@ enum LoupeTests {
     let lifted = Picture(renderer.render(frame: view, scale: 2, pose: pose(.pentax, lift: r * 0.12), scene: scene)!)
     try check(lifted.sharpest * 10 >= p.sharpest * 8 && abs(lifted.stripe - p.stripe) < 4,
       "picked up and moved, the loupe stays in focus and magnified: edges \(lifted.sharpest) against \(p.sharpest)")
-    // A wide field: full magnification on the axis, more of the picture towards the rim.
+    // Pincushion: full magnification on the axis, more towards the rim.
     var edge = scene
     edge.film = image(400, 300) { ctx in
       fill(ctx, CGRect(x: 0, y: 0, width: 400, height: 300), (0.1, 0.2, 0.8))
@@ -93,8 +93,42 @@ enum LoupeTests {
     let wide = Picture(renderer.render(frame: view, scale: 2, pose: pose(.pentax), scene: edge)!)
     var reached: CGFloat = 0
     for x in stride(from: 203.0, to: 240.0, by: 0.5) where reached == 0 && wide.at(CGFloat(x), 150)[1] > 150 { reached = CGFloat(x) }
-    try check(reached - 203 > 10 && reached - 203 < 4 * 5.5 * 0.95,
-      "the lens takes in a wide field: film 4 pt off the axis shows \(reached - 203) pt out, nearer than 5.5× would put it")
+    try check(reached - 203 > 4 * 5.5 * 1.02 && reached - 203 < 4 * 5.5 * 1.3,
+      "pincushion towards the rim: film 4 pt off the axis shows \(reached - 203) pt out, further than 5.5× alone would put it")
+    // Looking into the eyecup: the lens fills a large circle, magnified as much, with colour fringes at its rim.
+    let lensOnScreen: CGFloat = 120, lz = CGFloat(LoupeStyle.pentax.lens.z) * r
+    let s = lensOnScreen / (CGFloat(LoupeStyle.pentax.lens.radius) * r), close = lz * s / (s - 1)
+    let near = CGRect(x: centre.x - 130, y: centre.y - 130, width: 260, height: 260)
+    var dark = scene
+    dark.film = image(400, 300) { ctx in
+      fill(ctx, CGRect(x: 0, y: 0, width: 400, height: 300), (0, 0, 0))
+      fill(ctx, CGRect(x: 203 + 15, y: 0, width: 400, height: 300), (1, 1, 1))
+      fill(ctx, CGRect(x: 200, y: 0, width: 6, height: 300), (1, 1, 1))
+    }
+    let looked = renderer.render(frame: near, scale: 2, pose: pose(.pentax, eye: SIMD3(Float(centre.x), Float(centre.y), Float(close))), scene: dark)!
+    let bytes = [UInt8](looked.dataProvider!.data! as Data)
+    func px(_ x: CGFloat, _ y: CGFloat) -> [Int] {
+      let i = (Int((y - near.minY) * 2) * looked.width + Int((x - near.minX) * 2)) * 4
+      return (0..<4).map { Int(bytes[i + $0]) }
+    }
+    var stripe = 0.0, firstRed: CGFloat = 0, firstBlue: CGFloat = 0
+    for x in stride(from: centre.x - 60, to: centre.x + 60, by: 0.5) where px(x, centre.y)[1] > 150 && x < centre.x + 40 { stripe += 0.5 }
+    for x in stride(from: centre.x + 40, to: centre.x + 118, by: 0.5) {
+      let v = px(x, centre.y)
+      if firstRed == 0 && v[0] > 120 { firstRed = x }
+      if firstBlue == 0 && v[2] > 120 { firstBlue = x }
+    }
+    let rim = px(centre.x + lensOnScreen * 1.15, centre.y)
+    try check(abs(stripe - 33) < 5 && rim[3] == 255 && rim[0] < 70 && rim[1] < 70,
+      "looking into the eyecup the lens fills a \(Int(lensOnScreen)) pt circle, still 5.5× (stripe \(stripe) pt), the black eyecup around it (\(rim.prefix(3)))")
+    try check(firstRed > 0 && firstBlue > firstRed + 0.4,
+      "near the rim red and blue part a little: an edge shows in red \(firstBlue - firstRed) pt before blue")
+    // The glass rim over black film: lit on the side facing the softbox, up and to the left.
+    func luma(_ v: [Int]) -> Int { v[0] + v[1] + v[2] }
+    let d = lensOnScreen * 0.95 / 2.squareRoot()
+    let toward = px(centre.x - d, centre.y - d), away = px(centre.x - d, centre.y + d)
+    try check(luma(toward) > luma(away) + 40,
+      "the lens's glass rim catches the light on the side facing it: \(luma(toward)) against \(luma(away))")
     // Seen from the left, the top leans right: the stripe moves right of the base's centre.
     let oblique = Picture(renderer.render(frame: view, scale: 2, pose: pose(.pentax, eye: SIMD3(-500, 150, 3000)), scene: scene)!)
     var brightest = (x: CGFloat(0), v: 0)
@@ -156,6 +190,16 @@ enum LoupeTests {
     let first = canvas.screen(frames[0].rect.cg)
     try check(!loupe.isHidden && loupe.center == loupe.homeCenter && abs(loupe.center!.x - first.midX) < 1 && abs(loupe.center!.y - first.midY) < 1,
       "the loupe lies on the selected frame on the light table")
+    let side = min(canvas.bounds.width, canvas.bounds.height)
+    guard let looked = loupe.eyepiece else { throw DeskError.message("FAIL: the loupe is looked into") }
+    try check(model.preferences.loupeField == .large && abs(looked.lens - 0.32 * side) < 2 && loupe.frame.width > looked.lens * 2,
+      "looked into, its lens fills a large circle, \(Int(looked.lens)) pt in radius on a \(Int(side)) pt canvas, as a real loupe fills the view")
+    model.preferences.loupeField = .actual
+    canvas.updateLoupe()
+    try check(loupe.eyepiece == nil && abs(loupe.frame.width - (loupe.radius * 4.2).rounded()) <= 2,
+      "at the film's own scale it lies on the table, seen from afar, as before")
+    model.preferences.loupeField = .large
+    canvas.updateLoupe()
     let perMM = canvas.imageRect.height / 135.5
     try check(abs(loupe.radius - 24 * perMM) < 0.5 || loupe.radius == 44, "the loupe lies to the film's scale: \(Int(loupe.radius)) pt for a 48 mm base")
     let start = loupe.center!
@@ -228,11 +272,14 @@ enum LoupeTests {
     defaults.set(true, forKey: "showLoupe")
     try check(fresh.previewDPI == 600 && !fresh.showLoupe && fresh.loupeStyle == .pentax,
       "previews are 600 dpi and the Pentax loupe is put away until shown, whatever the old setting said")
+    try check(fresh.loupeField == .large, "and it is looked into with the large field")
     fresh.previewDPI = 150
     fresh.loupeStyle = .mamiya
     fresh.showLoupe = true
+    fresh.loupeField = .small
     let again = Preferences(defaults: defaults)
-    try check(again.previewDPI == 150 && again.loupeStyle == .mamiya && again.showLoupe, "preview resolution and the loupe are remembered")
+    try check(again.previewDPI == 150 && again.loupeStyle == .mamiya && again.showLoupe && again.loupeField == .small,
+      "preview resolution and the loupe are remembered")
     defaults.set(300, forKey: "previewDPI")
     try check(Preferences(defaults: defaults).previewDPI == 600, "an unoffered preview resolution falls back to 600 dpi")
     UserDefaults().removePersistentDomain(forName: suite)

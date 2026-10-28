@@ -12,6 +12,37 @@ enum LoupeStyle: String, CaseIterable {
   /// The top's height above the base, in base radii; the shader's profiles.
   var height: Double { self == .pentax ? 1.15 : 0.92 }
   var index: Int32 { self == .pentax ? 0 : 1 }
+  /// The eye lens's height and radius, in base radii, as the shader draws them.
+  var lens: (z: Double, radius: Double) { self == .pentax ? (1.04, 0.60) : (0.875, 0.67) }
+  /// Points round the outline, (radius, height) in base radii: how far it spreads under perspective.
+  var outline: [(r: Double, z: Double)] {
+    self == .pentax
+      ? [(1, 0), (0.93, 0.44), (0.875, 0.72), (0.86, 1.02), (0.77, 1.14)]
+      : [(1, 0), (0.95, 0.28), (0.915, 0.26), (0.745, 0.86), (0.765, 0.905)]
+  }
+}
+
+/// How the loupe is seen: with an eye at its eyecup, the lens filling a share of the canvas as a real
+/// loupe fills the view, or from afar, lying on the table at the film's own scale.
+enum LoupeField: String, CaseIterable {
+  case large, medium, small, actual
+  var title: String {
+    switch self {
+    case .large: return "大视场"
+    case .medium: return "中视场"
+    case .small: return "小视场"
+    case .actual: return "实物大小（放在灯箱上）"
+    }
+  }
+  /// The lens's radius on screen, as a share of the canvas's shorter side; nil for the film's scale.
+  var share: CGFloat? {
+    switch self {
+    case .large: return 0.32
+    case .medium: return 0.24
+    case .small: return 0.17
+    case .actual: return nil
+    }
+  }
 }
 
 /// Ray-marches a loupe standing on the light table: a clear acrylic skirt that lets the table's
@@ -305,17 +336,32 @@ final class LoupeRenderer {
       if (lens) {
         float3 p = ro + rd * tLens, world = base + p * R;
         float rho = length(p.xy) / lensR;
-        // The film under the axis, magnified, through a wide-field eyepiece: full magnification on
-        // the axis, the field widening towards the rim so the lens takes in more of the picture,
-        // with a little lateral colour there.
-        float2 offset = p.xy * R * (1.0 + 0.5 * rho * rho) / t.magnification;
+        // The film under the axis, magnified as a simple loupe magnifies it: more towards the rim,
+        // so straight lines bow outwards there (pincushion), and red and blue are magnified a
+        // little differently, fringing edges near the rim (lateral colour). Measured on screen from
+        // where the lens's centre is seen, so the picture is magnified as much however close the
+        // eye is to the eyecup.
+        float3 Lc = base + float3(0.0, 0.0, lensZ * R);
+        float2 axis = E.xy + (Lc.xy - E.xy) * (E.z / (E.z - Lc.z));
+        float rho2 = rho * rho;
+        float2 offset = (P - axis) * (1.0 - 0.10 * rho2 - 0.08 * rho2 * rho2) / t.magnification;
+        // A thick, liquid-glass rim: past 0.86 of the radius the picture is drawn in and stretched
+        // along the rim, never folded over, and the colours part a little more.
+        float bevel = smoothstep(0.86, 1.0, rho);
+        float drawn = rho - 0.6 * (rho - 0.86) * bevel;
+        offset *= drawn / max(rho, 1e-4);
         float lod = t.blur + 0.5 * smoothstep(0.7, 1.0, rho);
-        float spread = 1.0 + 0.008 * rho * rho;
+        float spread = 1.0 + 0.015 * rho2 + 0.03 * bevel;
         float3 c = float3(filmAt(table, film, detail, t, t.center + offset * spread, lod).r,
                           filmAt(table, film, detail, t, t.center + offset, lod).g,
                           filmAt(table, film, detail, t, t.center + offset / spread, lod).b);
-        c *= 0.95 * (1.0 - 0.25 * smoothstep(0.55, 1.0, rho));
-        c = mix(c, float3(0.004), smoothstep(0.93, 1.0, rho));
+        c *= 0.95 * (1.0 - 0.2 * smoothstep(0.55, 1.0, rho));
+        // The bevel catches the softbox on the side facing it, and a fainter glint opposite.
+        float2 outward = p.xy / max(length(p.xy), 1e-4);
+        float facing = dot(outward, normalize(kLight.xy));
+        float glint = bevel * bevel * (1.0 - smoothstep(0.975, 1.0, rho));
+        c += float3(1.0, 0.99, 0.97) * glint * (0.05 + 0.55 * pow(saturate(facing), 3.0) + 0.18 * pow(saturate(-facing), 4.0));
+        c = mix(c, float3(0.004), smoothstep(0.975, 1.0, rho));
         // A domed, coated eye lens.
         float3 n = normalize(float3(p.xy / lensR * 0.32, 1.0));
         float F = 0.012 + 0.988 * pow(1.0 - saturate(dot(n, V)), 5.0);
@@ -355,6 +401,9 @@ final class LoupeView: NSView {
   var style = LoupeStyle.pentax {
     didSet { if style != oldValue { layoutOnTable() } }
   }
+  var field = LoupeField.large {
+    didSet { if field != oldValue { layoutOnTable() } }
+  }
   /// The base's centre, in canvas points; on the selected frame until moved.
   private(set) var center: CGPoint?
   private(set) var lift: CGFloat = 0
@@ -369,9 +418,28 @@ final class LoupeView: NSView {
   override var acceptsFirstResponder: Bool { false }
 
   var radius: CGFloat { canvas?.loupeRadius(for: style) ?? 70 }
-  /// The viewer sits in front of the table, looking down: the loupe shows its front, more so
-  /// the further back it lies.
-  private var eye: SIMD3<Float> { canvas?.viewer ?? SIMD3(Float(bounds.midX), Float(bounds.maxY), Float(max(bounds.width, bounds.height) * 2)) }
+  /// Looking into the loupe: the eye on its axis just above the eyecup, as close as it takes for
+  /// the lens to fill the field's share of the canvas; the eyecup darkens the view around it, as
+  /// through a real loupe. How far the loupe spreads on screen, and the lens's radius there.
+  var eyepiece: (eye: SIMD3<Float>, extent: CGFloat, lens: CGFloat)? {
+    guard let canvas, let center, let share = field.share else { return nil }
+    let R = Double(radius), raised = Double(lift), lens = style.lens
+    let target = Double(share * min(canvas.bounds.width, canvas.bounds.height))
+    let lz = lens.z * R + raised, top = style.height * R + raised
+    var s = max(1.6, target / (lens.radius * R))
+    var z = lz * s / (s - 1)
+    if z < top * 1.06 {
+      z = top * 1.06
+      s = z / (z - lz)
+    }
+    let extent = style.outline.map { $0.r * R * z / (z - ($0.z * R + raised)) }.max()! * 1.06
+    return (SIMD3(Float(center.x), Float(center.y), Float(z)), CGFloat(extent), CGFloat(lens.radius * R * s))
+  }
+  /// The viewer looks into the eyecup; at the film's scale it sits in front of the table, looking
+  /// down, and the loupe shows its front, more so the further back it lies.
+  private var eye: SIMD3<Float> {
+    eyepiece?.eye ?? canvas?.viewer ?? SIMD3(Float(bounds.midX), Float(bounds.maxY), Float(max(bounds.width, bounds.height) * 2))
+  }
   /// Where it lies when shown: the middle of the selected frame, or of the picture.
   var homeCenter: CGPoint { canvas?.loupeHome ?? .zero }
 
@@ -390,9 +458,15 @@ final class LoupeView: NSView {
     c.x = min(max(c.x, glass.minX + r * 0.4), max(glass.minX + r * 0.4, glass.maxX - r * 0.4))
     c.y = min(max(c.y, glass.minY + r * 0.4), max(glass.minY + r * 0.4, glass.maxY - r * 0.4))
     center = c
-    // Room for the shadow and for the top leaning out under perspective.
-    let half = r * 2.1
-    frame = CGRect(x: c.x - half, y: c.y - half, width: half * 2, height: half * 2).integral
+    if let view = eyepiece {
+      // Only what shows on the canvas is drawn; the eyecup can spread past its edges.
+      let around = CGRect(x: c.x - view.extent, y: c.y - view.extent, width: view.extent * 2, height: view.extent * 2)
+      frame = around.intersection(canvas.bounds).integral
+    } else {
+      // Room for the shadow and for the top leaning out under perspective.
+      let half = r * 2.1
+      frame = CGRect(x: c.x - half, y: c.y - half, width: half * 2, height: half * 2).integral
+    }
   }
   /// The table or the film under the loupe changed.
   func setNeedsRender() {
@@ -407,8 +481,9 @@ final class LoupeView: NSView {
     guard let canvas, let center, !isHidden, bounds.width > 0 else { return }
     let pose = LoupeRenderer.Pose(
       style: style, center: center, radius: radius, lift: lift, eye: eye, magnification: canvas.loupeMagnification(for: style))
+    // While it is carried, one ray a pixel keeps up with the mouse; set down, it is antialiased.
     image = LoupeRenderer.shared.render(
-      frame: frame, scale: window?.backingScaleFactor ?? 2, pose: pose, scene: canvas.loupeScene())
+      frame: frame, scale: window?.backingScaleFactor ?? 2, pose: pose, scene: canvas.loupeScene(), samples: grab == nil ? 4 : 1)
     needsDisplay = true
   }
   override func draw(_ dirtyRect: NSRect) {
@@ -422,6 +497,7 @@ final class LoupeView: NSView {
   override func hitTest(_ point: NSPoint) -> NSView? {
     guard !isHidden, let center, let superview else { return nil }
     let p = superview.convert(point, to: canvas)
+    if let view = eyepiece { return hypot(p.x - center.x, p.y - center.y) < view.lens * 1.5 ? self : nil }
     let r = radius
     let e = eye, h = CGFloat(style.height) * r + lift
     let scale = CGFloat(e.z) / (CGFloat(e.z) - h)
@@ -430,7 +506,7 @@ final class LoupeView: NSView {
   }
   override func resetCursorRects() {
     guard let center else { return }
-    let r = radius
+    let r = eyepiece.map { $0.lens * 1.5 } ?? radius
     addCursorRect(convert(CGRect(x: center.x - r, y: center.y - r, width: 2 * r, height: 2 * r), from: canvas), cursor: .openHand)
   }
   override func mouseDown(with event: NSEvent) {
@@ -487,6 +563,14 @@ final class LoupeView: NSView {
       menu.addItem(item)
     }
     menu.addItem(.separator())
+    for f in LoupeField.allCases {
+      let item = NSMenuItem(title: f.title, action: #selector(chooseField(_:)), keyEquivalent: "")
+      item.target = self
+      item.representedObject = f.rawValue
+      item.state = f == field ? .on : .off
+      menu.addItem(item)
+    }
+    menu.addItem(.separator())
     let back = NSMenuItem(title: "移到所选画面中央", action: #selector(home), keyEquivalent: "")
     back.target = self
     menu.addItem(back)
@@ -498,6 +582,10 @@ final class LoupeView: NSView {
   @objc private func choose(_ item: NSMenuItem) {
     guard let raw = item.representedObject as? String, let s = LoupeStyle(rawValue: raw) else { return }
     canvas?.model?.preferences.loupeStyle = s
+  }
+  @objc private func chooseField(_ item: NSMenuItem) {
+    guard let raw = item.representedObject as? String, let f = LoupeField(rawValue: raw) else { return }
+    canvas?.model?.preferences.loupeField = f
   }
   @objc private func putAway() { canvas?.model?.toggleLoupe(false) }
 }

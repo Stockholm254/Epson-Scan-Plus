@@ -70,6 +70,11 @@ struct EpsonScanPlusApp: App {
         ) {
           ForEach(LoupeStyle.allCases, id: \.self) { Text($0.title).tag($0) }
         }
+        Picker(
+          "看片镜视场", selection: Binding(get: { model.preferences.loupeField }, set: { model.preferences.loupeField = $0 })
+        ) {
+          ForEach(LoupeField.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
         Button("顺时针旋转") { model.turn(clockwise: true) }.keyboardShortcut("r")
         Button("逆时针旋转") { model.turn(clockwise: false) }.keyboardShortcut(
           "r", modifiers: [.command, .shift])
