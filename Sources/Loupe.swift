@@ -461,7 +461,7 @@ final class LoupeRenderer {
         float drawn = rho - 0.3 * (rho - 0.93) * bevel;
         offset *= drawn / max(rho, 1e-4);
         float lod = t.blur + 0.5 * smoothstep(0.7, 1.0, rho);
-        float spread = 1.0 + 0.015 * rho2 + 0.03 * bevel;
+        float spread = 1.0 + 0.008 * rho2 + 0.006 * bevel;
         float3 c = float3(filmAt(table, film, detail, t, t.center + offset * spread, lod).r,
                           filmAt(table, film, detail, t, t.center + offset, lod).g,
                           filmAt(table, film, detail, t, t.center + offset / spread, lod).b);

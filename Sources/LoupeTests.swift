@@ -114,7 +114,7 @@ enum LoupeTests {
     var dark = scene
     dark.film = image(400, 300) { ctx in
       fill(ctx, CGRect(x: 0, y: 0, width: 400, height: 300), (0, 0, 0))
-      fill(ctx, CGRect(x: 203 + 15, y: 0, width: 400, height: 300), (1, 1, 1))
+      fill(ctx, CGRect(x: 203 + 18, y: 0, width: 400, height: 300), (1, 1, 1))
       fill(ctx, CGRect(x: 200, y: 0, width: 6, height: 300), (1, 1, 1))
     }
     var into = pose(.pentax, eye: SIMD3(Float(centre.x), Float(centre.y), Float(close)))
