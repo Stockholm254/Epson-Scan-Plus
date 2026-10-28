@@ -52,6 +52,8 @@ final class AppModel: ObservableObject {
   var pendingShift = [URL]()
   /// The camera's last picture as it arrived, RAW or JPEG, for checking focus.
   @Published var lastCapture: URL?
+  /// A note floating up over the live view for a moment: a picture filed, a group complete.
+  @Published var captureToast: String?
   @Published var profile = FilmProfile.builtins[0]
   @Published var profiles = FilmProfile.builtins
   @Published var status = "点击「预览」读取胶片"

@@ -201,6 +201,8 @@ final class CameraController: ObservableObject {
   @Published private(set) var properties = [String: CameraProperty]()
   @Published private(set) var focusResult: String?
   @Published private(set) var refining = false
+  /// Shots the camera has taken since connecting.
+  @Published private(set) var shots = 0
   @Published private(set) var log = [String]()
   /// Where the camera focuses, in the live view's normalised coordinates.
   @Published private(set) var focusPoint = CGPoint(x: 0.5, y: 0.5)
@@ -433,7 +435,11 @@ final class CameraController: ObservableObject {
       focusResult = result
       message = result == "focused" ? "已合焦" : result == "failed" ? "相机没能合焦" : "等待合焦超时"
     case "shot":
-      if event["ok"] as? Bool == false { message = "快门没有释放（\(event["code"] as? String ?? "")）" }
+      if event["ok"] as? Bool == false {
+        message = "快门没有释放（\(event["code"] as? String ?? "")）"
+      } else {
+        shots += 1
+      }
     case "downloaded":
       if let path = event["path"] as? String, !path.isEmpty { onCapture?(URL(fileURLWithPath: path)) }
     default: break

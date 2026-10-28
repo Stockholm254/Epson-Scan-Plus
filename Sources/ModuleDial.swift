@@ -1,9 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// The module selector: a knurled rotary switch whose pointer clicks round to ① 采集, ② 去色罩 or
-/// ③ 去漏光, each engraved beside its stop with a lamp over the one it is on. Click a name to go
-/// there, or the knob to turn it on to the next.
+/// The module selector: a knurled rotary switch under a glass cap, whose pointer clicks round to
+/// ① 采集, ② 去色罩 or ③ 去漏光, each engraved beside its stop with a lamp over the one it is on.
+/// Click a name to go there, or the knob to turn it on to the next.
 struct ModuleDial: View {
   @Binding var page: AppModel.Page
   /// The pointer's angle at each stop, in degrees from straight up.
@@ -33,6 +33,11 @@ struct ModuleDial: View {
         }
       }
     }
+    .padding(.horizontal, Hardware.glass ? 10 : 0).padding(.vertical, Hardware.glass ? 3 : 0)
+    .background {
+      // In the glass look the dial sits in a pane of glass, its lamps shining through.
+      if Hardware.glass { SystemGlassBackground(capsule: true, radius: 20, tint: NSColor(white: 0, alpha: 0.22)) }
+    }
     .accessibilityElement(children: .ignore)
     .accessibilityLabel("模块")
     .accessibilityValue("\(page.number) \(page.rawValue)")
@@ -60,6 +65,11 @@ struct ModuleDial: View {
           colors: [Color(white: 0.44), Color(white: 0.19)], center: UnitPoint(x: 0.35, y: 0.3), startRadius: 1, endRadius: 14))
         .frame(width: 21, height: 21)
         .overlay(Circle().stroke(Color.white.opacity(0.13), lineWidth: 0.5))
+      // A glass cap over it, catching the light from the top left.
+      Circle()
+        .fill(LinearGradient(colors: [.white.opacity(0.32), .white.opacity(0.04), .clear], startPoint: .topLeading, endPoint: .bottomTrailing))
+        .frame(width: 21, height: 21)
+      Ellipse().fill(Color.white.opacity(0.55)).frame(width: 7, height: 3.5).rotationEffect(.degrees(-30)).offset(x: -4.5, y: -5.5)
       Capsule().fill(Hardware.amber).frame(width: 2.2, height: 8).offset(y: -5.6)
         .shadow(color: Hardware.amber.opacity(0.6), radius: 2)
         .rotationEffect(.degrees(angle))

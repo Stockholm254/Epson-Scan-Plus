@@ -30,6 +30,7 @@ extension AppModel {
         pendingShift.append(dest)
         guard pendingShift.count >= pixelShiftCount else {
           status = "像素位移：已收到 \(pendingShift.count) / \(pixelShiftCount) 张"
+          toast("像素位移 \(pendingShift.count) / \(pixelShiftCount)")
           return
         }
         let first = pendingShift.sorted { $0.lastPathComponent < $1.lastPathComponent }[0]
@@ -105,11 +106,19 @@ extension AppModel {
     frames.append(f)
     selectedID = f.id
     status = "第 \(f.name) 张已入库：\(original.lastPathComponent)"
+    toast("第 \(f.name) 张已入库")
     updateRollBase()
     refresh()
     updateThumbnails()
     updateRollSlopes()
     saveProject()
+  }
+  /// Shows `text` over the live view for three seconds, unless another note takes its place.
+  func toast(_ text: String) {
+    captureToast = text
+    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+      if self?.captureToast == text { self?.captureToast = nil }
+    }
   }
   /// `url`, or the same name with a number added where a file already has it.
   static func unused(_ url: URL) -> URL {

@@ -1,67 +1,97 @@
 import AppKit
 import SwiftUI
 
-/// Module ①'s workspace with the camera: the live view on the copy stand's dark base, the focus
-/// box (click to move it), red, green and blue gels to look through one channel, a digital zoom
-/// about the box, and under it the focus controls (autofocus, the lens's Near/Far steps, a knurled
-/// focus ring, the app's own focus search) and the shutter. Beside it, the last picture at full
-/// resolution about the focus point, pixel for pixel, to check focus.
+/// Module ①'s workspace with the camera: the live view filling the copy stand's dark base, and
+/// floating over it on glass the gels, zoom and sharpness above and the focus controls and the
+/// shutter below. On the picture the focus box (click to move it) and a glass bubble magnifying
+/// what is under it. Beside it, on a glass pane, the last picture at full resolution about the
+/// focus point, pixel for pixel, to check focus.
 struct CameraStage: View {
   @ObservedObject var m: AppModel
   @ObservedObject var camera: CameraController
   @State private var zoom = 1
   @State private var ring: CGFloat = 0
+  @State private var magnifier = true
   var body: some View {
     HStack(spacing: 0) {
-      VStack(spacing: 0) {
-        HStack(spacing: 10) {
-          ChannelGels(channel: $m.channelView)
-          Picker("放大", selection: $zoom) {
-            Text("1×").tag(1)
-            Text("2×").tag(2)
-            Text("4×").tag(4)
-          }.pickerStyle(.segmented).labelsHidden().frame(width: 130).help("取景放大：按对焦框放大实时取景")
-          Spacer()
-          if let s = camera.sharpness {
-            Text(String(format: "清晰度 R %.1f  G %.1f  B %.1f", s.r * 1e4, s.g * 1e4, s.b * 1e4)).lcd(10)
-              .help("对焦框里的清晰度（拉普拉斯能量 × 10⁴）：越大越清楚，只在同一画面里前后比较")
-          }
-        }.padding(.horizontal, 16).padding(.vertical, 10)
-        GeometryReader { geo in
-          ZStack {
-            Color(red: 0.06, green: 0.06, blue: 0.065)
-            if let live = camera.live {
-              let shown = view(live)
-              let fit = fitted(CGSize(width: shown.width, height: shown.height), in: geo.size)
-              Image(decorative: shown, scale: 1).resizable().interpolation(zoom > 1 ? .none : .high)
-                .frame(width: fit.width, height: fit.height)
-                .overlay {
-                  if zoom == 1 {
-                    let b = camera.focusBox
-                    Rectangle().stroke(Hardware.amber, lineWidth: 1.5)
-                      .frame(width: b.width * fit.width, height: b.height * fit.width)
-                      .position(x: camera.focusPoint.x * fit.width, y: camera.focusPoint.y * fit.height)
-                  }
-                }
-                .contentShape(Rectangle())
-                .gesture(SpatialTapGesture().onEnded { tap in
-                  guard zoom == 1 else { return }
-                  camera.setFocusPoint(CGPoint(x: tap.location.x / fit.width, y: tap.location.y / fit.height))
-                })
-            } else {
-              VStack(spacing: 8) {
-                Image(systemName: "camera.viewfinder").font(.system(size: 34)).foregroundStyle(.secondary)
-                Text(camera.connected ? "等待实时取景…" : camera.phase == .missing ? "这份 App 没有带 Sony SDK" : "在左边连接相机")
-                  .font(.system(size: 13)).foregroundStyle(.secondary)
-              }
+      ZStack {
+        Color(red: 0.06, green: 0.06, blue: 0.065)
+        GeometryReader { geo in liveView(in: geo.size) }
+        VStack(spacing: 0) {
+          HStack(spacing: 10) {
+            ChannelGels(channel: $m.channelView)
+            Picker("放大", selection: $zoom) {
+              Text("1×").tag(1)
+              Text("2×").tag(2)
+              Text("4×").tag(4)
+            }.pickerStyle(.segmented).labelsHidden().frame(width: 120).help("取景放大：按对焦框放大整幅实时取景")
+            Button {
+              magnifier.toggle()
+            } label: {
+              Image(systemName: "magnifyingglass.circle").frame(width: 16)
+            }.buttonStyle(HardwareKeyStyle(latched: magnifier)).controlSize(.small)
+              .help(magnifier ? "收起对焦框上的玻璃放大镜" : "在对焦框上放一个放大 4 倍的玻璃放大镜")
+            Spacer(minLength: 8)
+            if let s = camera.sharpness {
+              Text(String(format: "清晰度 R %.1f  G %.1f  B %.1f", s.r * 1e4, s.g * 1e4, s.b * 1e4)).lcd(10)
+                .help("对焦框里的清晰度（拉普拉斯能量 × 10⁴）：越大越清楚，只在同一画面里前后比较")
             }
-          }.frame(width: geo.size.width, height: geo.size.height)
-        }
-        controls.padding(.horizontal, 16).padding(.vertical, 10)
+          }.padding(.horizontal, 10).padding(.vertical, 6).glassPane(radius: 20)
+            .padding(.horizontal, 12).padding(.top, 10)
+          Spacer()
+          if let toast = m.captureToast {
+            GlassToast(text: toast).transition(.move(edge: .bottom).combined(with: .opacity)).padding(.bottom, 8)
+          }
+          controls.padding(.horizontal, 12).padding(.vertical, 10).glassPane(radius: 18)
+            .padding(.horizontal, 12).padding(.bottom, 12)
+        }.animation(.spring(response: 0.35, dampingFraction: 0.8), value: m.captureToast)
       }
-      Divider()
-      FocusCheck(m: m, camera: camera).frame(width: 280)
+      FocusCheck(m: m, camera: camera).frame(width: 276).consolePanel().padding(8)
     }.background(Color(red: 0.105, green: 0.11, blue: 0.115))
+  }
+  /// The live frame fitted to the stage, under the bars as a picture lies under glass, with the
+  /// focus box and the glass bubble over it.
+  @ViewBuilder func liveView(in size: CGSize) -> some View {
+    if let live = camera.live {
+      let shown = view(live)
+      let fit = fitted(CGSize(width: shown.width, height: shown.height), in: size)
+      let at = CGPoint(x: camera.focusPoint.x * fit.width, y: camera.focusPoint.y * fit.height)
+      Image(decorative: shown, scale: 1).resizable().interpolation(zoom > 1 ? .none : .high)
+        .frame(width: fit.width, height: fit.height)
+        .overlay {
+          if zoom == 1 {
+            let b = camera.focusBox
+            Rectangle().stroke(Hardware.amber, lineWidth: 1.5)
+              .frame(width: b.width * fit.width, height: b.height * fit.width).position(at)
+          }
+        }
+        .overlay(alignment: .topLeading) {
+          if zoom == 1, magnifier,
+            let bubble = CropLens.magnifier(
+              shown, at: camera.focusPoint, box: nil, shownWidth: fit.width,
+              backing: NSScreen.main?.backingScaleFactor ?? 2)
+          {
+            let frame = CropLens.frame(for: at, in: CGRect(origin: .zero, size: fit).insetBy(dx: 6, dy: 6))
+            Image(decorative: bubble, scale: NSScreen.main?.backingScaleFactor ?? 2)
+              .frame(width: frame.width, height: frame.height)
+              .shadow(color: .black.opacity(0.5), radius: 14, y: 6)
+              .offset(x: frame.minX, y: frame.minY)
+              .allowsHitTesting(false)
+          }
+        }
+        .contentShape(Rectangle())
+        .gesture(SpatialTapGesture().onEnded { tap in
+          guard zoom == 1 else { return }
+          camera.setFocusPoint(CGPoint(x: tap.location.x / fit.width, y: tap.location.y / fit.height))
+        })
+        .frame(width: size.width, height: size.height)
+    } else {
+      VStack(spacing: 8) {
+        Image(systemName: "camera.viewfinder").font(.system(size: 34)).foregroundStyle(.secondary)
+        Text(camera.connected ? "等待实时取景…" : camera.phase == .missing ? "这份 App 没有带 Sony SDK" : "在左边连接相机")
+          .font(.system(size: 13)).foregroundStyle(.secondary)
+      }.frame(width: size.width, height: size.height)
+    }
   }
   /// The live frame as shown: zoomed about the focus point, through the chosen gel.
   func view(_ live: CGImage) -> CGImage {
@@ -75,7 +105,7 @@ struct CameraStage: View {
     return m.channelView.apply(image)
   }
   func fitted(_ size: CGSize, in box: CGSize) -> CGSize {
-    let k = min((box.width - 32) / max(1, size.width), (box.height - 32) / max(1, size.height))
+    let k = min((box.width - 24) / max(1, size.width), (box.height - 24) / max(1, size.height))
     return CGSize(width: size.width * k, height: size.height * k)
   }
   /// Focusing on one row, the shot on the next.
@@ -113,33 +143,32 @@ struct CameraStage: View {
       }.pickerStyle(.segmented).labelsHidden().frame(width: 190)
         .help("像素位移要先在相机上设好；这里只决定几张文件归成一组")
       Spacer()
-      Button {
-        camera.shoot()
-      } label: {
-        Label("拍摄", systemImage: "camera.shutter.button").frame(minWidth: 70)
-      }.buttonStyle(HardwareKeyStyle(prominent: true)).disabled(!camera.connected)
-        .keyboardShortcut(.space, modifiers: [])
+      ShutterKey(enabled: camera.connected, shots: camera.shots) { camera.shoot() }
     }
     }.buttonStyle(HardwareKeyStyle()).controlSize(.small).disabled(!camera.connected && camera.phase != .missing)
   }
 }
 
-/// Red, green and blue gels to slide over the picture: one shows that channel alone, in grey; a
-/// second click on it takes it away.
+/// Red, green and blue gels to slide over the picture, panes of tinted glass: one shows that
+/// channel alone, in grey, its gel lit; a second click on it takes it away.
 struct ChannelGels: View {
   @Binding var channel: ChannelView
   var body: some View {
     HStack(spacing: 4) {
       ForEach([ChannelView.r, .g, .b], id: \.self) { c in
-        let tint: Color = c == .r ? Color(red: 0.85, green: 0.3, blue: 0.27) : c == .g ? Color(red: 0.3, green: 0.66, blue: 0.36) : Color(red: 0.3, green: 0.5, blue: 0.85)
+        let tint: Color = c == .r ? Color(red: 0.88, green: 0.26, blue: 0.22) : c == .g ? Color(red: 0.25, green: 0.7, blue: 0.33) : Color(red: 0.25, green: 0.48, blue: 0.9)
+        let on = channel == c
         Button {
-          channel = channel == c ? .all : c
+          channel = on ? .all : c
         } label: {
           Text(c.rawValue).font(.system(size: 11, weight: .bold)).frame(width: 26, height: 20)
-            .background(RoundedRectangle(cornerRadius: 3).fill(tint.opacity(channel == c ? 0.95 : 0.35)))
-            .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.white.opacity(channel == c ? 0.6 : 0.15), lineWidth: 0.8))
-            .foregroundStyle(channel == c ? Color.white : Color(white: 0.85))
-        }.buttonStyle(.plain).help(channel == c ? "拿开滤色片，看全彩" : "只看 \(c.rawValue) 通道")
+            .tintedGlass(tint, strength: on ? 0.75 : 0.3, radius: 4)
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.white.opacity(on ? 0.65 : 0.15), lineWidth: 0.8))
+            .shadow(color: tint.opacity(on ? 0.7 : 0), radius: 5)
+            .foregroundStyle(on ? Color.white : Color(white: 0.85))
+            .offset(y: on ? -2 : 0)
+            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: on)
+        }.buttonStyle(.plain).help(on ? "拿开滤色片，看全彩" : "只看 \(c.rawValue) 通道")
       }
     }.accessibilityElement(children: .contain).accessibilityLabel("通道")
   }

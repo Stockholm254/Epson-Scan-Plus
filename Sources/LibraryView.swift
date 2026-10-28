@@ -20,6 +20,28 @@ struct LibrarySheet: View {
   }
   var body: some View {
     VStack(spacing: 0) {
+      if Hardware.glass {
+        ZStack(alignment: .top) {
+          drawer.safeAreaInset(edge: .top) { Color.clear.frame(height: 62) }
+          header.padding(.horizontal, 16).padding(.vertical, 9).glassPane(radius: 22).padding(.horizontal, 14).padding(.top, 10)
+        }
+      } else {
+        header.padding(.horizontal, 18).padding(.vertical, 12).background(Hardware.metal)
+        Divider()
+        drawer
+      }
+      HStack {
+        Text(m.libraryURL.path).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
+          .lineLimit(1).truncationMode(.middle)
+        Spacer()
+        Text("双击一页打开这一卷，进入 ② 去色罩；鼠标停在一格上可以放大看").font(.system(size: 10)).foregroundStyle(.secondary)
+      }.padding(.horizontal, 18).padding(.vertical, 8)
+    }
+    .frame(minWidth: 900, idealWidth: 1080, minHeight: 620, idealHeight: 760)
+    .background(Color(red: 0.135, green: 0.14, blue: 0.145)).preferredColorScheme(.dark).tint(Hardware.amber)
+    .onAppear { reload() }
+  }
+  var header: some View {
       HStack(spacing: 12) {
         Image(systemName: "archivebox").foregroundStyle(Hardware.amber)
         Text("库").font(.system(size: 16, weight: .semibold))
@@ -44,9 +66,10 @@ struct LibrarySheet: View {
           Image(systemName: "ellipsis.circle")
         }.menuStyle(.borderlessButton).fixedSize()
         Button("完成") { m.showLibrary = false }.keyboardShortcut(.cancelAction)
-      }.buttonStyle(HardwareKeyStyle()).controlSize(.regular).padding(.horizontal, 18).padding(.vertical, 12)
-        .background(Hardware.metal)
-      Divider()
+      }.buttonStyle(HardwareKeyStyle()).controlSize(.regular)
+  }
+  /// The drawer of sleeves.
+  var drawer: some View {
       ScrollView {
         if loaded && shown.isEmpty {
           VStack(spacing: 8) {
@@ -67,16 +90,6 @@ struct LibrarySheet: View {
           LinearGradient(colors: [.black.opacity(0.6), .clear], startPoint: .top, endPoint: .bottom).frame(height: 16)
         }
       }
-      HStack {
-        Text(m.libraryURL.path).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
-          .lineLimit(1).truncationMode(.middle)
-        Spacer()
-        Text("双击一页打开这一卷，进入 ② 去色罩").font(.system(size: 10)).foregroundStyle(.secondary)
-      }.padding(.horizontal, 18).padding(.vertical, 8)
-    }
-    .frame(minWidth: 900, idealWidth: 1080, minHeight: 620, idealHeight: 760)
-    .background(Color(red: 0.135, green: 0.14, blue: 0.145)).preferredColorScheme(.dark).tint(Hardware.amber)
-    .onAppear { reload() }
   }
   func reload() {
     let roots = m.libraryRoots
@@ -100,6 +113,9 @@ struct RollSleeve: View {
   let open: () -> Void
   @State private var pictures = [UUID: (image: CGImage, positive: Bool)]()
   @State private var hover = false
+  /// The pocket under the pointer, and the glass loupe over it.
+  @State private var hovered: UUID?
+  @State private var loupe: CGImage?
   static let perStrip = 6
   static let strips = 6
   private static let paper = Color(red: 0.93, green: 0.89, blue: 0.8)
@@ -176,6 +192,7 @@ struct RollSleeve: View {
             pocket(c < rows[r].count ? rows[r][c] : nil)
           }
         }.padding(2).background(Color.white.opacity(0.05))
+          .zIndex(rows[r].contains { $0.id == hovered } ? 10 : 0)
       }
       if entry.frames.count > shownFrames.count {
         Text("另有 \(entry.frames.count - shownFrames.count) 张").font(.system(size: 10)).foregroundStyle(.secondary)
@@ -187,13 +204,33 @@ struct RollSleeve: View {
         .allowsHitTesting(false)
     }
   }
+  /// A pocket of the strip; under the pointer, a glass loupe rises over it, enlarging the frame.
   func pocket(_ frame: RollEntry.Frame?) -> some View {
-    ZStack {
+    let under = frame != nil && hovered == frame?.id
+    return ZStack {
       Rectangle().fill(frame == nil ? Color.white.opacity(0.03) : Hardware.filmBase.opacity(0.85))
       if let frame, let picture = pictures[frame.id] {
         Image(decorative: picture.image, scale: 1).resizable().aspectRatio(contentMode: .fit)
       }
     }.aspectRatio(1.5, contentMode: .fit).clipped()
+      .overlay(alignment: .top) {
+        if under, let loupe {
+          Image(decorative: loupe, scale: 2).frame(width: 112, height: 112)
+            .shadow(color: .black.opacity(0.55), radius: 12, y: 6)
+            .offset(y: -118).allowsHitTesting(false)
+            .transition(.scale(scale: 0.7, anchor: .bottom).combined(with: .opacity))
+        }
+      }
+      .zIndex(under ? 10 : 0)
+      .onHover { inside in
+        guard let frame else { return }
+        if inside, let picture = pictures[frame.id] {
+          loupe = CropLens.loupe(picture.image)
+          withAnimation(.spring(response: 0.22, dampingFraction: 0.75)) { hovered = frame.id }
+        } else if hovered == frame.id {
+          withAnimation(.easeOut(duration: 0.12)) { hovered = nil }
+        }
+      }
   }
   var indexTab: some View {
     let color: Color = {

@@ -113,6 +113,14 @@ enum CameraTests {
     camera.onCapture = { arrived = $0 }
     camera.receive("{\"event\":\"downloaded\",\"path\":\"\(camFolder.path)/EPS00001.ARW\",\"type\":1}")
     try check(arrived?.lastPathComponent == "EPS00001.ARW", "a picture the camera sends is handed on")
+    camera.receive(#"{"event":"shot","ok":true,"code":"0x0","focus":"skipped"}"#)
+    camera.receive(#"{"event":"shot","ok":false,"code":"0x8402","focus":"skipped"}"#)
+    try check(camera.shots == 1 && camera.message.contains("快门没有释放"),
+      "each shot the camera takes flashes the shutter key once; a shutter that did not go says so")
+    let bubble = CropLens.magnifier(picture(320, 240), at: CGPoint(x: 0.5, y: 0.5), box: camera.focusBox, shownWidth: 520, backing: 2)
+    let loupe = CropLens.loupe(picture(160, 107))
+    try check(bubble?.width == 296 && loupe?.width == 224,
+      "the glass bubble over the live view and the library's loupe are drawn at the screen's resolution")
     camera.receive(#"{"event":"error","stage":"enum","code":"0x8000","message":"没有找到相机"}"#)
     try check(camera.phase == .failed && camera.message.contains("没有找到相机"), "a failure is shown as the process says it")
 
@@ -134,6 +142,7 @@ enum CameraTests {
       }
     }
     try capture("EPS00001.JPG")
+    try check(model.captureToast == "第 01 张已入库", "a filed picture says so over the live view for a moment")
     let root = model.sessionURL
     try check(model.rollSource == .camera && model.poolPictures && model.frames.count == 1 && model.frames[0].format == "翻拍"
       && model.frames[0].sourcePath?.hasPrefix(root?.appendingPathComponent("Captures").path ?? "-") == true

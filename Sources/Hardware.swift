@@ -13,8 +13,9 @@ enum Hardware {
   static let metal = LinearGradient(
     colors: [Color(white: 0.175), Color(white: 0.135)], startPoint: .top, endPoint: .bottom)
   /// The system draws Liquid Glass (macOS 26): the panels float as glass over the light table and
-  /// the keys, lamps and readouts take its look. Before, the scanner console.
-  static let glass = SystemGlass.viewClass != nil
+  /// the keys, lamps and readouts take its look. Before, the scanner console; also with
+  /// EPSON_SCAN_PLUS_NO_GLASS set, for screenshots, which cannot catch the system's glass.
+  static let glass = SystemGlass.viewClass != nil && ProcessInfo.processInfo.environment["EPSON_SCAN_PLUS_NO_GLASS"] == nil
 }
 
 /// A raised console key. `latched` holds it pressed in, for lamp toggles that are on.
