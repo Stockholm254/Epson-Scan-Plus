@@ -17,6 +17,7 @@ struct ScanCanvas: NSViewRepresentable {
     if view.cursorTool != model.tool {
       view.cursorTool = model.tool
       view.window?.invalidateCursorRects(for: view)
+      view.window?.invalidateCursorRects(for: view.loupe)
     }
     if view.lastViewportRevision != model.viewportRevision {
       view.pan = .zero
@@ -117,6 +118,7 @@ final class FilmCanvasView: NSView {
       guard !NSEdgeInsetsEqual(reserved, oldValue) else { return }
       clampPan()
       needsDisplay = true
+      window?.invalidateCursorRects(for: self)
       if !loupe.isHidden { loupe.layoutOnTable() }
     }
   }
@@ -158,12 +160,15 @@ final class FilmCanvasView: NSView {
   }
   override func resetCursorRects() {
     super.resetCursorRects()
-    if let cursor = samplingCursor { addCursorRect(bounds, cursor: cursor) }
+    // Only over the picture, and not under the panels and bars floating over the canvas.
+    let area = imageRect.intersection(openRect)
+    if let cursor = samplingCursor, !area.isEmpty { addCursorRect(area, cursor: cursor) }
   }
   /// The canvas between what floats over it.
   private var open: CGSize {
     CGSize(width: bounds.width - reserved.left - reserved.right, height: bounds.height - reserved.top - reserved.bottom)
   }
+  var openRect: CGRect { CGRect(x: reserved.left, y: reserved.top, width: max(0, open.width), height: max(0, open.height)) }
   func clampPan() {
     let r = imageRect
     let x = max(0, (r.width - open.width) / 2)
@@ -460,22 +465,31 @@ final class FilmCanvasView: NSView {
   /// point, and never under 2×; nil on the light table, where the loupe's field decides it.
   func loupeMagnification(for style: LoupeStyle) -> Double? {
     guard let model, model.singleView else { return nil }
-    let pixels = loupeDetail.map { Double($0.image.width) } ?? Double(shown?.width ?? 0)
+    // The frame's own picture once it is here, else the one shown; never another frame's.
+    let detail = loupeDetail.flatMap { $0.single && $0.id == model.selectedID && !model.editingSingle ? $0.image : nil }
+    let pixels = Double(detail?.width ?? shown?.width ?? 0)
     let perPoint = pixels / Double(max(1, imageRect.width))
     return min(style.magnification, max(2, perPoint * 1.5))
   }
-  /// Where the loupe first lies: the middle of the selected frame on the table, or of the picture.
+  /// The frame the loupe was put on: it stays there as the canvas changes, until it is shown
+  /// again, the view changes or it is put back on the selected frame.
+  var loupeHomeFrame: UUID?
+  /// Where the loupe first lies: the middle of its frame on the table, or of the picture.
   var loupeHome: CGPoint {
     let r = imageRect
     var c = CGPoint(x: r.midX, y: r.midY)
-    if let model, !model.singleView, let f = model.contactFrames.first(where: { $0.id == model.selectedID }) {
+    if let model, !model.singleView,
+      let f = model.contactFrames.first(where: { $0.id == (loupeHomeFrame ?? model.selectedID) })
+        ?? model.contactFrames.first(where: { $0.id == model.selectedID })
+    {
       let s = screen(f.rect.cg)
       c = CGPoint(x: s.midX, y: s.midY)
     }
     return CGPoint(x: min(max(c.x, bounds.minX), bounds.maxX), y: min(max(c.y, bounds.minY), bounds.maxY))
   }
   private var loupeView: Bool?
-  private var loupeWidth: CGFloat = 0
+  private var loupeShown = CGSize.zero
+  private var loupeTurn: QuarterTurn?
   func updateLoupe() {
     guard let model else { return }
     let hidden = !model.preferences.showLoupe || model.displayed == nil
@@ -485,15 +499,37 @@ final class FilmCanvasView: NSView {
     if !hidden, loupeView != model.singleView {
       if loupeView != nil { storedLoupeCenter = nil }
       loupeView = model.singleView
+      loupeHomeFrame = model.selectedID
       loupe.layoutOnTable()
     }
     if loupe.isHidden != hidden {
       loupe.isHidden = hidden
-      if !hidden { loupe.layoutOnTable() }
+      if !hidden {
+        loupeHomeFrame = model.selectedID
+        loupe.layoutOnTable()
+      } else {
+        // Put away, it keeps no full-resolution picture.
+        loupeDetail = nil
+        loupeDetailRequest = nil
+        loupeDetailStale = false
+        turnedLoupeDetail = nil
+        LoupeRenderer.shared.release()
+      }
     }
-    // Over the single frame the large field follows the picture's width, as it is zoomed.
-    if !hidden, model.singleView, abs(imageRect.width - loupeWidth) > 0.5 {
-      loupeWidth = imageRect.width
+    // The picture's size on screen sets the large field over the single frame, as it is zoomed,
+    // and the film's scale on the table; a table turned to lie across, or back, puts the loupe
+    // back on its frame.
+    if !hidden, !model.singleView, loupeTurn != turn {
+      if loupeTurn != nil {
+        storedLoupeCenter = nil
+        loupeHomeFrame = model.selectedID
+      }
+      loupeTurn = turn
+      loupeShown = .zero
+    }
+    let shownSize = imageRect.size
+    if !hidden, abs(shownSize.width - loupeShown.width) > 0.5 || abs(shownSize.height - loupeShown.height) > 0.5 {
+      loupeShown = shownSize
       loupe.layoutOnTable()
     }
     if !hidden { loupeMoved() }
@@ -645,8 +681,11 @@ final class FilmCanvasView: NSView {
     return turned
   }
   private var loupeDetailRequest: String?
+  private var loupeDetailStale = false
   /// Fetches the frame under the loupe at its own resolution, once per change to it: on the
-  /// table the frame it lies on, over the single frame that frame at full resolution.
+  /// table the frame it lies on, over the single frame that frame at full resolution. One at a
+  /// time: while one renders, newer changes only mark it stale, and the newest is asked for when
+  /// it is back, so a dragged fader does not queue a full-resolution render for every step.
   func loupeMoved() {
     guard let model, let center = loupe.center, imageRect.contains(center) else { return }
     let single = model.singleView
@@ -660,13 +699,22 @@ final class FilmCanvasView: NSView {
     guard let frame = found else { return }
     let key = model.loupeDetailKey(frame, single: single)
     guard key != loupeDetailRequest, key != loupeDetail?.key else { return }
+    if loupeDetailRequest != nil {
+      loupeDetailStale = true
+      return
+    }
     loupeDetailRequest = key
+    loupeDetailStale = false
     let positive = single ? !model.showNegative : model.contactPositive
     model.loupeDetail(for: frame, single: single) { [weak self] image in
       guard let self, self.loupeDetailRequest == key else { return }
       self.loupeDetailRequest = nil
       self.loupeDetail = image.map { (key, frame.id, frame.rect, positive, single, $0) }
       self.loupe.setNeedsRender()
+      if self.loupeDetailStale {
+        self.loupeDetailStale = false
+        self.loupeMoved()
+      }
     }
   }
   override func mouseDown(with event: NSEvent) {
@@ -674,8 +722,8 @@ final class FilmCanvasView: NSView {
     guard let model, model.displayed != nil, !model.rendering else { return }
     let p = convert(event.locationInWindow, from: nil)
     guard bounds.contains(p), imageRect.contains(p) else { return }
-    if model.tool == .base || model.tool == .neutral || model.tool == .calibrate || model.tool == .it8 {
-      model.sample(normal(p))
+    if model.tool.picksPoint {
+      sample(at: p)
       return
     }
     if model.singleView {
@@ -794,8 +842,14 @@ final class FilmCanvasView: NSView {
     needsDisplay = true
   }
   /// The light table always shows the whole roll; only the single frame zooms.
+  /// A sampler's click on a point of the picture: on the canvas, or through the loupe's lens.
+  func sample(at p: CGPoint) {
+    guard let model, model.displayed != nil, !model.rendering, model.tool.picksPoint, imageRect.contains(p) else { return }
+    model.sample(normal(p))
+  }
   func setZoom(_ zoom: Double, anchor: CGPoint) {
     guard model?.singleView == true else { return }
+    defer { window?.invalidateCursorRects(for: self) }
     let old = imageRect
     guard old.width > 0, old.height > 0 else { return }
     let n = CGPoint(x: (anchor.x - old.minX) / old.width, y: (anchor.y - old.minY) / old.height)

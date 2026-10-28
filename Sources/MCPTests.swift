@@ -64,6 +64,10 @@ enum MCPTests {
     let picked = call("pick_neutral", ["x": 0.5, "y": 0.5])
     try check(!picked.isError && model.settings.neutralSample != nil && model.settings.autoWhiteBalance,
       "pick_neutral white-balances on a point, auto white balance staying on")
+    let pickedGrey = model.settings.neutralSample
+    try check(!call("adjust", ["exposure": 0.1, "auto_white_balance": true]).isError && model.settings.neutralSample == pickedGrey,
+      "asking for auto white balance when it is already on keeps the neutral pick")
+    _ = call("undo")
     // On the generic preset auto goes on fitting each channel's contrast; the picked point still comes out grey.
     if let generic = FilmProfile.builtins.first(where: { $0.id == "generic" }) {
       model.chooseProfile(generic)

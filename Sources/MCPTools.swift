@@ -267,8 +267,12 @@ enum MCPTools {
         model.change("AI 调整") { a in
           for (key, v) in values { a[keyPath: key] = v }
           if let b = arguments["auto_white_balance"] as? Bool {
+            // Turned on from off it starts over from the picture; already on, a neutral pick stays.
+            if b && !a.autoWhiteBalance {
+              a.neutralSample = nil
+              a.manualBalance = nil
+            }
             a.autoWhiteBalance = b
-            if b { a.neutralSample = nil; a.manualBalance = nil }
           }
           if let b = arguments["auto_levels"] as? Bool { a.autoLevels = b }
           if let fine { a.baseFine = fine }

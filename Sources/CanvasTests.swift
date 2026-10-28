@@ -138,6 +138,18 @@ enum CanvasTests {
       "the loupe keeps the film's scale on the turned table")
     canvas.setZoom(3, anchor: CGPoint(x: canvas.bounds.midX, y: canvas.bounds.midY))
     try check(model.zoom == 1, "the light table does not zoom: it always shows the whole roll")
+    // The table turned to lie across, or back: the loupe goes back on its frame at the new scale.
+    model.toggleLoupe(true)
+    canvas.updateLoupe()
+    model.preferences.contactLandscape = false
+    canvas.updateLoupe()
+    let selectedBox = model.contactFrames.first { $0.id == model.selectedID }.map { canvas.screen($0.rect.cg) } ?? .zero
+    try check(canvas.loupe.center.map { selectedBox.contains($0) } == true && canvas.loupe.center == canvas.loupe.homeCenter,
+      "when the table turns upright, the loupe goes back on its frame")
+    model.preferences.contactLandscape = true
+    canvas.updateLoupe()
+    model.toggleLoupe(false)
+    canvas.updateLoupe()
     for i in model.frames.indices { model.frames[i].adjustments.rotation = i == 0 ? 1 : 3 }
     try check(model.contactTurn == 3, "turned the way most frames are turned, so they stand upright")
     model.preferences.contactLandscape = false

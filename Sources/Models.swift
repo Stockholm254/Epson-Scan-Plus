@@ -303,6 +303,9 @@ enum CanvasTool: String, CaseIterable {
   case calibrate = "标定中性点"
   case it8 = "IT8 色卡"
 
+  /// The tools a click reads a point of the picture with.
+  var picksPoint: Bool { self == .base || self == .neutral || self == .calibrate || self == .it8 }
+
   /// Each tool's SF Symbol. The two samplers differ in glyph and carry a label as well: the
   /// film base is the orange mask, the neutral a grey in the picture.
   var symbol: String {

@@ -153,6 +153,8 @@ final class LoupeRenderer {
     return (queue, pipeline)
   }()
   private let textures = TextureCache()
+  /// Lets go of the pictures kept on the GPU, while no loupe is shown.
+  func release() { textures.purge() }
   private lazy var blank: MTLTexture? = gpu.flatMap { textures.texture(for: nil, slot: -1, queue: $0.queue) }
 
   /// The loupe and its shadow over `frame` (canvas points) at `scale` pixels per point; nil without Metal.
@@ -599,7 +601,9 @@ final class LoupeView: NSView {
     // Until the canvas has a size there is no glass to lie on.
     guard let canvas, canvas.bounds.width > LightTable.glassInset * 4, canvas.bounds.height > LightTable.glassInset * 4
     else { return }
-    let glass = LightTable.glassRect(in: canvas.bounds), r = radius
+    // On the glass between the panels and bars floating over the canvas, never under them.
+    let table = LightTable.glassRect(in: canvas.bounds), between = table.intersection(canvas.openRect)
+    let glass = between.width > radius && between.height > radius ? between : table, r = radius
     // Where it was put, kept as a fraction of the canvas; until then on the selected frame.
     var c = canvas.storedLoupeCenter ?? homeCenter
     c.x = min(max(c.x, glass.minX + r * 0.4), max(glass.minX + r * 0.4, glass.maxX - r * 0.4))
@@ -656,11 +660,29 @@ final class LoupeView: NSView {
   override func resetCursorRects() {
     guard let center else { return }
     let r = eyepiece.map { $0.lens * Self.rim } ?? radius
-    addCursorRect(convert(CGRect(x: center.x - r, y: center.y - r, width: 2 * r, height: 2 * r), from: canvas), cursor: .openHand)
+    // With a sampler the lens picks what it shows; the rim still carries the loupe.
+    let cursor = eyepiece != nil ? canvas?.samplingCursor ?? .openHand : .openHand
+    addCursorRect(convert(CGRect(x: center.x - r, y: center.y - r, width: 2 * r, height: 2 * r), from: canvas), cursor: cursor)
+  }
+  /// The point of the picture the lens shows at `p` (canvas points) when looked into: the
+  /// shader's mapping, so a sampler picks through the loupe what it sees magnified there. Nil off
+  /// the lens, and at the film's own scale.
+  func pictureThroughLens(_ p: CGPoint) -> CGPoint? {
+    guard let view = eyepiece, let center else { return nil }
+    let d = CGPoint(x: p.x - center.x, y: p.y - center.y), rho = Double(hypot(d.x, d.y) / max(1, view.lens))
+    guard rho < 0.975 else { return nil }
+    let x = min(1, max(0, (rho - 0.93) / 0.07)), edge = x * x * (3 - 2 * x)
+    let drawn = rho - 0.3 * (rho - 0.93) * edge
+    let k = CGFloat((1 - style.pincushion * rho * rho) / (magnification ?? style.magnification) * (rho > 1e-4 ? drawn / rho : 1))
+    return CGPoint(x: center.x + d.x * k, y: center.y + d.y * k)
   }
   override func mouseDown(with event: NSEvent) {
     guard let canvas, let center else { return }
     let p = canvas.convert(event.locationInWindow, from: nil)
+    if canvas.model?.tool.picksPoint == true, let q = pictureThroughLens(p) {
+      canvas.sample(at: q)
+      return
+    }
     grab = CGPoint(x: p.x - center.x, y: p.y - center.y)
     NSCursor.closedHand.push()
     animateLift(to: radius * 0.1)
@@ -683,6 +705,7 @@ final class LoupeView: NSView {
   /// Back on the selected frame.
   @objc func home() {
     canvas?.storedLoupeCenter = nil
+    canvas?.loupeHomeFrame = canvas?.model?.selectedID
     moved()
   }
   private func moved() {

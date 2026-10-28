@@ -199,7 +199,10 @@ struct SystemGlassBackground: NSViewRepresentable {
       super.layout()
       guard let glass else { return }
       glass.frame = bounds
-      glass.setValue(Double(capsule ? bounds.height / 2 : radius), forKey: "cornerRadius")
+      // Found by name at run time: only what this system's class answers to is set.
+      if glass.responds(to: NSSelectorFromString("setCornerRadius:")) {
+        glass.setValue(Double(capsule ? bounds.height / 2 : radius), forKey: "cornerRadius")
+      }
     }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
   }
@@ -207,7 +210,7 @@ struct SystemGlassBackground: NSViewRepresentable {
   func updateNSView(_ host: Host, context: Context) {
     host.capsule = capsule
     host.radius = radius
-    host.glass?.setValue(tint, forKey: "tintColor")
+    if let glass = host.glass, glass.responds(to: NSSelectorFromString("setTintColor:")) { glass.setValue(tint, forKey: "tintColor") }
     host.needsLayout = true
   }
 }

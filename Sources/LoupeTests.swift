@@ -294,6 +294,13 @@ enum LoupeTests {
     try check(loupe.center == loupe.homeCenter && model.loupeCenter == nil, "its menu puts the loupe back on the selected frame")
     canvas.setFrameSize(NSSize(width: 1000, height: 640))
     try check(loupe.center == loupe.homeCenter, "where it stays when the window changes size")
+    model.select(frames[2].id)
+    canvas.setFrameSize(NSSize(width: 990, height: 636))
+    let ownFrame = canvas.screen(model.frames[1].rect.cg)
+    try check(abs(loupe.center!.x - ownFrame.midX) < 1 && abs(loupe.center!.y - ownFrame.midY) < 1,
+      "with another frame selected, the loupe stays on its own frame as the window changes")
+    canvas.setFrameSize(NSSize(width: 1000, height: 640))
+    model.select(frames[1].id)
     let small = loupe.radius
     model.preferences.loupeStyle = .mamiya
     canvas.updateLoupe()
@@ -326,6 +333,19 @@ enum LoupeTests {
     let single = canvas.loupeScene(), magnification = canvas.loupeMagnification(for: loupe.style) ?? 0
     try check(single.detail != nil && single.detailRect == canvas.imageRect && magnification >= 2 && magnification <= loupe.style.magnification,
       String(format: "it reads the frame at full resolution, magnified %.1f×, no further than its pixels allow", magnification))
+    // A sampler picks through the lens the point it shows there, magnified; the loupe stays put.
+    let lensCentre = loupe.center!, off = CGPoint(x: lensCentre.x + (loupe.eyepiece?.lens ?? 0) * 0.5, y: lensCentre.y)
+    let through = loupe.pictureThroughLens(off), shrink = (1 - loupe.style.pincushion * 0.25) / (loupe.magnification ?? 1)
+    try check(loupe.pictureThroughLens(lensCentre) == lensCentre && through.map { abs($0.x - (lensCentre.x + (off.x - lensCentre.x) * shrink)) < 0.01 } == true,
+      "the lens shows at each point the picture's point its shader maps there")
+    model.useTool(.neutral)
+    for _ in 0..<40 where model.rendering { settle(0.1) }
+    let unpicked = model.settings.neutralSample
+    loupe.mouseDown(with: event(.leftMouseDown, off))
+    loupe.mouseUp(with: event(.leftMouseUp, off))
+    try check(loupe.center == lensCentre && model.settings.neutralSample != nil && model.settings.neutralSample != unpicked,
+      "with the neutral sampler a click on the lens picks the point it shows, and leaves the loupe where it is")
+    model.useTool(.select)
     model.singleView = false
     model.toggleLoupe(false)
     canvas.updateLoupe()

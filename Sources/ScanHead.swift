@@ -34,6 +34,8 @@ final class TextureCache {
     if let image, slot >= 0 { kept[slot] = (image, texture) }
     return texture
   }
+  /// Lets go of every kept texture.
+  func purge() { kept.removeAll() }
   /// A finished premultiplied sRGB output texture as an image.
   static func image(_ output: MTLTexture) -> CGImage? {
     let w = output.width, h = output.height
