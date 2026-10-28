@@ -133,6 +133,21 @@ struct LCDGlass: View {
 }
 
 extension View {
+  /// The plate under a control floating over the picture. Where the system has Liquid Glass
+  /// (macOS 26, built with its SDK) the picture shows through it and the system keeps the text
+  /// legible over the bright table and the dark surround alike; before, a dark translucent plate
+  /// with light text.
+  @ViewBuilder func floatingPlate<S: Shape>(_ shape: S, text: Color, opacity: Double) -> some View {
+    #if compiler(>=6.2)
+      if #available(macOS 26.0, *) {
+        glassEffect(.regular, in: shape)
+      } else {
+        foregroundStyle(text).background(.black.opacity(opacity), in: shape)
+      }
+    #else
+      foregroundStyle(text).background(.black.opacity(opacity), in: shape)
+    #endif
+  }
   /// Amber segment-display text on dark glass.
   func lcd(_ fontSize: CGFloat = 10) -> some View {
     font(.system(size: fontSize, weight: .medium, design: .monospaced))

@@ -175,9 +175,8 @@ struct ContentView: View {
                 frame.needsRescan
                   ? "裁切超出原扫描 · 需重扫"
                   : m.overviewDPI >= 600 ? "\(Int(m.overviewDPI)) dpi 预览 · 正式扫描后更清晰" : "低清预览 · 正式扫描后查看细节"
-              ).font(.system(size: 11))
-                .padding(7).background(.black.opacity(0.65), in: RoundedRectangle(cornerRadius: 5))
-                .foregroundStyle(accent)
+              ).font(.system(size: 11)).foregroundStyle(accent)
+                .padding(7).floatingPlate(RoundedRectangle(cornerRadius: 5), text: accent, opacity: 0.65)
             }
           }.padding(12).allowsHitTesting(false)
         }
@@ -185,9 +184,9 @@ struct ContentView: View {
           HStack(spacing: 6) {
             Image(systemName: m.tool.symbol).foregroundStyle(accent)
             Text(hint)
-          }.font(.system(size: 11)).foregroundStyle(Color(white: 0.92))
+          }.font(.system(size: 11))
             .padding(.horizontal, 11).padding(.vertical, 6)
-            .background(.black.opacity(0.72), in: Capsule())
+            .floatingPlate(Capsule(), text: Color(white: 0.92), opacity: 0.72)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom).padding(14)
             .allowsHitTesting(false).accessibilityLabel("工具提示")
         }
