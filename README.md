@@ -53,6 +53,7 @@
   - 胶片名称与预设；「转换依据」说明当前斜率来自本机预设、整卷估计还是数据表。
   - 本机预设标定：取中性点，生成 V850 预设，带步骤提示；中性点深入暗部时同时标定暗部趾部。
   - 本机预设的使用、导出、删除和导入。
+  - AI 助手（MCP）：允许助手读取和调整转换，并复制连接配置（见下文）。
 - **输出**：
   - 导出格式与 JPEG 质量、色彩空间、文件名模板，导出当前 / 勾选，扫描后自动导出正片。
   - 接触表排列（胶片条或网格、每条张数、背景、方向、片号、标题）与导出。
@@ -74,6 +75,18 @@
 ![左：Pentax 式 5.5×；右：Mamiya 式 4×](doc/images/loupes.jpg)
 
 两种型号都按胶片的实际比例绘制，放大倍率相对屏幕上的灯箱。由 Metal 逐像素光线步进渲染：透明底座透出并折射下面的胶片，黑色机身映出上方的柔光箱和下面发亮的灯箱，镜片带镀膜反光。视点在灯箱前方，看片镜离画面中心越远，越能看到它的侧面。
+
+## AI 助手（MCP）
+
+Epson Scan plus 可以作为 [MCP](https://modelcontextprotocol.io) 服务器，让 Claude 等 AI 助手帮你看转换：读取选中画面的片基与来源、胶片的通道斜率、整卷估计、白平衡、色阶、负片密度和正片的直方图，看预览、在画面上取点，并调整片基、中性灰、冷暖、曝光、色阶等。每次调整都是 App 里的一步编辑，可以用 ⌘Z 撤销；助手不能扫描、删除或导出文件。
+
+1. 在「胶片」页的「AI 助手 · MCP」打开「允许 AI 助手读取和调整转换」（默认关闭）。
+2. 连接助手：
+   - **Claude Desktop**：点「Claude Desktop 配置」复制，在 Claude Desktop 的设置 → 开发者 → 编辑配置里加入 `mcpServers`，重启 Claude Desktop。
+   - **Claude Code**：点「Claude Code 命令」复制，在终端运行。
+3. 在对话里让助手「看看这张为什么偏色」之类即可。App 没开或没开启 MCP 时，助手会收到提示。
+
+助手启动的是 App 自己（`EpsonScanPlus --mcp`），它通过只有你的账户能访问的本机连接与正在运行的 App 通信，不经过网络。工具列表：`get_state`、`list_frames`、`list_presets`、`select_frame`、`preview`、`sample`、`adjust`、`pick_film_base`、`auto_film_base`、`pick_neutral`、`choose_preset`、`apply_to_roll`、`reset_adjustments`、`undo`。
 
 ## 快速开始
 

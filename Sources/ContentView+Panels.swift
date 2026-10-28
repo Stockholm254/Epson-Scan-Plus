@@ -199,7 +199,35 @@ extension ContentView {
       calibrationPanel
       Divider()
       customPresets
+      Divider()
+      assistantPanel
     }
+  }
+  /// Letting an assistant over MCP read and adjust the conversion, and how to connect one.
+  var assistantPanel: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack {
+        Text("AI 助手 · MCP").font(.system(size: 11, weight: .medium))
+        Spacer()
+        InfoButton(text: "让 Claude 等支持 MCP 的 AI 助手读取这张的转换状态（片基、通道斜率、白平衡、色阶、密度和直方图），看预览、取点，并调整去色罩和颜色，帮你判断偏色从哪里来。\n\n每次调整都能用 ⌘Z 撤销；助手不能扫描、删除或导出文件。只在本机通过只有你的账户能访问的连接工作，不经过网络。\n\nClaude Desktop：在设置 → 开发者 → 编辑配置里加入复制的配置后重启。Claude Code：在终端运行复制的命令。")
+      }
+      Toggle("允许 AI 助手读取和调整转换", isOn: Binding(get: { m.preferences.mcpEnabled }, set: { m.preferences.mcpEnabled = $0; m.updateMCP() }))
+        .toggleStyle(LEDToggleStyle()).font(.system(size: 11))
+      Text(m.mcpStatus).font(.system(size: 10)).foregroundStyle(m.preferences.mcpEnabled ? Hardware.amber : Color.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+      HStack {
+        Button("Claude Desktop 配置") {
+          copy("{\n  \"mcpServers\": {\n    \"epscan\": {\n      \"command\": \"\(m.mcpCommand)\",\n      \"args\": [\"--mcp\"]\n    }\n  }\n}")
+        }
+        .help("把 Claude Desktop 的配置复制到剪贴板")
+        Button("Claude Code 命令") { copy("claude mcp add epscan -- \"\(m.mcpCommand)\" --mcp") }
+          .help("把添加到 Claude Code 的命令复制到剪贴板")
+      }.font(.system(size: 10)).controlSize(.mini)
+    }
+  }
+  func copy(_ text: String) {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(text, forType: .string)
   }
   /// Where this frame's channel slopes come from, in the order the pipeline uses them.
   var conversionBasis: String {

@@ -147,6 +147,8 @@ final class Preferences: ObservableObject {
     let key = ScanPlan.speedKey(backend: backend, dpi: dpi)
     scanSpeed[key] = scanSpeed[key].map { ($0 + speed) / 2 } ?? speed
   }
+  /// An assistant connected over MCP may read and adjust the conversion. Off until turned on.
+  @Published var mcpEnabled: Bool { didSet { defaults?.set(mcpEnabled, forKey: "mcpEnabled") } }
   /// Frames side by side scanned in one pass when that is quicker (48-bit interface only).
   @Published var rowScanning: Bool { didSet { defaults?.set(rowScanning, forKey: "rowScanning") } }
   init(defaults: UserDefaults? = nil) {
@@ -173,6 +175,7 @@ final class Preferences: ObservableObject {
     leftWidth = left > 0 ? min(Self.leftWidths.upperBound, max(Self.leftWidths.lowerBound, left)) : 230
     scanSpeed = (defaults?.dictionary(forKey: "scanSpeed") as? [String: Double]) ?? [:]
     rowScanning = defaults?.object(forKey: "rowScanning") as? Bool ?? true
+    mcpEnabled = defaults?.bool(forKey: "mcpEnabled") ?? false
     rightWidth = right > 0 ? min(Self.rightWidths.upperBound, max(Self.rightWidths.lowerBound, right)) : 258
   }
   var libraryURL: URL { libraryPath.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? Self.defaultLibraryURL }

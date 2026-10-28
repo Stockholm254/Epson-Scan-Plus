@@ -22,6 +22,7 @@ enum RegressionTests {
     try CanvasTests.run(folder: folder)
     try RowScanTests.run(folder: folder)
     try LevelRegistrationTests.run(folder: folder)
+    try MCPTests.run(folder: folder)
     let pipe = ImagePipeline.shared
     func check(_ value: Bool, _ label: String) throws {
       guard value else { throw DeskError.message("FAIL: " + label) }

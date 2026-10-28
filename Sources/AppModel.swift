@@ -244,7 +244,36 @@ final class AppModel: ObservableObject {
     scanner.onScan = { [weak self] url in self?.receiveScan(url) }
     scanner.onFinished = { [weak self] error in self?.finishScan(error) }
   }
-  func start() { scanner.start() }
+  func start() {
+    scanner.start()
+    updateMCP()
+  }
+
+  // MARK: Assistant (MCP)
+
+  /// Takes an assistant's tool calls while `preferences.mcpEnabled`.
+  let mcp = MCPServer()
+  @Published private(set) var mcpStatus = "关闭"
+  func updateMCP() {
+    guard preferences.mcpEnabled else {
+      mcp.stop()
+      mcpStatus = "关闭"
+      return
+    }
+    mcp.model = self
+    mcp.onCall = { [weak self] name in
+      let time = Date().formatted(date: .omitted, time: .shortened)
+      DispatchQueue.main.async { self?.mcpStatus = "已连接 · 最近一次：\(name)（\(time)）" }
+    }
+    do {
+      try mcp.start()
+      if !mcpStatus.hasPrefix("已连接") { mcpStatus = "已开启 · 等待 AI 助手连接" }
+    } catch {
+      mcpStatus = "无法开启：\(error.localizedDescription)"
+    }
+  }
+  /// How an assistant starts this app's MCP server.
+  var mcpCommand: String { Bundle.main.executablePath ?? "/Applications/Epson Scan plus.app/Contents/MacOS/EpsonScanPlus" }
   /// Changes where new projects go. The open project and existing ones stay where they are.
   func setLibrary(_ url: URL) {
     libraryURL = url
@@ -1139,21 +1168,34 @@ final class AppModel: ObservableObject {
       return
     }
     if tool == .base {
-      frames[i].adjustments.base = color
-      frames[i].adjustments.baseFine = nil
-      frames[i].adjustments.manualBalance = nil
-      frames[i].adjustments.neutralSample = nil
-      frames[i].adjustments.autoWhiteBalance = false
-      status = "已取片基 · 自动白平衡已关闭以保留取样，可按需重算"
+      setFilmBase(color)
     } else if tool == .neutral {
-      frames[i].adjustments.manualBalance = nil
-      frames[i].adjustments.neutralSample = color
-      frames[i].adjustments.autoWhiteBalance = false
-      status = "已设置中性点"
+      setNeutral(color)
     }
     tool = .select
     refresh()
-    saveProject()
+  }
+  /// The film base from a reading of unexposed film; the white balance is left as picked, not
+  /// recalculated. One edit to undo, whether picked on the canvas or by an assistant.
+  func setFilmBase(_ color: RGB) {
+    change("取片基") {
+      $0.base = color
+      $0.baseFine = nil
+      $0.manualBalance = nil
+      $0.neutralSample = nil
+      $0.autoWhiteBalance = false
+    }
+    status = "已取片基 · 自动白平衡已关闭以保留取样，可按需重算"
+    updateThumbnails()
+  }
+  /// The white balance from a reading of something that should be grey.
+  func setNeutral(_ color: RGB) {
+    change("中性点") {
+      $0.manualBalance = nil
+      $0.neutralSample = color
+      $0.autoWhiteBalance = false
+    }
+    status = "已设置中性点"
     updateThumbnails()
   }
   func scanEnabled() {

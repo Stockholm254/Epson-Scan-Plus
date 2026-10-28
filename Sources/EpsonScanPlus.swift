@@ -7,6 +7,8 @@ struct EpsonScanPlusApp: App {
   @StateObject private var model: AppModel
   init() {
     let args = CommandLine.arguments
+    // Started by an assistant: a stdio MCP server that talks to the running app, never a window.
+    if args.contains("--mcp") { MCPBridge.run() }
     if args.contains("--self-test") { SmokeTests.run() }
     if args.contains("--hardware-test") { HardwareTest.run() }
     if args.contains("--sane-hardware-test") { HardwareTest.run(sane: true) }
