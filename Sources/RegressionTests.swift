@@ -4,6 +4,8 @@ import Foundation
 enum RegressionTests {
   static func run(folder: URL) throws {
     _ = NSApplication.shared
+    // The positives the library keeps go with the test's files, not into the user's caches.
+    RollLibrary.cacheRoot = folder.appendingPathComponent("roll-thumbnails")
     try ScanProgressTests.run(folder: folder)
     try SaneScannerTests.run(folder: folder)
     try OrientationTests.run(folder: folder)
@@ -20,6 +22,7 @@ enum RegressionTests {
     try WorkflowTests.run(folder: folder)
     try UsabilityTests.run(folder: folder)
     try CanvasTests.run(folder: folder)
+    try LibraryTests.run(folder: folder)
     try RowScanTests.run(folder: folder)
     try LevelRegistrationTests.run(folder: folder)
     try MCPTests.run(folder: folder)

@@ -9,7 +9,14 @@ final class AppModel: ObservableObject {
   @Published var selectedID: UUID?
   @Published var overview: CGImage?
   @Published var displayed: CGImage?
-  @Published var thumbnails = [UUID: CGImage]()
+  /// The frames' positives, as the filmstrip shows them; the library keeps a small copy of each.
+  @Published var thumbnails = [UUID: CGImage]() {
+    didSet {
+      guard !thumbnails.isEmpty, !readOnly, let folder = sessionURL else { return }
+      let images = thumbnails
+      DispatchQueue.global(qos: .utility).async { RollLibrary.storePositives(images, folder: folder) }
+    }
+  }
   /// Only the single frame zooms: back on the light table the whole roll shows again.
   @Published var singleView = false {
     didSet {
@@ -21,6 +28,9 @@ final class AppModel: ObservableObject {
   @Published var format = FilmFormat.auto
   @Published var dpi = 2400
   @Published var filmName = "Kodak Portra 160"
+  /// The open roll's name and notes in the library.
+  @Published var rollName = ""
+  @Published var rollNotes = ""
   @Published var profile = FilmProfile.builtins[0]
   @Published var profiles = FilmProfile.builtins
   @Published var status = "点击「预览」读取胶片"
@@ -85,10 +95,44 @@ final class AppModel: ObservableObject {
   private var exportsRunning = 0
   /// The left panel's tab: scanning and storage, film and presets, or output.
   enum PanelTab: String, CaseIterable { case scan = "扫描", film = "胶片", output = "输出" }
-  @Published var panelTab = PanelTab.scan
-  /// The main window's page: scanning and conversion, or repairing light leaks.
-  enum Page: String, CaseIterable { case scan = "扫描与转换", leak = "去漏光" }
-  @Published var page = Page.scan
+  /// The scan tab belongs to capturing, the film and output tabs to taking the mask off.
+  @Published var panelTab = PanelTab.scan {
+    didSet { if panelTab == .scan, page == .convert { page = .capture } }
+  }
+  /// The main window's three modules, in the order a roll goes through them: capturing it (the
+  /// scanner, the camera or files), taking the orange mask off, and repairing light leaks.
+  enum Page: String, CaseIterable {
+    case capture = "采集", convert = "去色罩", leak = "去漏光"
+    var number: String { ["①", "②", "③"][Self.allCases.firstIndex(of: self) ?? 0] }
+    var help: String {
+      switch self {
+      case .capture: return "采集：用 V850 预览和扫描，用 A7R IV 翻拍，或导入文件；每卷自动放进库里"
+      case .convert: return "去色罩：片基、白平衡、预设、曲线、接触表和看片镜，以及导出"
+      case .leak: return "去漏光：用参考图修复正片上的漏光"
+      }
+    }
+  }
+  @Published var page = Page.capture {
+    didSet {
+      if page == .capture { panelTab = .scan } else if page == .convert, panelTab == .scan { panelTab = .film }
+      // The pickers belong to taking the mask off.
+      if page == .capture, [CanvasTool.base, .neutral, .highlight].contains(tool) { tool = .select }
+    }
+  }
+  /// Where module ① takes pictures from.
+  enum CaptureSource: String, CaseIterable {
+    case scanner = "V850 扫描", camera = "A7R IV 翻拍", files = "导入文件"
+    var symbol: String {
+      switch self {
+      case .scanner: return "scanner"
+      case .camera: return "camera"
+      case .files: return "square.and.arrow.down"
+      }
+    }
+  }
+  @Published var captureSource = CaptureSource.scanner
+  /// The library, the window's cabinet of rolls, is open.
+  @Published var showLibrary = false
   /// The 去漏光 page, made when it is first shown.
   lazy var leak: LeakLab = makeLeakLab()
   /// New previews and imports create their project folders here.
@@ -365,6 +409,8 @@ final class AppModel: ObservableObject {
       frames = []
       thumbnails = [:]
       selectedID = nil
+      rollName = ""
+      rollNotes = ""
       clearEdits()
       let root = try makeSession()
       // Uncompressed: a 600 dpi preview writes in a tenth of a second, as PNG it takes two.
@@ -1531,6 +1577,8 @@ final class AppModel: ObservableObject {
     guard let first = urls.first else { return }
     do {
       sessionURL = nil
+      rollName = ""
+      rollNotes = ""
       let root = try makeSession()
       let src = root.appendingPathComponent("Originals")
       try FileManager.default.createDirectory(at: src, withIntermediateDirectories: true)
@@ -1786,6 +1834,9 @@ final class AppModel: ObservableObject {
       physicalHeightMM: physicalMM.height, filmName: filmName, profile: profile, scanDPI: dpi,
       frames: saved, scanBackendID: overviewBackendID, overviewInputGamma: overviewInputGamma)
     project.overviewFile = ProjectFiles.relative(overviewURL.path, to: root)
+    let name = rollName.trimmingCharacters(in: .whitespacesAndNewlines)
+    project.rollName = name.isEmpty ? nil : name
+    project.notes = rollNotes.isEmpty ? nil : rollNotes
     do {
       let e = JSONEncoder()
       e.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -1803,6 +1854,33 @@ final class AppModel: ObservableObject {
       && fm.fileExists(atPath: Preferences.legacyLibraryURL.path) ? Preferences.legacyLibraryURL : libraryURL
     guard panel.runModal() == .OK, let url = panel.url else { return }
     loadProject(url)
+    if sessionURL == url.deletingLastPathComponent(), page == .capture { page = .convert }
+  }
+  /// The folders the library shows: the library, and while it is the default one, the folder
+  /// versions before 0.4.9 kept their projects in.
+  var libraryRoots: [(url: URL, legacy: Bool)] {
+    var roots = [(url: libraryURL, legacy: false)]
+    let legacy = Preferences.legacyLibraryURL
+    if libraryURL.standardizedFileURL == Preferences.defaultLibraryURL.standardizedFileURL,
+      FileManager.default.fileExists(atPath: legacy.path)
+    {
+      roots.append((legacy, true))
+    }
+    return roots
+  }
+  /// The open roll's project file.
+  var projectURL: URL? { sessionURL?.appendingPathComponent(projectFileName) }
+  /// Opens a roll from the library and goes on to take the mask off it; the open roll is saved
+  /// first. The roll already open just goes on.
+  func openRoll(_ entry: RollEntry) {
+    guard !isWorking else { return }
+    if projectURL?.standardizedFileURL != entry.project.standardizedFileURL {
+      saveProject()
+      loadProject(entry.project)
+    }
+    guard projectURL?.standardizedFileURL == entry.project.standardizedFileURL else { return }
+    showLibrary = false
+    if page != .convert { page = .convert }
   }
   func loadProject(_ url: URL) {
     do {
@@ -1828,6 +1906,8 @@ final class AppModel: ObservableObject {
       clearEdits()
       profile = p.profile
       filmName = p.filmName
+      rollName = p.rollName ?? ""
+      rollNotes = p.notes ?? ""
       dpi = p.scanDPI
       overviewDPI = p.overviewDPI
       overviewBackendID = p.scanBackendID

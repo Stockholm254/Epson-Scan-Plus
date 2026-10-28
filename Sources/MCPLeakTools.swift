@@ -82,7 +82,7 @@ extension MCPTools {
     switch name {
     case "leak_get_state":
       return text(onMain { () -> [String: Any] in
-        var state: [String: Any] = ["page": model.page == .leak ? "去漏光" : "扫描与转换", "api_key_configured": lab.credentials.configured]
+        var state: [String: Any] = ["page": model.page.rawValue, "api_key_configured": lab.credentials.configured]
         guard let j = lab.job else {
           state["photo"] = NSNull()
           return state

@@ -110,6 +110,12 @@ final class FilmCanvasView: NSView {
   var original: CGRect?
   var dragID: UUID?
   var corner: Int?
+  /// The glass bubble over a corner being dragged: the corner, in the shown picture's normalised
+  /// coordinates, and when it appeared; the bubble last drawn, and the one fading after release.
+  var lens: (point: CGPoint, since: CFTimeInterval)?
+  var lensDrawn: (key: String, image: CGImage, frame: CGRect)?
+  var lensFading: (image: CGImage, frame: CGRect, since: CFTimeInterval)?
+  private var lensTimer: Timer?
   var pan = CGPoint.zero
   var panStart: CGPoint?
   /// Room at the edges taken by panels and bars floating over the canvas: the light table runs
@@ -360,6 +366,92 @@ final class FilmCanvasView: NSView {
       }
     }
     if model.singleView, model.tool == .it8, let frame = model.selected { drawIT8(model.it8Marks, settings: frame.adjustments) }
+    drawLens()
+  }
+  /// Puts the glass bubble on the corner under `p`, as it is dragged.
+  func showLens(at p: CGPoint) {
+    let n = shownNormal(p)
+    if lens == nil {
+      lensFading = nil
+      lens = (n, CACurrentMediaTime())
+      animateLens()
+    } else {
+      lens?.point = n
+    }
+  }
+  /// Lets the bubble go: it shrinks and fades where it was.
+  func releaseLens() {
+    if lens != nil, let drawn = lensDrawn {
+      lensFading = (drawn.image, drawn.frame, CACurrentMediaTime())
+      animateLens()
+    }
+    lens = nil
+    lensDrawn = nil
+  }
+  /// Redraws while the bubble swells in or fades out; dragging redraws it otherwise.
+  private func animateLens() {
+    guard lensTimer == nil else { return }
+    let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] t in
+      guard let self else { return t.invalidate() }
+      let now = CACurrentMediaTime()
+      let swelling = self.lens.map { now - $0.since < 0.25 } ?? false
+      let fading = self.lensFading.map { now - $0.since < 0.2 } ?? false
+      if !swelling && !fading {
+        self.lensFading = nil
+        t.invalidate()
+        self.lensTimer = nil
+      }
+      self.needsDisplay = true
+    }
+    RunLoop.main.add(timer, forMode: .common)
+    lensTimer = timer
+  }
+  /// The bubble over the dragged corner: the picture about it four times larger, the crop (or the
+  /// frame box) outlined in it, and in single view the outside of the crop darkened as here.
+  private func drawLens() {
+    let now = CACurrentMediaTime()
+    if let lens, let cg = shown, let model {
+      let r = imageRect
+      let backing = window?.backingScaleFactor ?? 2
+      let pixels = Int(CropLens.diameter * backing)
+      let center = CGPoint(x: lens.point.x * CGFloat(cg.width), y: lens.point.y * CGFloat(cg.height))
+      let scale = CropLens.magnification * r.width / CGFloat(max(1, cg.width)) * backing
+      let crop = draft.map { d -> CGRect in
+        let s = turn.shown(d)
+        return CGRect(
+          x: s.minX * CGFloat(cg.width), y: s.minY * CGFloat(cg.height), width: s.width * CGFloat(cg.width),
+          height: s.height * CGFloat(cg.height))
+      }
+      let dim = model.singleView ? (model.tool == .base ? 0.18 : 0.5) : 0
+      let at = CGPoint(x: r.minX + lens.point.x * r.width, y: r.minY + lens.point.y * r.height)
+      let frame = CropLens.frame(for: at, in: bounds.intersection(openRect).insetBy(dx: 8, dy: 8), flipped: isFlipped)
+      let key = "\(ObjectIdentifier(cg)) \(center) \(scale) \(crop.map { "\($0)" } ?? "") \(dim) \(pixels)"
+      if lensDrawn?.key != key,
+        let image = CropLens.render(cg, center: center, scale: scale, crop: crop, dimOutside: dim, pixels: pixels)
+      {
+        lensDrawn = (key, image, frame)
+      }
+      lensDrawn?.frame = frame
+      if let drawn = lensDrawn { paintLens(drawn.image, in: frame, CropLens.appearance(shownFor: now - lens.since, released: nil)) }
+    } else if let fading = lensFading {
+      let look = CropLens.appearance(shownFor: 1, released: now - fading.since)
+      if look.opacity > 0 { paintLens(fading.image, in: fading.frame, look) }
+    }
+  }
+  private func paintLens(_ image: CGImage, in frame: CGRect, _ look: (scale: CGFloat, opacity: CGFloat)) {
+    let size = CGSize(width: frame.width * look.scale, height: frame.height * look.scale)
+    let r = CGRect(x: frame.midX - size.width / 2, y: frame.midY - size.height / 2, width: size.width, height: size.height)
+    NSGraphicsContext.saveGraphicsState()
+    let shadow = NSShadow()
+    shadow.shadowColor = NSColor.black.withAlphaComponent(0.5 * look.opacity)
+    shadow.shadowBlurRadius = 16
+    // Shadow offsets are in unflipped coordinates: down is negative.
+    shadow.shadowOffset = CGSize(width: 0, height: -6)
+    shadow.set()
+    NSImage(cgImage: image, size: r.size).draw(
+      in: r, from: .zero, operation: .sourceOver, fraction: look.opacity, respectFlipped: true,
+      hints: [.interpolation: NSImageInterpolation.high])
+    NSGraphicsContext.restoreGraphicsState()
   }
   /// The IT8 target's marked points, and once four are set, where every patch will be read.
   private func drawIT8(_ marks: [CGPoint], settings: Adjustments) {
@@ -802,6 +894,7 @@ final class FilmCanvasView: NSView {
         draft = CGRect(
           x: min(end.x, opposite.x), y: min(end.y, opposite.y), width: abs(end.x - opposite.x),
           height: abs(end.y - opposite.y))
+        showLens(at: p)
       } else {
         draft = CGRect(
           x: clamp(original.minX + end.x - start.x, 0, 1 - original.width),
@@ -812,11 +905,13 @@ final class FilmCanvasView: NSView {
       draft = CGRect(
         x: min(start.x, end.x), y: min(start.y, end.y), width: abs(end.x - start.x),
         height: abs(end.y - start.y))
+      showLens(at: p)
     }
     needsDisplay = true
   }
   override func mouseUp(with event: NSEvent) {
     defer {
+      releaseLens()
       dragStart = nil
       draft = nil
       original = nil

@@ -1,28 +1,47 @@
 import AppKit
 import SwiftUI
 
-/// The left panel: scanning and storage, film and presets, and output, in three tabs. This is
-/// also where every setting lives; ⌘, opens the scan tab.
+/// The left panel. In module ① the source, the scanner (with storage), the camera or files; in
+/// module ② film and presets, and output, in two tabs. This is also where every setting lives;
+/// ⌘, opens the scanner's.
 extension ContentView {
   var leftPanel: some View {
     VStack(spacing: 0) {
       HStack(spacing: 6) {
-        ForEach(AppModel.PanelTab.allCases, id: \.self) { tab in
-          Button {
-            m.panelTab = tab
-          } label: {
-            Text(tab.rawValue).frame(maxWidth: .infinity)
-              .foregroundStyle(m.panelTab == tab ? Hardware.amber : Color(white: 0.8))
-          }.buttonStyle(HardwareKeyStyle(latched: m.panelTab == tab))
+        if m.page == .capture {
+          ForEach(AppModel.CaptureSource.allCases, id: \.self) { source in
+            Button {
+              m.captureSource = source
+            } label: {
+              Text(source.rawValue).lineLimit(1).minimumScaleFactor(0.8).frame(maxWidth: .infinity)
+                .foregroundStyle(m.captureSource == source ? Hardware.amber : Color(white: 0.8))
+            }.buttonStyle(HardwareKeyStyle(latched: m.captureSource == source))
+          }
+        } else {
+          ForEach([AppModel.PanelTab.film, .output], id: \.self) { tab in
+            Button {
+              m.panelTab = tab
+            } label: {
+              Text(tab.rawValue).frame(maxWidth: .infinity)
+                .foregroundStyle(m.panelTab == tab ? Hardware.amber : Color(white: 0.8))
+            }.buttonStyle(HardwareKeyStyle(latched: m.panelTab == tab))
+          }
         }
       }.controlSize(.small).font(.system(size: 12, weight: .medium)).padding(.horizontal, 14).padding(.vertical, 10)
       Divider()
       ScrollView {
         VStack(alignment: .leading, spacing: 18) {
-          switch m.panelTab {
-          case .scan: scanTab
-          case .film: filmTab
-          case .output: outputTab
+          if m.page == .capture {
+            switch m.captureSource {
+            case .scanner: scanTab
+            case .camera: cameraTab
+            case .files: filesTab
+            }
+          } else {
+            switch m.panelTab {
+            case .scan, .film: filmTab
+            case .output: outputTab
+            }
           }
           Spacer(minLength: 16)
         }.padding(16).buttonStyle(HardwareKeyStyle()).controlSize(.small)
@@ -386,6 +405,80 @@ extension ContentView {
   }
 
   /// A section title with its longer explanation behind an ⓘ.
+  // MARK: Camera and files
+
+  /// The A7R IV: what tethering will do, and until then what the camera's files need.
+  var cameraTab: some View {
+    VStack(alignment: .leading, spacing: 14) {
+      titled("A7R IV 翻拍", symbol: "camera", info:
+        "联机用 Sony Camera Remote SDK。A7R IV 只能用 USB 连接，相机的 USB 连接方式选「PC 遥控」。\n\nSDK 能取实时取景（JPEG，最宽 1024 像素）、半按快门自动对焦、设对焦点、手动对焦按 ±7 档步进、对焦放大，并把拍好的 RAW 直接传到电脑。像素位移、电子快门和 RAW 的压缩方式不能远程设置，要在相机上设好。")
+      HStack(spacing: 8) {
+        StatusLED(lamp: .busy, size: 7)
+        Text("未连接 · 联机在下一阶段").lcd(10)
+      }
+      note("下一阶段：实时取景、自动对焦、像素级放大确认对焦、三通道显示；拍好的 RAW 自动进这一卷。")
+      note("ARW 的解码和像素位移合成要等样张：同一张负片的无压缩 RAW 单张、像素位移 4 张一组（方便的话再来 16 张一组），以及一张同样曝光、不放底片的平场。")
+    }
+  }
+  /// Pictures from elsewhere, copied into a new roll.
+  var filesTab: some View {
+    VStack(alignment: .leading, spacing: 14) {
+      titled("导入文件", symbol: "square.and.arrow.down", info:
+        "TIFF、PNG 或 JPEG。文件复制到库里新的一卷的 Originals 文件夹，原文件不动。编码未知的文件按 Gamma 2.2 读，可以在 ② 去色罩的「输入设置」里改。")
+      Button {
+        m.importImages()
+      } label: {
+        Label("选择文件…", systemImage: "folder").frame(maxWidth: .infinity)
+      }.buttonStyle(HardwareKeyStyle(prominent: true)).disabled(m.isWorking)
+      note("每次导入放进新的一卷，之后在 ② 去色罩里处理。")
+    }
+  }
+  /// Module ①'s right panel: the roll as the library files it.
+  var rollPanel: some View {
+    let full = m.frames.filter(\.hasFullResolution).count
+    return ScrollView {
+      VStack(alignment: .leading, spacing: 14) {
+        sectionTitle("本卷", symbol: "archivebox")
+        if m.sessionURL == nil {
+          note("预览、扫描或导入之后，这一卷会自动放进库里。")
+        } else {
+          VStack(alignment: .leading, spacing: 4) {
+            Text("卷名").font(.system(size: 11)).foregroundStyle(.secondary)
+            TextField(m.sessionURL.flatMap { RollLibrary.started($0.lastPathComponent) }.map(RollLibrary.title) ?? "卷名", text: $m.rollName)
+              .textFieldStyle(.roundedBorder)
+          }
+          labeled("胶片") { Text(m.filmName).font(.system(size: 12)).lineLimit(1) }
+          labeled("画面") { Text("\(m.frames.count) 张 · 全分辨率 \(full)").lcd(10) }
+          VStack(alignment: .leading, spacing: 4) {
+            Text("备注").font(.system(size: 11)).foregroundStyle(.secondary)
+            TextField("相机、镜头、冲洗、地点……", text: $m.rollNotes, axis: .vertical).lineLimit(3...6)
+              .textFieldStyle(.roundedBorder)
+          }
+          if let url = m.sessionURL {
+            labeled("文件夹") {
+              Text(url.lastPathComponent).font(.system(size: 10, design: .monospaced)).lineLimit(1).truncationMode(.middle)
+            }
+            Button("在 Finder 中显示") { reveal(url) }.font(.system(size: 11))
+          }
+        }
+        Divider()
+        Button {
+          m.showLibrary = true
+        } label: {
+          Label("打开库…", systemImage: "archivebox").frame(maxWidth: .infinity)
+        }
+        Button {
+          m.page = .convert
+        } label: {
+          Label("下一步：② 去色罩", systemImage: "arrow.right").frame(maxWidth: .infinity)
+        }.buttonStyle(HardwareKeyStyle(prominent: true)).disabled(m.frames.isEmpty)
+        note("胶片名和预设在 ② 去色罩里选。")
+      }.padding(18).buttonStyle(HardwareKeyStyle()).controlSize(.small)
+    }.consolePanel()
+      .onChange(of: m.rollName) { m.saveProject() }
+      .onChange(of: m.rollNotes) { m.saveProject() }
+  }
+
   func titled(_ text: String, symbol: String, info: String) -> some View {
     HStack {
       sectionTitle(text, symbol: symbol)

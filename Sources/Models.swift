@@ -261,6 +261,11 @@ struct DeskProject: Codable {
   var overviewInputGamma: Double? = nil
   /// `overviewPath` relative to the project folder.
   var overviewFile: String? = nil
+  /// The roll's name and notes in the library; nil until given.
+  var rollName: String? = nil
+  var notes: String? = nil
+  /// Where its pictures came from (`RollSource`); nil for rolls the app tells by their frames.
+  var source: String? = nil
 }
 
 /// A project names its files by absolute path, which older versions read, and relative to its

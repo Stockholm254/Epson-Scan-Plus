@@ -43,7 +43,10 @@ struct EpsonScanPlusApp: App {
     }.defaultSize(width: 1320, height: 900).commands {
       CommandGroup(replacing: .appSettings) {
         // Every setting is in the main window's left panel.
-        Button("设置…") { model.panelTab = .scan }.keyboardShortcut(",")
+        Button("设置…") {
+          model.page = .capture
+          model.panelTab = .scan
+        }.keyboardShortcut(",")
       }
       CommandGroup(replacing: .newItem) {
         Button("导入图像…") { model.importImages() }.keyboardShortcut("o")
@@ -57,6 +60,14 @@ struct EpsonScanPlusApp: App {
           "s", modifiers: [.command, .shift])
         Button("扫描勾选画面") { model.requestScanEnabled() }
         Button("取消扫描") { model.cancel() }.keyboardShortcut(".")
+      }
+      CommandMenu("模块") {
+        ForEach(AppModel.Page.allCases, id: \.self) { page in
+          Button("\(page.number) \(page.rawValue)") { model.page = page }
+            .keyboardShortcut(KeyEquivalent(Character("\(AppModel.Page.allCases.firstIndex(of: page)! + 1)")), modifiers: [.command, .option])
+        }
+        Divider()
+        Button("库…") { model.showLibrary = true }.keyboardShortcut("l", modifiers: [.command, .shift])
       }
       CommandMenu("画面") {
         Button("接触表 / 单张") {

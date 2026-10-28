@@ -46,6 +46,7 @@ struct ContentView: View {
       Text(m.errorText ?? "")
     }
     .sheet(isPresented: $showInfo) { profileInfo }
+    .sheet(isPresented: $m.showLibrary) { LibrarySheet(m: m) }
     .onChange(of: m.tool) { m.refresh() }
     .onAppear {
       m.undoManager = undoManager
@@ -67,22 +68,21 @@ struct ContentView: View {
         Spacer(minLength: 4)
         scannerLamp
       }.frame(width: 204, alignment: .leading)
-      Picker("页面", selection: $m.page) {
-        ForEach(AppModel.Page.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-      }.pickerStyle(.segmented).labelsHidden().frame(width: 190)
-        .help("扫描与转换：预览、扫描、去色罩和导出；去漏光：用参考图修复正片上的漏光")
+      ModuleDial(page: $m.page)
       if m.page == .leak {
         LeakToolbar(lab: m.leak)
       } else {
       Button {
+        m.showLibrary = true
+      } label: {
+        Label("库", systemImage: "archivebox")
+      }.help("所有扫描、翻拍和导入的胶卷（⇧⌘L）")
+      if m.page == .capture {
+      Button {
         m.importImages()
       } label: {
         Label("导入", systemImage: "square.and.arrow.down")
-      }.help("导入 TIFF、PNG 或 JPEG")
-      Button {
-        m.openProject()
-      } label: {
-        Label("打开工程", systemImage: "folder")
+      }.help("导入 TIFF、PNG 或 JPEG，放进库里新的一卷")
       }
       }
       Spacer()
@@ -109,7 +109,7 @@ struct ContentView: View {
       }
       if m.page == .leak {
         LeakExportKey(lab: m.leak)
-      } else {
+      } else if m.page == .capture && m.captureSource == .scanner {
       Button {
         m.requestPreview()
       } label: {
@@ -174,7 +174,8 @@ struct ContentView: View {
   }
   /// The canvas tools, and fitting the picture.
   @ViewBuilder var toolControls: some View {
-      ForEach([CanvasTool.select, .crop, .base, .neutral, .highlight], id: \.self) { t in
+      // Capturing places the frames; the pickers belong to taking the mask off.
+      ForEach(m.page == .capture ? [CanvasTool.select, .crop] : [CanvasTool.select, .crop, .base, .neutral, .highlight], id: \.self) { t in
         Button {
           m.useTool(t)
         } label: {
@@ -359,7 +360,11 @@ struct ContentView: View {
       }
     }
   }
-  var rightPanel: some View {
+  /// Module ① keeps the roll's name and notes on the right; module ② the adjustments.
+  @ViewBuilder var rightPanel: some View {
+    if m.page == .capture { rollPanel } else { adjustPanel }
+  }
+  var adjustPanel: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 16) {
         HStack {
