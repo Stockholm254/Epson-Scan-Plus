@@ -3,6 +3,8 @@ import SwiftUI
 
 struct ScanCanvas: NSViewRepresentable {
   @ObservedObject var model: AppModel
+  /// Room at the edges taken by panels and bars floating over the canvas.
+  var reserved = NSEdgeInsets()
   func makeNSView(context: Context) -> FilmCanvasView {
     let v = FilmCanvasView()
     v.model = model
@@ -10,6 +12,7 @@ struct ScanCanvas: NSViewRepresentable {
   }
   func updateNSView(_ view: FilmCanvasView, context: Context) {
     view.model = model
+    view.reserved = reserved
     if view.lastViewportRevision != model.viewportRevision {
       view.pan = .zero
       view.lastViewportRevision = model.viewportRevision
@@ -102,10 +105,24 @@ final class FilmCanvasView: NSView {
   var corner: Int?
   var pan = CGPoint.zero
   var panStart: CGPoint?
+  /// Room at the edges taken by panels and bars floating over the canvas: the light table runs
+  /// under them, the picture fits between.
+  var reserved = NSEdgeInsets() {
+    didSet {
+      guard !NSEdgeInsetsEqual(reserved, oldValue) else { return }
+      clampPan()
+      needsDisplay = true
+      if !loupe.isHidden { loupe.layoutOnTable() }
+    }
+  }
+  /// The canvas between what floats over it.
+  private var open: CGSize {
+    CGSize(width: bounds.width - reserved.left - reserved.right, height: bounds.height - reserved.top - reserved.bottom)
+  }
   func clampPan() {
     let r = imageRect
-    let x = max(0, (r.width - bounds.width) / 2)
-    let y = max(0, (r.height - bounds.height) / 2)
+    let x = max(0, (r.width - open.width) / 2)
+    let y = max(0, (r.height - open.height) / 2)
     pan = CGPoint(x: clamp(pan.x, -x, x), y: clamp(pan.y, -y, y))
   }
   override func setFrameSize(_ newSize: NSSize) {
@@ -136,15 +153,15 @@ final class FilmCanvasView: NSView {
   private var fitScale: CGFloat {
     guard let cg = shown else { return 1 }
     return min(
-      max(1, bounds.width - 2 * Self.inset) / CGFloat(cg.width),
-      max(1, bounds.height - 2 * Self.inset) / CGFloat(cg.height))
+      max(1, open.width - 2 * Self.inset) / CGFloat(cg.width),
+      max(1, open.height - 2 * Self.inset) / CGFloat(cg.height))
   }
   var imageRect: CGRect {
     guard let cg = shown else { return .zero }
     let scale = fitScale * CGFloat(model?.zoom ?? 1)
     let size = CGSize(width: CGFloat(cg.width) * scale, height: CGFloat(cg.height) * scale)
     return CGRect(
-      x: (bounds.width - size.width) / 2 + pan.x, y: (bounds.height - size.height) / 2 + pan.y,
+      x: reserved.left + (open.width - size.width) / 2 + pan.x, y: reserved.top + (open.height - size.height) / 2 + pan.y,
       width: size.width, height: size.height)
   }
   /// A canvas point in the shown picture's normalised coordinates.
@@ -192,7 +209,7 @@ final class FilmCanvasView: NSView {
     guard let model, let cg = shown else {
       let text = "扫描预览" as NSString
       text.draw(
-        at: CGPoint(x: bounds.midX - 30, y: bounds.midY),
+        at: CGPoint(x: reserved.left + open.width / 2 - 30, y: reserved.top + open.height / 2),
         withAttributes: [
           .font: NSFont.systemFont(ofSize: 13),
           .foregroundColor: lightTable ? NSColor(calibratedWhite: 0.42, alpha: 1) : NSColor.secondaryLabelColor,

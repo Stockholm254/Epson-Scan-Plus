@@ -12,15 +12,47 @@ enum Hardware {
   static let filmBase = Color(red: 0.25, green: 0.13, blue: 0.06)
   static let metal = LinearGradient(
     colors: [Color(white: 0.175), Color(white: 0.135)], startPoint: .top, endPoint: .bottom)
+  /// The system draws Liquid Glass (macOS 26): the panels float as glass over the light table and
+  /// the keys, lamps and readouts take its look. Before, the scanner console.
+  static let glass = SystemGlass.viewClass != nil
 }
 
 /// A raised console key. `latched` holds it pressed in, for lamp toggles that are on.
 struct HardwareKeyStyle: ButtonStyle {
   var prominent = false
   var latched = false
-  func makeBody(configuration: Configuration) -> some View {
-    HardwareKey(
-      label: configuration.label, pressed: configuration.isPressed || latched, prominent: prominent)
+  @ViewBuilder func makeBody(configuration: Configuration) -> some View {
+    if Hardware.glass {
+      GlassKey(label: configuration.label, pressed: configuration.isPressed, latched: latched, prominent: prominent)
+    } else {
+      HardwareKey(
+        label: configuration.label, pressed: configuration.isPressed || latched, prominent: prominent)
+    }
+  }
+}
+
+/// A key in the glass look: a clear capsule lit from within when pressed, amber while latched, and
+/// amber all over for the one action a panel leads to. It lies on glass, so it is not glass itself.
+private struct GlassKey<Label: View>: View {
+  let label: Label
+  let pressed: Bool
+  let latched: Bool
+  let prominent: Bool
+  @Environment(\.isEnabled) private var enabled
+  @Environment(\.controlSize) private var size
+  var body: some View {
+    let compact = size == .mini || size == .small
+    let shape = Capsule()
+    label
+      .foregroundStyle(prominent ? Color(red: 0.2, green: 0.12, blue: 0.03) : latched ? Hardware.amber : Color(white: 0.92))
+      .padding(.horizontal, compact ? 9 : 13).padding(.vertical, compact ? 3 : 5.5)
+      .background(
+        shape.fill(prominent ? Hardware.amber.opacity(pressed ? 0.75 : 0.92) : Color.white.opacity(pressed ? 0.2 : latched ? 0.13 : 0.07)))
+      .overlay(shape.stroke(latched ? Hardware.amber.opacity(0.55) : Color.white.opacity(prominent ? 0 : 0.16), lineWidth: 0.6))
+      .shadow(color: latched ? Hardware.amber.opacity(0.35) : .clear, radius: 4)
+      .scaleEffect(pressed ? 0.97 : 1)
+      .opacity(enabled ? 1 : 0.4)
+      .contentShape(shape)
   }
 }
 
@@ -119,8 +151,17 @@ struct StatusLED: View {
 /// Dark glass behind an LCD readout.
 struct LCDGlass: View {
   var body: some View {
+    if Hardware.glass {
+      // A smoked pane let into the glass.
+      RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.3))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.1), lineWidth: 0.5))
+    } else {
+      lcd
+    }
+  }
+  private var lcd: some View {
     let shape = RoundedRectangle(cornerRadius: 3)
-    shape.fill(Hardware.lcdGlass)
+    return shape.fill(Hardware.lcdGlass)
       .overlay(
         shape.fill(
           LinearGradient(
@@ -187,20 +228,59 @@ extension View {
       if SystemGlass.viewClass != nil {
         foregroundStyle(text).background(
           SystemGlassBackground(
-            capsule: shape is Capsule, radius: (shape as? RoundedRectangle)?.cornerSize.width ?? 8,
+            capsule: shape is Capsule || shape is Circle, radius: (shape as? RoundedRectangle)?.cornerSize.width ?? 8,
             tint: NSColor(white: 0, alpha: opacity * 0.45)))
       } else {
         foregroundStyle(text).background(.black.opacity(opacity), in: shape)
       }
     #endif
   }
-  /// Amber segment-display text on dark glass.
-  func lcd(_ fontSize: CGFloat = 10) -> some View {
-    font(.system(size: fontSize, weight: .medium, design: .monospaced))
-      .foregroundStyle(Hardware.lcdText)
-      .shadow(color: Hardware.lcdText.opacity(0.55), radius: 2)
-      .padding(.horizontal, 5).padding(.vertical, 2)
-      .background(LCDGlass())
+  /// A readout: amber segment-display text on dark glass, or in the glass look amber figures on a
+  /// smoked capsule.
+  @ViewBuilder func lcd(_ fontSize: CGFloat = 10) -> some View {
+    if Hardware.glass {
+      font(.system(size: fontSize, weight: .medium, design: .monospaced))
+        .foregroundStyle(Hardware.lcdText)
+        .padding(.horizontal, 7).padding(.vertical, 2)
+        .background(Capsule().fill(Color.black.opacity(0.32)))
+        .overlay(Capsule().stroke(Color.white.opacity(0.1), lineWidth: 0.5))
+    } else {
+      font(.system(size: fontSize, weight: .medium, design: .monospaced))
+        .foregroundStyle(Hardware.lcdText)
+        .shadow(color: Hardware.lcdText.opacity(0.55), radius: 2)
+        .padding(.horizontal, 5).padding(.vertical, 2)
+        .background(LCDGlass())
+    }
+  }
+  /// A side panel: in the glass look a pane of Liquid Glass floating over the light table, which
+  /// shows through it; before, brushed metal. It takes every click that lands on it.
+  @ViewBuilder func consolePanel() -> some View {
+    if Hardware.glass {
+      // Smoked, so light text reads over the bright table as over the dark surround.
+      background {
+        ZStack {
+          SystemGlassBackground(capsule: false, radius: 16, tint: NSColor(white: 0.04, alpha: 0.5))
+          Color(white: 0.07).opacity(0.62)
+        }
+      }
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.1), lineWidth: 0.5))
+        .contentShape(RoundedRectangle(cornerRadius: 16))
+    } else {
+      background(Hardware.metal)
+    }
+  }
+  /// A group of controls floating over the picture: a capsule of Liquid Glass, or a dark one.
+  @ViewBuilder func glassBar() -> some View {
+    if Hardware.glass {
+      padding(.horizontal, 8).padding(.vertical, 5)
+        .background(SystemGlassBackground(capsule: true, radius: 18, tint: NSColor(white: 0, alpha: 0.28)))
+        .contentShape(Capsule())
+    } else {
+      padding(.horizontal, 8).padding(.vertical, 5)
+        .background(Capsule().fill(Color(white: 0.1).opacity(0.88)))
+        .contentShape(Capsule())
+    }
   }
 }
 

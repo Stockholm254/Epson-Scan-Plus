@@ -27,7 +27,7 @@ extension ContentView {
           Spacer(minLength: 16)
         }.padding(16).buttonStyle(HardwareKeyStyle()).controlSize(.small)
       }
-    }.background(Hardware.metal)
+    }.consolePanel()
   }
 
   // MARK: Scan
@@ -429,7 +429,8 @@ struct PanelDivider: View {
   let panelOnLeft: Bool
   @State private var start: Double?
   var body: some View {
-    Rectangle().fill(Color.black.opacity(0.5)).frame(width: 1)
+    // Between floating glass panels only the grab area is there.
+    Rectangle().fill(Color.black.opacity(Hardware.glass ? 0 : 0.5)).frame(width: 1)
       .overlay(Color.clear.frame(width: 8).contentShape(Rectangle()))
       .onHover { inside in inside ? NSCursor.resizeLeftRight.push() : NSCursor.pop() }
       .gesture(

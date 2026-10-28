@@ -12,7 +12,7 @@ struct LeakPage: View {
       PanelDivider(
         width: Binding(get: { m.preferences.rightWidth + 40 }, set: { m.preferences.rightWidth = $0 - 40 }),
         range: (Preferences.rightWidths.lowerBound + 40)...(Preferences.rightWidths.upperBound + 40), panelOnLeft: false)
-      LeakPanel(m: m, lab: lab).frame(width: m.preferences.rightWidth + 40)
+      LeakPanel(m: m, lab: lab).frame(width: m.preferences.rightWidth + 40).padding(Hardware.glass ? 8 : 0)
     }
     .onAppear {
       if lab.job == nil {
@@ -112,6 +112,14 @@ struct LeakViewer: View {
           if wipe > 0 && wipe < 1 {
             Rectangle().fill(Color.white.opacity(0.85)).frame(width: 1.5).offset(x: w * wipe - 0.75)
           }
+          // A glass handle on the line: drag it, or anywhere on the picture, to move the line.
+          if lab.after != nil && !lab.holdOriginal {
+            Image(systemName: "arrow.left.and.right").font(.system(size: 13, weight: .semibold))
+              .frame(width: 38, height: 38)
+              .floatingPlate(Circle(), text: Color(white: 0.95), opacity: 0.6)
+              .position(x: min(max(w * wipe, 22), w - 22), y: h / 2)
+              .allowsHitTesting(false)
+          }
         }
         HStack {
           if !lab.showReference && wipe > 0 { tag("修复前") }
@@ -120,6 +128,12 @@ struct LeakViewer: View {
         }.padding(8)
       }
       .frame(width: w, height: h)
+      .contentShape(Rectangle())
+      .gesture(
+        DragGesture(minimumDistance: 0).onChanged { drag in
+          guard lab.after != nil, !lab.showReference else { return }
+          lab.wipe = min(1, max(0, drag.location.x / w))
+        })
       .overlay(alignment: .bottomTrailing) {
         if lab.updating { ProgressView().controlSize(.mini).padding(8) }
       }
@@ -155,7 +169,7 @@ struct LeakPanel: View {
         Divider()
         export
       }.padding(18).buttonStyle(HardwareKeyStyle()).controlSize(.small)
-    }.background(Hardware.metal)
+    }.consolePanel()
   }
   func header(_ text: String, symbol: String, info: String) -> some View {
     HStack {

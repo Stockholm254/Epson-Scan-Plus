@@ -15,6 +15,8 @@ struct ContentView: View {
       Divider()
       if m.page == .leak {
         LeakPage(m: m, lab: m.leak)
+      } else if Hardware.glass {
+        glassWorkspace
       } else {
       HStack(spacing: 0) {
         leftPanel.frame(width: m.preferences.leftWidth)
@@ -121,8 +123,12 @@ struct ContentView: View {
         !m.scanner.ready || !m.hasScanTargets || m.isWorking)
       }
     }.buttonStyle(HardwareKeyStyle()).controlSize(.regular).padding(.horizontal, 18).padding(.vertical, 11)
-      .background(
-        LinearGradient(colors: [Color(white: 0.2), Color(white: 0.15)], startPoint: .top, endPoint: .bottom))
+      .background {
+        // In the glass look the window's own surface; the keys carry the glass.
+        if !Hardware.glass {
+          LinearGradient(colors: [Color(white: 0.2), Color(white: 0.15)], startPoint: .top, endPoint: .bottom)
+        }
+      }
   }
   /// The scanner's front-panel lamp with a short LCD status; the full status is in the tooltip.
   var scannerLamp: some View {
@@ -138,154 +144,215 @@ struct ContentView: View {
     if m.scanner.busy { return (.busy, m.scanner.cancellationHint == nil ? "工作中" : "取消中") }
     return m.scanner.ready ? (.ready, "就绪") : (.fault, "未就绪")
   }
+  /// The view switch, the loupe and how the table lies.
+  @ViewBuilder var viewControls: some View {
+      Picker("视图", selection: $m.singleView) {
+        Text("接触表").tag(false)
+        Text("单张").tag(true)
+      }.pickerStyle(.segmented).frame(width: 150).onChange(of: m.singleView) {
+        m.fitView()
+        m.focusCanvas()
+        m.refresh()
+      }
+      Button {
+        m.toggleLoupe()
+      } label: {
+        Label("看片镜", systemImage: "circle.circle").font(.system(size: 11)).foregroundStyle(
+          m.preferences.showLoupe ? accent : Color(white: 0.85))
+      }.buttonStyle(HardwareKeyStyle(latched: m.preferences.showLoupe)).controlSize(.small)
+        .help("看片镜：点一下放到所选画面上，拖动放大细看，再点一下收起 · Z。接触表和单张都能用；右键选择型号")
+      if !m.singleView {
+        Button {
+          m.preferences.contactLandscape.toggle()
+          m.fitView()
+        } label: {
+          Label("横排", systemImage: "rectangle.landscape.rotate").font(.system(size: 11)).foregroundStyle(
+            m.preferences.contactLandscape ? accent : Color(white: 0.85))
+        }.buttonStyle(HardwareKeyStyle(latched: m.preferences.contactLandscape)).controlSize(.small)
+          .help("把竖放的片夹横过来摆在灯箱上，胶片条横向排开，更好地利用宽屏。方向跟随多数画面的旋转，都没有旋转时顺时针转")
+      }
+  }
+  /// The canvas tools, and fitting the picture.
+  @ViewBuilder var toolControls: some View {
+      ForEach([CanvasTool.select, .crop, .base, .neutral], id: \.self) { t in
+        Button {
+          m.useTool(t)
+        } label: {
+          HStack(spacing: 4) {
+            Image(systemName: t.symbol).frame(width: 16, height: 14)
+            if let label = t.label { Text(label).font(.system(size: 11)) }
+          }.foregroundStyle(m.tool == t ? accent : Color(white: 0.85))
+        }.buttonStyle(HardwareKeyStyle(latched: m.tool == t)).controlSize(.small).help(t.help)
+          .accessibilityLabel(t.rawValue)
+      }
+      Divider().frame(height: 18)
+      Button {
+        m.fitView()
+      } label: {
+        Text("适合").font(.system(size: 11))
+      }.buttonStyle(HardwareKeyStyle()).controlSize(.small)
+  }
+  /// Which frame is shown, or how many there are.
+  @ViewBuilder var placeLabel: some View {
+      Text(m.singleView ? "第 \(m.selected?.name ?? "—") 张" : "\(m.frames.count) 个画面").font(
+        .system(size: 11, design: .monospaced))
+  }
+  /// Zoom, turning, mirroring and what is shown.
+  @ViewBuilder var viewingControls: some View {
+      Text(String(format: "%.1f×", m.zoom)).font(.system(size: 10, design: .monospaced))
+        .foregroundStyle(.secondary).help("相对适合窗口的缩放倍率")
+      if !m.singleView {
+        Button {
+          m.turnRoll(clockwise: false)
+        } label: {
+          Image(systemName: "rotate.left")
+        }.help("全卷逆时针旋转 90°：改变每张在单张视图和导出中的方向；转过 90° 的画面在横排的灯箱上也正立").disabled(m.frames.isEmpty)
+        Button {
+          m.turnRoll(clockwise: true)
+        } label: {
+          Image(systemName: "rotate.right")
+        }.help("全卷顺时针旋转 90°：改变每张在单张视图和导出中的方向；转过 90° 的画面在横排的灯箱上也正立").disabled(m.frames.isEmpty)
+        Button {
+          m.mirrorRoll()
+        } label: {
+          Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
+            .foregroundStyle(m.contactMirrored ? accent : Color(white: 0.85))
+        }.buttonStyle(HardwareKeyStyle(latched: m.contactMirrored)).help("全卷水平镜像：修正胶片正反面放反").disabled(m.frames.isEmpty)
+        Picker("显示", selection: $m.contactPositive) {
+          Text("原片").tag(false)
+          Text("反相").tag(true)
+        }.pickerStyle(.segmented).labelsHidden().frame(width: 110)
+          .help("反相：每张按各自的调色显示为正片，片边与片夹按本卷片基反相")
+          .onChange(of: m.contactPositive) { m.refresh() }
+      }
+      if m.singleView {
+        Button {
+          m.navigate(-1)
+        } label: {
+          Image(systemName: "chevron.left")
+        }.disabled(!m.canNavigate(-1)).help("上一张 · ←")
+        Button {
+          m.navigate(1)
+        } label: {
+          Image(systemName: "chevron.right")
+        }.disabled(!m.canNavigate(1)).help("下一张 · →")
+        Toggle("负片", isOn: $m.showNegative).toggleStyle(LEDToggleStyle()).font(.system(size: 11))
+          .onChange(of: m.showNegative) { m.refresh() }
+        Button {
+          m.turn(clockwise: false)
+        } label: {
+          Image(systemName: "rotate.left")
+        }.help(m.syncOrientation ? "全部逆时针旋转 90° · ⇧⌘R" : "逆时针旋转 90° · ⇧⌘R")
+        Button {
+          m.turn(clockwise: true)
+        } label: {
+          Image(systemName: "rotate.right")
+        }.help(m.syncOrientation ? "全部顺时针旋转 90° · ⌘R" : "顺时针旋转 90° · ⌘R")
+        Button {
+          m.toggleMirror()
+        } label: {
+          Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
+            .foregroundStyle(m.settings.flipHorizontal == true ? accent : Color(white: 0.85))
+        }.buttonStyle(HardwareKeyStyle(latched: m.settings.flipHorizontal == true)).help(
+          m.syncOrientation ? "全部水平镜像：修正整卷胶片正反面方向" : "水平镜像：修正胶片正反面方向")
+        Button {
+          m.syncOrientation.toggle()
+        } label: {
+          HStack(spacing: 3) {
+            Image(systemName: "link")
+            Text("同步全部")
+          }.font(.system(size: 11))
+            .foregroundStyle(m.syncOrientation ? accent : Color(white: 0.85))
+        }.buttonStyle(HardwareKeyStyle(latched: m.syncOrientation))
+          .help("开启后，旋转和水平镜像同步应用到本卷全部照片")
+      }
+      Text(m.sourceSummary).font(.system(size: 10, design: .monospaced)).foregroundStyle(
+        .secondary)
+  }
+  /// What floats over the picture: the render in progress, the frame's resolution, the tool's hint.
+  @ViewBuilder var canvasOverlays: some View {
+      if m.rendering { ProgressView().controlSize(.small).padding(14) }
+      if m.singleView && !m.rendering {
+        VStack(alignment: .trailing, spacing: 6) {
+          if let frame = m.selected, !frame.hasFullResolution {
+            Text(
+              frame.needsRescan
+                ? "裁切超出原扫描 · 需重扫"
+                : m.overviewDPI >= 600 ? "\(Int(m.overviewDPI)) dpi 预览 · 正式扫描后更清晰" : "低清预览 · 正式扫描后查看细节"
+            ).font(.system(size: 11)).foregroundStyle(accent)
+              .padding(7).floatingPlate(RoundedRectangle(cornerRadius: 5), text: accent, opacity: 0.65)
+          }
+        }.padding(12).allowsHitTesting(false)
+      }
+      if let hint = m.toolHint, !m.rendering {
+        HStack(spacing: 6) {
+          Image(systemName: m.tool.symbol).foregroundStyle(accent)
+          Text(hint)
+        }.font(.system(size: 11))
+          .padding(.horizontal, 11).padding(.vertical, 6)
+          .floatingPlate(Capsule(), text: Color(white: 0.92), opacity: 0.72)
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom).padding(14)
+          .allowsHitTesting(false).accessibilityLabel("工具提示")
+      }
+  }
   var workspace: some View {
     VStack(spacing: 0) {
       HStack(spacing: 12) {
-        Picker("视图", selection: $m.singleView) {
-          Text("接触表").tag(false)
-          Text("单张").tag(true)
-        }.pickerStyle(.segmented).frame(width: 150).onChange(of: m.singleView) {
-          m.fitView()
-          m.focusCanvas()
-          m.refresh()
-        }
-        Button {
-          m.toggleLoupe()
-        } label: {
-          Label("看片镜", systemImage: "circle.circle").font(.system(size: 11)).foregroundStyle(
-            m.preferences.showLoupe ? accent : Color(white: 0.85))
-        }.buttonStyle(HardwareKeyStyle(latched: m.preferences.showLoupe)).controlSize(.small)
-          .help("看片镜：点一下放到所选画面上，拖动放大细看，再点一下收起 · Z。接触表和单张都能用；右键选择型号")
-        if !m.singleView {
-          Button {
-            m.preferences.contactLandscape.toggle()
-            m.fitView()
-          } label: {
-            Label("横排", systemImage: "rectangle.landscape.rotate").font(.system(size: 11)).foregroundStyle(
-              m.preferences.contactLandscape ? accent : Color(white: 0.85))
-          }.buttonStyle(HardwareKeyStyle(latched: m.preferences.contactLandscape)).controlSize(.small)
-            .help("把竖放的片夹横过来摆在灯箱上，胶片条横向排开，更好地利用宽屏。方向跟随多数画面的旋转，都没有旋转时顺时针转")
-        }
+        viewControls
         Spacer()
-        ForEach([CanvasTool.select, .crop, .base, .neutral], id: \.self) { t in
-          Button {
-            m.useTool(t)
-          } label: {
-            HStack(spacing: 4) {
-              Image(systemName: t.symbol).frame(width: 16, height: 14)
-              if let label = t.label { Text(label).font(.system(size: 11)) }
-            }.foregroundStyle(m.tool == t ? accent : Color(white: 0.85))
-          }.buttonStyle(HardwareKeyStyle(latched: m.tool == t)).controlSize(.small).help(t.help)
-            .accessibilityLabel(t.rawValue)
-        }
-        Divider().frame(height: 18)
-        Button {
-          m.fitView()
-        } label: {
-          Text("适合").font(.system(size: 11))
-        }.buttonStyle(HardwareKeyStyle()).controlSize(.small)
+        toolControls
       }.padding(.horizontal, 16).padding(.vertical, 10)
       ZStack(alignment: .topTrailing) {
         ScanCanvas(model: m).frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
-        if m.rendering { ProgressView().controlSize(.small).padding(14) }
-        if m.singleView && !m.rendering {
-          VStack(alignment: .trailing, spacing: 6) {
-            if let frame = m.selected, !frame.hasFullResolution {
-              Text(
-                frame.needsRescan
-                  ? "裁切超出原扫描 · 需重扫"
-                  : m.overviewDPI >= 600 ? "\(Int(m.overviewDPI)) dpi 预览 · 正式扫描后更清晰" : "低清预览 · 正式扫描后查看细节"
-              ).font(.system(size: 11)).foregroundStyle(accent)
-                .padding(7).floatingPlate(RoundedRectangle(cornerRadius: 5), text: accent, opacity: 0.65)
-            }
-          }.padding(12).allowsHitTesting(false)
-        }
-        if let hint = m.toolHint, !m.rendering {
-          HStack(spacing: 6) {
-            Image(systemName: m.tool.symbol).foregroundStyle(accent)
-            Text(hint)
-          }.font(.system(size: 11))
-            .padding(.horizontal, 11).padding(.vertical, 6)
-            .floatingPlate(Capsule(), text: Color(white: 0.92), opacity: 0.72)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom).padding(14)
-            .allowsHitTesting(false).accessibilityLabel("工具提示")
-        }
+        canvasOverlays
       }.frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
       HStack {
-        Text(m.singleView ? "第 \(m.selected?.name ?? "—") 张" : "\(m.frames.count) 个画面").font(
-          .system(size: 11, design: .monospaced))
+        placeLabel
         Spacer()
-        Text(String(format: "%.1f×", m.zoom)).font(.system(size: 10, design: .monospaced))
-          .foregroundStyle(.secondary).help("相对适合窗口的缩放倍率")
-        if !m.singleView {
-          Button {
-            m.turnRoll(clockwise: false)
-          } label: {
-            Image(systemName: "rotate.left")
-          }.help("全卷逆时针旋转 90°：改变每张在单张视图和导出中的方向；转过 90° 的画面在横排的灯箱上也正立").disabled(m.frames.isEmpty)
-          Button {
-            m.turnRoll(clockwise: true)
-          } label: {
-            Image(systemName: "rotate.right")
-          }.help("全卷顺时针旋转 90°：改变每张在单张视图和导出中的方向；转过 90° 的画面在横排的灯箱上也正立").disabled(m.frames.isEmpty)
-          Button {
-            m.mirrorRoll()
-          } label: {
-            Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
-              .foregroundStyle(m.contactMirrored ? accent : Color(white: 0.85))
-          }.buttonStyle(HardwareKeyStyle(latched: m.contactMirrored)).help("全卷水平镜像：修正胶片正反面放反").disabled(m.frames.isEmpty)
-          Picker("显示", selection: $m.contactPositive) {
-            Text("原片").tag(false)
-            Text("反相").tag(true)
-          }.pickerStyle(.segmented).labelsHidden().frame(width: 110)
-            .help("反相：每张按各自的调色显示为正片，片边与片夹按本卷片基反相")
-            .onChange(of: m.contactPositive) { m.refresh() }
-        }
-        if m.singleView {
-          Button {
-            m.navigate(-1)
-          } label: {
-            Image(systemName: "chevron.left")
-          }.disabled(!m.canNavigate(-1)).help("上一张 · ←")
-          Button {
-            m.navigate(1)
-          } label: {
-            Image(systemName: "chevron.right")
-          }.disabled(!m.canNavigate(1)).help("下一张 · →")
-          Toggle("负片", isOn: $m.showNegative).toggleStyle(LEDToggleStyle()).font(.system(size: 11))
-            .onChange(of: m.showNegative) { m.refresh() }
-          Button {
-            m.turn(clockwise: false)
-          } label: {
-            Image(systemName: "rotate.left")
-          }.help(m.syncOrientation ? "全部逆时针旋转 90° · ⇧⌘R" : "逆时针旋转 90° · ⇧⌘R")
-          Button {
-            m.turn(clockwise: true)
-          } label: {
-            Image(systemName: "rotate.right")
-          }.help(m.syncOrientation ? "全部顺时针旋转 90° · ⌘R" : "顺时针旋转 90° · ⌘R")
-          Button {
-            m.toggleMirror()
-          } label: {
-            Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
-              .foregroundStyle(m.settings.flipHorizontal == true ? accent : Color(white: 0.85))
-          }.buttonStyle(HardwareKeyStyle(latched: m.settings.flipHorizontal == true)).help(
-            m.syncOrientation ? "全部水平镜像：修正整卷胶片正反面方向" : "水平镜像：修正胶片正反面方向")
-          Button {
-            m.syncOrientation.toggle()
-          } label: {
-            HStack(spacing: 3) {
-              Image(systemName: "link")
-              Text("同步全部")
-            }.font(.system(size: 11))
-              .foregroundStyle(m.syncOrientation ? accent : Color(white: 0.85))
-          }.buttonStyle(HardwareKeyStyle(latched: m.syncOrientation))
-            .help("开启后，旋转和水平镜像同步应用到本卷全部照片")
-        }
-        Text(m.sourceSummary).font(.system(size: 10, design: .monospaced)).foregroundStyle(
-          .secondary)
+        viewingControls
       }.buttonStyle(HardwareKeyStyle()).controlSize(.small).padding(.horizontal, 16).padding(.vertical, 9)
     }.background(Color(red: 0.105, green: 0.11, blue: 0.115))
+  }
+  /// In the glass look the canvas fills the workspace: the side panels float over it as panes of
+  /// Liquid Glass and its rows as glass groups, the light table running under them all and the
+  /// picture fitting between.
+  var glassWorkspace: some View {
+    let margin: CGFloat = 8, bar: CGFloat = 54
+    return ZStack {
+      ScanCanvas(
+        model: m,
+        reserved: NSEdgeInsets(
+          top: bar, left: m.preferences.leftWidth + 2 * margin + 1, bottom: bar, right: m.preferences.rightWidth + 2 * margin + 1)
+      ).frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
+      HStack(spacing: 0) {
+        leftPanel.frame(width: m.preferences.leftWidth).padding([.leading, .vertical], margin)
+        Spacer().frame(width: margin)
+        PanelDivider(
+          width: Binding(get: { m.preferences.leftWidth }, set: { m.preferences.leftWidth = $0 }),
+          range: Preferences.leftWidths, panelOnLeft: true)
+        VStack(spacing: 0) {
+          HStack(spacing: 10) {
+            HStack(spacing: 10) { viewControls }.glassBar()
+            Spacer()
+            HStack(spacing: 8) { toolControls }.glassBar()
+          }.padding(.horizontal, 10).padding(.top, 10)
+          ZStack(alignment: .topTrailing) {
+            Color.clear
+            canvasOverlays
+          }.frame(maxWidth: .infinity, maxHeight: .infinity)
+          HStack(spacing: 10) {
+            placeLabel.glassBar()
+            Spacer()
+            HStack(spacing: 8) { viewingControls }.glassBar()
+          }.buttonStyle(HardwareKeyStyle()).controlSize(.small).padding(.horizontal, 10).padding(.bottom, 10)
+        }
+        PanelDivider(
+          width: Binding(get: { m.preferences.rightWidth }, set: { m.preferences.rightWidth = $0 }),
+          range: Preferences.rightWidths, panelOnLeft: false)
+        Spacer().frame(width: margin)
+        rightPanel.frame(width: m.preferences.rightWidth).padding([.trailing, .vertical], margin)
+      }
+    }
   }
   var rightPanel: some View {
     ScrollView {
@@ -417,7 +484,7 @@ struct ContentView: View {
         }.frame(maxWidth: .infinity)
       }.padding(18).disabled(m.selected == nil || m.exporting)
         .buttonStyle(HardwareKeyStyle()).controlSize(.small)
-    }.background(Hardware.metal)
+    }.consolePanel()
   }
   /// Per-frame deconvolution strength, once the scanner has a measured profile.
   var sharpeningControl: some View {

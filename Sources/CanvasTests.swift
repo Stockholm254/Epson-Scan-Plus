@@ -210,6 +210,16 @@ enum CanvasTests {
     canvas.updateLoupe()
     try check(canvas.loupe.isHidden && !model.preferences.showLoupe && canvas.imageRect == whole, "pressed again, it is put away")
     model.preferences.showLoupe = true
+    // Panels and bars floating over the canvas: the picture fits between them, centred there.
+    let open = NSEdgeInsets(top: 54, left: 240, bottom: 54, right: 270)
+    canvas.reserved = open
+    let between = canvas.imageRect, size = canvas.bounds.size
+    try check(between.minX >= open.left - 0.5 && between.maxX <= size.width - open.right + 0.5
+      && between.minY >= open.top - 0.5 && between.maxY <= size.height - open.bottom + 0.5
+      && abs(between.midX - (open.left + (size.width - open.left - open.right) / 2)) < 1 && between.width < whole.width,
+      "with panels and bars floating over it, the picture fits between them and the table runs underneath")
+    canvas.reserved = NSEdgeInsets()
+    try check(canvas.imageRect == whole, "and takes the whole canvas again without them")
 
     // The whole roll turned and mirrored from the contact view, and the table with it.
     let mirroredMark = pipe.turned(marked, quarterTurns: 1, mirrored: true)!
