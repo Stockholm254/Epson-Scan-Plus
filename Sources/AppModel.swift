@@ -31,6 +31,9 @@ final class AppModel: ObservableObject {
   /// The open roll's name and notes in the library.
   @Published var rollName = ""
   @Published var rollNotes = ""
+  /// The roll's pictures that are a file each are measured together as one roll: asked for, as
+  /// files from elsewhere need not have been scanned alike.
+  @Published private(set) var poolPictures = false
   @Published var profile = FilmProfile.builtins[0]
   @Published var profiles = FilmProfile.builtins
   @Published var status = "点击「预览」读取胶片"
@@ -411,6 +414,7 @@ final class AppModel: ObservableObject {
       selectedID = nil
       rollName = ""
       rollNotes = ""
+      poolPictures = false
       clearEdits()
       let root = try makeSession()
       // Uncompressed: a 600 dpi preview writes in a tenth of a second, as PNG it takes two.
@@ -635,9 +639,11 @@ final class AppModel: ObservableObject {
     recordEdit(name, key: "\(name)-\(frames[i].id)")
     // The roll's measured base belongs to the film, so even a reset keeps it.
     let rollBase = frames[i].adjustments.rollBase, rollSlopes = frames[i].adjustments.rollSlopes
+    let picked = frames[i].adjustments.rollBasePicked
     mutation(&frames[i].adjustments)
     frames[i].adjustments.rollBase = rollBase
     frames[i].adjustments.rollSlopes = rollSlopes
+    frames[i].adjustments.rollBasePicked = picked
     refresh()
     saveProject()
   }
@@ -688,7 +694,9 @@ final class AppModel: ObservableObject {
     // as they are now; a removed frame comes back, an added one goes.
     frames = state.frames.map { old in
       guard var f = frames.first(where: { $0.id == old.id }) else { return old }
-      let rollBase = f.adjustments.rollBase ?? old.adjustments.rollBase
+      // A base picked for the roll is the user's own, so it goes back with the edits.
+      let picked = f.adjustments.rollBasePicked == true || old.adjustments.rollBasePicked == true
+      let rollBase = picked ? old.adjustments.rollBase : f.adjustments.rollBase ?? old.adjustments.rollBase
       let rollSlopes = f.adjustments.rollSlopes ?? old.adjustments.rollSlopes
       (f.name, f.rect, f.initialRect, f.enabled, f.format) = (old.name, old.rect, old.initialRect, old.enabled, old.format)
       f.adjustments = old.adjustments
@@ -713,14 +721,93 @@ final class AppModel: ObservableObject {
   /// Measures the film base between the frames on the current overview and shares it with
   /// them. Only for overviews whose values match the frames' scans: this app's 48-bit
   /// previews, or an imported strip the frames are cut from. Other frames keep theirs.
+  /// A base picked once and shared with the roll stays as it is, and reaches the frames of its
+  /// roll that came after it.
   private func updateRollBase() {
-    guard let overview else { return }
-    let onOverview = frames.indices.filter {
-      frames[$0].sourcePath == nil ? overviewBackendID == "epson2-linear-v1" : frames[$0].sourcePath == overviewURL?.path
+    if let overview {
+      let onOverview = frames.indices.filter {
+        frames[$0].adjustments.rollBasePicked != true
+          && (frames[$0].sourcePath == nil ? overviewBackendID == "epson2-linear-v1" : frames[$0].sourcePath == overviewURL?.path)
+      }
+      if !onOverview.isEmpty {
+        let base = ImagePipeline.shared.rollBase(overview, frames: onOverview.map { frames[$0] })
+        for i in onOverview { frames[i].adjustments.rollBase = base }
+      }
     }
-    guard !onOverview.isEmpty else { return }
-    let base = ImagePipeline.shared.rollBase(overview, frames: onOverview.map { frames[$0] })
-    for i in onOverview { frames[i].adjustments.rollBase = base }
+    for group in Self.rollGroups(frames, poolPictures: true) {
+      guard let shared = group.first(where: { $0.adjustments.rollBasePicked == true })?.adjustments.rollBase else { continue }
+      let ids = Set(group.map(\.id))
+      for i in frames.indices where ids.contains(frames[i].id) && frames[i].adjustments.rollBasePicked != true {
+        frames[i].adjustments.rollBase = shared
+        frames[i].adjustments.rollBasePicked = true
+      }
+    }
+  }
+  /// The frames measured together as one roll, for the channel slopes and a shared film base:
+  /// the scanned frames; each file holding several frames, an imported strip, on its own; and the
+  /// pictures that are a file each, as a camera takes them, each apart, or with `poolPictures`
+  /// those read alike (input gamma, bit depth) together.
+  static func rollGroups(_ frames: [FilmFrame], poolPictures: Bool) -> [[FilmFrame]] {
+    var perFile = [String: Int]()
+    for path in frames.compactMap(\.sourcePath) { perFile[path, default: 0] += 1 }
+    func key(_ f: FilmFrame) -> String {
+      guard let path = f.sourcePath else { return "scanned" }
+      if perFile[path, default: 0] > 1 || !poolPictures { return "file " + path }
+      return "pictures γ\(f.adjustments.inputGamma) \(f.sourceBits ?? 0)-bit"
+    }
+    var order = [String](), groups = [String: [FilmFrame]]()
+    for f in frames {
+      let k = key(f)
+      if groups[k] == nil { order.append(k) }
+      groups[k, default: []].append(f)
+    }
+    return order.map { groups[$0]! }
+  }
+  /// The roll has pictures that are a file each, more than one: they can be measured together.
+  var hasSinglePictures: Bool {
+    var perFile = [String: Int]()
+    for path in frames.compactMap(\.sourcePath) { perFile[path, default: 0] += 1 }
+    return perFile.values.filter { $0 == 1 }.count >= 2
+  }
+  /// Measures the roll's pictures that are a file each together, or each apart again.
+  func setPoolPictures(_ pool: Bool) {
+    guard pool != poolPictures else { return }
+    poolPictures = pool
+    status = pool ? "导入的单张一起做整卷估计" : "导入的单张各自估计"
+    saveProject()
+    updateRollSlopes()
+  }
+  /// Shares the film base picked on this frame (the leader, or a frame's edge) with its roll, for
+  /// rolls without gaps between the frames to measure it in, as a camera's or pictures imported
+  /// a file each. Frames with a base picked of their own keep it.
+  func shareFilmBase() {
+    guard !isWorking, let f = selected, let base = f.adjustments.base else { return }
+    recordEdit("整卷共用片基")
+    let group = Self.rollGroups(frames, poolPictures: true).first { $0.contains { $0.id == f.id } } ?? [f]
+    let ids = Set(group.map(\.id))
+    for i in frames.indices where ids.contains(frames[i].id) {
+      frames[i].adjustments.rollBase = base
+      frames[i].adjustments.rollBasePicked = true
+    }
+    status = "第 \(f.name) 张取的片基已用于整卷 \(group.count) 张"
+    refresh()
+    saveProject()
+    // The film's toe bends from a measured base, so the estimate is taken again.
+    updateRollSlopes()
+  }
+  /// Back to the film base measured between the frames, where there is one.
+  func unshareFilmBase() {
+    guard !isWorking, frames.contains(where: { $0.adjustments.rollBasePicked == true }) else { return }
+    recordEdit("取消整卷片基")
+    for i in frames.indices where frames[i].adjustments.rollBasePicked == true {
+      frames[i].adjustments.rollBase = nil
+      frames[i].adjustments.rollBasePicked = nil
+    }
+    updateRollBase()
+    status = "已取消整卷片基"
+    refresh()
+    saveProject()
+    updateRollSlopes()
   }
   /// Each frame turns from its own orientation, so portrait frames stay portrait.
   func turn(clockwise: Bool) {
@@ -762,6 +849,7 @@ final class AppModel: ObservableObject {
       frames[i].adjustments.rotation = own.rotation
       frames[i].adjustments.rollBase = own.rollBase
       frames[i].adjustments.rollSlopes = own.rollSlopes
+      frames[i].adjustments.rollBasePicked = own.rollBasePicked
     }
     refresh()
     updateThumbnails()
@@ -798,15 +886,15 @@ final class AppModel: ObservableObject {
     updateThumbnails()
     saveProject()
   }
-  /// Estimates channel slopes across each roll — the scanned frames, or each imported file — and
-  /// shares them with its frames. They are the fallback when the preset is not calibrated.
+  /// Estimates channel slopes across each roll (`rollGroups`) and shares them with its frames.
+  /// They are the fallback when the preset is not calibrated.
   func updateRollSlopes(completion: (() -> Void)? = nil) {
-    let snapshot = frames, green = profile.slopes.g, toe = profile.toe
+    let snapshot = frames, green = profile.slopes.g, toe = profile.toe, pool = poolPictures
     rollSlopesRevision += 1
     let token = rollSlopesRevision
     renderQueue.async {
       var result = [UUID: RGB?]()
-      for (_, members) in Dictionary(grouping: snapshot, by: { $0.sourcePath ?? "" }) {
+      for members in Self.rollGroups(snapshot, poolPictures: pool) {
         let inputs = members.compactMap { f in
           (try? self.source(for: f, maxDimension: 600)).map { (image: $0, settings: f.adjustments) }
         }
@@ -1579,6 +1667,7 @@ final class AppModel: ObservableObject {
       sessionURL = nil
       rollName = ""
       rollNotes = ""
+      poolPictures = false
       let root = try makeSession()
       let src = root.appendingPathComponent("Originals")
       try FileManager.default.createDirectory(at: src, withIntermediateDirectories: true)
@@ -1837,6 +1926,7 @@ final class AppModel: ObservableObject {
     let name = rollName.trimmingCharacters(in: .whitespacesAndNewlines)
     project.rollName = name.isEmpty ? nil : name
     project.notes = rollNotes.isEmpty ? nil : rollNotes
+    project.poolPictures = poolPictures ? true : nil
     do {
       let e = JSONEncoder()
       e.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -1908,6 +1998,7 @@ final class AppModel: ObservableObject {
       filmName = p.filmName
       rollName = p.rollName ?? ""
       rollNotes = p.notes ?? ""
+      poolPictures = p.poolPictures ?? false
       dpi = p.scanDPI
       overviewDPI = p.overviewDPI
       overviewBackendID = p.scanBackendID

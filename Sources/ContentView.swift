@@ -393,19 +393,29 @@ struct ContentView: View {
             }
           }
         }.font(.system(size: 11))
+        if m.settings.rollBasePicked == true {
+          HStack {
+            Text("整卷共用手动取的片基").font(.system(size: 10)).foregroundStyle(.secondary)
+            Spacer()
+            Button("取消整卷片基") { m.unshareFilmBase() }.font(.system(size: 11))
+          }
+        } else if m.settings.base != nil {
+          Button("整卷共用这个片基") { m.shareFilmBase() }.font(.system(size: 11))
+            .help("把这一张取的片基用于整卷：拍一张片头或片边取片基，整卷共用。片间测不到片基的卷用得着，比如翻拍或一张一个文件导入的卷")
+        }
         VStack(alignment: .leading, spacing: 7) {
           HStack {
             Text("片基微调 · EV").font(.system(size: 11, weight: .medium))
             Spacer()
             Button("归零") { m.change("片基微调") { $0.baseFine = nil } }.font(.system(size: 10))
-            InfoButton(text: "「取片基」只点未曝光的橙色片基（片间或片边），不点景物或片夹；「自动片基」按整卷片间的未曝光区或本张最薄处估计。\n\n微调按 EV 逐通道改变片基，不会被自动白平衡抵消。")
+            InfoButton(text: "「取片基」只点未曝光的橙色片基（片间或片边），不点景物或片夹；「自动片基」按整卷片间的未曝光区或本张最薄处估计。片间测不到片基的卷（翻拍，或一张一个文件导入），在片头或片边取一次片基，点「整卷共用这个片基」，整卷都用它。\n\n微调按 EV 逐通道改变片基，不会被自动白平衡抵消。")
           }
           ForEach(0..<3, id: \.self) { channel in baseSlider(channel) }
           if let base = m.toneAnalysis?.base ?? m.settings.base ?? m.settings.rollBase {
             Text(String(format: "基准 RGB  %.3f  %.3f  %.3f", base.r, base.g, base.b)).font(
               .system(size: 9, design: .monospaced)
             ).foregroundStyle(.secondary)
-            Text(m.settings.base != nil ? "片基来自手动取样" : m.settings.rollBase != nil ? "片基来自整卷片间未曝光区" : "片基按本张最薄的片区估计")
+            Text(m.settings.base != nil ? "片基来自手动取样" : m.settings.rollBasePicked == true ? "片基来自整卷共用的手动取样" : m.settings.rollBase != nil ? "片基来自整卷片间未曝光区" : "片基按本张最薄的片区估计")
               .font(.system(size: 10)).foregroundStyle(.secondary)
           }
         }

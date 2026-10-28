@@ -122,6 +122,9 @@ struct Adjustments: Codable, Equatable {
   var base: RGB? = nil
   /// The roll's film base, measured by the app between the frames; used when `base` is nil.
   var rollBase: RGB? = nil
+  /// The roll base was picked by hand once, on the leader or a frame's edge, and shared with the
+  /// roll, rather than measured between the frames: the gaps do not replace it.
+  var rollBasePicked: Bool? = nil
   /// The roll's channel slopes, estimated by the app across all its frames; used unless the
   /// preset is calibrated for this scanner.
   var rollSlopes: RGB? = nil
@@ -266,6 +269,8 @@ struct DeskProject: Codable {
   var notes: String? = nil
   /// Where its pictures came from (`RollSource`); nil for rolls the app tells by their frames.
   var source: String? = nil
+  /// Its pictures that are a file each are estimated together, as one roll; nil, apart.
+  var poolPictures: Bool? = nil
 }
 
 /// A project names its files by absolute path, which older versions read, and relative to its

@@ -214,6 +214,11 @@ extension ContentView {
         Text("转换依据").font(.system(size: 11, weight: .medium))
         Text(conversionBasis).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       }
+      if m.hasSinglePictures {
+        Toggle("导入的单张一起做整卷估计", isOn: Binding(get: { m.poolPictures }, set: { m.setPoolPictures($0) }))
+          .toggleStyle(LEDToggleStyle()).font(.system(size: 11))
+        note("一张一个文件的画面（翻拍，或一张张导入的扫描），只在它们是同一卷、用同样的设备和设置拍或扫时打开。读法不同（Gamma、位深）的文件不会混在一起。")
+      }
       Divider()
       calibrationPanel
       Divider()
@@ -259,7 +264,11 @@ extension ContentView {
     if let s = m.settings.rollSlopes {
       return String(format: "这种胶片还没有本机标定，按整卷画面里的明暗过渡自动估计通道斜率：R %.3f · G %.3f · B %.3f。画面越多越准；拍一张灰卡可以标定。", s.r, s.g, s.b)
     }
-    if m.profile.setsChannelContrast { return "按 Kodak 数据表斜率（本卷画面太少，未能自动估计）。" }
+    if m.profile.setsChannelContrast {
+      return m.hasSinglePictures && !m.poolPictures
+        ? "按 Kodak 数据表斜率：一张一个文件的画面各自估计不了。它们是同一卷、同样设置的话，打开下面的「导入的单张一起做整卷估计」。"
+        : "按 Kodak 数据表斜率（本卷画面太少，未能自动估计）。"
+    }
     return "通用：每张按自己的画面拉伸各通道。"
   }
   /// Calibrating a preset for this scanner from neutral points picked in single view.

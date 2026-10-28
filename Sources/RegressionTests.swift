@@ -23,6 +23,7 @@ enum RegressionTests {
     try UsabilityTests.run(folder: folder)
     try CanvasTests.run(folder: folder)
     try LibraryTests.run(folder: folder)
+    try RollGroupTests.run(folder: folder)
     try RowScanTests.run(folder: folder)
     try LevelRegistrationTests.run(folder: folder)
     try MCPTests.run(folder: folder)

@@ -163,7 +163,8 @@ enum MCPTools {
       if let toe = profile.toe { preset["toe"] = rgb(toe) }
       if let offsets = profile.offsets { preset["calibrated_neutral_offsets"] = rgb(offsets) }
       var base: [String: Any] = ["rgb": rgb(analysis.base),
-        "source": s.base != nil ? "manual pick" : s.rollBase != nil ? "measured between frames of the roll" : "estimated from the thinnest part of this frame"]
+        "source": s.base != nil ? "manual pick" : s.rollBasePicked == true ? "picked once and shared with the roll"
+          : s.rollBase != nil ? "measured between frames of the roll" : "estimated from the thinnest part of this frame"]
       if let fine = s.baseFine { base["fine_ev"] = rgb(fine) }
       var state = summary
       state["frame"] = framePart
