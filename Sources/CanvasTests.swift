@@ -158,8 +158,9 @@ enum CanvasTests {
     try check(model.tool == .base, "but not with ⌘ held, which is undo")
     key("n", code: 45)
     try check(model.tool == .neutral && model.singleView, "N the neutral sampler, on the single frame")
+    try check(canvas.samplingCursor != nil, "the neutral sampler shows an eyedropper over the picture")
     key("v", code: 9)
-    try check(model.tool == .select, "V goes back to selecting")
+    try check(model.tool == .select && canvas.samplingCursor == nil, "V goes back to selecting, and to the arrow")
     model.singleView = false
     key("c", code: 8)
     try check(model.tool == .crop && CanvasTool.allCases.compactMap(\.shortcut).count == 4 && CanvasTool.base.help.hasSuffix("· B"),

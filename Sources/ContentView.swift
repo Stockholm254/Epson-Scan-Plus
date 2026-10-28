@@ -431,7 +431,7 @@ struct ContentView: View {
                 }
               })
           ).toggleStyle(LEDToggleStyle()).font(.system(size: 11))
-          InfoButton(text: "自动白平衡按画面估计，忽略外缘 5%（不改变导出范围）。「取中性灰」点画面中应为灰色的地方来校正，此时自动白平衡关闭；「重算白平衡」按当前设置重新估计。")
+          InfoButton(text: "自动白平衡按画面估计，忽略外缘 5%（不改变导出范围）。「取中性灰」用滴管点画面中应为灰色的地方，按这一点自动白平衡（「自动」保持开着）；「重算白平衡」放弃取样点，按画面重新估计。")
         }
         slider("冷暖", key: \.warmth, range: -1...1)
         slider("绿 / 洋红", key: \.tint, range: -1...1)

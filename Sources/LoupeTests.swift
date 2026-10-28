@@ -131,6 +131,32 @@ enum LoupeTests {
     let toward = px(centre.x - d, centre.y - d), away = px(centre.x - d, centre.y + d)
     try check(luma(toward) > luma(away) + 40,
       "the lens's glass rim catches the light on the side facing it: \(luma(toward)) against \(luma(away))")
+    // An eye almost at the eyecup sees the rim at a grazing angle: the coating and the eyecup's
+    // inside must still mirror the room and the loupe's dark inside, never the bright table.
+    var black = scene
+    black.film = image(400, 300) { fill($0, CGRect(x: 0, y: 0, width: 400, height: 300), (0, 0, 0)) }
+    let grazing: CGFloat = 7, nearEye = lz * grazing / (grazing - 1)
+    var almost = pose(.pentax, eye: SIMD3(Float(centre.x), Float(centre.y), Float(nearEye)))
+    let rimLens = CGFloat(LoupeStyle.pentax.lens.radius) * r * grazing
+    almost.cut = rimLens * LoupeView.rim
+    let span = CGRect(x: centre.x - rimLens * 1.2, y: centre.y - rimLens * 1.2, width: rimLens * 2.4, height: rimLens * 2.4)
+    let nearRender = renderer.render(frame: span, scale: 1, pose: almost, scene: black)!
+    let closeBytes = [UInt8](nearRender.dataProvider!.data! as Data)
+    var brightestRim = 0, greenestRim = 0
+    for k in 0..<16 {
+      let a = Double(k) * .pi / 8
+      // Away from the side that faces the light, where the bevel's own glint is allowed.
+      if cos(a) * -0.28 + sin(a) * -0.40 > 0.1 { continue }
+      for f in [0.86, 0.92, 0.97, 1.05] {
+        let x = Int(rimLens * 1.2 + CGFloat(cos(a) * f) * rimLens), y = Int(rimLens * 1.2 + CGFloat(sin(a) * f) * rimLens)
+        let i = (y * nearRender.width + x) * 4
+        let v = (0..<3).map { Int(closeBytes[i + $0]) }
+        brightestRim = max(brightestRim, v.reduce(0, +) / 3)
+        greenestRim = max(greenestRim, v[1] - v[0])
+      }
+    }
+    try check(brightestRim < 110 && greenestRim < 30,
+      "even with the eye almost at the eyecup the rim mirrors no table: brightest \(brightestRim), green cast \(greenestRim)")
     // Seen from the left, the top leans right: the stripe moves right of the base's centre.
     let oblique = Picture(renderer.render(frame: view, scale: 2, pose: pose(.pentax, eye: SIMD3(-500, 150, 3000)), scene: scene)!)
     var brightest = (x: CGFloat(0), v: 0)
@@ -194,8 +220,10 @@ enum LoupeTests {
       "the loupe lies on the selected frame on the light table")
     let side = min(canvas.bounds.width, canvas.bounds.height)
     guard let looked = loupe.eyepiece else { throw DeskError.message("FAIL: the loupe is looked into") }
+    let lensHeight = CGFloat(LoupeStyle.pentax.lens.z) * looked.radius + loupe.lift / max(1, loupe.radius) * looked.radius
+    let nearness = CGFloat(looked.eye.z) / (CGFloat(looked.eye.z) - lensHeight)
     try check(model.preferences.loupeField == .large && abs(looked.lens - 0.32 * side) < 2 && loupe.frame.width > looked.lens * 2
-      && looked.extent < looked.lens * 1.2,
+      && looked.extent < looked.lens * 1.2 && abs(nearness - LoupeView.eyeNearness) < 0.01,
       "looked into, its lens fills a large circle, \(Int(looked.lens)) pt in radius on a \(Int(side)) pt canvas, as a real loupe fills the view, with only a thin rim round it")
     model.preferences.loupeField = .actual
     canvas.updateLoupe()

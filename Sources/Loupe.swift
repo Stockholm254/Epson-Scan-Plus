@@ -333,7 +333,10 @@ final class LoupeRenderer {
           albedo = float3(0.7); rough = 0.5;
         }
         float3 F = f0 + (1.0 - f0) * pow(1.0 - nv, 5.0) * (1.0 - 0.7 * rough);
-        float3 spec = environment(table, t, reflect(rd, n), world, rough) * F;
+        // A surface facing into the loupe mirrors its dark inside when it looks down, not the table.
+        float3 mirrored = reflect(rd, n);
+        bool inward = dot(n.xy, p.xy) < 0.0 && mirrored.z < 0.0;
+        float3 spec = (inward ? float3(0.01) : environment(table, t, mirrored, world, rough)) * F;
         return float4((albedo * irradiance(n, glow) + spec) * occlusion(p, n, t.style), 1);
       }
       if (lens) {
@@ -369,7 +372,12 @@ final class LoupeRenderer {
         float F = 0.012 + 0.988 * pow(1.0 - saturate(dot(n, V)), 5.0);
         // Multicoating: violet face-on, turning green towards the rim.
         float3 coat = mix(float3(0.75, 0.45, 1.0), float3(0.5, 1.0, 0.6), smoothstep(0.4, 1.0, rho));
-        float3 reflection = environment(table, t, reflect(rd, n), world, 0.01) * F * coat * 1.5;
+        // The lens lies at the bottom of the eyecup: it mirrors the room above, never the table under
+        // the loupe, and what it would mirror low down is the eyecup's black inside.
+        float3 up = reflect(rd, n);
+        float cup = smoothstep(0.2, 0.6, up.z);
+        up.z = max(up.z, 0.05);
+        float3 reflection = environment(table, t, normalize(up), world, 0.01) * F * coat * 1.5 * cup;
         return float4(c * (1.0 - F) + reflection, 1);
       }
       return float4(0, 0, 0, shadow(P, t, top));
@@ -431,24 +439,27 @@ final class LoupeView: NSView {
   /// Looking into the loupe: the eye on its axis just above the eyecup, as close as it takes for
   /// the lens to fill the field's share of the canvas, a thin rim of the eyecup round it, as
   /// through a real loupe. How far that reaches on screen, and the lens's radius there.
-  var eyepiece: (eye: SIMD3<Float>, extent: CGFloat, lens: CGFloat)? {
+  /// How much nearer the eye makes the lens's plane look: the eye stays as far off as a real one,
+  /// the lens's rim some 40° off its axis. Nearer, the rim is seen at a grazing angle no eye has,
+  /// and the coating and the eyecup's inside mirror the whole table.
+  static let eyeNearness = 2.4
+  /// Looking into the loupe: the eye on its axis above the eyecup, the loupe drawn as large as it
+  /// takes for its lens to fill the field's share of the canvas (magnification does not change
+  /// with it), and a thin rim of the eyecup round the lens. Where the eye is, how far the view
+  /// reaches on screen, the lens's radius there, and the loupe's base radius it is drawn at.
+  var eyepiece: (eye: SIMD3<Float>, extent: CGFloat, lens: CGFloat, radius: CGFloat)? {
     guard let canvas, let center, let share = field.share else { return nil }
-    let R = Double(radius), raised = Double(lift), lens = style.lens
+    let lens = style.lens, s = Self.eyeNearness
     let side = min(canvas.bounds.width, canvas.bounds.height)
     var target = Double(share * side)
     // Over the single frame the large field is just as wide as the picture shown.
     if field == .large, canvas.model?.singleView == true {
       target = Double(min(canvas.imageRect.width / 2, side * 0.5))
     }
-    let lz = lens.z * R + raised, top = style.height * R + raised
-    var s = max(1.6, target / (lens.radius * R))
-    var z = lz * s / (s - 1)
-    if z < top * 1.06 {
-      z = top * 1.06
-      s = z / (z - lz)
-    }
-    let onScreen = CGFloat(lens.radius * R * s)
-    return (SIMD3(Float(center.x), Float(center.y), Float(z)), onScreen * Self.rim + 2, onScreen)
+    let R = target / (lens.radius * s), raised = Double(lift / max(1, radius)) * R
+    let lz = lens.z * R + raised, z = lz * s / (s - 1)
+    let onScreen = CGFloat(target)
+    return (SIMD3(Float(center.x), Float(center.y), Float(z)), onScreen * Self.rim + 2, onScreen, CGFloat(R))
   }
   /// The viewer looks into the eyecup; at the film's scale it sits in front of the table, looking
   /// down, and the loupe shows its front, more so the further back it lies.
@@ -494,9 +505,10 @@ final class LoupeView: NSView {
   }
   func renderNow() {
     guard let canvas, let center, !isHidden, bounds.width > 0 else { return }
+    let view = eyepiece
     let pose = LoupeRenderer.Pose(
-      style: style, center: center, radius: radius, lift: lift, eye: eye, magnification: canvas.loupeMagnification(for: style),
-      cut: eyepiece.map { $0.lens * Self.rim })
+      style: style, center: center, radius: view?.radius ?? radius, lift: view.map { lift / max(1, radius) * $0.radius } ?? lift,
+      eye: eye, magnification: canvas.loupeMagnification(for: style), cut: view.map { $0.lens * Self.rim })
     // While it is carried, one ray a pixel keeps up with the mouse; set down, it is antialiased.
     image = LoupeRenderer.shared.render(
       frame: frame, scale: window?.backingScaleFactor ?? 2, pose: pose, scene: canvas.loupeScene(), samples: grab == nil ? 4 : 1)

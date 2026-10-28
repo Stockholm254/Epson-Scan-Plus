@@ -52,7 +52,7 @@ enum MCPTools {
     ]),
     Tool(name: "pick_film_base", description: "在指定位置取片基（只应点在未曝光的橙色片基上，例如画面边缘的片间）；会关闭自动白平衡以保留取样。", properties: point, required: ["x", "y"]),
     Tool(name: "auto_film_base", description: "放弃手动片基，改用整卷片间测得的片基或本张最薄处的估计。", properties: [:]),
-    Tool(name: "pick_neutral", description: "把指定位置作为中性灰校正白平衡（灰卡、白墙、水泥等）；会关闭自动白平衡。", properties: point, required: ["x", "y"]),
+    Tool(name: "pick_neutral", description: "把指定位置作为中性灰，按它自动白平衡（灰卡、白墙、水泥等）。", properties: point, required: ["x", "y"]),
     Tool(name: "choose_preset", description: "选用胶片预设（按名称，部分匹配，如 \"Portra 160\"）。", properties: ["name": ["type": "string"]], required: ["name"]),
     Tool(name: "apply_to_roll", description: "把选中画面的调整同步到本卷所有画面（保留各张的方向和裁切）。", properties: [:]),
     Tool(name: "reset_adjustments", description: "把选中画面的调整恢复默认（保留输入 Gamma、方向和整卷估计）。", properties: [:]),
@@ -280,7 +280,8 @@ enum MCPTools {
       let (frame, _) = try selected(model)
       let v = reading(pipe.raster(try model.source(for: frame, maxDimension: 2000), maxDimension: 2000), at: p, settings: frame.adjustments)
       onMain { name == "pick_film_base" ? model.setFilmBase(v) : model.setNeutral(v) }
-      return [["type": "text", "text": (name == "pick_film_base" ? "已取片基" : "已设中性点") + "：负片线性 RGB \(String(format: "%.4f %.4f %.4f", v.r, v.g, v.b))；自动白平衡已关闭。"]]
+      let reading = "负片线性 RGB \(String(format: "%.4f %.4f %.4f", v.r, v.g, v.b))"
+      return [["type": "text", "text": name == "pick_film_base" ? "已取片基：\(reading)；自动白平衡已关闭。" : "已按中性点自动白平衡：\(reading)。"]]
     case "auto_film_base":
       _ = try selected(model)
       onMain { model.change("自动片基") { $0.base = nil; $0.baseFine = nil } }

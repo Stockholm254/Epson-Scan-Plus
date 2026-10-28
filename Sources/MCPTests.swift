@@ -62,7 +62,19 @@ enum MCPTests {
     try check(!call("undo").isError && model.settings.warmth == 0 && model.settings.exposure == 0, "and undo takes it back, as ⌘Z does")
     try check(call("adjust", ["warmth": 0.3, "rotation": 1]).isError && model.settings.warmth == 0, "an unknown setting is refused, and nothing changes")
     let picked = call("pick_neutral", ["x": 0.5, "y": 0.5])
-    try check(!picked.isError && model.settings.neutralSample != nil && !model.settings.autoWhiteBalance, "pick_neutral sets the white balance from a point")
+    try check(!picked.isError && model.settings.neutralSample != nil && model.settings.autoWhiteBalance,
+      "pick_neutral white-balances on a point, auto white balance staying on")
+    // On the generic preset auto goes on fitting each channel's contrast; the picked point still comes out grey.
+    if let generic = FilmProfile.builtins.first(where: { $0.id == "generic" }) {
+      model.chooseProfile(generic)
+      for _ in 0..<40 where model.rendering { settle(0.1) }
+      _ = call("pick_neutral", ["x": 0.5, "y": 0.5])
+      let grey = ((json(call("sample", ["points": [[0.5, 0.5]]])) as? [[String: Any]])?.first?["positive_srgb"] as? [String: Double]) ?? [:]
+      let values = ["r", "g", "b"].compactMap { grey[$0] }
+      try check(values.count == 3 && values.max()! - values.min()! < 0.02 && model.settings.autoWhiteBalance,
+        String(format: "and on the generic preset, still fitting each channel's contrast, the picked point comes out grey: %.3f %.3f %.3f",
+          values.first ?? 0, values.count > 1 ? values[1] : 0, values.last ?? 0))
+    }
     try check(!call("pick_film_base", ["x": 0.02, "y": 0.5]).isError && model.settings.base != nil, "pick_film_base takes the base from a point")
     try check(!call("auto_film_base").isError && model.settings.base == nil, "auto_film_base goes back to the measured base")
     try check(!call("choose_preset", ["name": "portra 400"]).isError && model.profile.name.contains("400"), "choose_preset finds a preset by part of its name")

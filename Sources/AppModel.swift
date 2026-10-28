@@ -1209,14 +1209,15 @@ final class AppModel: ObservableObject {
     status = "已取片基 · 自动白平衡已关闭以保留取样，可按需重算"
     updateThumbnails()
   }
-  /// The white balance from a reading of something that should be grey.
+  /// Auto white balance on a reading of something that should be grey: the grey sets the
+  /// balance, and auto stays on to fit each channel's contrast where the preset leaves that to it.
   func setNeutral(_ color: RGB) {
     change("中性点") {
       $0.manualBalance = nil
       $0.neutralSample = color
-      $0.autoWhiteBalance = false
+      $0.autoWhiteBalance = true
     }
-    status = "已设置中性点"
+    status = "已按中性点自动白平衡"
     updateThumbnails()
   }
   func scanEnabled() {

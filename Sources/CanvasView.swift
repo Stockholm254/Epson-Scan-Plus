@@ -13,6 +13,11 @@ struct ScanCanvas: NSViewRepresentable {
   func updateNSView(_ view: FilmCanvasView, context: Context) {
     view.model = model
     view.reserved = reserved
+    // A sampler shows its eyedropper over the canvas.
+    if view.cursorTool != model.tool {
+      view.cursorTool = model.tool
+      view.window?.invalidateCursorRects(for: view)
+    }
     if view.lastViewportRevision != model.viewportRevision {
       view.pan = .zero
       view.lastViewportRevision = model.viewportRevision
@@ -114,6 +119,46 @@ final class FilmCanvasView: NSView {
       needsDisplay = true
       if !loupe.isHidden { loupe.layoutOnTable() }
     }
+  }
+  var cursorTool: CanvasTool?
+  /// The pointer while a sampler is chosen: an eyedropper, its tip on the point read (filled for
+  /// the film base, as its key shows), or cross hairs for marking the IT8 target.
+  var samplingCursor: NSCursor? {
+    switch model?.tool {
+    case .base: return Self.filledDropper
+    case .neutral, .calibrate: return Self.dropper
+    case .it8: return .crosshair
+    default: return nil
+    }
+  }
+  private static let dropper = eyedropper("eyedropper")
+  private static let filledDropper = eyedropper("eyedropper.full")
+  private static func eyedropper(_ symbol: String) -> NSCursor {
+    let size = NSSize(width: 24, height: 24)
+    let image = NSImage(size: size, flipped: false) { rect in
+      guard let glyph = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+        .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 17, weight: .medium))
+      else { return false }
+      func tinted(_ color: NSColor) -> NSImage {
+        NSImage(size: glyph.size, flipped: false) { r in
+          glyph.draw(in: r)
+          color.set()
+          r.fill(using: .sourceAtop)
+          return true
+        }
+      }
+      // A white outline round a dark glyph, legible on the bright table and the dark surround.
+      let at = NSPoint(x: 2, y: 2), white = tinted(.white), dark = tinted(NSColor(white: 0.1, alpha: 1))
+      for dx in [-1.0, 0, 1] { for dy in [-1.0, 0, 1] { white.draw(at: NSPoint(x: at.x + dx, y: at.y + dy), from: .zero, operation: .sourceOver, fraction: 1) } }
+      dark.draw(at: at, from: .zero, operation: .sourceOver, fraction: 1)
+      return true
+    }
+    // The tip is at the glyph's lower left; a cursor's hot spot counts from the top.
+    return NSCursor(image: image, hotSpot: NSPoint(x: 3, y: size.height - 3))
+  }
+  override func resetCursorRects() {
+    super.resetCursorRects()
+    if let cursor = samplingCursor { addCursorRect(bounds, cursor: cursor) }
   }
   /// The canvas between what floats over it.
   private var open: CGSize {

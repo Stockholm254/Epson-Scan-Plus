@@ -351,8 +351,14 @@ final class ImagePipeline {
     var gain = RGB.one
     var balance = RGB.zero
     if let sample = settings.neutralSample {
+      // With auto white balance on, the generic preset still fits each channel's contrast to the
+      // scene; the picked grey then sets where the channels meet.
+      if settings.autoWhiteBalance && !fixed {
+        gain = RGB(spans.map { clamp(commonSpan / $0, 0.5, 2) })
+      }
       let d = (0..<3).map {
         exposure(log10(max(0.0001, base.values[$0]) / max(0.0001, sample.values[$0])) * settings.inputGamma, $0)
+          * gain.values[$0]
       }
       let mean = d.reduce(0, +) / 3
       balance = RGB(d.map { mean - $0 })
