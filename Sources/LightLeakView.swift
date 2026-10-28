@@ -124,7 +124,7 @@ struct LeakViewer: View {
         HStack {
           if !lab.showReference && wipe > 0 { tag("修复前") }
           Spacer()
-          if lab.showReference { tag("参考图") } else if wipe < 1 { tag(lab.repaired ? "去漏光后" : "尚未去漏光") }
+          if lab.showReference { tag("参考图") } else if wipe < 1 { tag(lab.repaired && lab.after != nil ? "去漏光后" : "尚未去漏光") }
         }.padding(8)
       }
       .frame(width: w, height: h)
@@ -248,7 +248,7 @@ struct LeakPanel: View {
       Toggle(
         "保留灯光红晕和真实红色物体",
         isOn: Binding(get: { lab.params.protectHighlights }, set: { v in lab.change("保留灯光红晕") { $0.protectHighlights = v } })
-      ).toggleStyle(LEDToggleStyle()).font(.system(size: 11)).disabled(!lab.hasBase)
+      ).toggleStyle(LEDToggleStyle()).font(.system(size: 11)).disabled(!lab.hasBase || lab.busy != nil)
       VStack(spacing: 3) {
         HStack {
           Text("去偏色强度").font(.system(size: 11)).foregroundStyle(.secondary)
@@ -257,7 +257,7 @@ struct LeakPanel: View {
         }
         Fader(
           title: "去偏色强度", value: Binding(get: { lab.model?.strength ?? 0 }, set: { lab.setStrength($0) }), range: 0...1, detent: 1
-        ).disabled(lab.model == nil)
+        ).disabled(lab.model == nil || lab.busy != nil)
       }
     }
   }
@@ -305,7 +305,7 @@ struct LeakPanel: View {
       fader("冷 ↔ 暖", "%+.0f", \.temperature, -100...100)
       fader("绿 ↔ 品红", "%+.0f", \.tint, -100...100)
       fader("对比度", "%+.0f", \.contrast, -50...80)
-    }.disabled(!lab.hasBase)
+    }.disabled(!lab.hasBase || lab.busy != nil)
   }
   func fader(_ title: String, _ format: String, _ key: WritableKeyPath<LeakParams, Double>, _ range: ClosedRange<Double>) -> some View {
     VStack(spacing: 3) {
@@ -482,7 +482,7 @@ struct LeakGenerateSheet: View {
         Button("生成并去漏光（调用 API）") {
           lab.showGenerate = false
           lab.generate(quality: quality, note: note)
-        }.keyboardShortcut(.defaultAction).disabled(!credentials.configured)
+        }.disabled(!credentials.configured)
       }
     }.padding(24).frame(width: 480)
   }

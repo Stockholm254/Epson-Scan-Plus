@@ -497,7 +497,11 @@ final class LeakCredentials: ObservableObject {
         throw DeskError.message("macOS 钥匙串保存未完成。若出现系统授权窗口，请允许后重试；不会改存明文文件。")
       }
     } else if remembered {
-      try? store.clear()
+      do {
+        try store.clear()
+      } catch {
+        throw DeskError.message("钥匙串里保存的 Key 没能删除，下次启动仍会读到。若出现系统授权窗口，请允许后重试。")
+      }
     }
     key = next
     self.model = model
@@ -507,10 +511,15 @@ final class LeakCredentials: ObservableObject {
   }
   /// Forgets the key here and in the Keychain; the key on the API platform is not revoked.
   func clear() {
-    try? store.clear()
+    do {
+      try store.clear()
+      remembered = false
+      storageError = nil
+    } catch {
+      // Forgotten here all the same, but said plainly: the next launch would read it back.
+      storageError = "钥匙串里的 Key 没能删除，下次启动仍会读到。请在「钥匙串访问」中删除「\(store.service)」，或允许授权后重试。"
+    }
     key = ""
-    remembered = false
     configured = false
-    storageError = nil
   }
 }

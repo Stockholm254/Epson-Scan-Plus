@@ -244,6 +244,12 @@ final class LeakLab: ObservableObject {
 
   /// A change of parameters, undoable; `refit` fits the reference again (free, local) after it.
   func change(_ name: String, refit: Bool = false, _ edit: (inout LeakParams) -> Void) {
+    // A fit, a generation or a turn under way puts its own parameters back when it ends: a change
+    // now would be lost then, so none is taken.
+    guard busy == nil else {
+      notice = "正在处理，请稍候再调整。"
+      return
+    }
     var next = params
     edit(&next)
     guard next != params else { return }
@@ -314,13 +320,14 @@ final class LeakLab: ObservableObject {
     run("重建正片预览") {
       let full = try self.original(j)
       let base = Self.base(full, next)
+      var j = j
+      j.base = "base-\(Self.stamp()).tif"
+      j.meta = .init(width: full.width, height: full.height, previewWidth: base.width, previewHeight: base.height)
+      // Written before the job names it: a job never points at a base that is not there.
+      if let folder = self.onMain({ self.persisted ? self.folder : nil }) {
+        try base.saveTIFF(to: folder.appendingPathComponent(j.base!))
+      }
       return {
-        var j = j
-        j.base = "base-\(Self.stamp()).tif"
-        j.meta = .init(width: full.width, height: full.height, previewWidth: base.width, previewHeight: base.height)
-        if self.persisted, let folder = self.folder {
-          try? base.saveTIFF(to: folder.appendingPathComponent(j.base!))
-        }
         self.job = j
         self.base = base
         self.before = base.cgImage()
@@ -363,6 +370,8 @@ final class LeakLab: ObservableObject {
     let input = params
     pending?.cancel()
     generation += 1
+    // The preview this replaces would have cleared it.
+    updating = false
     run("拟合原片引导的边缘感知匹配") {
       let fitted = try LeakEngine.fitReference(base: base, guide: guide, params: input, baseID: baseID)
       let out = try LeakEngine.result(base, base: base, params: fitted)
@@ -446,12 +455,17 @@ final class LeakLab: ObservableObject {
   /// A generated reference: saved, then fitted if it can be.
   func receive(_ generated: (bytes: Data, meta: LeakJob.Generated), prepared: LeakParams) throws {
     let (current, folder, job) = onMain { (self.base, self.folder, self.job) }
-    guard let base = current, let folder, var j = job, let baseID = j.base else { return }
+    guard let base = current, let folder, var j = job, let baseID = j.base else {
+      throw DeskError.message("去漏光任务已关闭，参考图没有保存。")
+    }
     let stamp = Self.stamp(), name = "guide-ai-\(stamp).png"
     guard let source = CGImageSourceCreateWithData(generated.bytes as CFData, nil), let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
       image.width * image.height <= 20_000_000
     else { throw DeskError.message("API 返回图像无法读取。") }
     try ImagePipeline.shared.savePNG(image, to: folder.appendingPathComponent(name))
+    // Read back before the job names it, so a failure leaves the job as it was.
+    let guide = LeakEngine.resized(try LeakImage(image), width: 640)
+    let shown = try? ImagePipeline.shared.load(folder.appendingPathComponent(name), maxDimension: 1800)
     var meta = generated.meta
     meta.sourceBase = baseID
     meta.sourceGeometry = .init(rotation: prepared.rotation, crop: prepared.crop)
@@ -459,12 +473,16 @@ final class LeakLab: ObservableObject {
     j.guideName = "OpenAI · \(meta.model) · \(stamp)"
     j.generatedAI = meta
     try onMain {
+      let old = self.job
       self.job = j
-      try self.persist()
+      do { try self.persist() } catch {
+        self.job = old
+        throw error
+      }
+      self.guide = guide
+      self.reference = shown
       self.busy = "参考图已保存，拟合低频校正"
     }
-    let guide = LeakEngine.resized(try LeakImage(image), width: 640)
-    let shown = try? ImagePipeline.shared.load(folder.appendingPathComponent(name), maxDimension: 1800)
     var params = prepared, warning: String
     do {
       if abs(log(guide.aspect / base.aspect)) > 0.08 { throw DeskError.message("模型改变了画幅比例，请先检查参考图与原片是否同一构图") }
@@ -478,6 +496,7 @@ final class LeakLab: ObservableObject {
     DispatchQueue.main.async {
       self.pending?.cancel()
       self.generation += 1
+      self.updating = false
       self.guide = guide
       self.reference = shown
       self.set(params, name: "生成参考图")
@@ -516,11 +535,13 @@ final class LeakLab: ObservableObject {
     let id = generation, input = params
     updating = true
     let work = DispatchWorkItem {
-      let out = try? LeakEngine.result(base, base: base, params: input)
+      var out: LeakImage?, failure: String?
+      do { out = try LeakEngine.result(base, base: base, params: input) } catch { failure = error.localizedDescription }
       DispatchQueue.main.async {
         guard id == self.generation else { return }
         self.updating = false
         self.after = out.map { $0.cgImage() }
+        if let failure { self.errorText = failure }
       }
     }
     pending = work
@@ -618,13 +639,16 @@ extension AppModel {
   /// A frame of the open roll at full resolution, converted as `origin` says and as an export
   /// would convert it.
   func leakPositive(_ origin: LeakJob.Origin) throws -> CGImage {
-    guard projectPath == origin.project, var frame = frames.first(where: { $0.id == origin.frame }) else {
+    // What the open roll says, read on the main thread: the lab asks from its own queue.
+    let read = { (self.projectPath, self.frames.first { $0.id == origin.frame }, self.preferences.sharpening) }
+    let (path, found, sharpening) = Thread.isMainThread ? read() : DispatchQueue.main.sync(execute: read)
+    guard path == origin.project, var frame = found else {
       let roll = URL(fileURLWithPath: origin.project).deletingLastPathComponent().lastPathComponent
       throw DeskError.message("请先打开第 \(origin.frameName) 张所在的工程「\(roll)」。")
     }
     frame.adjustments = origin.adjustments
     let image = try source(for: frame, full: true)
-    let sharpener = Sharpening.sharpener(preferences.sharpening, frame: frame, maxDimension: nil)
+    let sharpener = Sharpening.sharpener(sharpening, frame: frame, maxDimension: nil)
     // Unclipped, as the renderer computes it: the engine converts it into Adobe RGB exactly.
     let pipeline = ImagePipeline.shared
     let ci = try pipeline.output(image, settings: frame.adjustments, profile: origin.profile, sharpener: sharpener, extendedRange: true)

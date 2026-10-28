@@ -208,6 +208,19 @@ enum LightLeakTests {
     lab.setScene("night")
     lab.wait()
     try check(lab.params.sceneInfo?.type == "night" && lab.repaired, "a new scene is fitted again against the reference, for free")
+    // A fader still settling when the scene changes: the fit takes its place, and nothing is left waiting.
+    lab.change("曝光") { $0.exposure = 0.3 }
+    lab.setScene("day")
+    let waited = Date()
+    lab.wait(60)
+    try check(!lab.updating && lab.busy == nil && Date().timeIntervalSince(waited) < 30 && lab.params.exposure == 0.3 && lab.params.sceneMode == "day",
+      "a scene changed while a preview waits leaves nothing waiting, and keeps the exposure")
+    lab.setScene("night")
+    lab.change("曝光") { $0.exposure = 1 }
+    lab.wait()
+    try check(lab.params.exposure == 0.3 && lab.params.sceneMode == "night" && lab.repaired,
+      "a change while a fit runs is refused, rather than lost when the fit ends")
+    try check(LeakField(width: 3, height: 3, values: [0.5]).sample(0.5, 0.5) == 0, "a damaged field reads as nothing, not out of bounds")
     let exportURL = root.appendingPathComponent("out").appendingPathComponent("leaked_去漏光.tif")
     try FileManager.default.createDirectory(at: exportURL.deletingLastPathComponent(), withIntermediateDirectories: true)
     try Data("an older export".utf8).write(to: exportURL.deletingPathExtension().appendingPathExtension("jpg"))
@@ -302,6 +315,14 @@ enum LightLeakTests {
       "leak_preview shows the result, and leak_sample reads before, after and the leak's confidence at each point")
     let undone = mcp("undo")
     try check(!undone.isError && pageLab.model?.strength == 1, "undo over MCP takes back the page's last change")
+    let both = mcp("leak_set", ["scene": "day", "strength": 0.5])
+    try check(!both.isError && pageLab.params.sceneMode == "day" && pageLab.model?.strength == 0.5,
+      "leak_set with a scene and a strength fits the scene, then sets the strength on the new fit")
+    let protecting = pageLab.params.protectHighlights
+    let typed = mcp("leak_set", ["protect_highlights": "false"])
+    try check(typed.isError && pageLab.params.protectHighlights == protecting, "a value of the wrong type is refused, not reported as adjusted")
+    let missing = mcp("leak_open", ["frame": "99"])
+    try check(missing.isError && pageLab.job?.origin?.frame == frame.id, "leak_open of a frame the roll does not have says so and keeps the page")
     let frameExport = root.appendingPathComponent("out").appendingPathComponent("frame.tif")
     pageLab.export(to: frameExport)
     pageLab.wait()

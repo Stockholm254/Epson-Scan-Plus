@@ -139,6 +139,8 @@ struct LeakField: Codable, Equatable {
   /// The reference's overall green and blue (gain, bias), for the neutral veil only.
   var baseline: [[Double]]?
   func sample(_ x: Double, _ y: Double) -> Double {
+    // A damaged field reads as nothing rather than out of bounds.
+    guard width >= 2, height >= 2, values.count == width * height else { return 0 }
     let fx = clamp(x) * Double(width - 1), fy = clamp(y) * Double(height - 1)
     let ix = min(width - 2, Int(fx.rounded(.down))), iy = min(height - 2, Int(fy.rounded(.down)))
     let ax = fx - Double(ix), ay = fy - Double(iy)

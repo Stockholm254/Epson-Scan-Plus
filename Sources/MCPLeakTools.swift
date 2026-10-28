@@ -116,6 +116,7 @@ extension MCPTools {
         lab.jobs().map { ["job": $0.id, "name": $0.name, "has_reference": $0.hasReference, "modified": ISO8601DateFormatter().string(from: $0.modified)] }
       })
     case "leak_open":
+      guard onMain({ lab.busy == nil }) else { throw DeskError.message("去漏光页正在处理（\(onMain { lab.busy ?? "" })），稍后再打开。") }
       if let id = arguments["job"] as? String {
         guard onMain({ lab.jobs().contains { $0.id == id } }) else { throw DeskError.message("没有编号为 \(id) 的任务。可用 leak_list_jobs 查看。") }
         onMain {
@@ -135,14 +136,23 @@ extension MCPTools {
         throw DeskError.message("需要 frame（画面编号）或 job（任务编号）。")
       }
       try settle(lab)
+      // Whether what was asked for is what is open now.
+      let wantedJob = arguments["job"] as? String, wantedFrame = arguments["frame"] as? String
+      guard onMain({
+        guard let j = lab.job, lab.hasBase else { return false }
+        if let wantedJob { return j.id == wantedJob }
+        return j.origin.map { o in model.frames.first { $0.id == o.frame }?.name == wantedFrame } ?? false
+      }) else { throw DeskError.message("没有打开：" + onMain { lab.notice }) }
       return say(onMain { "已打开「\(lab.job?.sourceName ?? "")」。" + (lab.hasReference ? "已有参考图。" : "还没有参考图。") + lab.notice })
     case "leak_start":
       try requireBase(lab)
       guard onMain({ lab.hasReference }) else {
         throw DeskError.message("还没有参考图。生成参考图要计费，请用 leak_request_reference 请用户在 App 里确认，或请用户导入已有参考图。")
       }
+      guard onMain({ lab.busy == nil }) else { throw DeskError.message("去漏光页正在处理，稍后再试。") }
       onMain { lab.start() }
       try settle(lab)
+      guard onMain({ lab.repaired && lab.after != nil }) else { throw DeskError.message("没有应用去漏光：" + onMain { lab.notice }) }
       return say(onMain { lab.notice })
     case "leak_set":
       try requireBase(lab)
@@ -160,18 +170,27 @@ extension MCPTools {
       ]
       let values = try numbers.compactMap { n in try value(n.1, n.2).map { (n.0, $0) } }
       let strength = try value("strength", 0...1)
-      let scene = arguments["scene"] as? String
+      if arguments["scene"] != nil, !(arguments["scene"] is String) { throw DeskError.message("scene 应为 auto、day 或 night。") }
+      if arguments["protect_highlights"] != nil, !(arguments["protect_highlights"] is Bool) { throw DeskError.message("protect_highlights 应为 true 或 false。") }
+      let scene = arguments["scene"] as? String, protect = arguments["protect_highlights"] as? Bool
       if let scene, !["auto", "day", "night"].contains(scene) { throw DeskError.message("scene 只能是 auto、day 或 night。") }
-      if strength != nil, !onMain({ lab.model != nil }) { throw DeskError.message("还没有应用去漏光，没有强度可调。先 leak_start。") }
-      onMain {
-        lab.change("AI 调整去漏光") { p in
-          for (key, v) in values { p[keyPath: key] = v }
-          if let b = arguments["protect_highlights"] as? Bool { p.protectHighlights = b }
-          if let strength { p.referenceModel?.strength = strength }
-        }
-        if let scene, scene != lab.params.sceneMode { lab.setScene(scene) }
+      guard onMain({ lab.busy == nil }) else { throw DeskError.message("去漏光页正在处理，稍后再调整。") }
+      // A new scene is fitted again first; the rest then applies to that fit, a strength included.
+      if let scene, scene != onMain({ lab.params.sceneMode }) {
+        onMain { lab.setScene(scene) }
+        try settle(lab)
       }
-      try settle(lab)
+      if !values.isEmpty || protect != nil || strength != nil {
+        if strength != nil, !onMain({ lab.model != nil }) { throw DeskError.message("还没有应用去漏光，没有强度可调。先 leak_start。") }
+        onMain {
+          lab.change("AI 调整去漏光") { p in
+            for (key, v) in values { p[keyPath: key] = v }
+            if let protect { p.protectHighlights = protect }
+            if let strength { p.referenceModel?.strength = strength }
+          }
+        }
+        try settle(lab)
+      }
       return say("已调整：\(arguments.keys.sorted().joined(separator: ", "))。可用 ⌘Z 或 undo 撤销。" + (scene != nil ? onMain { lab.notice } : ""))
     case "leak_preview":
       try requireBase(lab)
@@ -185,7 +204,8 @@ extension MCPTools {
         }
       }
       guard let image else { throw DeskError.message(kind == "reference" ? "还没有参考图。" : "预览尚未生成。") }
-      let label = ["original": "修复前", "reference": "参考图"][kind] ?? (onMain { lab.repaired } ? "去漏光后" : "尚未去漏光")
+      if kind == "result", onMain({ lab.repaired && lab.after == nil }) { throw DeskError.message("去漏光预览没有生成：" + onMain { lab.notice }) }
+      let label = ["original": "修复前", "reference": "参考图"][kind] ?? (onMain { lab.repaired && lab.after != nil } ? "去漏光后" : "尚未去漏光")
       return [
         ["type": "image", "data": try jpeg(image, maxSize: size), "mimeType": "image/jpeg"],
         ["type": "text", "text": "\(onMain { lab.job?.sourceName ?? "" }) · \(label) · \(image.width) × \(image.height)"],
