@@ -129,12 +129,14 @@ final class FilmCanvasView: NSView {
     switch model?.tool {
     case .base: return Self.filledDropper
     case .neutral, .calibrate: return Self.dropper
+    case .highlight: return Self.halfDropper
     case .it8: return .crosshair
     default: return nil
     }
   }
   private static let dropper = eyedropper("eyedropper")
   private static let filledDropper = eyedropper("eyedropper.full")
+  private static let halfDropper = eyedropper("eyedropper.halffull")
   private static func eyedropper(_ symbol: String) -> NSCursor {
     let size = NSSize(width: 24, height: 24)
     let image = NSImage(size: size, flipped: false) { rect in

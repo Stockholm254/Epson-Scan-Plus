@@ -131,6 +131,10 @@ struct Adjustments: Codable, Equatable {
   // EV per channel; applied AFTER automatic estimation, never cancelled by it.
   var baseFine: RGB? = nil
   var neutralSample: RGB? = nil  // Encoded negative values, recalculated if the film/base changes.
+  /// The densest highlight of the negative, a white in the picture (Dmax), as read there:
+  /// each channel is stretched from its black, or the picked grey, up to it, so it comes out a
+  /// neutral white. Encoded negative values; nil leaves the white to the scene.
+  var highlightSample: RGB? = nil
   /// Deconvolution strength 0...1 from the scanner profile; nil uses the frame's default.
   var sharpening: Double? = nil
   /// RGB and per-channel tone curves, applied after conversion; nil leaves tones as they are.
@@ -300,11 +304,12 @@ enum CanvasTool: String, CaseIterable {
   case crop = "画框"
   case base = "片基"
   case neutral = "中性灰"
+  case highlight = "高光"
   case calibrate = "标定中性点"
   case it8 = "IT8 色卡"
 
   /// The tools a click reads a point of the picture with.
-  var picksPoint: Bool { self == .base || self == .neutral || self == .calibrate || self == .it8 }
+  var picksPoint: Bool { self == .base || self == .neutral || self == .highlight || self == .calibrate || self == .it8 }
 
   /// Each tool's SF Symbol. The two samplers differ in glyph and carry a label as well: the
   /// film base is the orange mask, the neutral a grey in the picture.
@@ -314,6 +319,7 @@ enum CanvasTool: String, CaseIterable {
     case .crop: return "crop"
     case .base: return "eyedropper.full"
     case .neutral: return "eyedropper"
+    case .highlight: return "eyedropper.halffull"
     case .calibrate: return "target"
     case .it8: return "squareshape.split.3x3"
     }
@@ -323,6 +329,7 @@ enum CanvasTool: String, CaseIterable {
     switch self {
     case .base: return "片基"
     case .neutral: return "中性灰"
+    case .highlight: return "高光"
     default: return nil
     }
   }
@@ -333,6 +340,7 @@ enum CanvasTool: String, CaseIterable {
     case .crop: return "c"
     case .base: return "b"
     case .neutral: return "n"
+    case .highlight: return "w"
     case .calibrate, .it8: return nil
     }
   }
@@ -343,6 +351,7 @@ enum CanvasTool: String, CaseIterable {
     case .crop: what = "画框：在接触表上拖出新画框；单张中裁切"
     case .base: what = "取片基：点未曝光的橙色片基，作为去色罩的基准"
     case .neutral: what = "取中性灰：点画面中应为灰色的地方，校正白平衡"
+    case .highlight: what = "取高光（Dmax）：点负片上最密、正片里应为纯白的地方，各通道以它为白点对齐"
     case .calibrate: what = "标定中性点：点选灰卡等中性灰，生成本机预设"
     case .it8: what = "IT8 色卡：按提示点色卡上的 6 个点"
     }

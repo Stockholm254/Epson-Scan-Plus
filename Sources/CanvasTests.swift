@@ -175,11 +175,14 @@ enum CanvasTests {
     key("n", code: 45)
     try check(model.tool == .neutral && model.singleView, "N the neutral sampler, on the single frame")
     try check(canvas.samplingCursor != nil, "the neutral sampler shows an eyedropper over the picture")
+    key("w", code: 13)
+    try check(model.tool == .highlight && model.singleView && canvas.samplingCursor != nil,
+      "W the highlight (Dmax) sampler, on the single frame, with its own eyedropper")
     key("v", code: 9)
     try check(model.tool == .select && canvas.samplingCursor == nil, "V goes back to selecting, and to the arrow")
     model.singleView = false
     key("c", code: 8)
-    try check(model.tool == .crop && CanvasTool.allCases.compactMap(\.shortcut).count == 4 && CanvasTool.base.help.hasSuffix("· B"),
+    try check(model.tool == .crop && CanvasTool.allCases.compactMap(\.shortcut).count == 5 && CanvasTool.base.help.hasSuffix("· B"),
       "C too, each named in its button's tooltip")
     let loupeShown = model.preferences.showLoupe
     key("z", code: 6)

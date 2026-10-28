@@ -376,6 +376,25 @@ final class ImagePipeline {
       // A calibrated preset knows where this film and scanner put a neutral.
       balance = RGB(offsets.values.map { -$0 })
     }
+    // The densest highlight picked as white (Dmax): each channel stretched from its own reference,
+    // the picked grey, the scene's black under auto white balance, else the film base, up to it,
+    // so the highlight comes out a neutral white, and with auto levels the white of the picture.
+    var white: Double?
+    if let picked = settings.highlightSample {
+      func pointExposure(_ v: RGB) -> [Double] {
+        (0..<3).map { exposure(log10(max(0.0001, base.values[$0]) / max(0.0001, v.values[$0])) * settings.inputGamma, $0) }
+      }
+      let top = pointExposure(picked)
+      let grey = settings.neutralSample.map(pointExposure)
+      let reference = grey ?? (settings.autoWhiteBalance && settings.manualBalance == nil ? channelLow : [0, 0, 0])
+      let reach = (0..<3).map { max(0.02, top[$0] - reference[$0]) }
+      let target = reach.reduce(0, +) / 3
+      gain = RGB(reach.map { clamp(target / $0, 0.5, 2) })
+      let anchored = (0..<3).map { reference[$0] * gain.values[$0] }
+      let meet = grey == nil ? 0 : anchored.reduce(0, +) / 3
+      balance = RGB(anchored.map { meet - $0 })
+      white = (0..<3).map { top[$0] * gain.values[$0] + balance.values[$0] }.reduce(0, +) / 3
+    }
     var lows = [Double]()
     var highs = [Double]()
     for c in 0..<3 {
@@ -383,7 +402,7 @@ final class ImagePipeline {
       highs.append(quantile(e[c], 0.995) * gain.values[c] + balance.values[c])
     }
     let low = settings.autoLevels ? (lows.min() ?? 0) : 0
-    let high = settings.autoLevels ? max(low + 0.05, highs.max() ?? 2) : 3.6
+    let high = settings.autoLevels ? max(low + 0.05, white ?? highs.max() ?? 2) : 3.6
     return ToneAnalysis(base: base, balance: balance, low: low, high: high, gain: gain)
   }
 

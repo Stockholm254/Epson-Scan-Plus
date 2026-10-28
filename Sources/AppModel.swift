@@ -147,6 +147,7 @@ final class AppModel: ObservableObject {
     case .crop: return singleView ? "拖动四角裁切 · 方向键微调 · 回车完成 · Esc 退出" : "在灯箱上拖出新的画框 · Esc 退出"
     case .base: return "点未曝光的橙色片基（片间或片边），不要点景物或片夹 · Esc 退出"
     case .neutral: return "点画面中应为中性灰的地方：灰卡、白墙、水泥 · Esc 退出"
+    case .highlight: return "点负片上最密、正片里应为纯白的高光：阳光下的白墙、高光反射；更亮处会剪成白 · Esc 退出"
     case .calibrate:
       return "点选中性灰：灰卡、白墙、水泥等均匀处 · 已取 \(calibrationPoints.count) 个"
         + (calibrationPoints.isEmpty ? "" : " · ⌫ 撤回上一点") + " · Esc 结束"
@@ -178,7 +179,7 @@ final class AppModel: ObservableObject {
   func useTool(_ value: CanvasTool) {
     if value != tool { editRegionLock = nil }
     tool = value
-    if value == .neutral || value == .calibrate || value == .it8 { singleView = selected != nil }
+    if value == .neutral || value == .highlight || value == .calibrate || value == .it8 { singleView = selected != nil }
     if value == .base || value == .crop { fitView() }
     focusCanvas()
     refresh()
@@ -213,6 +214,7 @@ final class AppModel: ObservableObject {
       $0.autoWhiteBalance = true
       $0.manualBalance = nil
       $0.neutralSample = nil
+      $0.highlightSample = nil
     }
     status = "已重算白平衡 · 独立校正通道亮暗范围"
   }
@@ -1197,6 +1199,8 @@ final class AppModel: ObservableObject {
       setFilmBase(color)
     } else if tool == .neutral {
       setNeutral(color)
+    } else if tool == .highlight {
+      setHighlight(color)
     }
     tool = .select
     refresh()
@@ -1223,6 +1227,13 @@ final class AppModel: ObservableObject {
       $0.autoWhiteBalance = true
     }
     status = "已按中性点自动白平衡"
+    updateThumbnails()
+  }
+  /// The densest highlight (Dmax) from a reading of something that should be white: each
+  /// channel's white is put on it.
+  func setHighlight(_ color: RGB) {
+    change("高光点") { $0.highlightSample = color }
+    status = "已取高光（Dmax）：这一点在正片里是白色，各通道以它为白点对齐"
     updateThumbnails()
   }
   func scanEnabled() {

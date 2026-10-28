@@ -174,7 +174,7 @@ struct ContentView: View {
   }
   /// The canvas tools, and fitting the picture.
   @ViewBuilder var toolControls: some View {
-      ForEach([CanvasTool.select, .crop, .base, .neutral], id: \.self) { t in
+      ForEach([CanvasTool.select, .crop, .base, .neutral, .highlight], id: \.self) { t in
         Button {
           m.useTool(t)
         } label: {
@@ -436,7 +436,7 @@ struct ContentView: View {
                 }
               })
           ).toggleStyle(LEDToggleStyle()).font(.system(size: 11))
-          InfoButton(text: "自动白平衡按画面估计，忽略外缘 5%（不改变导出范围）。「取中性灰」用滴管点画面中应为灰色的地方，按这一点自动白平衡（「自动」保持开着）；「重算白平衡」放弃取样点，按画面重新估计。")
+          InfoButton(text: "自动白平衡按画面估计，忽略外缘 5%（不改变导出范围）。「取中性灰」用滴管点画面中应为灰色的地方，按这一点自动白平衡（「自动」保持开着）。「取高光」（Dmax）点负片上最密、正片里应为纯白的地方，比如阳光下的白墙或高光反射：各通道从暗部（或取过的中性灰）拉到这一点，它在正片里是白色。「重算白平衡」放弃取样点，按画面重新估计。")
         }
         slider("冷暖", key: \.warmth, range: -1...1)
         slider("绿 / 洋红", key: \.tint, range: -1...1)
@@ -445,6 +445,16 @@ struct ContentView: View {
         } label: {
           Label("取中性灰", systemImage: CanvasTool.neutral.symbol)
         }.font(.system(size: 11))
+        HStack {
+          Button {
+            m.useTool(.highlight)
+          } label: {
+            Label("取高光（Dmax）", systemImage: CanvasTool.highlight.symbol)
+          }.font(.system(size: 11))
+          if m.settings.highlightSample != nil {
+            Button("清除高光点") { m.change("清除高光点") { $0.highlightSample = nil } }.font(.system(size: 11))
+          }
+        }
         Button("重算白平衡") { m.recalculateWhiteBalance() }.font(.system(size: 11))
         if m.settings.manualBalance != nil {
           Text("保留了旧版中性点；可点「重算白平衡」使用新版校正。").font(.system(size: 10)).foregroundStyle(accent)
