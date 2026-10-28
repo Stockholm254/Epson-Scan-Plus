@@ -79,6 +79,11 @@ final class AppModel: ObservableObject {
   /// The left panel's tab: scanning and storage, film and presets, or output.
   enum PanelTab: String, CaseIterable { case scan = "扫描", film = "胶片", output = "输出" }
   @Published var panelTab = PanelTab.scan
+  /// The main window's page: scanning and conversion, or repairing light leaks.
+  enum Page: String, CaseIterable { case scan = "扫描与转换", leak = "去漏光" }
+  @Published var page = Page.scan
+  /// The 去漏光 page, made when it is first shown.
+  lazy var leak: LeakLab = makeLeakLab()
   /// New previews and imports create their project folders here.
   @Published private(set) var libraryURL: URL
   let preferences: Preferences

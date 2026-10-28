@@ -6,7 +6,8 @@ import UniformTypeIdentifiers
 /// What an AI assistant connected over MCP can do: read how the selected frame is converted —
 /// film base and where it came from, the film's channel slopes, white balance, levels, densities
 /// and the result — see it, sample it, and adjust it. Every change goes through the app's own edits,
-/// so ⌘Z takes it back; nothing here scans, deletes, exports or touches files.
+/// so ⌘Z takes it back; nothing here scans, deletes, exports or touches files. The 去漏光 page's
+/// tools are in MCPLeakTools.
 enum MCPTools {
   struct Tool {
     let name: String
@@ -26,7 +27,8 @@ enum MCPTools {
     "x": number("横向位置，0 为画面左边，1 为右边（单张视图中看到的方向）", 0...1),
     "y": number("纵向位置，0 为画面上边，1 为下边", 0...1),
   ]
-  static let tools: [Tool] = [
+  static let tools: [Tool] = conversionTools + leakTools
+  private static let conversionTools: [Tool] = [
     Tool(name: "get_state", description: "读取当前工程和选中画面的转换状态：胶片预设与各通道斜率、片基 RGB 及来源、整卷估计、白平衡、色阶、影调、扫描与对齐信息，以及负片密度和正片各通道的百分位与溢出比例。调整前先调用。", properties: [:]),
     Tool(name: "list_frames", description: "列出本卷所有画面：编号、是否勾选、是否已正式扫描及 dpi、方向。", properties: [:]),
     Tool(name: "list_presets", description: "列出可用的胶片预设：名称、通道斜率、来源，是否为本机标定。", properties: [:]),
@@ -65,7 +67,7 @@ enum MCPTools {
     - 偏色先查片基（get_state 里的 film_base 和来源）；片基可疑时用 pick_film_base 点未曝光的片间，或 base_fine_ev 微调。再用 pick_neutral 或 warmth / tint。
     - 坐标是单张视图里画面的相对位置，0–1，左上为原点。
     - 每次调整都能在 App 里用 ⌘Z 撤销，也可以调用 undo。工具不会扫描、删除或导出文件。
-    """
+    """ + "\n" + leakInstructions
 
   /// Runs `name` with `arguments` against the app. Called off the main thread by the server; state
   /// is read and changed on the main thread.
@@ -80,7 +82,7 @@ enum MCPTools {
     if Thread.isMainThread { return try work() }
     return try DispatchQueue.main.sync(execute: work)
   }
-  private static func text(_ value: Any) -> [[String: Any]] {
+  static func text(_ value: Any) -> [[String: Any]] {
     let data = (try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys])) ?? Data()
     return [["type": "text", "text": String(data: data, encoding: .utf8) ?? "{}"]]
   }
@@ -310,6 +312,7 @@ enum MCPTools {
       guard let undone else { throw DeskError.message("没有可以撤销的编辑。") }
       return [["type": "text", "text": "已撤销「\(undone)」。"]]
     default:
+      if name.hasPrefix("leak_") { return try runLeak(name, arguments, model) }
       throw DeskError.message("没有名为 \(name) 的工具。")
     }
   }

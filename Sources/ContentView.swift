@@ -13,6 +13,9 @@ struct ContentView: View {
     VStack(spacing: 0) {
       toolbar
       Divider()
+      if m.page == .leak {
+        LeakPage(m: m, lab: m.leak)
+      } else {
       HStack(spacing: 0) {
         leftPanel.frame(width: m.preferences.leftWidth)
         PanelDivider(
@@ -24,10 +27,11 @@ struct ContentView: View {
           range: Preferences.rightWidths, panelOnLeft: false)
         rightPanel.frame(width: m.preferences.rightWidth)
       }
+      }
       Divider()
       filmstrip
       Divider()
-      footer
+      if m.page == .leak { LeakStatus(lab: m.leak) } else { footer }
     }
     .background(panelColor).preferredColorScheme(.dark).tint(accent)
     .frame(minWidth: 1120, minHeight: 760)
@@ -46,8 +50,17 @@ struct ContentView: View {
       }
       m.refresh()
     }
-    .onAppear { m.undoManager = undoManager }
-    .onChange(of: undoManager) { _, new in m.undoManager = new }
+    .onAppear {
+      m.undoManager = undoManager
+      if m.page == .leak { m.leak.undoManager = undoManager }
+    }
+    .onChange(of: undoManager) { _, new in
+      m.undoManager = new
+      if m.page == .leak { m.leak.undoManager = new }
+    }
+    .onChange(of: m.page) { _, page in
+      if page == .leak { m.leak.undoManager = undoManager } else { m.leak.save() }
+    }
   }
   var toolbar: some View {
     HStack(spacing: 16) {
@@ -57,6 +70,13 @@ struct ContentView: View {
         Spacer(minLength: 4)
         scannerLamp
       }.frame(width: 204, alignment: .leading)
+      Picker("页面", selection: $m.page) {
+        ForEach(AppModel.Page.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+      }.pickerStyle(.segmented).labelsHidden().frame(width: 190)
+        .help("扫描与转换：预览、扫描、去色罩和导出；去漏光：用参考图修复正片上的漏光")
+      if m.page == .leak {
+        LeakToolbar(lab: m.leak)
+      } else {
       Button {
         m.importImages()
       } label: {
@@ -66,6 +86,7 @@ struct ContentView: View {
         m.openProject()
       } label: {
         Label("打开工程", systemImage: "folder")
+      }
       }
       Spacer()
       if m.scanBatch.isActive || m.scanner.busy {
@@ -89,6 +110,9 @@ struct ContentView: View {
           .help("整批进度按张数计算，包含当前这张的扫描进度；不是剩余时间估算")
         Button("取消") { m.cancel() }.disabled(m.scanBatch.phase == .cancelling)
       }
+      if m.page == .leak {
+        LeakExportKey(lab: m.leak)
+      } else {
       Button {
         m.requestPreview()
       } label: {
@@ -100,6 +124,7 @@ struct ContentView: View {
         Label("扫描所选 \(m.enabledCount)", systemImage: "scanner")
       }.buttonStyle(HardwareKeyStyle(prominent: true)).disabled(
         !m.scanner.ready || !m.hasScanTargets || m.isWorking)
+      }
     }.buttonStyle(HardwareKeyStyle()).controlSize(.regular).padding(.horizontal, 18).padding(.vertical, 11)
       .background(
         LinearGradient(colors: [Color(white: 0.2), Color(white: 0.15)], startPoint: .top, endPoint: .bottom))
@@ -579,16 +604,7 @@ struct ContentView: View {
       }
     }.padding(28).frame(width: 440)
   }
-  func sectionTitle(_ text: String, symbol: String) -> some View {
-    // Engraved into the panel: a dark edge above, a faint highlight below.
-    HStack(spacing: 7) {
-      Image(systemName: symbol).foregroundStyle(accent)
-      Text(text).font(.system(size: 12, weight: .semibold)).tracking(1.5)
-        .foregroundStyle(Color(white: 0.8))
-    }
-    .shadow(color: .black.opacity(0.9), radius: 0, y: -0.5)
-    .shadow(color: .white.opacity(0.08), radius: 0, y: 0.75)
-  }
+  func sectionTitle(_ text: String, symbol: String) -> some View { SectionTitle(text: text, symbol: symbol) }
   func labeled<V: View>(_ name: String, @ViewBuilder content: () -> V) -> some View {
     HStack {
       Text(name).font(.system(size: 11)).foregroundStyle(.secondary)

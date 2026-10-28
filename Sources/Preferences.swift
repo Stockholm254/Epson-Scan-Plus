@@ -151,6 +151,8 @@ final class Preferences: ObservableObject {
   @Published var mcpEnabled: Bool { didSet { defaults?.set(mcpEnabled, forKey: "mcpEnabled") } }
   /// Frames side by side scanned in one pass when that is quicker (48-bit interface only).
   @Published var rowScanning: Bool { didSet { defaults?.set(rowScanning, forKey: "rowScanning") } }
+  /// The light-leak job open last, opened again with the page.
+  @Published var leakJob: String? { didSet { defaults?.set(leakJob, forKey: "leakJob") } }
   init(defaults: UserDefaults? = nil) {
     self.defaults = defaults
     libraryPath = defaults?.string(forKey: "libraryPath")
@@ -176,6 +178,7 @@ final class Preferences: ObservableObject {
     scanSpeed = (defaults?.dictionary(forKey: "scanSpeed") as? [String: Double]) ?? [:]
     rowScanning = defaults?.object(forKey: "rowScanning") as? Bool ?? true
     mcpEnabled = defaults?.bool(forKey: "mcpEnabled") ?? false
+    leakJob = defaults?.string(forKey: "leakJob")
     rightWidth = right > 0 ? min(Self.rightWidths.upperBound, max(Self.rightWidths.lowerBound, right)) : 258
   }
   var libraryURL: URL { libraryPath.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? Self.defaultLibraryURL }
