@@ -45,6 +45,8 @@ struct LeakJob: Codable, Identifiable {
   var params = LeakParams()
   var meta: Meta?
   var modified: Date?
+  /// Matching points on the original and the reference, for a manual alignment.
+  var pairs: [LeakPair]?
 }
 
 /// The 去漏光 page. One photograph at a time: a frame of the open roll or an imported positive,
@@ -197,6 +199,8 @@ final class LeakLab: ObservableObject {
     self.persisted = persisted
     before = base.cgImage()
     after = nil
+    selectedRegion = nil
+    tool = .inspect
     reference = j.guide.flatMap { try? ImagePipeline.shared.load(root.appendingPathComponent(j.id).appendingPathComponent($0), maxDimension: 1800) }
     showReference = false
     wipe = repaired ? 0.5 : 0
@@ -316,11 +320,13 @@ final class LeakLab: ObservableObject {
     next.referenceModel = nil
     rebuild(j, next)
   }
-  private func rebuild(_ j: LeakJob, _ next: LeakParams) {
+  private func rebuild(_ j: LeakJob, _ next: LeakParams, pairs: [LeakPair]? = nil, notice told: String? = nil) {
     run("重建正片预览") {
       let full = try self.original(j)
       let base = Self.base(full, next)
       var j = j
+      // Landmarks on the old base no longer match.
+      j.pairs = pairs
       j.base = "base-\(Self.stamp()).tif"
       j.meta = .init(width: full.width, height: full.height, previewWidth: base.width, previewHeight: base.height)
       // Written before the job names it: a job never points at a base that is not there.
@@ -337,7 +343,7 @@ final class LeakLab: ObservableObject {
         if self.hasReference {
           self.fit()
         } else {
-          self.notice = "方向已更新。点击「开始去漏光」。"
+          self.notice = told ?? "方向 / 裁切已更新。点击「开始去漏光」。"
           self.preview()
         }
       }
@@ -348,6 +354,213 @@ final class LeakLab: ObservableObject {
     if let source = j.source, let folder { return try LeakImage(contentsOf: folder.appendingPathComponent(source)) }
     guard let origin = j.origin, let renderFrame else { throw DeskError.message("找不到这个任务的原片。") }
     return try LeakImage(renderFrame(origin))
+  }
+
+  // MARK: Regions, protection, landmarks, crop and presets
+
+  /// What a drag on the picture does: compare, draw a leak region, place its clean point, or
+  /// paint a protection.
+  enum Tool: String { case inspect, ellipse, reference, protect }
+  @Published var tool = Tool.inspect
+  @Published var selectedRegion: String?
+  /// The protection brush's radius, as a share of the picture's width.
+  @Published var brush = 0.025
+  @Published var showMasks = true
+  @Published var sensitivity = 0.5
+  @Published var showAlign = false
+  @Published var showCrop = false
+  var region: LeakRegion? { params.regions.first { $0.id == selectedRegion } }
+  /// The job's matching points on the original and the reference.
+  var pairs: [LeakPair] { job?.pairs ?? [] }
+
+  /// A leak region drawn as an ellipse (0–1 of the picture): chosen, and waiting for a clean
+  /// point of the same material.
+  func addRegion(x: Double, y: Double, rx: Double, ry: Double) {
+    let r = LeakRegion(
+      id: UUID().uuidString.lowercased(), name: "手动区域 \(params.regions.count + 1)", shape: "ellipse", mode: "chroma",
+      x: clamp(x), y: clamp(y), rx: max(0.005, rx), ry: max(0.005, ry), amount: 0.8, feather: 0.8)
+    change("新建漏光区域") { $0.regions.append(r) }
+    guard params.regions.contains(where: { $0.id == r.id }) else { return }
+    selectedRegion = r.id
+    tool = .reference
+    notice = "区域已创建。现在在照片上点同材质、没有漏光的干净位置，作为颜色参考。"
+  }
+  /// The clean point the chosen region's colour is corrected to; what was measured before goes.
+  func setReference(_ p: LeakPoint) {
+    guard let id = selectedRegion, params.regions.contains(where: { $0.id == id }) else {
+      notice = "先在列表里选择，或用「画区域」新建一个漏光区域。"
+      return
+    }
+    change("区域参考点") { params in
+      guard let i = params.regions.firstIndex(where: { $0.id == id }) else { return }
+      params.regions[i].ref = LeakPoint(x: clamp(p.x), y: clamp(p.y))
+      params.regions[i].target = nil
+      params.regions[i].fog = nil
+      params.regions[i].ratios = nil
+      params.regions[i].channelRy = nil
+      params.regions[i].gaussian = false
+      params.regions[i].detected = false
+    }
+    tool = .inspect
+  }
+  /// A change to one region or protection; repeats of one control within a second are one step.
+  func editRegion(_ id: String, _ name: String, _ edit: (inout LeakRegion) -> Void) {
+    change(name) { p in
+      if let i = p.regions.firstIndex(where: { $0.id == id }) {
+        edit(&p.regions[i])
+      } else if let i = p.protect.firstIndex(where: { $0.id == id }) {
+        edit(&p.protect[i])
+      }
+    }
+  }
+  func moveRegion(_ id: String, x: Double, y: Double) {
+    editRegion(id, "移动区域") {
+      $0.x = clamp(x)
+      $0.y = clamp(y)
+    }
+  }
+  /// On or off; a suggestion turned on counts as approved, so the next fit keeps it.
+  func setEnabled(_ id: String, _ on: Bool) {
+    editRegion(id, on ? "启用区域" : "停用区域") {
+      $0.enabled = on
+      $0.approved = on
+    }
+  }
+  func deleteRegion(_ id: String) {
+    change("删除区域") { p in
+      p.regions.removeAll { $0.id == id }
+      p.protect.removeAll { $0.id == id }
+    }
+    if selectedRegion == id && region == nil { selectedRegion = nil }
+  }
+  /// The leak region whose ellipse holds `p`, the nearest centre first, for picking and moving.
+  func regionAt(_ p: LeakPoint) -> LeakRegion? {
+    params.regions.filter { r in
+      guard r.shape == "ellipse", let x = r.x, let y = r.y, let rx = r.rx, let ry = r.ry, rx > 0, ry > 0 else { return false }
+      return pow((p.x - x) / rx, 2) + pow((p.y - y) / ry, 2) <= 1
+    }.min { hypot(($0.x ?? 0) - p.x, ($0.y ?? 0) - p.y) < hypot(($1.x ?? 0) - p.x, ($1.y ?? 0) - p.y) }
+  }
+  /// A protection painted with the brush (points 0–1 of the picture): nothing is corrected under
+  /// it, whatever the fit or the detection says.
+  func addProtection(_ points: [[Double]]) {
+    guard !points.isEmpty else { return }
+    let r = LeakRegion(
+      id: UUID().uuidString.lowercased(), name: "手绘保护区", shape: "stroke",
+      points: Array(points.prefix(2000)).map { [clamp($0[0]), clamp($0[1])] }, radius: brush)
+    change("保护画笔") { $0.protect.append(r) }
+  }
+  /// Leak regions and lamp protections suggested from the picture. Suggested regions stay off
+  /// until ticked; detected protections replace earlier detected ones; drawn ones stay.
+  func detect() {
+    guard let base, busy == nil else { return }
+    let sensitivity = min(1, max(0.1, self.sensitivity))
+    run("自动检测漏光区域") {
+      let d = LeakEngine.detect(LeakEngine.resized(base, width: 320), sensitivity: sensitivity)
+      return {
+        self.change("自动检测") { p in
+          p.regions = p.regions.filter { $0.detected != true } + d.regions.map { r in
+            var r = r
+            r.enabled = false
+            r.detected = true
+            return r
+          }
+          p.protect = Array((p.protect.filter { $0.detected != true } + d.protect.map { r in
+            var r = r
+            r.detected = true
+            return r
+          }).prefix(80))
+        }
+        self.selectedRegion = d.regions.first?.id ?? self.selectedRegion
+        self.notice = d.message + "\n自动结果不是漏光定论：红色是候选校正（勾选后生效），青色是保护。"
+      }
+    }
+  }
+  /// Matching points, four or more, for when the automatic alignment is unsure; none aligns the
+  /// reference as the same framing. The next fit uses them.
+  func setPairs(_ list: [LeakPair]) {
+    guard var j = job, busy == nil else { return }
+    guard list.isEmpty || list.count >= 4 else {
+      notice = "至少需要 4 对对应点；或清空后按相同构图对齐。"
+      return
+    }
+    j.pairs = list.isEmpty ? nil : Array(list.prefix(20))
+    job = j
+    save()
+    notice = list.isEmpty ? "已清空对应点，按相同构图对齐。" : "已设 \(min(20, list.count)) 对对应点。点击「开始去漏光」按对应点在本地重新拟合，不调用 API。"
+  }
+  /// A new crop of the turned original: a new base, the regions, protections and landmarks drawn
+  /// on the old one cleared, and the reference matched again.
+  func setCrop(_ crop: LeakCrop) {
+    guard let j = job, busy == nil else { return }
+    var c = crop
+    c.x = min(0.9, max(0, c.x))
+    c.y = min(0.9, max(0, c.y))
+    c.w = min(1 - c.x, max(0.05, c.w))
+    c.h = min(1 - c.y, max(0.05, c.h))
+    guard c != params.crop else { return }
+    var next = params
+    next.crop = c
+    next.regions = []
+    next.protect = []
+    next.referenceModel = nil
+    selectedRegion = nil
+    rebuild(j, next)
+  }
+  /// Parameters, regions and landmarks, in FilmLightLab's preset file: either app reads the
+  /// other's. The fitted model and the scene judged belong to one photograph and are left out.
+  struct Preset: Codable {
+    var version = 1
+    var name: String
+    var params: LeakParams
+    var pairs: [LeakPair]?
+  }
+  func savePreset(to url: URL) throws {
+    var p = params
+    p.referenceModel = nil
+    p.sceneInfo = nil
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    try encoder.encode(Preset(name: "Epson Scan plus 去漏光预设", params: p, pairs: job?.pairs)).write(to: url, options: .atomic)
+    notice = "预设已保存到 \(url.lastPathComponent)。"
+  }
+  func loadPreset(from url: URL) {
+    guard let j = job, busy == nil else { return }
+    let preset: Preset
+    do {
+      preset = try JSONDecoder().decode(Preset.self, from: Data(contentsOf: url))
+    } catch {
+      errorText = "不是有效的去漏光预设（Epson Scan plus 或 FilmLightLab）：\(error.localizedDescription)"
+      return
+    }
+    var next = preset.params
+    next.referenceModel = nil
+    next.sceneInfo = nil
+    let landmarks = (preset.pairs ?? []).count >= 4 ? Array((preset.pairs ?? []).prefix(20)) : nil
+    selectedRegion = nil
+    if next.rotation != params.rotation || next.crop != params.crop {
+      rebuild(j, next, pairs: landmarks, notice: "预设已载入，方向 / 裁切按预设重建。区域位置按画幅比例保存，换了照片请检查并调整。")
+      return
+    }
+    change("载入预设") { $0 = next }
+    var k = j
+    k.pairs = landmarks
+    job = k
+    save()
+    notice = "预设已载入。区域位置按画幅比例保存，换了照片请检查并调整" + (hasReference ? "；点击「开始去漏光」重新拟合，不调用 API。" : "。")
+  }
+  func chooseSavePreset() {
+    let panel = NSSavePanel()
+    panel.allowedContentTypes = [.json]
+    panel.nameFieldStringValue = "去漏光预设.json"
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    do { try savePreset(to: url) } catch { errorText = error.localizedDescription }
+  }
+  func chooseLoadPreset() {
+    let panel = NSOpenPanel()
+    panel.allowedContentTypes = [.json]
+    panel.message = "选择去漏光预设（Epson Scan plus 或 FilmLightLab 导出的 JSON）。"
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    loadPreset(from: url)
   }
 
   // MARK: Repairing
@@ -373,7 +586,7 @@ final class LeakLab: ObservableObject {
     // The preview this replaces would have cleared it.
     updating = false
     run("拟合原片引导的边缘感知匹配") {
-      let fitted = try LeakEngine.fitReference(base: base, guide: guide, params: input, baseID: baseID)
+      let fitted = try LeakEngine.fitReference(base: base, guide: guide, params: input, pairs: j.pairs ?? [], baseID: baseID)
       let out = try LeakEngine.result(base, base: base, params: fitted)
       return {
         self.set(fitted, name: "开始去漏光")
@@ -400,6 +613,7 @@ final class LeakLab: ObservableObject {
       j.guide = name
       j.guideName = url.lastPathComponent
       j.generatedAI = nil
+      j.pairs = nil
       return {
         self.job = j
         self.guide = guide
@@ -472,6 +686,7 @@ final class LeakLab: ObservableObject {
     j.guide = name
     j.guideName = "OpenAI · \(meta.model) · \(stamp)"
     j.generatedAI = meta
+    j.pairs = nil
     try onMain {
       let old = self.job
       self.job = j

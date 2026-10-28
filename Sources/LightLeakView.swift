@@ -24,6 +24,8 @@ struct LeakPage: View {
     }
     .sheet(isPresented: $lab.showAPI) { LeakAPISheet(credentials: lab.credentials, shown: $lab.showAPI) }
     .sheet(isPresented: $lab.showGenerate) { LeakGenerateSheet(lab: lab, credentials: lab.credentials) }
+    .sheet(isPresented: $lab.showAlign) { LeakAlignSheet(lab: lab) }
+    .sheet(isPresented: $lab.showCrop) { LeakCropSheet(lab: lab) }
     .alert("无法完成去漏光", isPresented: Binding(get: { lab.errorText != nil }, set: { if !$0 { lab.errorText = nil } })) {
       Button("好") { lab.errorText = nil }
     } message: {
@@ -36,6 +38,7 @@ struct LeakPage: View {
 struct LeakViewer: View {
   @ObservedObject var lab: LeakLab
   var choose: () -> Void
+  @State private var draft = LeakDraft()
   var body: some View {
     VStack(spacing: 0) {
       HStack(spacing: 12) {
@@ -128,16 +131,71 @@ struct LeakViewer: View {
         }.padding(8)
       }
       .frame(width: w, height: h)
+      .overlay {
+        if lab.showMasks && !lab.showReference {
+          LeakMasks(params: lab.params, selected: lab.selectedRegion, draft: draft, brush: lab.brush).allowsHitTesting(false)
+        }
+      }
       .contentShape(Rectangle())
       .gesture(
-        DragGesture(minimumDistance: 0).onChanged { drag in
-          guard lab.after != nil, !lab.showReference else { return }
-          lab.wipe = min(1, max(0, drag.location.x / w))
-        })
+        DragGesture(minimumDistance: 0)
+          .onChanged { drag in self.drag(drag.location, w: w, h: h) }
+          .onEnded { drag in self.finish(drag.location, w: w, h: h) })
       .overlay(alignment: .bottomTrailing) {
         if lab.updating { ProgressView().controlSize(.mini).padding(8) }
       }
       .position(x: g.size.width / 2, y: g.size.height / 2)
+    }
+  }
+  /// A drag on the picture: compares (or moves the region under it) when looking; draws a
+  /// region, places its clean point or paints a protection with the tools.
+  func drag(_ location: CGPoint, w: CGFloat, h: CGFloat) {
+    guard lab.busy == nil else { return }
+    let p = CGPoint(x: min(1, max(0, location.x / w)), y: min(1, max(0, location.y / h)))
+    let first = !draft.began
+    draft.began = true
+    switch lab.tool {
+    case .inspect:
+      if first, lab.showMasks, !lab.showReference, let hit = lab.regionAt(LeakPoint(x: p.x, y: p.y)) {
+        lab.selectedRegion = hit.id
+        draft.moving = (hit.id, p, CGPoint(x: hit.x ?? 0.5, y: hit.y ?? 0.5))
+      }
+      if let m = draft.moving {
+        lab.moveRegion(m.id, x: m.original.x + p.x - m.start.x, y: m.original.y + p.y - m.start.y)
+      } else if lab.after != nil, !lab.showReference {
+        lab.wipe = Double(p.x)
+      }
+    case .ellipse:
+      if first { draft.start = p }
+      draft.now = p
+    case .reference:
+      break
+    case .protect:
+      let q = [Double(p.x), Double(p.y)]
+      if let last = draft.stroke.last {
+        if hypot(q[0] - last[0], q[1] - last[1]) > 0.003 && draft.stroke.count < 2000 { draft.stroke.append(q) }
+      } else {
+        draft.stroke.append(q)
+      }
+    }
+  }
+  func finish(_ location: CGPoint, w: CGFloat, h: CGFloat) {
+    defer { draft = LeakDraft() }
+    guard lab.busy == nil, draft.began else { return }
+    let p = CGPoint(x: min(1, max(0, location.x / w)), y: min(1, max(0, location.y / h)))
+    switch lab.tool {
+    case .ellipse:
+      guard let a = draft.start else { return }
+      let b = draft.now ?? p
+      if abs(b.x - a.x) > 0.01 || abs(b.y - a.y) > 0.01 {
+        lab.addRegion(x: Double(a.x + b.x) / 2, y: Double(a.y + b.y) / 2, rx: Double(abs(b.x - a.x)) / 2, ry: Double(abs(b.y - a.y)) / 2)
+      }
+    case .reference:
+      lab.setReference(LeakPoint(x: p.x, y: p.y))
+    case .protect:
+      lab.addProtection(draft.stroke)
+    case .inspect:
+      break
     }
   }
   func tag(_ text: String) -> some View {
@@ -164,6 +222,8 @@ struct LeakPanel: View {
         repair
         Divider()
         reference
+        Divider()
+        LeakRegionsSection(lab: lab)
         Divider()
         adjustments
         Divider()

@@ -89,7 +89,8 @@
 1. **选照片**：在下方胶片条点一张本卷的照片，按它当前的调色在本机转换为 Adobe RGB 16 位正片处理，不用先导出再导入；也可以「导入正片」其他软件已去色罩、反相的 TIFF / PNG / JPEG（推荐带 ICC 的 16 位 TIFF，原文件不改动）。左右旋转在画面右上角。
 2. **开始去漏光**：已有参考图时在本地免费修复；没有时先生成参考图。也可以在「参考图」里导入在别处得到的同一张照片的干净版本。
 3. **检查**：拖动画面下方的对比滑杆看修复前后，按住「按住看原片」临时看原片，「结果 / 参考图」切换看参考图。场景（自动 / 白天 / 夜晚）、「保留灯光红晕和真实红色物体」、去偏色强度和基础调整（曝光、冷暖、绿 / 品红、对比度）随时可改，换场景或旋转后用已有参考图在本地重新拟合。所有改动都能 ⌘Z 撤销。
-4. **导出 16 位 TIFF**：原图裁切尺寸的 RGB 16 位 Adobe RGB TIFF，旁边附同一像素的 sRGB JPEG 和参数记录（`.tif.json`）；只写你选的文件，同名的 JPEG 已存在时加编号，不覆盖。本卷照片导出时按建立任务时的调色重新转换全分辨率；调色改过后，「照片」一节会提示并可「按当前调色重新载入」。
+4. **局部处理**（可选）：「局部区域与保护」里可以画椭圆框住漏光并点干净参考点、用画笔保护真实的红色物体和灯光、自动检测候选区域（勾选才生效）、在自动对齐不确定时手动标对应点、裁切，以及保存 / 载入预设（与 FilmLightLab 的预设文件通用）。
+5. **导出 16 位 TIFF**：原图裁切尺寸的 RGB 16 位 Adobe RGB TIFF，旁边附同一像素的 sRGB JPEG 和参数记录（`.tif.json`）；只写你选的文件，同名的 JPEG 已存在时加编号，不覆盖。本卷照片导出时按建立任务时的调色重新转换全分辨率；调色改过后，「照片」一节会提示并可「按当前调色重新载入」。
 
 **参考图与费用**：生成参考图调用 OpenAI 图像接口（`https://api.openai.com/v1/images/edits`，模型 gpt-image-2.5-sunburst / flare 或 gpt-image-2，提示词与 FilmLightLab 相同）。只在你在确认窗口点「生成并去漏光（调用 API）」后，上传最长边 1536 px、无 EXIF 的 JPEG 缩图及附加要求；原尺寸照片留在本机。每次 1 张，不自动重试，失败或超时仍可能已计费。生成的参考图先保存再拟合，拟合失败也不会再次收费。
 
@@ -109,7 +110,7 @@ Epson Scan plus 可以作为 [MCP](https://modelcontextprotocol.io) 服务器，
 
 助手启动的是 App 自己（`EpsonScanPlus --mcp`），它通过只有你的账户能访问的本机连接与正在运行的 App 通信，不经过网络。工具列表：`get_state`、`list_frames`、`list_presets`、`select_frame`、`preview`、`sample`、`adjust`、`pick_film_base`、`auto_film_base`、`pick_neutral`、`choose_preset`、`apply_to_roll`、`reset_adjustments`、`undo`。
 
-去漏光页也在同一个 MCP 服务器里：`leak_get_state`、`leak_list_jobs`、`leak_open`（打开本卷某张或某个任务）、`leak_start`（用已有参考图在本地修复）、`leak_set`（场景、强度、保护、基础调整）、`leak_preview`（结果 / 原片 / 参考图）、`leak_sample`（修复前后的值和该处的漏光把握）、`leak_request_reference`。生成参考图要上传并计费，助手不能替你决定：`leak_request_reference` 只在 App 里打开确认窗口，由你点确认；助手读不到 API Key，也不能导出。
+去漏光页也在同一个 MCP 服务器里：`leak_get_state`、`leak_list_jobs`、`leak_open`（打开本卷某张或某个任务）、`leak_start`（用已有参考图在本地修复）、`leak_set`（场景、强度、保护、基础调整）、`leak_preview`（结果 / 原片 / 参考图）、`leak_sample`（修复前后的值和该处的漏光把握）、`leak_detect`（自动检测候选区域，默认不启用）、`leak_request_reference`。生成参考图要上传并计费，助手不能替你决定：`leak_request_reference` 只在 App 里打开确认窗口，由你点确认；助手读不到 API Key，也不能导出。
 
 ## 快速开始
 

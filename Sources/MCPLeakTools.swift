@@ -33,6 +33,9 @@ extension MCPTools {
       "points": ["type": "array", "maxItems": 20, "description": "[[x, y], …]",
         "items": ["type": "array", "items": ["type": "number"], "minItems": 2, "maxItems": 2]],
     ], required: ["points"]),
+    Tool(name: "leak_detect", description: "在照片上自动检测漏光候选区域和灯光保护区：候选区域默认不启用，要用户在 App 里勾选才生效；检测到的保护区替换之前检测的，手绘保护不变。可用 ⌘Z 或 undo 撤销。", properties: [
+      "sensitivity": number("灵敏度，默认 0.5", 0.1...1),
+    ]),
     Tool(name: "leak_request_reference", description: "请用户生成参考图：只在 App 里打开确认窗口（说明会上传 1536 px 缩图并由用户的 OpenAI API 账户计费），由用户决定是否生成；本工具自己不上传、不计费。未设置 API Key 时打开 API 管理。", properties: [:]),
   ]
   static let leakInstructions = """
@@ -98,6 +101,10 @@ extension MCPTools {
         if let s = p.sceneInfo { scene["judged"] = s.type; scene["label"] = s.label; scene["night_weight"] = short(s.nightWeight); scene["confidence"] = short(s.confidence) }
         state["scene"] = scene
         state["protect_highlights"] = p.protectHighlights
+        state["local"] = [
+          "leak_regions": p.regions.count, "leak_regions_enabled": p.regions.filter { $0.enabled != false }.count,
+          "protections": p.protect.count, "landmark_pairs": j.pairs?.count ?? 0,
+        ]
         state["detected_protections"] = p.protect.filter { $0.detected == true }.count
         state["adjustments"] = ["exposure": p.exposure, "temperature": p.temperature, "tint": p.tint, "contrast": p.contrast]
         if let m = p.referenceModel {
@@ -230,6 +237,18 @@ extension MCPTools {
           item["night_white_fog_confidence"] = short(model.neutralField.sample(x, y))
         }
         return item
+      })
+    case "leak_detect":
+      try requireBase(lab)
+      guard onMain({ lab.busy == nil }) else { throw DeskError.message("去漏光页正在处理，稍后再试。") }
+      if let raw = arguments["sensitivity"] {
+        guard let v = (raw as? NSNumber)?.doubleValue, v.isFinite else { throw DeskError.message("sensitivity 应为数字。") }
+        onMain { lab.sensitivity = min(1, max(0.1, v)) }
+      }
+      onMain { lab.detect() }
+      try settle(lab)
+      return say(onMain {
+        "\(lab.notice)\n现有漏光区域 \(lab.params.regions.count) 个（启用 \(lab.params.regions.filter { $0.enabled != false }.count) 个），保护区 \(lab.params.protect.count) 个。"
       })
     case "leak_request_reference":
       try requireBase(lab)

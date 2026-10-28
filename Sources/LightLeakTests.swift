@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import ImageIO
+import simd
 import Security
 import UniformTypeIdentifiers
 
@@ -221,6 +222,79 @@ enum LightLeakTests {
     try check(lab.params.exposure == 0.3 && lab.params.sceneMode == "night" && lab.repaired,
       "a change while a fit runs is refused, rather than lost when the fit ends")
     try check(LeakField(width: 3, height: 3, values: [0.5]).sample(0.5, 0.5) == 0, "a damaged field reads as nothing, not out of bounds")
+
+    // A region drawn by hand over the leak, with a clean point of the same ground: it corrects there.
+    guard let plain = lab.after.flatMap({ try? LeakImage($0) }) else { throw DeskError.message("FAIL: no repair to compare with") }
+    lab.addRegion(x: 0.06, y: 0.8, rx: 0.06, ry: 0.12)
+    try check(lab.tool == .reference && lab.region?.ref == nil, "a drawn region is chosen and waits for its clean point")
+    lab.setReference(LeakPoint(x: 0.85, y: 0.8))
+    lab.wait()
+    let local = try LeakImage(lab.after!)
+    let moved = simd_length(LeakEngine.sample(local, 0.06, 0.8) - LeakEngine.sample(plain, 0.06, 0.8))
+    let still = simd_length(LeakEngine.sample(local, 0.6, 0.2) - LeakEngine.sample(plain, 0.6, 0.2))
+    try check(lab.region?.ref == LeakPoint(x: 0.85, y: 0.8) && lab.tool == .inspect && moved > 0.003 && still < 0.001,
+      String(format: "with its clean point the region corrects the picture under it (%.4f) and nowhere else (%.4f)", moved, still))
+    try check(lab.regionAt(LeakPoint(x: 0.07, y: 0.8))?.id == lab.selectedRegion && lab.regionAt(LeakPoint(x: 0.5, y: 0.5)) == nil,
+      "a press inside the region's ellipse finds it, one outside finds none")
+    // A protection painted over it: nothing is corrected under the brush, the original's pixels stay.
+    lab.brush = 0.08
+    lab.addProtection([[0.04, 0.8], [0.08, 0.8]])
+    lab.wait()
+    let original = try LeakImage(lab.before!)
+    // The basic adjustments (here +0.3 EV) act before the protection, as in FilmLightLab.
+    let underBrush = simd_length(LeakEngine.sample(try LeakImage(lab.after!), 0.06, 0.8) - LeakEngine.globalColor(LeakEngine.sample(original, 0.06, 0.8), lab.params))
+    try check(lab.params.protect.contains { $0.shape == "stroke" && $0.radius == 0.08 } && underBrush < 0.01,
+      String(format: "a painted protection keeps the original under the brush (after the basic adjustments), region and repair alike (%.4f off)", underBrush))
+    undo.undo()
+    lab.wait()
+    // Suggestions: detected regions stay off until ticked, the drawn region and protections stay.
+    let drawn = lab.params.regions.count
+    lab.detect()
+    lab.wait()
+    try check(lab.params.regions.count >= drawn && lab.params.regions.filter { $0.detected == true }.allSatisfy { $0.enabled == false }
+      && lab.params.regions.contains { $0.ref == LeakPoint(x: 0.85, y: 0.8) } && lab.errorText == nil,
+      "automatic detection suggests regions left off, beside the drawn one (\(lab.params.regions.count - drawn) suggested)")
+    if let suggested = lab.params.regions.first(where: { $0.detected == true }) {
+      lab.setEnabled(suggested.id, true)
+      try check(lab.params.regions.first { $0.id == suggested.id }?.approved == true, "a suggestion ticked counts as approved")
+      lab.deleteRegion(suggested.id)
+    }
+    // Landmarks: four pairs align the reference by hand.
+    lab.setPairs([LeakPair(source: [0.1, 0.1], target: [0.1, 0.1])])
+    try check(lab.pairs.isEmpty, "fewer than four landmarks are refused")
+    lab.setPairs([[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]].map { LeakPair(source: $0, target: $0) })
+    lab.start()
+    lab.wait()
+    try check(lab.pairs.count == 4 && lab.model?.alignment.method == "manual-landmarks" && lab.repaired,
+      "with four landmarks the fit aligns by them (\(lab.model?.alignment.method ?? "none"))")
+    lab.setPairs([])
+    // A crop: a new base of the cropped part, regions and landmarks cleared, fitted again.
+    lab.setPairs([[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]].map { LeakPair(source: $0, target: $0) })
+    let presetURL = root.appendingPathComponent("preset.json")
+    try lab.savePreset(to: presetURL)
+    lab.setCrop(LeakCrop(x: 0.1, y: 0.1, w: 0.8, h: 0.6))
+    lab.wait()
+    let shape = lab.job?.meta.map { Double($0.previewHeight) / Double($0.previewWidth) } ?? 0
+    try check(abs(shape - 0.5) < 0.01 && lab.params.regions.isEmpty && lab.pairs.isEmpty && lab.params.crop.w == 0.8 && lab.repaired,
+      String(format: "a crop builds the base from the cropped part (%.3f high for 1 wide), clears what was drawn and fits again", shape))
+    // Presets: what was saved comes back, crop and landmarks included.
+    lab.loadPreset(from: presetURL)
+    lab.wait()
+    try check(lab.params.crop == LeakCrop() && lab.params.regions.contains { $0.ref == LeakPoint(x: 0.85, y: 0.8) } && lab.pairs.count == 4
+      && lab.params.exposure == 0.3 && lab.errorText == nil,
+      "a saved preset brings back the crop, the regions and the landmarks")
+    let filmLightLab = root.appendingPathComponent("FilmLightLab-preset.json")
+    try Data(#"{"version":1,"name":"FilmLightLab 预设","params":{"rotation":0,"crop":{"x":0,"y":0,"w":1,"h":1},"exposure":0.2,"temperature":0,"tint":0,"contrast":0,"sceneMode":"night","protectHighlights":true,"regions":[{"id":"a","name":"区域","shape":"ellipse","mode":"chroma","x":0.3,"y":0.4,"rx":0.1,"ry":0.1,"amount":0.8,"feather":0.8,"ref":{"x":0.8,"y":0.5}}],"protect":[]},"pairs":[]}"#.utf8)
+      .write(to: filmLightLab)
+    lab.loadPreset(from: filmLightLab)
+    lab.wait()
+    try check(lab.params.exposure == 0.2 && lab.params.regions.count == 1 && lab.params.regions[0].ref == LeakPoint(x: 0.8, y: 0.5) && lab.pairs.isEmpty,
+      "and FilmLightLab's own preset files load too")
+    lab.loadPreset(from: presetURL)
+    lab.wait()
+    lab.setPairs([])
+    lab.start()
+    lab.wait()
     let exportURL = root.appendingPathComponent("out").appendingPathComponent("leaked_去漏光.tif")
     try FileManager.default.createDirectory(at: exportURL.deletingLastPathComponent(), withIntermediateDirectories: true)
     try Data("an older export".utf8).write(to: exportURL.deletingPathExtension().appendingPathExtension("jpg"))
@@ -282,7 +356,7 @@ enum LightLeakTests {
       return result
     }
     let names = MCPTools.tools.map(\.name)
-    try check(names.filter { $0.hasPrefix("leak_") }.count == 8 && Set(names).count == names.count && MCPTools.instructions.contains("leak_request_reference"),
+    try check(names.filter { $0.hasPrefix("leak_") }.count == 9 && Set(names).count == names.count && MCPTools.instructions.contains("leak_request_reference"),
       "the MCP server lists the 去漏光 tools beside the conversion ones")
     let opened = mcp("leak_open", ["frame": "01"])
     try check(!opened.isError && app.page == .leak && pageLab.job?.origin?.frame == frame.id && pageLab.hasBase && !FileManager.default.fileExists(atPath: pageLab.root.path),
@@ -321,6 +395,10 @@ enum LightLeakTests {
     let protecting = pageLab.params.protectHighlights
     let typed = mcp("leak_set", ["protect_highlights": "false"])
     try check(typed.isError && pageLab.params.protectHighlights == protecting, "a value of the wrong type is refused, not reported as adjusted")
+    let detected = mcp("leak_detect", ["sensitivity": 0.6])
+    try check(!detected.isError && pageLab.sensitivity == 0.6 && pageLab.params.regions.allSatisfy { $0.enabled == false },
+      "leak_detect suggests regions over MCP, left off for the user to tick")
+    _ = mcp("undo")
     let missing = mcp("leak_open", ["frame": "99"])
     try check(missing.isError && pageLab.job?.origin?.frame == frame.id, "leak_open of a frame the roll does not have says so and keeps the page")
     let frameExport = root.appendingPathComponent("out").appendingPathComponent("frame.tif")
