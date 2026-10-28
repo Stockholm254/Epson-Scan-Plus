@@ -317,6 +317,7 @@ enum MCPTools {
       onMain { model.resetAdjustments() }
       return [["type": "text", "text": "已重置这张的调整。"]]
     case "undo":
+      if onMain({ model.page == .leak && model.leak.busy == "重建正片预览" }) { throw DeskError.message("去漏光页正在重建正片预览，稍后再撤销。") }
       let undone: String? = onMain {
         guard let undo = model.undoManager, undo.canUndo else { return nil }
         let name = undo.undoActionName

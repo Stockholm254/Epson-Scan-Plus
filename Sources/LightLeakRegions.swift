@@ -120,6 +120,10 @@ struct LeakRegionsSection: View {
       if !lab.params.protect.isEmpty {
         Text("保护区 \(lab.params.protect.count)").font(.system(size: 11, weight: .medium))
         rows(lab.params.protect, protection: true)
+        if lab.params.protect.contains(where: { $0.detected == true }) {
+          Text("自动检测的保护区（灯光、红色小物体）每次「开始去漏光」都会重新检测，取消勾选只到下次拟合为止；手绘保护一直保留。")
+            .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
       }
       HStack {
         Button("对应点…") { lab.showAlign = true }.disabled(!lab.hasReference)

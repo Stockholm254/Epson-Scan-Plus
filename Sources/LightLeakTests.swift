@@ -283,6 +283,42 @@ enum LightLeakTests {
     try check(lab.params.crop == LeakCrop() && lab.params.regions.contains { $0.ref == LeakPoint(x: 0.85, y: 0.8) } && lab.pairs.count == 4
       && lab.params.exposure == 0.3 && lab.errorText == nil,
       "a saved preset brings back the crop, the regions and the landmarks")
+    // ⌘Z while the fit runs: the fit adds its model to the undone parameters instead of putting them back.
+    let exposureBefore = lab.params.exposure
+    lab.change("曝光") { $0.exposure = 0.6 }
+    lab.wait()
+    lab.start()
+    undo.undo()
+    lab.wait()
+    try check(lab.params.exposure == exposureBefore && lab.repaired && lab.errorText == nil,
+      "an undo while the fit runs stays undone, and the fit is applied on top of it")
+    // A crop is one undo step, which puts the base, the regions and the repair before it back.
+    let uncropped = lab.params, uncroppedShape = lab.job?.meta.map { Double($0.previewHeight) / Double($0.previewWidth) } ?? 0
+    lab.setCrop(LeakCrop(x: 0.2, y: 0.1, w: 0.6, h: 0.6))
+    lab.wait()
+    try check(lab.params.regions.isEmpty && lab.undoManager?.undoActionName == "裁切", "a crop clears what was drawn, as one undo step")
+    undo.undo()
+    lab.wait()
+    let backShape = lab.job?.meta.map { Double($0.previewHeight) / Double($0.previewWidth) } ?? 0
+    try check(lab.params == uncropped && abs(backShape - uncroppedShape) < 1e-9 && lab.after != nil,
+      "and ⌘Z puts the uncropped base back with its regions and its repair")
+    undo.redo()
+    lab.wait()
+    try check(lab.params.crop == LeakCrop(x: 0.2, y: 0.1, w: 0.6, h: 0.6) && lab.params.regions.isEmpty, "redo crops again")
+    undo.undo()
+    lab.wait()
+    // Two regions deleted one after the other are two undo steps.
+    lab.addRegion(x: 0.3, y: 0.3, rx: 0.05, ry: 0.05)
+    lab.addRegion(x: 0.6, y: 0.3, rx: 0.05, ry: 0.05)
+    let two = lab.params.regions.count
+    lab.deleteRegion(lab.params.regions[two - 1].id)
+    lab.deleteRegion(lab.params.regions[two - 2].id)
+    undo.undo()
+    try check(lab.params.regions.count == two - 1, "two quick deletions are two undo steps, not one")
+    undo.undo()
+    undo.undo()
+    undo.undo()
+    lab.wait()
     let filmLightLab = root.appendingPathComponent("FilmLightLab-preset.json")
     try Data(#"{"version":1,"name":"FilmLightLab 预设","params":{"rotation":0,"crop":{"x":0,"y":0,"w":1,"h":1},"exposure":0.2,"temperature":0,"tint":0,"contrast":0,"sceneMode":"night","protectHighlights":true,"regions":[{"id":"a","name":"区域","shape":"ellipse","mode":"chroma","x":0.3,"y":0.4,"rx":0.1,"ry":0.1,"amount":0.8,"feather":0.8,"ref":{"x":0.8,"y":0.5}}],"protect":[]},"pairs":[]}"#.utf8)
       .write(to: filmLightLab)

@@ -23,6 +23,7 @@ struct ScanCanvas: NSViewRepresentable {
       view.pan = .zero
       view.lastViewportRevision = model.viewportRevision
     }
+    view.refreshCursorArea()
     view.clampPan()
     view.applyFocusRequest()
     view.needsDisplay = true
@@ -171,6 +172,14 @@ final class FilmCanvasView: NSView {
     CGSize(width: bounds.width - reserved.left - reserved.right, height: bounds.height - reserved.top - reserved.bottom)
   }
   var openRect: CGRect { CGRect(x: reserved.left, y: reserved.top, width: max(0, open.width), height: max(0, open.height)) }
+  private var cursorArea = CGRect.zero
+  /// The sampler's cursor follows the picture: a new frame shown, the view panned or zoomed.
+  func refreshCursorArea() {
+    let area = imageRect.intersection(openRect)
+    guard area != cursorArea else { return }
+    cursorArea = area
+    window?.invalidateCursorRects(for: self)
+  }
   func clampPan() {
     let r = imageRect
     let x = max(0, (r.width - open.width) / 2)
@@ -834,6 +843,7 @@ final class FilmCanvasView: NSView {
       pan.x -= event.scrollingDeltaX
       pan.y -= event.scrollingDeltaY
       clampPan()
+      refreshCursorArea()
     }
     needsDisplay = true
   }

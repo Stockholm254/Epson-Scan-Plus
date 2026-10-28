@@ -247,7 +247,9 @@ final class LeakLab: ObservableObject {
   // MARK: Changes
 
   /// A change of parameters, undoable; `refit` fits the reference again (free, local) after it.
-  func change(_ name: String, refit: Bool = false, _ edit: (inout LeakParams) -> Void) {
+  /// Changes with the same `step` within a second are one undo step (a fader dragged, a region
+  /// moved); nil keeps each change a step of its own.
+  func change(_ name: String, refit: Bool = false, step: String? = nil, _ edit: (inout LeakParams) -> Void) {
     // A fit, a generation or a turn under way puts its own parameters back when it ends: a change
     // now would be lost then, so none is taken.
     guard busy == nil else {
@@ -257,11 +259,11 @@ final class LeakLab: ObservableObject {
     var next = params
     edit(&next)
     guard next != params else { return }
-    set(next, name: name)
+    set(next, name: name, step: step)
     if refit && hasReference { fit() } else { save(); preview(soon: true) }
   }
-  private var lastChange: (name: String, at: Date)?
-  private func set(_ next: LeakParams, name: String) {
+  private var lastChange: (step: String, at: Date)?
+  private func set(_ next: LeakParams, name: String, step: String?) {
     let old = params
     params = next
     guard let undoManager else { return }
@@ -270,15 +272,21 @@ final class LeakLab: ObservableObject {
       lastChange = nil
     } else {
       let now = Date()
-      defer { lastChange = (name, now) }
+      defer { lastChange = step.map { ($0, now) } }
       // Repeats of one control within a second, a fader being dragged, are one step.
-      if let lastChange, lastChange.name == name, now.timeIntervalSince(lastChange.at) < 1, undoManager.canUndo { return }
+      if let step, let lastChange, lastChange.step == step, now.timeIntervalSince(lastChange.at) < 1, undoManager.canUndo { return }
     }
     // Without event grouping (tests, an assistant over MCP) each change is a group of its own.
     let grouping = !undoManager.groupsByEvent && !replaying
     if grouping { undoManager.beginUndoGrouping() }
     undoManager.registerUndo(withTarget: self) { lab in
-      lab.set(old, name: name)
+      // A fit or a generation under way adds its model to the undone parameters when it ends; a
+      // base being rebuilt would replace them, so not while it is.
+      guard !lab.rebuilding else {
+        lab.notice = "正在重建正片预览，这一步撤销没有生效，请稍候再试。"
+        return
+      }
+      lab.set(old, name: name, step: step)
       lab.save()
       lab.preview()
     }
@@ -286,7 +294,7 @@ final class LeakLab: ObservableObject {
     if grouping { undoManager.endUndoGrouping() }
   }
   func setScene(_ mode: String) {
-    change("场景", refit: true) {
+    change("场景", refit: true, step: "场景") {
       $0.sceneMode = mode
       $0.sceneInfo = nil
       $0.referenceModel = nil
@@ -295,7 +303,7 @@ final class LeakLab: ObservableObject {
   }
   func setStrength(_ value: Double) {
     guard params.referenceModel != nil else { return }
-    change("去偏色强度") { $0.referenceModel?.strength = value }
+    change("去偏色强度", step: "去偏色强度") { $0.referenceModel?.strength = value }
   }
   func clearReferenceCorrection() {
     change("停用参考校正") { $0.referenceModel = nil }
@@ -318,10 +326,13 @@ final class LeakLab: ObservableObject {
     j.origin = origin
     var next = params
     next.referenceModel = nil
-    rebuild(j, next)
+    // The framing is the same, so the landmarks still match.
+    rebuild(j, next, pairs: j.pairs, name: "按当前调色重新载入")
   }
-  private func rebuild(_ j: LeakJob, _ next: LeakParams, pairs: [LeakPair]? = nil, notice told: String? = nil) {
-    run("重建正片预览") {
+  private static let rebuildLabel = "重建正片预览"
+  private var rebuilding: Bool { busy == Self.rebuildLabel }
+  private func rebuild(_ j: LeakJob, _ next: LeakParams, pairs: [LeakPair]? = nil, name: String = "旋转 / 裁切", notice told: String? = nil) {
+    run(Self.rebuildLabel) {
       let full = try self.original(j)
       let base = Self.base(full, next)
       var j = j
@@ -334,19 +345,41 @@ final class LeakLab: ObservableObject {
         try base.saveTIFF(to: folder.appendingPathComponent(j.base!))
       }
       return {
-        self.job = j
-        self.base = base
-        self.before = base.cgImage()
-        self.undoManager?.removeAllActions(withTarget: self)
-        self.params = next
-        self.save()
-        if self.hasReference {
-          self.fit()
-        } else {
-          self.notice = told ?? "方向 / 裁切已更新。点击「开始去漏光」。"
-          self.preview()
-        }
+        self.place(j, base: base, params: next, name: name)
+        if !self.hasReference { self.notice = told ?? "方向 / 裁切已更新。点击「开始去漏光」。" }
       }
+    }
+  }
+  /// A base put in place with its job and parameters, as one undo step whose undo puts the one
+  /// before back as it was, fitted or not, without rebuilding anything.
+  private func place(_ j: LeakJob, base: LeakImage, params next: LeakParams, name: String) {
+    if let undoManager, let oldJob = job, let oldBase = self.base {
+      let oldParams = params
+      let grouping = !undoManager.groupsByEvent && !undoManager.isUndoing && !undoManager.isRedoing
+      if grouping { undoManager.beginUndoGrouping() }
+      undoManager.registerUndo(withTarget: self) { lab in
+        guard lab.busy == nil else {
+          lab.notice = "正在处理，这一步撤销没有生效，请稍候再试。"
+          return
+        }
+        lab.place(oldJob, base: oldBase, params: oldParams, name: name)
+      }
+      undoManager.setActionName(name)
+      if grouping { undoManager.endUndoGrouping() }
+    }
+    lastChange = nil
+    job = j
+    self.base = base
+    before = base.cgImage()
+    // The old repair belongs to the old base; nothing is shown as repaired until this one is.
+    after = nil
+    params = next
+    if region == nil { selectedRegion = nil }
+    save()
+    if hasReference && next.referenceModel == nil {
+      fit(recorded: false)
+    } else {
+      preview()
     }
   }
   /// The original at full resolution: the imported file, or the frame converted as the job says.
@@ -404,8 +437,8 @@ final class LeakLab: ObservableObject {
     tool = .inspect
   }
   /// A change to one region or protection; repeats of one control within a second are one step.
-  func editRegion(_ id: String, _ name: String, _ edit: (inout LeakRegion) -> Void) {
-    change(name) { p in
+  func editRegion(_ id: String, _ name: String, joins: Bool = true, _ edit: (inout LeakRegion) -> Void) {
+    change(name, step: joins ? name + "·" + id : nil) { p in
       if let i = p.regions.firstIndex(where: { $0.id == id }) {
         edit(&p.regions[i])
       } else if let i = p.protect.firstIndex(where: { $0.id == id }) {
@@ -421,7 +454,7 @@ final class LeakLab: ObservableObject {
   }
   /// On or off; a suggestion turned on counts as approved, so the next fit keeps it.
   func setEnabled(_ id: String, _ on: Bool) {
-    editRegion(id, on ? "启用区域" : "停用区域") {
+    editRegion(id, on ? "启用区域" : "停用区域", joins: false) {
       $0.enabled = on
       $0.approved = on
     }
@@ -478,7 +511,11 @@ final class LeakLab: ObservableObject {
   /// Matching points, four or more, for when the automatic alignment is unsure; none aligns the
   /// reference as the same framing. The next fit uses them.
   func setPairs(_ list: [LeakPair]) {
-    guard var j = job, busy == nil else { return }
+    guard var j = job else { return }
+    guard busy == nil else {
+      notice = "正在处理，对应点没有保存，请稍候再设。"
+      return
+    }
     guard list.isEmpty || list.count >= 4 else {
       notice = "至少需要 4 对对应点；或清空后按相同构图对齐。"
       return
@@ -491,7 +528,11 @@ final class LeakLab: ObservableObject {
   /// A new crop of the turned original: a new base, the regions, protections and landmarks drawn
   /// on the old one cleared, and the reference matched again.
   func setCrop(_ crop: LeakCrop) {
-    guard let j = job, busy == nil else { return }
+    guard let j = job else { return }
+    guard busy == nil else {
+      notice = "正在处理，裁切没有应用，请稍候再试。"
+      return
+    }
     var c = crop
     c.x = min(0.9, max(0, c.x))
     c.y = min(0.9, max(0, c.y))
@@ -504,7 +545,7 @@ final class LeakLab: ObservableObject {
     next.protect = []
     next.referenceModel = nil
     selectedRegion = nil
-    rebuild(j, next)
+    rebuild(j, next, name: "裁切")
   }
   /// Parameters, regions and landmarks, in FilmLightLab's preset file: either app reads the
   /// other's. The fitted model and the scene judged belong to one photograph and are left out.
@@ -538,7 +579,7 @@ final class LeakLab: ObservableObject {
     let landmarks = (preset.pairs ?? []).count >= 4 ? Array((preset.pairs ?? []).prefix(20)) : nil
     selectedRegion = nil
     if next.rotation != params.rotation || next.crop != params.crop {
-      rebuild(j, next, pairs: landmarks, notice: "预设已载入，方向 / 裁切按预设重建。区域位置按画幅比例保存，换了照片请检查并调整。")
+      rebuild(j, next, pairs: landmarks, name: "载入预设", notice: "预设已载入，方向 / 裁切按预设重建。区域位置按画幅比例保存，换了照片请检查并调整。")
       return
     }
     change("载入预设") { $0 = next }
@@ -577,8 +618,19 @@ final class LeakLab: ObservableObject {
       showGenerate = true
     }
   }
-  /// The reference learned against the base, and the repair shown.
-  func fit() {
+  /// A fit's parameters over what changed while it ran (an undo, say): its model, the scene it
+  /// judged and the protections it detected; the rest as it is now. Without `input`, always so.
+  private func merged(_ fitted: LeakParams, over input: LeakParams?) -> LeakParams {
+    if let input, params == input { return fitted }
+    var p = params
+    p.referenceModel = fitted.referenceModel
+    p.sceneInfo = fitted.sceneInfo
+    p.protect = p.protect.filter { $0.detected != true } + fitted.protect.filter { $0.detected == true }
+    return p
+  }
+  /// The reference learned against the base, and the repair shown; `recorded` makes it an undo
+  /// step of its own (not after a turn or a crop, whose step it belongs to).
+  func fit(recorded: Bool = true) {
     guard let base, let guide, let j = job, let baseID = j.base else { return }
     let input = params
     pending?.cancel()
@@ -589,8 +641,9 @@ final class LeakLab: ObservableObject {
       let fitted = try LeakEngine.fitReference(base: base, guide: guide, params: input, pairs: j.pairs ?? [], baseID: baseID)
       let out = try LeakEngine.result(base, base: base, params: fitted)
       return {
-        self.set(fitted, name: "开始去漏光")
-        self.after = out.cgImage()
+        let next = self.merged(fitted, over: input)
+        if recorded { self.set(next, name: "开始去漏光", step: nil) } else { self.params = next }
+        if next == fitted { self.after = out.cgImage() } else { self.preview() }
         self.wipe = 0.5
         try? self.persist()
         let a = fitted.referenceModel?.alignment
@@ -714,8 +767,9 @@ final class LeakLab: ObservableObject {
       self.updating = false
       self.guide = guide
       self.reference = shown
-      self.set(params, name: "生成参考图")
-      self.after = out.cgImage()
+      let next = self.merged(params, over: nil)
+      self.set(next, name: "生成参考图", step: nil)
+      if next == params { self.after = out.cgImage() } else { self.preview() }
       self.wipe = 0.5
       self.save()
       self.busy = nil

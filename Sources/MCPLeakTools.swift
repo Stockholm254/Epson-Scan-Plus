@@ -182,6 +182,10 @@ extension MCPTools {
       let scene = arguments["scene"] as? String, protect = arguments["protect_highlights"] as? Bool
       if let scene, !["auto", "day", "night"].contains(scene) { throw DeskError.message("scene 只能是 auto、day 或 night。") }
       guard onMain({ lab.busy == nil }) else { throw DeskError.message("去漏光页正在处理，稍后再调整。") }
+      // Nothing is applied when part of it cannot be.
+      if strength != nil, !onMain({ lab.model != nil || (scene != nil && lab.hasReference) }) {
+        throw DeskError.message("还没有应用去漏光，没有强度可调。先 leak_start。")
+      }
       // A new scene is fitted again first; the rest then applies to that fit, a strength included.
       if let scene, scene != onMain({ lab.params.sceneMode }) {
         onMain { lab.setScene(scene) }

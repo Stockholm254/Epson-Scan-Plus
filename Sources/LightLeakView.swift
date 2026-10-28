@@ -150,7 +150,8 @@ struct LeakViewer: View {
   /// A drag on the picture: compares (or moves the region under it) when looking; draws a
   /// region, places its clean point or paints a protection with the tools.
   func drag(_ location: CGPoint, w: CGFloat, h: CGFloat) {
-    guard lab.busy == nil else { return }
+    // The tools draw on the original; on the reference they would land in the wrong place.
+    guard lab.busy == nil, lab.tool == .inspect || !lab.showReference else { return }
     let p = CGPoint(x: min(1, max(0, location.x / w)), y: min(1, max(0, location.y / h)))
     let first = !draft.began
     draft.began = true
@@ -181,7 +182,7 @@ struct LeakViewer: View {
   }
   func finish(_ location: CGPoint, w: CGFloat, h: CGFloat) {
     defer { draft = LeakDraft() }
-    guard lab.busy == nil, draft.began else { return }
+    guard lab.busy == nil, draft.began, lab.tool == .inspect || !lab.showReference else { return }
     let p = CGPoint(x: min(1, max(0, location.x / w)), y: min(1, max(0, location.y / h)))
     switch lab.tool {
     case .ellipse:
