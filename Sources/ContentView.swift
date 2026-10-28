@@ -203,6 +203,7 @@ struct ContentView: View {
   }
   /// Zoom, turning, mirroring and what is shown.
   @ViewBuilder var viewingControls: some View {
+    if m.singleView { ChannelGels(channel: $m.channelView) }
       if m.singleView {
         Text(String(format: "%.1f×", m.zoom)).font(.system(size: 10, design: .monospaced))
           .foregroundStyle(.secondary).help("相对适合窗口的缩放倍率")
@@ -301,7 +302,12 @@ struct ContentView: View {
           .allowsHitTesting(false).accessibilityLabel("工具提示")
       }
   }
-  var workspace: some View {
+  /// Module ① with the camera: the live view takes the canvas's place.
+  var cameraStage: Bool { m.page == .capture && m.captureSource == .camera }
+  @ViewBuilder var workspace: some View {
+    if cameraStage { CameraStage(m: m, camera: m.camera) } else { sheetWorkspace }
+  }
+  var sheetWorkspace: some View {
     VStack(spacing: 0) {
       HStack(spacing: 12) {
         viewControls
@@ -325,17 +331,27 @@ struct ContentView: View {
   var glassWorkspace: some View {
     let margin: CGFloat = 8, bar: CGFloat = 54
     return ZStack {
-      ScanCanvas(
-        model: m,
-        reserved: NSEdgeInsets(
-          top: bar, left: m.preferences.leftWidth + 2 * margin + 1, bottom: bar, right: m.preferences.rightWidth + 2 * margin + 1)
-      ).frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
+      if cameraStage {
+        CameraStage(m: m, camera: m.camera)
+          .clipShape(RoundedRectangle(cornerRadius: 12))
+          .padding(.leading, m.preferences.leftWidth + 2 * margin + 1).padding(.trailing, m.preferences.rightWidth + 2 * margin + 1)
+          .padding(.vertical, margin)
+      } else {
+        ScanCanvas(
+          model: m,
+          reserved: NSEdgeInsets(
+            top: bar, left: m.preferences.leftWidth + 2 * margin + 1, bottom: bar, right: m.preferences.rightWidth + 2 * margin + 1)
+        ).frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
+      }
       HStack(spacing: 0) {
         leftPanel.frame(width: m.preferences.leftWidth).padding([.leading, .vertical], margin)
         Spacer().frame(width: margin)
         PanelDivider(
           width: Binding(get: { m.preferences.leftWidth }, set: { m.preferences.leftWidth = $0 }),
           range: Preferences.leftWidths, panelOnLeft: true)
+        if cameraStage {
+          Spacer()
+        } else {
         VStack(spacing: 0) {
           HStack(spacing: 10) {
             HStack(spacing: 10) { viewControls }.glassBar()
@@ -351,6 +367,7 @@ struct ContentView: View {
             Spacer()
             HStack(spacing: 8) { viewingControls }.glassBar()
           }.buttonStyle(HardwareKeyStyle()).controlSize(.small).padding(.horizontal, 10).padding(.bottom, 10)
+        }
         }
         PanelDivider(
           width: Binding(get: { m.preferences.rightWidth }, set: { m.preferences.rightWidth = $0 }),

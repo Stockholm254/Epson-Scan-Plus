@@ -33,7 +33,25 @@ final class AppModel: ObservableObject {
   @Published var rollNotes = ""
   /// The roll's pictures that are a file each are measured together as one roll: asked for, as
   /// files from elsewhere need not have been scanned alike.
-  @Published private(set) var poolPictures = false
+  @Published var poolPictures = false
+  /// Where the open roll's pictures came from, when the app knows: the camera's rolls say so.
+  @Published var rollSource: RollSource?
+  /// The camera on the copy stand.
+  lazy var camera: CameraController = {
+    let c = CameraController()
+    c.onCapture = { [weak self] url in self?.receiveCapture(url) }
+    return c
+  }()
+  /// Pictures a pixel-shift shot takes (set on the camera, 4 or 16), or 1: the app groups them.
+  @Published var pixelShiftCount = 1
+  /// The channel the picture and the camera's live view are looked at through: all, or one alone.
+  @Published var channelView = ChannelView.all {
+    didSet { canvasFocusRevision += 0 }
+  }
+  /// The files of a pixel-shift shot still to come, and the folder they go in.
+  var pendingShift = [URL]()
+  /// The camera's last picture as it arrived, RAW or JPEG, for checking focus.
+  @Published var lastCapture: URL?
   @Published var profile = FilmProfile.builtins[0]
   @Published var profiles = FilmProfile.builtins
   @Published var status = "点击「预览」读取胶片"
@@ -70,10 +88,10 @@ final class AppModel: ObservableObject {
   @Published var canvasFocusRevision = 0
   private var samplingInput: CGImage?
   private var editRegionLock: NormalRect?
-  private var overviewURL: URL?
+  var overviewURL: URL?
   private let overviewCache = OverviewCache()
-  private var overviewBackendID: String?
-  private var overviewInputGamma: Double?
+  var overviewBackendID: String?
+  var overviewInputGamma: Double?
   /// The pass under way, and the box it covers in the overview.
   private var currentScan: [UUID]?
   private var currentScanRect: NormalRect?
@@ -415,6 +433,7 @@ final class AppModel: ObservableObject {
       rollName = ""
       rollNotes = ""
       poolPictures = false
+      rollSource = nil
       clearEdits()
       let root = try makeSession()
       // Uncompressed: a 600 dpi preview writes in a tenth of a second, as PNG it takes two.
@@ -723,7 +742,7 @@ final class AppModel: ObservableObject {
   /// previews, or an imported strip the frames are cut from. Other frames keep theirs.
   /// A base picked once and shared with the roll stays as it is, and reaches the frames of its
   /// roll that came after it.
-  private func updateRollBase() {
+  func updateRollBase() {
     if let overview {
       let onOverview = frames.indices.filter {
         frames[$0].adjustments.rollBasePicked != true
@@ -1668,6 +1687,7 @@ final class AppModel: ObservableObject {
       rollName = ""
       rollNotes = ""
       poolPictures = false
+      rollSource = nil
       let root = try makeSession()
       let src = root.appendingPathComponent("Originals")
       try FileManager.default.createDirectory(at: src, withIntermediateDirectories: true)
@@ -1927,6 +1947,7 @@ final class AppModel: ObservableObject {
     project.rollName = name.isEmpty ? nil : name
     project.notes = rollNotes.isEmpty ? nil : rollNotes
     project.poolPictures = poolPictures ? true : nil
+    project.source = rollSource?.rawValue
     do {
       let e = JSONEncoder()
       e.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -1999,6 +2020,7 @@ final class AppModel: ObservableObject {
       rollName = p.rollName ?? ""
       rollNotes = p.notes ?? ""
       poolPictures = p.poolPictures ?? false
+      rollSource = p.source.flatMap(RollSource.init(rawValue:))
       dpi = p.scanDPI
       overviewDPI = p.overviewDPI
       overviewBackendID = p.scanBackendID

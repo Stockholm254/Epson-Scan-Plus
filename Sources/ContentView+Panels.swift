@@ -421,12 +421,7 @@ extension ContentView {
     VStack(alignment: .leading, spacing: 14) {
       titled("A7R IV 翻拍", symbol: "camera", info:
         "联机用 Sony Camera Remote SDK。A7R IV 只能用 USB 连接，相机的 USB 连接方式选「PC 遥控」。\n\nSDK 能取实时取景（JPEG，最宽 1024 像素）、半按快门自动对焦、设对焦点、手动对焦按 ±7 档步进、对焦放大，并把拍好的 RAW 直接传到电脑。像素位移、电子快门和 RAW 的压缩方式不能远程设置，要在相机上设好。")
-      HStack(spacing: 8) {
-        StatusLED(lamp: .busy, size: 7)
-        Text("未连接 · 联机在下一阶段").lcd(10)
-      }
-      note("下一阶段：实时取景、自动对焦、像素级放大确认对焦、三通道显示；拍好的 RAW 自动进这一卷。")
-      note("ARW 的解码和像素位移合成要等样张：同一张负片的无压缩 RAW 单张、像素位移 4 张一组（方便的话再来 16 张一组），以及一张同样曝光、不放底片的平场。")
+      CameraPanel(m: m, camera: m.camera)
     }
   }
   /// Pictures from elsewhere, copied into a new roll.
