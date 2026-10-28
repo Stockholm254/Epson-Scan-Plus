@@ -131,6 +131,8 @@ static const Known known[] = {
   {"ShutterSpeed", sdk::CrDeviceProperty_ShutterSpeed, sdk::CrDataType_UInt32},
   {"FNumber", sdk::CrDeviceProperty_FNumber, sdk::CrDataType_UInt16},
   {"IsoSensitivity", sdk::CrDeviceProperty_IsoSensitivity, sdk::CrDataType_UInt32},
+  {"ExposureBiasCompensation", sdk::CrDeviceProperty_ExposureBiasCompensation, sdk::CrDataType_UInt16},
+  {"Colortemp", sdk::CrDeviceProperty_Colortemp, sdk::CrDataType_UInt16},
   {"ExposureProgramMode", sdk::CrDeviceProperty_ExposureProgramMode, sdk::CrDataType_UInt32},
   {"FileType", sdk::CrDeviceProperty_FileType, sdk::CrDataType_UInt16},
   {"StillImageQuality", sdk::CrDeviceProperty_StillImageQuality, sdk::CrDataType_UInt16},

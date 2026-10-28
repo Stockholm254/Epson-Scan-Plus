@@ -276,6 +276,29 @@ struct CameraPanel: View {
         setting("光圈", "FNumber")
         setting("ISO", "IsoSensitivity")
         setting("模式", "ExposureProgramMode")
+        setting("曝光补偿", "ExposureBiasCompensation")
+        Text("模式由相机上的转盘决定：M 档时快门、光圈都能改，A 档只改光圈，S 档只改快门。光圈要电子镜头才能远程改（比如 Sigma 70mm F2.8 DG Macro Art）；翻拍底片一般从 f/5.6–8 开始试。")
+          .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        Divider()
+        Text("白平衡").font(.system(size: 12, weight: .medium))
+        setting("模式", "WhiteBalance")
+        if camera.properties["WhiteBalance"]?.value == CameraController.colourTemperatureMode {
+          HStack(spacing: 6) {
+            Text("色温").font(.system(size: 11)).foregroundStyle(.secondary)
+            Spacer()
+            Button("−") { camera.nudgeColourTemperature(by: -100) }.help("冷一点：减 100K")
+            Menu(camera.properties["Colortemp"]?.text ?? "--") {
+              ForEach([3200, 4000, 5000, 5500, 6500] as [Int64], id: \.self) { k in
+                Button("\(k)K") { camera.setColourTemperature(k) }
+              }
+            }.menuStyle(.borderlessButton).fixedSize().font(.system(size: 11))
+            Button("+") { camera.nudgeColourTemperature(by: 100) }.help("暖一点：加 100K")
+          }
+        } else {
+          Button("设为色温 5500K") { camera.setColourTemperature(5500) }.font(.system(size: 11))
+        }
+        Text("RAW 的数据不受白平衡影响，App 解码时整卷固定 5500K；这里只改实时取景和 JPEG 的颜色。固定一个色温，取景每张颜色一致。")
+          .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         Divider()
         Text("对焦").font(.system(size: 12, weight: .medium))
         HStack {

@@ -9,7 +9,20 @@ struct CameraProperty: Equatable {
   let value: Int64
   let values: [Int64]
   let settable: Bool
+  /// The SDK's data type: with its range bit, `values` are the lowest, the highest and the step.
+  var type: UInt32 = 0
   var text: String { Self.describe(name, value) }
+  var isRange: Bool { type & 0x4000 != 0 }
+  /// `v` brought within what the camera takes: inside its range on its step, or the nearest of
+  /// the values it lists.
+  func nearest(_ v: Int64) -> Int64 {
+    if isRange, values.count >= 2 {
+      let lo = values[0], hi = values[1], step = values.count > 2 ? max(1, values[2]) : 1
+      let clamped = min(max(v, lo), hi)
+      return lo + ((clamped - lo + step / 2) / step) * step
+    }
+    return values.min { abs($0 - v) < abs($1 - v) } ?? v
+  }
   /// How the camera would show `v` for the setting `name`.
   static func describe(_ name: String, _ v: Int64) -> String {
     func pick(_ names: [Int64: String]) -> String { names[v] ?? String(format: "0x%llx", v) }
@@ -26,6 +39,17 @@ struct CameraProperty: Equatable {
     case "IsoSensitivity":
       let iso = v & 0xFFFFFF
       return iso == 0xFFFFFF ? "ISO AUTO" : "ISO \(iso)"
+    case "ExposureBiasCompensation":
+      // EV × 1000 in 16 bits, the negative ones as two's complement.
+      let ev = Double(v > 32767 ? v - 65536 : v) / 1000
+      return ev == 0 ? "±0.0 EV" : String(format: "%+.1f EV", ev)
+    case "WhiteBalance":
+      return pick([
+        0: "自动", 1: "水下自动", 0x11: "日光", 0x12: "阴影", 0x13: "阴天", 0x14: "白炽灯", 0x20: "荧光灯",
+        0x21: "荧光灯 暖白", 0x22: "荧光灯 冷白", 0x23: "荧光灯 日白", 0x24: "荧光灯 日光", 0x30: "闪光灯",
+        0x100: "色温", 0x101: "自定义 1", 0x102: "自定义 2", 0x103: "自定义 3", 0x104: "自定义",
+      ])
+    case "Colortemp": return "\(v)K"
     case "FocusMode": return pick([1: "MF", 2: "AF-S", 3: "AF-C", 4: "AF-A", 5: "AF-D", 6: "DMF", 7: "PF"])
     case "FileType": return pick([1: "JPEG", 2: "RAW", 3: "RAW+JPEG", 4: "RAW+HEIF", 5: "HEIF"])
     case "StillImageStoreDestination": return pick([1: "电脑", 2: "存储卡", 3: "电脑和存储卡"])
@@ -250,6 +274,18 @@ final class CameraController: ObservableObject {
     send(["cmd": "afpoint", "x": Int((focusPoint.x * 639).rounded()), "y": Int((focusPoint.y * 479).rounded())])
   }
   func shoot() { send(["cmd": "shoot", "af": autofocusMode]) }
+  /// The white balance the camera's colour-temperature setting gives.
+  static let colourTemperatureMode: Int64 = 0x100
+  /// Sets the colour temperature (switching white balance to it first), within what the camera takes.
+  func setColourTemperature(_ kelvin: Int64) {
+    if properties["WhiteBalance"]?.value != Self.colourTemperatureMode { set("WhiteBalance", Self.colourTemperatureMode) }
+    set("Colortemp", properties["Colortemp"]?.nearest(kelvin) ?? kelvin)
+  }
+  /// A step warmer or cooler: 100 K a click, as the camera steps it.
+  func nudgeColourTemperature(by kelvin: Int64) {
+    guard let now = properties["Colortemp"]?.value else { return setColourTemperature(5500) }
+    setColourTemperature(now + kelvin)
+  }
   /// Focuses by the sharpness of the live view in the focus box: needs live view and manual focus,
   /// which it switches to.
   func refineFocus() {
@@ -365,7 +401,7 @@ final class CameraController: ObservableObject {
         properties[name] = CameraProperty(
           name: name, value: (item["value"] as? NSNumber)?.int64Value ?? 0,
           values: (item["values"] as? [NSNumber])?.map(\.int64Value) ?? [],
-          settable: item["settable"] as? Bool ?? false)
+          settable: item["settable"] as? Bool ?? false, type: (item["type"] as? NSNumber)?.uint32Value ?? 0)
       }
     case "changed":
       // Many arrive at once; one read answers them all.

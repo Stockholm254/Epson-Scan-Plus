@@ -43,6 +43,13 @@ enum CameraTests {
       && CameraProperty.describe("IsoSensitivity", 0xFFFFFF) == "ISO AUTO" && CameraProperty.describe("FocusMode", 1) == "MF"
       && CameraProperty.describe("FileType", 2) == "RAW",
       "the camera's settings read as the camera shows them: f/8.0, 1/250, 30\", ISO 100, MF, RAW")
+    try check(CameraProperty.describe("ExposureBiasCompensation", 65236) == "-0.3 EV" && CameraProperty.describe("ExposureBiasCompensation", 700) == "+0.7 EV"
+      && CameraProperty.describe("ExposureBiasCompensation", 0) == "±0.0 EV" && CameraProperty.describe("WhiteBalance", 0x100) == "色温"
+      && CameraProperty.describe("WhiteBalance", 0x11) == "日光" && CameraProperty.describe("Colortemp", 5500) == "5500K",
+      "exposure compensation reads in EV, negatives too; white balance and colour temperature as the camera names them")
+    let range = CameraProperty(name: "Colortemp", value: 5500, values: [2500, 9900, 100], settable: true, type: 0x4002)
+    try check(range.isRange && range.nearest(5640) == 5600 && range.nearest(12000) == 9900 && range.nearest(1000) == 2500,
+      "a colour temperature is kept within the camera's range, on its 100 K steps")
 
     // The focus search on simulated optics: sharpness peaks at one lens position.
     var landed = [Int]()
@@ -80,6 +87,11 @@ enum CameraTests {
     camera.receive(#"{"event":"props","props":[{"name":"FNumber","code":256,"type":2,"value":800,"settable":true,"readable":true,"values":[400,560,800,1100]},{"name":"FocusMode","code":265,"type":2,"value":1,"settable":true,"readable":true,"values":[1,2]}]}"#)
     try check(camera.properties["FNumber"]?.text == "f/8.0" && camera.properties["FNumber"]?.values.count == 4 && !camera.autofocusMode,
       "the settings arrive with the values the camera offers")
+    camera.receive(#"{"event":"props","props":[{"name":"WhiteBalance","code":263,"type":2,"value":0,"settable":true,"readable":true,"values":[0,17,256]},{"name":"Colortemp","code":282,"type":16386,"value":5500,"settable":true,"readable":true,"values":[2500,9900,100]}]}"#)
+    sent.removeAll()
+    camera.nudgeColourTemperature(by: 100)
+    try check(sent.count == 2 && sent[0].contains("\"WhiteBalance\"") && sent[0].contains("256") && sent[1].contains("\"Colortemp\"") && sent[1].contains("5600"),
+      "a click warmer switches white balance to colour temperature and sets 5600 K")
     camera.set("FNumber", 1100)
     try check(sent.last?.contains("\"set\"") == true && sent.last?.contains("1100") == true, "a setting is sent by name")
     let live = camFolder.appendingPathComponent("live-1.jpg")
