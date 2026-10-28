@@ -242,7 +242,7 @@ enum CanvasTests {
     func onCanvas(_ y: Double) -> CGPoint { canvas.canvasPoint(overview: CGPoint(x: scanned.x + scanned.width / 2, y: scanned.y + scanned.height * y))! }
     guard let headPose = canvas.scanHead.pose else { throw DeskError.message("FAIL: a scan shows the scan head") }
     let line = headPose.line, middle = CGPoint(x: (line.0.x + line.1.x) / 2, y: (line.0.y + line.1.y) / 2)
-    try check(model.scanningFrame?.id == model.frames[1].id && !canvas.scanHead.isHidden
+    try check(model.scanningFrames.map(\.id) == [model.frames[1].id] && !canvas.scanHead.isHidden
       && hypot(middle.x - onCanvas(0.5).x, middle.y - onCanvas(0.5).y) < 0.5 && headPose.length > canvas.screen(scanned.cg).height,
       "while a frame is scanned the head lies across it, at the line the scanner has reached")
     var lit = 0, lamp = 0
@@ -276,6 +276,6 @@ enum CanvasTests {
     model.singleView = false
     scanner.finish()
     canvas.updateScanHead()
-    try check(model.scanningFrame == nil && canvas.scanHead.isHidden && canvas.scanHead.pose == nil, "and goes when the scan ends")
+    try check(model.scanningFrames.isEmpty && canvas.scanHead.isHidden && canvas.scanHead.pose == nil, "and goes when the scan ends")
   }
 }

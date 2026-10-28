@@ -23,7 +23,8 @@ final class AppModel: ObservableObject {
   @Published var rendering = false
   @Published var detectingFrames = false
   @Published var exporting = false
-  @Published var scanQueue = [UUID]()
+  /// The passes still to scan: one frame each, or the frames of a row scanned together.
+  @Published var scanQueue = [[UUID]]()
   @Published private(set) var scanBatch = ScanBatchProgress()
   @Published var histogram = [Double](repeating: 0, count: 64)
   @Published var exportType = "tiff"
@@ -53,7 +54,11 @@ final class AppModel: ObservableObject {
   private let overviewCache = OverviewCache()
   private var overviewBackendID: String?
   private var overviewInputGamma: Double?
-  private var currentScan: UUID?
+  /// The pass under way, and the box it covers in the overview.
+  private var currentScan: [UUID]?
+  private var currentScanRect: NormalRect?
+  /// Why a pass that came back could not be kept, for the message the batch stops with.
+  private var receiveError: String?
   private var currentScanReceivedFile = false
   private var scanBatchID = UUID()
   private var activeScanDPI = 2400
@@ -106,7 +111,16 @@ final class AppModel: ObservableObject {
     return !singleView && frames.filter { $0.adjustments.flipHorizontal == true }.count * 2 > frames.count
   }
   /// The frame the scanner is reading now, and how far it has got.
-  var scanningFrame: FilmFrame? { currentScan.flatMap { id in frames.first { $0.id == id } } }
+  var scanningFrames: [FilmFrame] { (currentScan ?? []).compactMap { id in frames.first { $0.id == id } } }
+  /// The box the scanner is reading now, over one frame or a row of them.
+  var scanningRect: NormalRect? { currentScan == nil ? nil : currentScanRect }
+  /// Rows are scanned together only over the 48-bit interface, whose timing was measured.
+  var scansRows: Bool { preferences.rowScanning && scanner.backendID == "epson2-linear-v1" }
+  private var bytesPerPixel: Double { Double(max(8, scanner.bits) * 3) / 8 }
+  /// How the batch's frames would be scanned at `dpi`.
+  func scanPasses(_ targets: [FilmFrame], dpi: Int) -> [[FilmFrame]] {
+    ScanPasses.group(targets, physicalMM: physicalMM, dpi: dpi, bytesPerPixel: bytesPerPixel, rows: scansRows)
+  }
   /// Where a point of the overview is shown in single view, normalised to the picture there.
   func singleViewPoint(_ p: CGPoint) -> CGPoint? {
     guard singleView, let frame = selected else { return nil }
@@ -852,8 +866,49 @@ final class AppModel: ObservableObject {
   /// scanner's stray light in, for measuring it.
   func source(for frame: FilmFrame, full: Bool = false, maxDimension: Int? = nil, raw: Bool = false) throws -> CGImage {
     let image = try uncorrectedSource(for: frame, full: full, maxDimension: maxDimension)
-    guard !raw, let offset = flareOffset(frame) else { return image }
-    return ImagePipeline.shared.removingFlare(offset, from: image)
+    return raw ? image : corrected(image, frame, scan: Self.readsScan(frame))
+  }
+  /// Whether a frame's pixels come from its own scan, rather than the preview or an imported file.
+  static func readsScan(_ frame: FilmFrame) -> Bool { frame.sourcePath == nil && frame.scanPath != nil && frame.hasFullResolution }
+  /// A scan put on its preview's scale, then its stray light taken out, in one step.
+  private func corrected(_ image: CGImage, _ frame: FilmFrame, scan: Bool) -> CGImage {
+    let levels = scan ? frame.levels.flatMap { $0.usable ? $0 : nil } : nil
+    let flare = flareOffset(frame)
+    guard levels != nil || flare != nil else { return image }
+    let scale = levels?.scale ?? RGB(r: 1, g: 1, b: 1), bias = levels?.bias ?? RGB(r: 0, g: 0, b: 0)
+    let f = flare ?? RGB(r: 0, g: 0, b: 0)
+    return ImagePipeline.shared.leveled(image, scale: scale, bias: RGB((0..<3).map { bias.values[$0] - f.values[$0] }))
+  }
+  /// Whether a frame's scan can be put on its preview's scale: this app's linear scans, against
+  /// a 48-bit preview of the same holder.
+  func canRegister(_ frame: FilmFrame) -> Bool {
+    Self.readsScan(frame) && overviewBackendID == "epson2-linear-v1" && frame.adjustments.inputGamma == 1 && overviewURL != nil
+  }
+  /// Measures a scan against the preview; `unmeasured` when its levels cannot be told apart.
+  func measureLevels(_ frame: FilmFrame) -> LevelRegistration? {
+    guard canRegister(frame), let path = frame.scanPath, let url = overviewURL,
+      let scan = try? ImagePipeline.shared.loadDecoded(URL(fileURLWithPath: path)), let preview = try? overviewCache.image(url)
+    else { return nil }
+    return LevelRegistration.measure(scan: scan, footprint: frame.captureRect, preview: preview, region: frame.rect) ?? .unmeasured
+  }
+  /// Scans in a project from before 0.4.9 have no measured levels; they are measured against the
+  /// preview once, then the frames are converted again. `wait` measures before returning.
+  func registerMissingLevels(wait: Bool = false) {
+    let pending = frames.filter { $0.levels == nil && canRegister($0) }
+    guard !pending.isEmpty else { return }
+    let project = sessionURL
+    let measure = { pending.compactMap { f in self.measureLevels(f).map { (f.id, $0) } } }
+    let apply = { (results: [(UUID, LevelRegistration)]) in
+      guard self.sessionURL == project else { return }
+      for (id, levels) in results { if let i = self.frames.firstIndex(where: { $0.id == id }) { self.frames[i].levels = levels } }
+      let aligned = results.filter { $0.1.usable }.count
+      self.status = "已把 \(aligned) 张正式扫描对齐到预览" + (aligned < results.count ? " · \(results.count - aligned) 张无法对齐，保持原样" : "")
+      self.saveProject()
+      self.updateRollSlopes()
+      self.refresh()
+      self.updateThumbnails()
+    }
+    if wait { apply(measure()) } else { renderQueue.async { let r = measure(); DispatchQueue.main.async { apply(r) } } }
   }
   /// The stray light to take out of a frame's readings: this app's linear scans and previews, while
   /// a scanner calibration is in use. Imported files and older 24-bit scans keep what they read.
@@ -887,7 +942,7 @@ final class AppModel: ObservableObject {
     }
     if let path = frame.scanPath, frame.hasFullResolution {
       let scan = try pipe.load(URL(fileURLWithPath: path), maxDimension: 3000)
-      return (flareOffset(frame).map { pipe.removingFlare($0, from: scan) } ?? scan, frame.captureRect)
+      return (corrected(scan, frame, scan: true), frame.captureRect)
     }
     guard let url = overviewURL else { throw DeskError.message("尚无图像。") }
     let region = editRegionLock ?? frame.rect.expanded(by: 0.14)
@@ -994,6 +1049,7 @@ final class AppModel: ObservableObject {
         }
         let summary =
           "\(Int(pixels.width)) × \(Int(pixels.height)) · \(frame.hasFullResolution ? (frame.scanDPI.map{String($0)+" dpi"} ?? "源图") : previewDPI >= 600 ? "\(previewDPI) dpi 预览" : "低清预览")"
+          + (Self.readsScan(frame) && frame.levels?.usable == true ? " · 已对齐预览" : "")
         DispatchQueue.main.async {
           guard self.revision == token else { return }
           self.displayed = output
@@ -1146,9 +1202,9 @@ final class AppModel: ObservableObject {
   func scanPlan(_ targets: [FilmFrame], dpi planDPI: Int? = nil, forSheet: Bool = false) -> ScanPlan {
     let dpi = planDPI ?? self.dpi
     return ScanPlan.make(
-      targets, physicalMM: physicalMM, dpi: dpi, bitsPerChannel: max(8, scanner.bits),
+      scanPasses(targets, dpi: dpi), physicalMM: physicalMM, dpi: dpi, bitsPerChannel: max(8, scanner.bits),
       export: preferences.autoExport && !forSheet ? preferences.exportFormat : nil,
-      rate: preferences.scanRates[ScanPlan.rateKey(backend: scanner.backendID, dpi: dpi)],
+      speed: preferences.scanSpeed[ScanPlan.speedKey(backend: scanner.backendID, dpi: dpi)],
       available: Self.availableBytes(at: libraryURL))
   }
   /// Free space on the volume the library is on, from its nearest folder that exists.
@@ -1176,7 +1232,8 @@ final class AppModel: ObservableObject {
       return
     }
     self.batchDPI = batchDPI
-    scanQueue = ids
+    let targets = ids.compactMap { id in frames.first { $0.id == id } }
+    scanQueue = scanPasses(targets, dpi: batchDPI ?? dpi).map { $0.map(\.id) }
     scanBatchID = UUID()
     scanBatch = ScanBatchProgress(total: ids.count)
     cancelRequested = false
@@ -1187,30 +1244,35 @@ final class AppModel: ObservableObject {
     guard scanBatch.phase == .running, !scanQueue.isEmpty, !scanner.busy,
       currentScan == nil
     else { return }
-    let id = scanQueue.removeFirst()
-    guard let frame = frames.first(where: { $0.id == id }) else {
+    let ids = scanQueue.removeFirst()
+    let pass = ids.compactMap { id in frames.first { $0.id == id } }
+    guard !pass.isEmpty, pass.count == ids.count else {
       stopScanBatch(message: "待扫描的画面已不存在。")
       return
     }
+    let rect = ScanPasses.union(pass)
     do {
       let root = try makeSession()
       let raw = root.appendingPathComponent("Originals")
       try FileManager.default.createDirectory(at: raw, withIntermediateDirectories: true)
-      currentScan = id
+      currentScan = ids
+      currentScanRect = rect
       currentScanReceivedFile = false
-      scanBatch.beginFrame()
+      receiveError = nil
+      scanBatch.beginFrame(count: ids.count)
       activeScanDPI = batchDPI ?? dpi
       scanStarted = Date()
       let captureRect: NormalRect
       if scanner.backendID == "epson2-linear-v1" {
-        captureRect = NormalRect(x: frame.rect.x * physicalMM.width / scanner.physicalMM.width,
-          y: frame.rect.y * physicalMM.height / scanner.physicalMM.height,
-          width: frame.rect.width * physicalMM.width / scanner.physicalMM.width,
-          height: frame.rect.height * physicalMM.height / scanner.physicalMM.height)
-      } else { captureRect = frame.rect }
+        captureRect = NormalRect(x: rect.x * physicalMM.width / scanner.physicalMM.width,
+          y: rect.y * physicalMM.height / scanner.physicalMM.height,
+          width: rect.width * physicalMM.width / scanner.physicalMM.width,
+          height: rect.height * physicalMM.height / scanner.physicalMM.height)
+      } else { captureRect = rect }
+      let name = pass.count == 1 ? pass[0].name : "row-" + pass.map(\.name).joined(separator: "-")
       try scanner.scan(
         rect: captureRect, dpi: activeScanDPI, directory: raw,
-        name: "\(frame.name)_\(activeScanDPI)dpi_\(UUID().uuidString.prefix(6))")
+        name: "\(name)_\(activeScanDPI)dpi_\(UUID().uuidString.prefix(6))")
     } catch {
       stopScanBatch(message: error.localizedDescription)
     }
@@ -1223,11 +1285,12 @@ final class AppModel: ObservableObject {
     }
     guard currentScan != nil else { return }
     guard currentScanReceivedFile else {
-      stopScanBatch(message: "驱动结束扫描，但没有返回可读取的图像文件。")
+      stopScanBatch(message: receiveError ?? "驱动结束扫描，但没有返回可读取的图像文件。")
       return
     }
-    let scanned = currentScan
+    let scanned = currentScan ?? []
     currentScan = nil
+    currentScanRect = nil
     currentScanReceivedFile = false
     scanBatch.completeFrame()
     if cancelRequested { scanBatch.stop(cancelled: true) }
@@ -1236,7 +1299,7 @@ final class AppModel: ObservableObject {
     // The scan itself stays a raw negative. Its positive is exported when the batch ends, once the
     // roll estimate has taken the new scans in, so the file matches what the app shows. Scans
     // made for a contact sheet only feed the sheet.
-    if preferences.autoExport, pendingSheet == nil, let scanned { autoExportIDs.append(scanned) }
+    if preferences.autoExport, pendingSheet == nil { autoExportIDs += scanned }
     guard scanBatch.isActive else {
       endBatch()
       return
@@ -1250,6 +1313,7 @@ final class AppModel: ObservableObject {
   private func stopScanBatch(message: String? = nil) {
     scanQueue = []
     currentScan = nil
+    currentScanRect = nil
     currentScanReceivedFile = false
     scanBatch.stop(cancelled: cancelRequested)
     status = scanBatch.summary
@@ -1285,29 +1349,75 @@ final class AppModel: ObservableObject {
     export(items: items, to: root.appendingPathComponent("Exports"))
   }
   private func receiveScan(_ url: URL) {
-    guard let id = currentScan, let i = frames.firstIndex(where: { $0.id == id }) else { return }
+    guard let ids = currentScan, let rect = currentScanRect else { return }
+    let pass = ids.compactMap { id in frames.firstIndex { $0.id == id } }
+    guard pass.count == ids.count else { return }
     let info = ImagePipeline.shared.info(url)
     guard info.width > 0, info.height > 0, info.bits > 0 else { return }
-    currentScanReceivedFile = true
-    frames[i].scanPath = url.path
-    frames[i].scanRect = frames[i].rect
-    if let area = scanner.actualScanAreaMM {
-      frames[i].scanRect = NormalRect(x: area.minX / physicalMM.width, y: area.minY / physicalMM.height,
-        width: area.width / physicalMM.width, height: area.height / physicalMM.height)
+    // Where the scanner actually read, in the overview's coordinates.
+    let footprint = scanner.actualScanAreaMM.map {
+      NormalRect(x: $0.minX / physicalMM.width, y: $0.minY / physicalMM.height,
+        width: $0.width / physicalMM.width, height: $0.height / physicalMM.height)
+    } ?? rect
+    var originals = [UUID: (path: String, rect: NormalRect)]()
+    if pass.count == 1 {
+      originals[ids[0]] = (url.path, footprint)
+    } else {
+      do {
+        originals = try Self.split(url, footprint: footprint, frames: pass.map { frames[$0] }, dpi: activeScanDPI)
+        try? FileManager.default.removeItem(at: url)
+      } catch {
+        // The pass stays on disk; nothing is lost, the batch stops.
+        receiveError = "无法把整行扫描分成每张的原始文件：\(error.localizedDescription)。整行扫描保留在 Originals。"
+        return
+      }
     }
-    frames[i].sourcePath = nil
-    frames[i].scanDPI = activeScanDPI
-    frames[i].sourceBits = info.bits
+    currentScanReceivedFile = true
+    for i in pass {
+      guard let original = originals[frames[i].id] else { continue }
+      frames[i].scanPath = original.path
+      frames[i].scanRect = original.rect
+      frames[i].sourcePath = nil
+      frames[i].scanDPI = activeScanDPI
+      frames[i].sourceBits = info.bits
+      // Each scan on the preview's scale, whatever levels the scanner chose for its window.
+      frames[i].levels = measureLevels(frames[i])
+    }
     if let started = scanStarted {
-      preferences.recordScan(backend: scanner.backendID, dpi: activeScanDPI, seconds: Date().timeIntervalSince(started),
-        megapixels: Double(info.width * info.height) / 1e6)
+      let predicted = ScanTiming.seconds(
+        widthMM: rect.width * physicalMM.width, heightMM: rect.height * physicalMM.height, dpi: activeScanDPI,
+        bytesPerPixel: Double(info.bits * 3) / 8)
+      preferences.recordScan(backend: scanner.backendID, dpi: activeScanDPI, seconds: Date().timeIntervalSince(started), predicted: predicted)
       scanStarted = nil
     }
-    status = "第 \(frames[i].name) 张扫描完成 · \(info.bits*3)-bit 原始负片已存入 Originals"
+    let names = pass.map { frames[$0].name }
+    status = (names.count == 1 ? "第 \(names[0]) 张" : "第 \(names.joined(separator: "、")) 张（一次扫完）") + "扫描完成 · \(info.bits*3)-bit 原始负片已存入 Originals"
       + (preferences.autoExport && pendingSheet == nil ? " · 整批扫完后正片导出到 Exports" : " · 正片请在「输出」导出")
     saveProject()
-    if id == selectedID { refresh() }
+    if let selectedID, ids.contains(selectedID) { refresh() }
     updateThumbnails()
+  }
+  /// Cuts a pass over several frames into each frame's own original, as if it had been scanned
+  /// alone: the frame's box rounded out to whole pixels of the pass, the pixels as read, in an
+  /// uncompressed TIFF next to the pass. Returns each frame's file and where it lies.
+  static func split(_ url: URL, footprint: NormalRect, frames: [FilmFrame], dpi: Int) throws -> [UUID: (path: String, rect: NormalRect)] {
+    let pass = try ImagePipeline.shared.loadDecoded(url)
+    let w = Double(pass.width), h = Double(pass.height)
+    var result = [UUID: (path: String, rect: NormalRect)]()
+    for frame in frames {
+      let r = frame.rect
+      let x0 = max(0, floor((r.x - footprint.x) / footprint.width * w)), x1 = min(w, ceil((r.x + r.width - footprint.x) / footprint.width * w))
+      let y0 = max(0, floor((r.y - footprint.y) / footprint.height * h)), y1 = min(h, ceil((r.y + r.height - footprint.y) / footprint.height * h))
+      guard x1 - x0 >= 2, y1 - y0 >= 2, let crop = pass.cropping(to: CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0)) else {
+        throw DeskError.message("第 \(frame.name) 张不在这次扫描范围内")
+      }
+      let out = url.deletingLastPathComponent().appendingPathComponent("\(frame.name)_\(dpi)dpi_\(UUID().uuidString.prefix(6)).tiff")
+      try ImagePipeline.shared.saveTIFF(crop, to: out, dpi: dpi)
+      result[frame.id] = (out.path, NormalRect(
+        x: footprint.x + x0 / w * footprint.width, y: footprint.y + y0 / h * footprint.height,
+        width: (x1 - x0) / w * footprint.width, height: (y1 - y0) / h * footprint.height))
+    }
+    return result
   }
   func cancel() {
     scanQueue = []
@@ -1634,6 +1744,7 @@ final class AppModel: ObservableObject {
       refresh()
       updateThumbnails()
       status = overviewPath == p.overviewPath ? "已打开工程" : "已打开工程 · 工程文件夹已移动，按新位置读取文件"
+      if !readOnly { registerMissingLevels() }
     } catch { errorText = error.localizedDescription }
   }
   func openEpson() {

@@ -137,15 +137,18 @@ final class Preferences: ObservableObject {
   @Published var sharpening: SharpeningProfile? {
     didSet { defaults?.set(sharpening.flatMap { try? JSONEncoder().encode($0) }, forKey: "sharpening") }
   }
-  /// Seconds per megapixel this computer's scanner has taken, by backend and resolution
-  /// (`ScanPlan.rateKey`), for the time a batch will take.
-  @Published var scanRates: [String: Double] { didSet { defaults?.set(scanRates, forKey: "scanRates") } }
-  /// Takes in one finished scan; the latest counts as much as all before it.
-  func recordScan(backend: String, dpi: Int, seconds: Double, megapixels: Double) {
-    guard let rate = ScanPlan.rate(seconds: seconds, megapixels: megapixels) else { return }
-    let key = ScanPlan.rateKey(backend: backend, dpi: dpi)
-    scanRates[key] = scanRates[key].map { ($0 + rate) / 2 } ?? rate
+  /// How this computer's scanner keeps time against `ScanTiming`, by backend and resolution
+  /// (`ScanPlan.speedKey`): actual over predicted, for the time a batch will take. A new key, so
+  /// the seconds per megapixel 0.4.8 kept are not read as one.
+  @Published var scanSpeed: [String: Double] { didSet { defaults?.set(scanSpeed, forKey: "scanSpeed") } }
+  /// Takes in one finished pass; the latest counts as much as all before it.
+  func recordScan(backend: String, dpi: Int, seconds: Double, predicted: Double) {
+    guard let speed = ScanPlan.speed(seconds: seconds, predicted: predicted) else { return }
+    let key = ScanPlan.speedKey(backend: backend, dpi: dpi)
+    scanSpeed[key] = scanSpeed[key].map { ($0 + speed) / 2 } ?? speed
   }
+  /// Frames side by side scanned in one pass when that is quicker (48-bit interface only).
+  @Published var rowScanning: Bool { didSet { defaults?.set(rowScanning, forKey: "rowScanning") } }
   init(defaults: UserDefaults? = nil) {
     self.defaults = defaults
     libraryPath = defaults?.string(forKey: "libraryPath")
@@ -168,7 +171,8 @@ final class Preferences: ObservableObject {
     contactLandscape = defaults?.object(forKey: "contactLandscape") as? Bool ?? true
     let left = defaults?.double(forKey: "leftWidth") ?? 0, right = defaults?.double(forKey: "rightWidth") ?? 0
     leftWidth = left > 0 ? min(Self.leftWidths.upperBound, max(Self.leftWidths.lowerBound, left)) : 230
-    scanRates = (defaults?.dictionary(forKey: "scanRates") as? [String: Double]) ?? [:]
+    scanSpeed = (defaults?.dictionary(forKey: "scanSpeed") as? [String: Double]) ?? [:]
+    rowScanning = defaults?.object(forKey: "rowScanning") as? Bool ?? true
     rightWidth = right > 0 ? min(Self.rightWidths.upperBound, max(Self.rightWidths.lowerBound, right)) : 258
   }
   var libraryURL: URL { libraryPath.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? Self.defaultLibraryURL }

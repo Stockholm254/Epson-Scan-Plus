@@ -557,18 +557,26 @@ final class FilmCanvasView: NSView {
   }
   func updateScanHead() {
     guard let model else { return }
-    scanHead.follow(frame: model.scanningFrame?.id, progress: ScanBatchProgress.normalized(model.scanner.progress))
+    scanHead.follow(frame: model.scanningFrames.first?.id, progress: ScanBatchProgress.normalized(model.scanner.progress))
   }
-  /// Where the head is over `frame` at `progress`: across the frame, a little past each side,
-  /// at the line the scanner has reached. The V850 reads the bed from its top down.
-  func scanHeadPose(frame id: UUID, progress: Double) -> ScanHeadRenderer.Pose? {
-    guard let model, let frame = model.frames.first(where: { $0.id == id }) else { return nil }
+  /// Where the head is at `progress` through the pass under way: across the box it reads (a row of
+  /// frames or one), a little past each side, at the line the scanner has reached. In single view
+  /// it crosses the frame shown, when that frame is in the pass. The V850 reads the bed from its
+  /// top down.
+  func scanHeadPose(progress: Double) -> ScanHeadRenderer.Pose? {
+    guard let model, let pass = model.scanningRect else { return nil }
+    let scanning = model.scanningFrames
+    let r: NormalRect, along: Double
     if model.singleView {
-      guard model.selectedID == id else { return nil }
+      guard let frame = model.selected, scanning.contains(where: { $0.id == frame.id }) else { return nil }
+      r = frame.rect
+      along = (pass.y + pass.height * clamp(progress) - r.y) / r.height
     } else {
-      guard model.contactFrames.contains(where: { $0.id == id }) else { return nil }
+      guard scanning.contains(where: { f in model.contactFrames.contains { $0.id == f.id } }) else { return nil }
+      r = pass
+      along = progress
     }
-    let r = frame.rect, y = r.y + r.height * clamp(progress), margin = r.width * 0.12
+    let y = r.y + r.height * clamp(along), margin = min(r.width, r.height * 0.67) * 0.12
     guard let a = canvasPoint(overview: CGPoint(x: r.x - margin, y: y)),
       let b = canvasPoint(overview: CGPoint(x: r.x + r.width + margin, y: y)),
       let top = canvasPoint(overview: CGPoint(x: r.x + r.width / 2, y: r.y)),

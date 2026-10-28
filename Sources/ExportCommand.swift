@@ -18,6 +18,7 @@ enum ExportCommand {
     let model = AppModel(libraryURL: url.deletingLastPathComponent())
     model.readOnly = true
     model.loadProject(url)
+    model.registerMissingLevels(wait: true)
     guard model.errorText == nil else {
       fputs("\(model.errorText!)\n", stderr)
       exit(1)

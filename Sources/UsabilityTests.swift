@@ -57,31 +57,34 @@ enum UsabilityTests {
       return f
     }
     let roll = (1...36).map { frame(String(format: "%02d", $0), scanned: $0 <= 3) }
-    let plan = ScanPlan.make(roll, physicalMM: bed, dpi: 2400, bitsPerChannel: 16, export: .tiff, rate: nil, available: 500e9)
+    let alone = roll.map { [$0] }
+    let plan = ScanPlan.make(alone, physicalMM: bed, dpi: 2400, bitsPerChannel: 16, export: .tiff, speed: nil, available: 500e9)
     try check(plan.width == 2216 && plan.height == 3378 && plan.uniform && abs(plan.originalBytes / 36 - 44.9e6) < 0.1e6,
       String(format: "a 35 mm frame at 2400 dpi is %d × %d pixels, %.1f MB as a 48-bit original", plan.width, plan.height, plan.originalBytes / 36e6))
-    try check(abs(plan.seconds / 36 - 44.7) < 0.5 && ScanPlan.duration(plan.seconds) == "约 27 分钟" && !plan.measured,
+    try check(abs(plan.seconds / 36 - 43.6) < 0.3 && ScanPlan.duration(plan.seconds) == "约 26 分钟" && !plan.measured && plan.passes == 36,
       String(format: "until this scanner has been timed, a frame takes about %.0f s, as measured on the V850: a roll %@", plan.seconds / 36, ScanPlan.duration(plan.seconds)))
     try check(plan.rescans == 3 && plan.exportBytes == plan.originalBytes && plan.fits,
       "it counts frames scanned before and the automatic exports' space")
     let text = plan.summary
-    try check(["2216 × 3378", "48-bit", "其中 3 张已扫描过", "约 27 分钟", "粗略估计", "TIFF · 16-bit", "可用空间"].allSatisfy(text.contains),
+    try check(["2216 × 3378", "48-bit", "其中 3 张已扫描过", "约 26 分钟", "按 V850 实测估计", "TIFF · 16-bit", "可用空间"].allSatisfy(text.contains)
+      && !text.contains("按行合并"),
       "and says it all before the batch starts:\n" + text)
-    let full = ScanPlan.make(roll, physicalMM: bed, dpi: 2400, bitsPerChannel: 16, export: nil, rate: nil, available: 600e6)
+    let full = ScanPlan.make(alone, physicalMM: bed, dpi: 2400, bitsPerChannel: 16, export: nil, speed: nil, available: 600e6)
     try check(!full.fits && full.summary.hasPrefix("磁盘空间不足") && full.exportBytes == 0,
       "a batch that would fill the disk says so first")
     try check(ScanPlan.duration(44) == "约 40 秒" && ScanPlan.duration(3600) == "约 1 小时" && ScanPlan.duration(5000) == "约 1 小时 23 分钟",
       "times read in seconds, minutes or hours")
 
-    // Timing this scanner: each finished scan refines the rate for its backend and resolution.
+    // Timing this scanner: each finished pass refines how it keeps time at that resolution.
     let prefs = Preferences()
-    prefs.recordScan(backend: "epson2-linear-v1", dpi: 2400, seconds: 45, megapixels: 7.4856)
-    prefs.recordScan(backend: "epson2-linear-v1", dpi: 2400, seconds: 50, megapixels: 7.4856)
-    prefs.recordScan(backend: "epson2-linear-v1", dpi: 2400, seconds: .nan, megapixels: 7.4856)
-    let rate = prefs.scanRates[ScanPlan.rateKey(backend: "epson2-linear-v1", dpi: 2400)] ?? 0
-    try check(abs(rate - (37 + 42) / 2 / 7.4856) < 1e-9 && prefs.scanRates.count == 1,
-      String(format: "finished scans time this scanner: %.2f s per megapixel at 2400 dpi", rate))
-    let timed = ScanPlan.make(roll, physicalMM: bed, dpi: 2400, bitsPerChannel: 16, export: nil, rate: rate, available: nil)
+    let predicted = plan.seconds / 36
+    prefs.recordScan(backend: "epson2-linear-v1", dpi: 2400, seconds: 45, predicted: predicted)
+    prefs.recordScan(backend: "epson2-linear-v1", dpi: 2400, seconds: 50, predicted: predicted)
+    prefs.recordScan(backend: "epson2-linear-v1", dpi: 2400, seconds: .nan, predicted: predicted)
+    let rate = prefs.scanSpeed[ScanPlan.speedKey(backend: "epson2-linear-v1", dpi: 2400)] ?? 0
+    try check(abs(rate - (45 + 50) / 2 / predicted) < 1e-9 && prefs.scanSpeed.count == 1,
+      String(format: "finished scans time this scanner: %.2f× the V850's measured pace at 2400 dpi", rate))
+    let timed = ScanPlan.make(alone, physicalMM: bed, dpi: 2400, bitsPerChannel: 16, export: nil, speed: rate, available: nil)
     try check(timed.measured && timed.seconds > plan.seconds && timed.summary.contains("按本机 2400 dpi 的实测") && timed.fits,
       "and the next batch's estimate uses it")
 
@@ -105,10 +108,10 @@ enum UsabilityTests {
       space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
     let file = folder.appendingPathComponent("usability-scan.tif")
     try ImagePipeline.shared.saveTIFF(ctx.makeImage()!, to: file, dpi: 2400)
-    try check(model.preferences.scanRates.isEmpty, "nothing is timed before a scan finishes")
+    try check(model.preferences.scanSpeed.isEmpty, "nothing is timed before a scan finishes")
     scanner.finish(file)
-    let key = ScanPlan.rateKey(backend: scanner.backendID, dpi: 2400)
-    try check(model.preferences.scanRates.keys.sorted() == [key] && model.frames[0].scanPath == file.path,
-      "a finished scan is timed for the next estimate, under its backend and resolution: \(model.preferences.scanRates)")
+    let key = ScanPlan.speedKey(backend: scanner.backendID, dpi: 2400)
+    try check(model.preferences.scanSpeed.keys.sorted() == [key] && model.frames[0].scanPath == file.path,
+      "a finished scan is timed for the next estimate, under its backend and resolution: \(model.preferences.scanSpeed)")
   }
 }

@@ -233,6 +233,9 @@ struct FilmFrame: Identifiable, Codable {
   /// `scanPath` and `sourcePath` relative to the project folder, written only in saved projects.
   var scanFile: String? = nil
   var sourceFile: String? = nil
+  /// The scan's levels against the preview, measured when it arrives (or when a project from
+  /// before 0.4.9 is opened); conversion puts the scan on the preview's scale with it.
+  var levels: LevelRegistration? = nil
   var captureRect: NormalRect { scanRect ?? rect }
   var hasFullResolution: Bool {
     sourcePath != nil || (scanPath != nil && captureRect.contains(rect))

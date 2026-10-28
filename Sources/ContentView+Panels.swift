@@ -35,7 +35,7 @@ extension ContentView {
   var scanTab: some View {
     VStack(alignment: .leading, spacing: 18) {
       titled("扫描仪", symbol: "scanner", info:
-        "原始文件是未反相的负片，保留橙色色罩，作存档和重新转换用；去色罩的正片默认在扫完后导出到 Exports（见「输出」）。无损压缩对扫描数据几乎无效（LZW 反而变大），因此不压缩。\n\n整幅预览用于识别画面、接触表和看片镜。600 dpi 时每张 35 mm 约 850 像素，未正式扫描的画面也能看清细节；300 dpi 并不比 600 dpi 快多少，所以不提供。"
+        "原始文件是未反相的负片，保留橙色色罩，作存档和重新转换用；去色罩的正片默认在扫完后导出到 Exports（见「输出」）。无损压缩对扫描数据几乎无效（LZW 反而变大），因此不压缩。\n\n整幅预览用于识别画面、接触表和看片镜。600 dpi 时每张 35 mm 约 850 像素，未正式扫描的画面也能看清细节；300 dpi 并不比 600 dpi 快多少，所以不提供。\n\n扫描仪每次扫描都自己设定读数的高低：正式扫描的蓝色比预览高约 11%，比一张宽的窗口还每次不同。每张正式扫描到达时都和预览里同一块逐像素配准，换算到预览的标尺上，片基和整卷估计都在这个标尺上测，所以整卷一致。原始文件不改动。"
           + (m.scanner.ready ? "\n\n" + m.scanner.captureNote : ""))
       HStack(alignment: .top, spacing: 8) {
         StatusLED(lamp: lampState.lamp, size: 7).padding(.top, 4)
@@ -58,6 +58,12 @@ extension ContentView {
           Text(m.scanner.ready ? "\(m.scanner.bits * 3)-bit RGB" : "待检测").font(.system(size: 12, design: .monospaced))
         }
         labeled("原始文件") { Text("TIFF · 16-bit 线性").font(.system(size: 12)).foregroundStyle(.secondary) }
+        HStack {
+          Toggle("按行合并扫描", isOn: Binding(get: { m.preferences.rowScanning }, set: { m.preferences.rowScanning = $0 }))
+            .toggleStyle(LEDToggleStyle()).font(.system(size: 11)).disabled(m.isWorking)
+          Spacer()
+          InfoButton(text: "并排的几张一次扫完，再分成每张的原始文件，和单独扫描的一样保存。按 V850 实测，一个装满的 135 片夹（18 张）从约 13 分钟缩短到约 9 分钟。\n\n只在合起来更快时才合并：片夹里只有一条胶片、或一排只勾了一张时照常逐张扫；隔着一条的两张也分开扫。\n\n比一张宽的扫描窗口，扫描仪每次校准的蓝色增益不同（实测 −0.4% 到 +3.8%），黑电平也会漂；每张扫描到达时都和预览对齐，修正后和单独扫描相差不到 0.15%。只用于 48-bit 接口。")
+        }
       }
       HStack {
         Button("重新连接") { m.scanner.reconnect() }

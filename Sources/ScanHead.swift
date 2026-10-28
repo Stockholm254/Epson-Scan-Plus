@@ -272,7 +272,8 @@ final class ScanHeadView: NSView {
   override var acceptsFirstResponder: Bool { false }
   override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-  /// The frame the scanner is reading and how far it has got; nil when it is not scanning one.
+  /// The pass the scanner is reading (by its first frame) and how far it has got; nil when it is
+  /// not scanning.
   func follow(frame id: UUID?, progress p: Double) {
     guard let id else { return stop() }
     let p = clamp(p)
@@ -312,7 +313,7 @@ final class ScanHeadView: NSView {
     }
   }
   func renderNow() {
-    guard let canvas, let frameID, let pose = canvas.scanHeadPose(frame: frameID, progress: progress) else {
+    guard let canvas, frameID != nil, let pose = canvas.scanHeadPose(progress: progress) else {
       pose = nil
       isHidden = true
       return
