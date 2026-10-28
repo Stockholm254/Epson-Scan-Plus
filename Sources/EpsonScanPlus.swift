@@ -63,11 +63,8 @@ struct EpsonScanPlusApp: App {
           model.singleView.toggle()
           model.refresh()
         }.keyboardShortcut("1")
-        Button("放大镜") { model.tool = model.tool == .loupe ? .select : .loupe }.keyboardShortcut("l")
-        Toggle(
-          "灯箱上的看片镜",
-          isOn: Binding(get: { model.preferences.showLoupe }, set: { model.preferences.showLoupe = $0 })
-        ).keyboardShortcut("l", modifiers: [.command, .option])
+        Toggle("看片镜", isOn: Binding(get: { model.preferences.showLoupe }, set: { model.toggleLoupe($0) }))
+          .keyboardShortcut("l")
         Picker(
           "看片镜型号", selection: Binding(get: { model.preferences.loupeStyle }, set: { model.preferences.loupeStyle = $0 })
         ) {

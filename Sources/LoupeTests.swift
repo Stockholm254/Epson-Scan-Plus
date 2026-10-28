@@ -82,7 +82,19 @@ enum LoupeTests {
     let mamiya = Picture(renderer.render(frame: view, scale: 2, pose: pose(.mamiya), scene: scene)!)
     try check(abs(mamiya.stripe - 24) < 4.5, "the Mamiya loupe magnifies 4×: the stripe is \(mamiya.stripe) pt")
     let lifted = Picture(renderer.render(frame: view, scale: 2, pose: pose(.pentax, lift: r * 0.12), scene: scene)!)
-    try check(lifted.sharpest < p.sharpest, "lifted off the film the loupe goes out of focus: edges \(lifted.sharpest) against \(p.sharpest)")
+    try check(lifted.sharpest * 10 >= p.sharpest * 8 && abs(lifted.stripe - p.stripe) < 4,
+      "picked up and moved, the loupe stays in focus and magnified: edges \(lifted.sharpest) against \(p.sharpest)")
+    // A wide field: full magnification on the axis, more of the picture towards the rim.
+    var edge = scene
+    edge.film = image(400, 300) { ctx in
+      fill(ctx, CGRect(x: 0, y: 0, width: 400, height: 300), (0.1, 0.2, 0.8))
+      fill(ctx, CGRect(x: 207, y: 0, width: 400, height: 300), (1, 1, 1))
+    }
+    let wide = Picture(renderer.render(frame: view, scale: 2, pose: pose(.pentax), scene: edge)!)
+    var reached: CGFloat = 0
+    for x in stride(from: 203.0, to: 240.0, by: 0.5) where reached == 0 && wide.at(CGFloat(x), 150)[1] > 150 { reached = CGFloat(x) }
+    try check(reached - 203 > 10 && reached - 203 < 4 * 5.5 * 0.95,
+      "the lens takes in a wide field: film 4 pt off the axis shows \(reached - 203) pt out, nearer than 5.5× would put it")
     // Seen from the left, the top leans right: the stripe moves right of the base's centre.
     let oblique = Picture(renderer.render(frame: view, scale: 2, pose: pose(.pentax, eye: SIMD3(-500, 150, 3000)), scene: scene)!)
     var brightest = (x: CGFloat(0), v: 0)
@@ -136,9 +148,14 @@ enum LoupeTests {
     window.contentView = canvas
     canvas.model = model
     canvas.updateLoupe()
+    try check(canvas.loupe.isHidden, "the loupe is put away until its key is pressed")
+    model.toggleLoupe()
+    canvas.updateLoupe()
     settle()
     let loupe = canvas.loupe
-    try check(!loupe.isHidden && loupe.center == loupe.parkedCenter, "the loupe lies by the light table's edge in the contact view")
+    let first = canvas.screen(frames[0].rect.cg)
+    try check(!loupe.isHidden && loupe.center == loupe.homeCenter && abs(loupe.center!.x - first.midX) < 1 && abs(loupe.center!.y - first.midY) < 1,
+      "the loupe lies on the selected frame on the light table")
     let perMM = canvas.imageRect.height / 135.5
     try check(abs(loupe.radius - 24 * perMM) < 0.5 || loupe.radius == 44, "the loupe lies to the film's scale: \(Int(loupe.radius)) pt for a 48 mm base")
     let start = loupe.center!
@@ -157,12 +174,14 @@ enum LoupeTests {
     try check(abs(loupe.center!.x - goal.x) < 1 && abs(loupe.center!.y - goal.y) < 1 && model.loupeCenter != nil,
       "dragging carries the loupe onto a frame, and it stays there")
     // As SwiftUI does on every change: the roll estimate lands meanwhile and changes the frame.
-    for _ in 0..<50 where canvas.loupeScene().detail == nil {
+    // The loupe began on frame 01, so it waits for the picture of the frame it now lies on.
+    for _ in 0..<50 where canvas.loupeScene().detail == nil || canvas.loupeScene().detailRect != target {
       canvas.updateLoupe()
       settle(0.1)
     }
     let shown = canvas.loupeScene()
-    try check(shown.detail != nil && shown.detailRect == target, "the lens reads the frame under it at the frame's own resolution")
+    try check(shown.detail != nil && shown.detailRect == target,
+      "the lens reads the frame under it at the frame's own resolution (\(shown.detail == nil ? "none" : "\(shown.detailRect)") for \(target))")
     guard let before = shown.detail else { throw DeskError.message("FAIL: no picture of the frame to edit") }
     model.select(frames[1].id)
     model.change { $0.exposure += 0.5 }
@@ -174,19 +193,29 @@ enum LoupeTests {
     moved.x += 0.01
     model.setRect(frames[1].id, rect: moved)
     try check(canvas.loupeScene().detail == nil, "a moved frame box drops the old picture at once")
-    loupe.mouseDown(with: event(.leftMouseDown, goal, clicks: 2))
-    try check(loupe.center == loupe.parkedCenter && model.loupeCenter == nil, "a double-click puts the loupe back by the edge")
+    loupe.home()
+    try check(loupe.center == loupe.homeCenter && model.loupeCenter == nil, "its menu puts the loupe back on the selected frame")
     canvas.setFrameSize(NSSize(width: 1000, height: 640))
-    try check(loupe.center == loupe.parkedCenter, "parked, the loupe stays in its corner when the window changes size")
+    try check(loupe.center == loupe.homeCenter, "where it stays when the window changes size")
     let small = loupe.radius
     model.preferences.loupeStyle = .mamiya
     canvas.updateLoupe()
     try check(loupe.style == .mamiya && loupe.radius > small, "the Mamiya loupe is the larger one")
     model.singleView = true
+    model.refresh()
+    for _ in 0..<40 where model.rendering { settle(0.1) }
     canvas.updateLoupe()
-    try check(loupe.isHidden, "single view has no light table, so no loupe")
+    settle()
+    try check(!loupe.isHidden && loupe.center == canvas.loupeHome, "over the single frame the loupe is there too, on the picture's middle")
+    for _ in 0..<50 where canvas.loupeScene().detail == nil {
+      canvas.updateLoupe()
+      settle(0.1)
+    }
+    let single = canvas.loupeScene(), magnification = canvas.loupeMagnification(for: loupe.style) ?? 0
+    try check(single.detail != nil && single.detailRect == canvas.imageRect && magnification >= 2 && magnification <= loupe.style.magnification,
+      String(format: "it reads the frame at full resolution, magnified %.1f×, no further than its pixels allow", magnification))
     model.singleView = false
-    model.preferences.showLoupe = false
+    model.toggleLoupe(false)
     canvas.updateLoupe()
     try check(loupe.isHidden, "the loupe can be put away")
     window.close()
@@ -196,13 +225,14 @@ enum LoupeTests {
     UserDefaults().removePersistentDomain(forName: suite)
     let defaults = UserDefaults(suiteName: suite)!
     let fresh = Preferences(defaults: defaults)
-    try check(fresh.previewDPI == 600 && fresh.showLoupe && fresh.loupeStyle == .pentax,
-      "previews are 600 dpi and the Pentax loupe lies out, unless changed")
+    defaults.set(true, forKey: "showLoupe")
+    try check(fresh.previewDPI == 600 && !fresh.showLoupe && fresh.loupeStyle == .pentax,
+      "previews are 600 dpi and the Pentax loupe is put away until shown, whatever the old setting said")
     fresh.previewDPI = 150
     fresh.loupeStyle = .mamiya
-    fresh.showLoupe = false
+    fresh.showLoupe = true
     let again = Preferences(defaults: defaults)
-    try check(again.previewDPI == 150 && again.loupeStyle == .mamiya && !again.showLoupe, "preview resolution and the loupe are remembered")
+    try check(again.previewDPI == 150 && again.loupeStyle == .mamiya && again.showLoupe, "preview resolution and the loupe are remembered")
     defaults.set(300, forKey: "previewDPI")
     try check(Preferences(defaults: defaults).previewDPI == 600, "an unoffered preview resolution falls back to 600 dpi")
     UserDefaults().removePersistentDomain(forName: suite)

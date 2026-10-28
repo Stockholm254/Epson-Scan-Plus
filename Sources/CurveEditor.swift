@@ -5,6 +5,8 @@ import SwiftUI
 struct CurveEditor: View {
   @Binding var curves: ToneCurves
   var histogram: [Double]
+  /// Red, green and blue, on one scale; empty draws the brightness alone.
+  var channels: [[Double]] = []
   @State private var channel = 0
   @State private var dragging: Int?
   private static let names = ["RGB", "R", "G", "B"]
@@ -24,7 +26,7 @@ struct CurveEditor: View {
       .aspectRatio(1, contentMode: .fit)
       .padding(4).background(LCDGlass())
       .accessibilityElement().accessibilityLabel("色调曲线 · \(Self.names[channel])")
-      Text("拖动控制点调整；点空白处添加，双击控制点删除。各通道曲线在 RGB 曲线之后生效。")
+      Text("拖动控制点调整；点空白处添加，双击控制点删除。各通道曲线在 RGB 曲线之后生效。背后是正片的红、绿、蓝直方图。")
         .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
   }
@@ -55,7 +57,13 @@ struct CurveEditor: View {
           p.move(to: CGPoint(x: x, y: size.height))
           p.addLine(to: CGPoint(x: x, y: size.height * (1 - v * 0.9)))
         }
-      }.stroke(Hardware.lcdText.opacity(0.12), lineWidth: 2)
+      }.stroke(Hardware.lcdText.opacity(channels.isEmpty ? 0.12 : 0.05), lineWidth: 2)
+      // Each channel's histogram in its colour; the one being edited, or all three for RGB, brighter.
+      ForEach(Array(channels.prefix(3).enumerated()), id: \.offset) { i, values in
+        let tone = Self.colors[i + 1], lit = channel == 0 || channel == i + 1
+        histogramShape(values, size).fill(tone.opacity(lit ? 0.16 : 0.06))
+        histogramLine(values, size).stroke(tone.opacity(lit ? 0.55 : 0.2), lineWidth: 0.8)
+      }
       Path { p in
         for i in 1..<4 {
           let f = Double(i) / 4
@@ -67,9 +75,10 @@ struct CurveEditor: View {
         p.move(to: CGPoint(x: 0, y: size.height))
         p.addLine(to: CGPoint(x: size.width, y: 0))
       }.stroke(Hardware.lcdText.opacity(0.1), lineWidth: 0.5)
+      // Every channel's curve, the one being edited on top.
       ForEach(0..<4, id: \.self) { i in
-        if i != channel && !curves[i].isIdentity {
-          path(curves[i], size).stroke(Self.colors[i].opacity(0.35), lineWidth: 1)
+        if i != channel {
+          path(curves[i], size).stroke(Self.colors[i].opacity(curves[i].isIdentity ? 0.25 : 0.6), lineWidth: 1)
         }
       }
       path(curve, size).stroke(color, lineWidth: 1.5).shadow(color: color.opacity(0.6), radius: 2)
@@ -79,6 +88,21 @@ struct CurveEditor: View {
           .frame(width: 9, height: 9).position(onView(p, size))
       }
     }
+  }
+  private func histogramLine(_ values: [Double], _ size: CGSize) -> Path {
+    Path { p in
+      for (i, v) in values.enumerated() {
+        let point = CGPoint(x: Double(i) / Double(max(1, values.count - 1)) * size.width, y: size.height * (1 - v * 0.9))
+        if i == 0 { p.move(to: point) } else { p.addLine(to: point) }
+      }
+    }
+  }
+  private func histogramShape(_ values: [Double], _ size: CGSize) -> Path {
+    var p = histogramLine(values, size)
+    p.addLine(to: CGPoint(x: size.width, y: size.height))
+    p.addLine(to: CGPoint(x: 0, y: size.height))
+    p.closeSubpath()
+    return p
   }
   private func path(_ curve: ToneCurve, _ size: CGSize) -> Path {
     Path { p in

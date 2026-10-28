@@ -23,7 +23,7 @@ enum UsabilityTests {
     func check(_ value: Bool, _ label: String) throws {
       guard value else { throw DeskError.message("FAIL: " + label) }; print("PASS: " + label)
     }
-    let toolbar: [CanvasTool] = [.select, .crop, .base, .neutral, .loupe]
+    let toolbar: [CanvasTool] = [.select, .crop, .base, .neutral]
     try check(Set(toolbar.map(\.symbol)).count == toolbar.count && CanvasTool.base.label != nil && CanvasTool.neutral.label != nil
       && CanvasTool.base.label != CanvasTool.neutral.label,
       "the toolbar's tools have their own symbols, and the two samplers say which is which")

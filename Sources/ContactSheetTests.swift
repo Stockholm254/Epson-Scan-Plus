@@ -108,10 +108,10 @@ enum ContactSheetTests {
       String(format: "contact print: base %.2f (black), holder %.2f (white), frames converted", rebate, holder))
 
     // End to end, from the existing previews (no scanner): strips as JPEG, grid as 16-bit TIFF.
-    func compose(_ format: ExportFormat, _ name: String) throws -> URL {
+    func compose(_ format: ExportFormat, _ name: String, fromPreview: Bool = false) throws -> URL {
       let url = roll.appendingPathComponent(name)
       var finished = false, failure: Error?
-      model.composeContactSheet(ids: model.frames.map(\.id), to: url, format: format) { error in
+      model.composeContactSheet(ids: model.frames.map(\.id), to: url, format: format, fromPreview: fromPreview) { error in
         finished = true
         failure = error
       }
@@ -133,6 +133,17 @@ enum ContactSheetTests {
     try check(jpegInfo.width == Int(expected.width) && jpegInfo.height == Int(expected.height) && jpegInfo.bits == 8
       && Int(jpegInfo.dpi) == ContactSheet.scanDPI,
       "film-strip contact sheet: \(jpegInfo.width) × \(jpegInfo.height) JPEG at 1200 dpi")
+    // Straight from the preview: nothing to scan, the sheet at the preview's own resolution.
+    try check(model.contactSheetScans(model.frames).isEmpty, "by default a contact sheet scans nothing first")
+    model.preferences.sheet.resolution = .scan
+    try check(model.contactSheetScans(model.frames).count == model.frames.filter { $0.sourcePath == nil }.count,
+      "at 1200 dpi it scans the frames not yet scanned at 1200 dpi first")
+    model.preferences.sheet.resolution = .preview
+    let previewSizes = sizes.map { CGSize(width: $0.width / 2, height: $0.height / 2) }
+    let direct = pipe.info(try compose(.jpeg, "sheet-preview.jpg", fromPreview: true))
+    let directExpected = ContactSheet.geometry(count: 4, cell: ContactSheet.cell(for: previewSizes), layout: model.preferences.sheet).size
+    try check(direct.width == Int(directExpected.width) && direct.height == Int(directExpected.height) && Int(direct.dpi) == Int(model.overviewDPI),
+      "from the preview the sheet is made at the preview's \(Int(model.overviewDPI)) dpi, not enlarged: \(direct.width) × \(direct.height)")
     // The strip's rebate prints black between frames; the paper around it stays light.
     let sheet = pipe.raster(try pipe.load(jpeg), maxDimension: 2000)
     let layout = ContactSheet.geometry(count: 4, cell: ContactSheet.cell(for: sizes), layout: model.preferences.sheet)

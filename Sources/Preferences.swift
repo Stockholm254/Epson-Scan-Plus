@@ -115,8 +115,9 @@ final class Preferences: ObservableObject {
   /// 300 dpi is barely quicker than 600, so it is not offered.
   @Published var previewDPI: Int { didSet { defaults?.set(previewDPI, forKey: "previewDPI") } }
   static let previewResolutions = [600, 150]
-  /// The loupe lying on the light table, and which one.
-  @Published var showLoupe: Bool { didSet { defaults?.set(showLoupe, forKey: "showLoupe") } }
+  /// The loupe on the picture, and which one. Put away until its key is pressed; a new key, since
+  /// the loupe that lay beside the film by default now lies on it.
+  @Published var showLoupe: Bool { didSet { defaults?.set(showLoupe, forKey: "loupeShown") } }
   @Published var loupeStyle: LoupeStyle { didSet { defaults?.set(loupeStyle.rawValue, forKey: "loupeStyle") } }
   /// The light table turns an upright holder a quarter turn, so the strips run across a wide window.
   @Published var contactLandscape: Bool { didSet { defaults?.set(contactLandscape, forKey: "contactLandscape") } }
@@ -170,7 +171,7 @@ final class Preferences: ObservableObject {
     autoExport = defaults.map { $0.object(forKey: "autoExport") as? Bool ?? true } ?? false
     let dpi = defaults?.integer(forKey: "previewDPI") ?? 0
     previewDPI = Self.previewResolutions.contains(dpi) ? dpi : 600
-    showLoupe = defaults?.object(forKey: "showLoupe") as? Bool ?? true
+    showLoupe = defaults?.object(forKey: "loupeShown") as? Bool ?? false
     loupeStyle = defaults?.string(forKey: "loupeStyle").flatMap(LoupeStyle.init(rawValue:)) ?? .pentax
     contactLandscape = defaults?.object(forKey: "contactLandscape") as? Bool ?? true
     let left = defaults?.double(forKey: "leftWidth") ?? 0, right = defaults?.double(forKey: "rightWidth") ?? 0

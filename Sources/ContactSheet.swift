@@ -1,9 +1,11 @@
 import AppKit
 import CoreImage
 
-/// Contact sheet export: the ticked frames printed at 1200 dpi, as film strips or a grid.
+/// Contact sheet export: the ticked frames as film strips or a grid, straight from the preview at
+/// its own resolution, or printed at 1200 dpi from scans made for it first.
 enum ContactSheet {
   static let scanDPI = 1200
+  enum Resolution: String, Codable, CaseIterable { case preview, scan }
   struct Layout: Codable, Equatable {
     enum Style: String, Codable, CaseIterable { case strips, grid }
     var style = Style.strips
@@ -14,6 +16,9 @@ enum ContactSheet {
     var title = true
     /// Apply each frame's rotation; off keeps every frame the way it lies on the film.
     var followRotation = true
+    /// From the preview (nil, as before this setting) or scanned at 1200 dpi first.
+    var resolution: Resolution?
+    var scansFirst: Bool { resolution == .scan }
   }
   /// Rectangles in pixels with a top-left origin.
   struct Geometry {
@@ -93,12 +98,12 @@ enum ContactSheet {
     return g
   }
 
-  /// Renders and writes the sheet, returning its pixel size. Frames are rendered one at a time,
-  /// so memory holds the sheet and a single frame.
+  /// Renders and writes the sheet at `dpi`, returning its pixel size. Frames are rendered one at a
+  /// time, so memory holds the sheet and a single frame.
   @discardableResult
   static func export(
     _ tiles: [Tile], profile: FilmProfile, layout: Layout, title: String, filmCode: String, to url: URL,
-    format: ExportFormat, quality: Double
+    format: ExportFormat, quality: Double, dpi: Int = scanDPI
   ) throws -> CGSize {
     guard !tiles.isEmpty else { throw DeskError.message("没有可放进接触表的画面。") }
     let pipe = ImagePipeline.shared
@@ -107,10 +112,10 @@ enum ContactSheet {
       if !layout.followRotation { s.rotation = 0 }
       return s
     }
-    // First pass: each frame's printed size at 1200 dpi, without rendering pixels.
+    // First pass: each frame's printed size at the sheet's resolution, without rendering pixels.
     let sizes = try tiles.map { t -> CGSize in
       let image = try t.source()
-      let scale = Double(scanDPI) / max(1, t.dpi)
+      let scale = Double(dpi) / max(1, t.dpi)
       let sideways = ((settings(t).rotation % 4) + 4) % 2 == 1
       let w = Double(image.width) * scale, h = Double(image.height) * scale
       return sideways ? CGSize(width: h, height: w) : CGSize(width: w, height: h)
@@ -163,7 +168,7 @@ enum ContactSheet {
       try autoreleasepool {
         var ci = try pipe.output(try t.source(), settings: settings(t), profile: profile, sharpener: t.sharpener)
         let fit = min(cell.width / sizes[i].width, cell.height / sizes[i].height, 1)
-        let scale = Double(scanDPI) / max(1, t.dpi) * fit
+        let scale = Double(dpi) / max(1, t.dpi) * fit
         if abs(scale - 1) > 0.0005, let lanczos = CIFilter(name: "CILanczosScaleTransform") {
           lanczos.setValue(ci, forKey: kCIInputImageKey)
           lanczos.setValue(scale, forKey: kCIInputScaleKey)
@@ -188,7 +193,7 @@ enum ContactSheet {
       }
     }
     guard let sheet = ctx.makeImage() else { throw DeskError.message("无法生成接触表。") }
-    try pipe.write(sheet, to: url, format: format, dpi: scanDPI, quality: quality)
+    try pipe.write(sheet, to: url, format: format, dpi: dpi, quality: quality)
     return g.size
   }
 }

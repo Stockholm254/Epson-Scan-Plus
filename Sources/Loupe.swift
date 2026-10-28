@@ -40,6 +40,8 @@ final class LoupeRenderer {
     var lift: CGFloat = 0
     /// The viewer, above the table; perspective shows the barrel's far side away from the middle.
     var eye: SIMD3<Float>
+    /// Less than the loupe's own where the picture under it has fewer pixels to show.
+    var magnification: Double? = nil
   }
 
   private lazy var gpu: (queue: MTLCommandQueue, pipeline: MTLComputePipelineState)? = {
@@ -75,9 +77,9 @@ final class LoupeRenderer {
       canvas: SIMD2(Float(max(1, scene.canvas.width)), Float(max(1, scene.canvas.height))),
       center: SIMD2(Float(pose.center.x), Float(pose.center.y)),
       scale: Float(scale), radius: Float(pose.radius), lift: Float(pose.lift),
-      magnification: Float(pose.style.magnification),
-      // Lifted off the film, the loupe goes out of focus.
-      blur: Float(min(3, pose.lift / pose.radius * 14)),
+      magnification: Float(pose.magnification ?? pose.style.magnification),
+      // Picked up and moved, it stays in focus: the film under it is always magnified.
+      blur: 0,
       style: pose.style.index, samples: Int32(samples == 1 ? 1 : 4), pad: 0)
     encoder.setComputePipelineState(gpu.pipeline)
     encoder.setTexture(output, index: 0)
@@ -303,8 +305,10 @@ final class LoupeRenderer {
       if (lens) {
         float3 p = ro + rd * tLens, world = base + p * R;
         float rho = length(p.xy) / lensR;
-        // The film under the axis, magnified, with a little distortion and lateral colour at the rim.
-        float2 offset = p.xy * R * (1.0 - 0.035 * rho * rho) / t.magnification;
+        // The film under the axis, magnified, through a wide-field eyepiece: full magnification on
+        // the axis, the field widening towards the rim so the lens takes in more of the picture,
+        // with a little lateral colour there.
+        float2 offset = p.xy * R * (1.0 + 0.5 * rho * rho) / t.magnification;
         float lod = t.blur + 0.5 * smoothstep(0.7, 1.0, rho);
         float spread = 1.0 + 0.008 * rho * rho;
         float3 c = float3(filmAt(table, film, detail, t, t.center + offset * spread, lod).r,
@@ -342,15 +346,16 @@ final class LoupeRenderer {
     """
 }
 
-/// The loupe lying beside the film on the light table. Drag it anywhere on the table; it shows
-/// the film beneath it magnified, from the frame's own pixels. Double-click puts it back by the
-/// edge; the right-click menu picks the loupe. The canvas below never redraws for it.
+/// The loupe on the picture, on the light table or over the single frame: shown and put away by
+/// its key, it first lies on the selected frame. Drag it anywhere; it shows the picture beneath it
+/// magnified, from the frame's own pixels, and keeps doing so while it moves. The right-click menu
+/// picks the loupe. The canvas below never redraws for it.
 final class LoupeView: NSView {
   weak var canvas: FilmCanvasView?
   var style = LoupeStyle.pentax {
     didSet { if style != oldValue { layoutOnTable() } }
   }
-  /// The base's centre, in canvas points; parked by the table's edge until moved.
+  /// The base's centre, in canvas points; on the selected frame until moved.
   private(set) var center: CGPoint?
   private(set) var lift: CGFloat = 0
   private var grab: CGPoint?
@@ -367,13 +372,8 @@ final class LoupeView: NSView {
   /// The viewer sits in front of the table, looking down: the loupe shows its front, more so
   /// the further back it lies.
   private var eye: SIMD3<Float> { canvas?.viewer ?? SIMD3(Float(bounds.midX), Float(bounds.maxY), Float(max(bounds.width, bounds.height) * 2)) }
-  /// In its rest down the right of the table, or by the corner when the table is too narrow for one.
-  var parkedCenter: CGPoint {
-    guard let canvas else { return .zero }
-    if let rest = canvas.loupeRest { return CGPoint(x: rest.midX, y: rest.midY) }
-    let glass = LightTable.glassRect(in: canvas.bounds), r = radius
-    return CGPoint(x: glass.maxX - r - 20, y: glass.maxY - r - 20)
-  }
+  /// Where it lies when shown: the middle of the selected frame, or of the picture.
+  var homeCenter: CGPoint { canvas?.loupeHome ?? .zero }
 
   /// Keeps the loupe on the glass and its view around it, then shows it again.
   func layoutOnTable() {
@@ -385,8 +385,8 @@ final class LoupeView: NSView {
     guard let canvas, canvas.bounds.width > LightTable.glassInset * 4, canvas.bounds.height > LightTable.glassInset * 4
     else { return }
     let glass = LightTable.glassRect(in: canvas.bounds), r = radius
-    // Where it was put, kept as a fraction of the canvas; parked, it stays in its corner.
-    var c = canvas.storedLoupeCenter ?? parkedCenter
+    // Where it was put, kept as a fraction of the canvas; until then on the selected frame.
+    var c = canvas.storedLoupeCenter ?? homeCenter
     c.x = min(max(c.x, glass.minX + r * 0.4), max(glass.minX + r * 0.4, glass.maxX - r * 0.4))
     c.y = min(max(c.y, glass.minY + r * 0.4), max(glass.minY + r * 0.4, glass.maxY - r * 0.4))
     center = c
@@ -405,7 +405,8 @@ final class LoupeView: NSView {
   }
   func renderNow() {
     guard let canvas, let center, !isHidden, bounds.width > 0 else { return }
-    let pose = LoupeRenderer.Pose(style: style, center: center, radius: radius, lift: lift, eye: eye)
+    let pose = LoupeRenderer.Pose(
+      style: style, center: center, radius: radius, lift: lift, eye: eye, magnification: canvas.loupeMagnification(for: style))
     image = LoupeRenderer.shared.render(
       frame: frame, scale: window?.backingScaleFactor ?? 2, pose: pose, scene: canvas.loupeScene())
     needsDisplay = true
@@ -434,7 +435,6 @@ final class LoupeView: NSView {
   }
   override func mouseDown(with event: NSEvent) {
     guard let canvas, let center else { return }
-    if event.clickCount == 2 { return park() }
     let p = canvas.convert(event.locationInWindow, from: nil)
     grab = CGPoint(x: p.x - center.x, y: p.y - center.y)
     NSCursor.closedHand.push()
@@ -455,8 +455,8 @@ final class LoupeView: NSView {
     canvas?.storedLoupeCenter = point
     moved()
   }
-  /// Back by the table's edge, where it stays when the window changes size.
-  @objc func park() {
+  /// Back on the selected frame.
+  @objc func home() {
     canvas?.storedLoupeCenter = nil
     moved()
   }
@@ -487,7 +487,7 @@ final class LoupeView: NSView {
       menu.addItem(item)
     }
     menu.addItem(.separator())
-    let back = NSMenuItem(title: "放回原位", action: #selector(park), keyEquivalent: "")
+    let back = NSMenuItem(title: "移到所选画面中央", action: #selector(home), keyEquivalent: "")
     back.target = self
     menu.addItem(back)
     let hide = NSMenuItem(title: "收起看片镜", action: #selector(putAway), keyEquivalent: "")
@@ -499,5 +499,5 @@ final class LoupeView: NSView {
     guard let raw = item.representedObject as? String, let s = LoupeStyle(rawValue: raw) else { return }
     canvas?.model?.preferences.loupeStyle = s
   }
-  @objc private func putAway() { canvas?.model?.preferences.showLoupe = false }
+  @objc private func putAway() { canvas?.model?.toggleLoupe(false) }
 }

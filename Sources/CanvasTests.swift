@@ -162,9 +162,13 @@ enum CanvasTests {
     try check(model.tool == .select, "V goes back to selecting")
     model.singleView = false
     key("c", code: 8)
+    try check(model.tool == .crop && CanvasTool.allCases.compactMap(\.shortcut).count == 4 && CanvasTool.base.help.hasSuffix("· B"),
+      "C too, each named in its button's tooltip")
+    let loupeShown = model.preferences.showLoupe
     key("z", code: 6)
-    try check(model.tool == .loupe && CanvasTool.allCases.compactMap(\.shortcut).count == 5 && CanvasTool.base.help.hasSuffix("· B"),
-      "C and Z too, each named in its button's tooltip")
+    try check(model.preferences.showLoupe != loupeShown && model.tool == .crop, "Z shows or puts away the loupe, whatever the tool")
+    key("z", code: 6)
+    try check(model.preferences.showLoupe == loupeShown, "and Z again turns it back")
     model.useTool(.select)
 
     model.select(frames[1].id)
@@ -188,20 +192,23 @@ enum CanvasTests {
     key("\u{7F}", code: 51)
     try check(model.frames.count == 3, "otherwise delete removes the selected frame, as before")
 
-    // The loupe's rest: a strip of glass down the right, clear of the film.
+    // The loupe: no strip of its own; shown by its key, it lies on the selected frame.
     model.useTool(.select)
     model.singleView = false
-    model.preferences.showLoupe = true
+    model.toggleLoupe(false)
+    canvas.updateLoupe()
+    let whole = canvas.imageRect
+    guard let chosen = model.frames.last else { throw DeskError.message("FAIL: no frame to put the loupe on") }
+    model.select(chosen.id)
+    model.toggleLoupe()
     canvas.updateLoupe()
     settle()
-    guard let rest = canvas.loupeRest else { throw DeskError.message("FAIL: the light table keeps a rest for the loupe") }
-    let parked = canvas.loupe.center ?? .zero, r = canvas.loupe.radius
-    try check(canvas.imageRect.maxX <= rest.minX && rest.contains(parked)
-      && parked.x - r >= rest.minX && parked.x + r <= rest.maxX && canvas.loupe.center == canvas.loupe.parkedCenter,
-      String(format: "the loupe rests in a strip of its own down the right (%.0f pt wide), clear of the film", rest.width))
-    let beside = canvas.imageRect
-    model.preferences.showLoupe = false
-    try check(canvas.loupeRest == nil && canvas.imageRect.width > beside.width, "put away, the film takes the strip back")
+    let home = canvas.screen(chosen.rect.cg), placed = canvas.loupe.center ?? .zero
+    try check(!canvas.loupe.isHidden && canvas.imageRect == whole && abs(placed.x - home.midX) < 1 && abs(placed.y - home.midY) < 1,
+      "shown, the loupe lies on the selected frame, and the film keeps the whole table")
+    model.toggleLoupe()
+    canvas.updateLoupe()
+    try check(canvas.loupe.isHidden && !model.preferences.showLoupe && canvas.imageRect == whole, "pressed again, it is put away")
     model.preferences.showLoupe = true
 
     // The whole roll turned and mirrored from the contact view, and the table with it.

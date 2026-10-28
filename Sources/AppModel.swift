@@ -27,6 +27,8 @@ final class AppModel: ObservableObject {
   @Published var scanQueue = [[UUID]]()
   @Published private(set) var scanBatch = ScanBatchProgress()
   @Published var histogram = [Double](repeating: 0, count: 64)
+  /// Red, green and blue of the positive, on one scale, for the curves.
+  @Published var channelHistograms = [[Double]](repeating: [Double](repeating: 0, count: 64), count: 3)
   @Published var exportType = "tiff"
   /// Rotate and mirror act on the current frame, or on every frame while syncing.
   @Published var syncOrientation = false
@@ -140,7 +142,6 @@ final class AppModel: ObservableObject {
     case .crop: return singleView ? "拖动四角裁切 · 方向键微调 · 回车完成 · Esc 退出" : "在灯箱上拖出新的画框 · Esc 退出"
     case .base: return "点未曝光的橙色片基（片间或片边），不要点景物或片夹 · Esc 退出"
     case .neutral: return "点画面中应为中性灰的地方：灰卡、白墙、水泥 · Esc 退出"
-    case .loupe: return "把鼠标移到画面上放大查看 · Esc 退出"
     case .calibrate:
       return "点选中性灰：灰卡、白墙、水泥等均匀处 · 已取 \(calibrationPoints.count) 个"
         + (calibrationPoints.isEmpty ? "" : " · ⌫ 撤回上一点") + " · Esc 结束"
@@ -172,7 +173,7 @@ final class AppModel: ObservableObject {
   func useTool(_ value: CanvasTool) {
     if value != tool { editRegionLock = nil }
     tool = value
-    if value == .loupe || value == .neutral || value == .calibrate || value == .it8 { singleView = selected != nil }
+    if value == .neutral || value == .calibrate || value == .it8 { singleView = selected != nil }
     if value == .base || value == .crop { fitView() }
     focusCanvas()
     refresh()
@@ -983,13 +984,23 @@ final class AppModel: ObservableObject {
     let context = pipe.scaled(try pipe.crop(overviewCache.image(url), rect: region), maxDimension: 3000)
     return (flareOffset(frame).map { pipe.removingFlare($0, from: context) } ?? context, region)
   }
-  /// The frame under the light table's loupe as the contact view shows it, positive or raw, but
-  /// from the frame's own pixels: its scan, or the full-resolution preview.
-  func loupeDetail(for frame: FilmFrame, completion: @escaping (CGImage?) -> Void) {
-    let positive = contactPositive, p = profile
+  /// The loupe's key, as the tools' are: shows it on the picture, or puts it away.
+  static let loupeShortcut = "z"
+  /// Shows the loupe on the selected frame, or puts it away; `shown` sets it either way.
+  func toggleLoupe(_ shown: Bool? = nil) {
+    loupeCenter = nil
+    preferences.showLoupe = shown ?? !preferences.showLoupe
+  }
+  /// The frame under the loupe from the frame's own pixels: on the light table as the contact view
+  /// shows it, positive or raw (its scan, or the full-resolution preview); over the single frame
+  /// as that view shows it, turned and mirrored, at full resolution.
+  func loupeDetail(for frame: FilmFrame, single: Bool = false, completion: @escaping (CGImage?) -> Void) {
+    let positive = single ? !showNegative : contactPositive, p = profile
     renderQueue.async {
-      var image = try? self.source(for: frame, maxDimension: 2400)
-      if positive, let crop = image {
+      var image = try? self.source(for: frame, full: single, maxDimension: single ? nil : 2400)
+      if single, let crop = image {
+        image = ImagePipeline.shared.render(crop, settings: frame.adjustments, profile: p, analysis: nil, negative: !positive)
+      } else if positive, let crop = image {
         // Upright, as in the contact print, so it lies under its frame box.
         var s = frame.adjustments
         s.rotation = 0
@@ -1000,9 +1011,10 @@ final class AppModel: ObservableObject {
     }
   }
   /// Changes whenever the loupe's picture of `frame` would.
-  func loupeDetailKey(_ frame: FilmFrame) -> String {
+  func loupeDetailKey(_ frame: FilmFrame, single: Bool = false) -> String {
     let settings = (try? JSONEncoder().encode(frame.adjustments)).map { $0.base64EncodedString() } ?? ""
-    return [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", "\(contactPositive)", profile.id, settings]
+    let shown = single ? "single \(!showNegative)" : "table \(contactPositive)"
+    return [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", shown, profile.id, settings]
       .joined(separator: "|")
   }
   func refresh() {
@@ -1040,20 +1052,19 @@ final class AppModel: ObservableObject {
     let edit = editingSingle
     if !edit { editRegionLock = nil }
     let negative = showNegative || tool == .base
-    let full = tool == .loupe
     let sharpening = preferences.sharpening
     let previewDPI = Int(overviewDPI)
     rendering = true
     let work = DispatchWorkItem { [weak self] in
       guard let self else { return }
       do {
-        let cropped = try self.source(for: frame, full: full)
+        let cropped = try self.source(for: frame)
         let analysis = ImagePipeline.shared.analyze(
           cropped, settings: frame.adjustments, profile: p)
         let context = edit ? try self.contextSource(for: frame) : nil
         let input = context?.image ?? cropped
         // The kernel follows the size the source was loaded at, as in source(for:) and contextSource(for:).
-        let loaded = edit ? 3000 : full ? nil : (frame.sourcePath != nil ? 3000 : 2200)
+        let loaded = edit ? 3000 : (frame.sourcePath != nil ? 3000 : 2200)
         let sharpener = negative ? nil : Sharpening.sharpener(sharpening, frame: frame, maxDimension: loaded)
         guard
           let output = ImagePipeline.shared.render(
@@ -1062,15 +1073,19 @@ final class AppModel: ObservableObject {
         else { throw DeskError.message("无法生成预览") }
         let r = ImagePipeline.shared.raster(output, maxDimension: 250)
         var hist = [Double](repeating: 0, count: 64)
+        var channels = [[Double]](repeating: [Double](repeating: 0, count: 64), count: 3)
         for y in 0..<r.height {
           for x in 0..<r.width {
             let c = r.pixel(x, y)
             let l = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
             hist[min(63, Int(l * 63))] += 1
+            for (i, v) in c.values.enumerated() { channels[i][min(63, max(0, Int(v * 63)))] += 1 }
           }
         }
         let maxBin = hist.max() ?? 1
         hist = hist.map { $0 / max(1, maxBin) }
+        let maxChannel = channels.joined().max() ?? 1
+        channels = channels.map { $0.map { $0 / max(1, maxChannel) } }
         var pixels = CGSize(width: input.width, height: input.height)
         if frame.hasFullResolution, let path = frame.scanPath ?? frame.sourcePath {
           let info = ImagePipeline.shared.info(URL(fileURLWithPath: path))
@@ -1091,8 +1106,9 @@ final class AppModel: ObservableObject {
           self.samplingInput = input
           self.toneAnalysis = analysis
           if edit { self.editRegionLock = context?.region }
-          if !edit && !negative && !full { self.thumbnails[frame.id] = output }
+          if !edit && !negative { self.thumbnails[frame.id] = output }
           self.histogram = hist
+          self.channelHistograms = channels
           self.rendering = false
           self.sourceSummary = summary
         }
@@ -1630,6 +1646,12 @@ final class AppModel: ObservableObject {
   }
   /// Exports the ticked frames as one contact sheet. Frames without a scan of at least 1200 dpi
   /// are first scanned at 1200 dpi, and those scans become their originals.
+  /// The ticked frames a contact sheet would scan first: none from the preview, else those not
+  /// yet scanned at 1200 dpi or more.
+  func contactSheetScans(_ items: [FilmFrame]) -> [FilmFrame] {
+    guard preferences.sheet.scansFirst else { return [] }
+    return items.filter { $0.sourcePath == nil && !($0.hasFullResolution && ($0.scanDPI ?? 0) >= ContactSheet.scanDPI) }
+  }
   func exportContactSheet() {
     guard !isWorking else { return }
     let items = frames.filter(\.enabled)
@@ -1637,10 +1659,8 @@ final class AppModel: ObservableObject {
       errorText = "请先勾选要放进接触表的画面。"
       return
     }
-    let needScan = items.filter {
-      $0.sourcePath == nil && !($0.hasFullResolution && ($0.scanDPI ?? 0) >= ContactSheet.scanDPI)
-    }
-    var usePreviews = false
+    let needScan = contactSheetScans(items)
+    var usePreviews = !preferences.sheet.scansFirst
     if !needScan.isEmpty {
       let ready = scanner.ready && !(scanner.backendID == "epson2-linear-v1" && overviewBackendID != scanner.backendID)
       let alert = NSAlert()
@@ -1661,6 +1681,7 @@ final class AppModel: ObservableObject {
     }
     let panel = NSSavePanel()
     panel.canCreateDirectories = true
+    panel.message = usePreviews ? "按预览的分辨率（\(Int(overviewDPI)) dpi）直接导出，不扫描" : "1200 dpi 接触表"
     panel.directoryURL = sessionURL ?? libraryURL
     let date = Date().formatted(.iso8601.year().month().day())
     let safeFilm = String(filmName.map { $0.isLetter || $0.isNumber ? $0 : "_" }.prefix(40))
@@ -1671,15 +1692,17 @@ final class AppModel: ObservableObject {
     preferences.exportFormat = chooser.format
     exportType = chooser.format.rawValue
     if needScan.isEmpty || usePreviews {
-      composeContactSheet(ids: items.map(\.id), to: url, format: chooser.format)
+      composeContactSheet(ids: items.map(\.id), to: url, format: chooser.format, fromPreview: usePreviews)
     } else {
       pendingSheet = (items.map(\.id), url, chooser.format)
       startScanBatch(needScan.map(\.id), dpi: ContactSheet.scanDPI)
       if !scanBatch.isActive { pendingSheet = nil }  // The batch refused to start.
     }
   }
+  /// The sheet at 1200 dpi from the frames' own pixels, or `fromPreview` at the preview's
+  /// resolution: scanned frames read at that size, the rest from the preview, nothing scanned.
   func composeContactSheet(
-    ids: [UUID], to url: URL, format: ExportFormat, completion: ((Error?) -> Void)? = nil
+    ids: [UUID], to url: URL, format: ExportFormat, fromPreview: Bool = false, completion: ((Error?) -> Void)? = nil
   ) {
     let items = ids.compactMap { id in frames.first { $0.id == id } }
     let p = profile, layout = preferences.sheet, quality = preferences.jpegQuality
@@ -1687,20 +1710,29 @@ final class AppModel: ObservableObject {
     let title = "\(filmName) · \(Date().formatted(.iso8601.year().month().day())) · \(items.count) 张"
     let filmCode = filmName.uppercased()
     let sharpening = preferences.sharpening
-    let tiles = items.map { f in
-      ContactSheet.Tile(
+    let tiles = items.map { f -> ContactSheet.Tile in
+      if fromPreview, Self.readsScan(f), let path = f.scanPath, let scanned = f.scanDPI {
+        // The whole scan file read at the preview's resolution, then cropped to the frame.
+        let info = ImagePipeline.shared.info(URL(fileURLWithPath: path))
+        let size = max(64, Int(Double(max(info.width, info.height)) * previewDPI / Double(scanned)))
+        return ContactSheet.Tile(
+          name: f.name, settings: f.adjustments, dpi: previewDPI, source: { try self.source(for: f, maxDimension: size) },
+          sharpener: Sharpening.sharpener(sharpening, frame: f, maxDimension: size))
+      }
+      return ContactSheet.Tile(
         name: f.name, settings: f.adjustments,
         dpi: f.hasFullResolution ? Double(f.scanDPI ?? Int(previewDPI)) : previewDPI,
         source: { try self.source(for: f, full: true) },
         sharpener: Sharpening.sharpener(sharpening, frame: f, maxDimension: nil))
     }
+    let sheetDPI = fromPreview ? Int(previewDPI) : ContactSheet.scanDPI
     beginExport()
     status = "正在生成接触表 · \(items.count) 张…"
     renderQueue.async {
       do {
         let size = try ContactSheet.export(
           tiles, profile: p, layout: layout, title: title, filmCode: filmCode, to: url,
-          format: format, quality: quality)
+          format: format, quality: quality, dpi: sheetDPI)
         DispatchQueue.main.async {
           self.endExport()
           self.status = "接触表已导出：\(url.lastPathComponent) · \(Int(size.width)) × \(Int(size.height))"

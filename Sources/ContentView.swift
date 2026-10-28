@@ -44,12 +44,7 @@ struct ContentView: View {
       Text(m.errorText ?? "")
     }
     .sheet(isPresented: $showInfo) { profileInfo }
-    .onChange(of: m.tool) { old, new in
-      if new == .loupe {
-        m.singleView = m.selected != nil
-      }
-      m.refresh()
-    }
+    .onChange(of: m.tool) { m.refresh() }
     .onAppear {
       m.undoManager = undoManager
       if m.page == .leak { m.leak.undoManager = undoManager }
@@ -154,14 +149,14 @@ struct ContentView: View {
           m.focusCanvas()
           m.refresh()
         }
+        Button {
+          m.toggleLoupe()
+        } label: {
+          Label("看片镜", systemImage: "circle.circle").font(.system(size: 11)).foregroundStyle(
+            m.preferences.showLoupe ? accent : Color(white: 0.85))
+        }.buttonStyle(HardwareKeyStyle(latched: m.preferences.showLoupe)).controlSize(.small)
+          .help("看片镜：点一下放到所选画面上，拖动放大细看，再点一下收起 · Z。接触表和单张都能用；右键选择型号")
         if !m.singleView {
-          Button {
-            m.preferences.showLoupe.toggle()
-          } label: {
-            Label("看片镜", systemImage: "circle.circle").font(.system(size: 11)).foregroundStyle(
-              m.preferences.showLoupe ? accent : Color(white: 0.85))
-          }.buttonStyle(HardwareKeyStyle(latched: m.preferences.showLoupe)).controlSize(.small)
-            .help("灯箱上的看片镜：拖到画面上放大细看，双击放回灯箱边，右键选择型号")
           Button {
             m.preferences.contactLandscape.toggle()
             m.fitView()
@@ -172,7 +167,7 @@ struct ContentView: View {
             .help("把竖放的片夹横过来摆在灯箱上，胶片条横向排开，更好地利用宽屏。方向跟随多数画面的旋转，都没有旋转时顺时针转")
         }
         Spacer()
-        ForEach([CanvasTool.select, .crop, .base, .neutral, .loupe], id: \.self) { t in
+        ForEach([CanvasTool.select, .crop, .base, .neutral], id: \.self) { t in
           Button {
             m.useTool(t)
           } label: {
@@ -300,7 +295,12 @@ struct ContentView: View {
           Spacer()
           Button("重置") { m.resetAdjustments() }.font(.system(size: 11))
         }
-        HistogramView(values: m.histogram).frame(height: 65).padding(4).background(LCDGlass())
+        // The curves first, over the picture's histograms channel by channel.
+        CurveEditor(
+          curves: Binding(
+            get: { m.settings.curves ?? ToneCurves() },
+            set: { value in m.change("曲线") { $0.curves = value.isIdentity ? nil : value } }),
+          histogram: m.histogram, channels: m.channelHistograms)
         Toggle("负片去色罩 / 反相", isOn: bool(\.inputIsNegative)).toggleStyle(LEDToggleStyle())
           .font(.system(size: 11))
         HStack {
@@ -399,13 +399,6 @@ struct ContentView: View {
         Divider()
         Text("色彩").font(.system(size: 12, weight: .medium))
         slider("饱和度", key: \.saturation, range: 0...1.8)
-        Divider()
-        Text("曲线").font(.system(size: 12, weight: .medium))
-        CurveEditor(
-          curves: Binding(
-            get: { m.settings.curves ?? ToneCurves() },
-            set: { value in m.change("曲线") { $0.curves = value.isIdentity ? nil : value } }),
-          histogram: m.histogram)
         Divider()
         sharpeningControl
         DisclosureGroup {
@@ -630,44 +623,6 @@ struct ContentView: View {
         value: Binding(
           get: { m.settings[keyPath: key] }, set: { v in m.change(title) { $0[keyPath: key] = v } }),
         range: range, detent: Adjustments()[keyPath: key])
-    }
-  }
-}
-
-struct HistogramView: View {
-  var values: [Double]
-  var body: some View {
-    GeometryReader { g in
-      let trace = Path { p in
-        for (i, v) in values.enumerated() {
-          let point = CGPoint(
-            x: Double(i) / Double(max(1, values.count - 1)) * g.size.width,
-            y: g.size.height * (1 - v * 0.85))
-          if i == 0 { p.move(to: point) } else { p.addLine(to: point) }
-        }
-      }
-      ZStack {
-        // Screen graticule: quarter tones across, half height up.
-        Path { p in
-          for i in 1..<4 {
-            let x = g.size.width * Double(i) / 4
-            p.move(to: CGPoint(x: x, y: 0))
-            p.addLine(to: CGPoint(x: x, y: g.size.height))
-          }
-          p.move(to: CGPoint(x: 0, y: g.size.height / 2))
-          p.addLine(to: CGPoint(x: g.size.width, y: g.size.height / 2))
-        }.stroke(Hardware.lcdText.opacity(0.1), lineWidth: 0.5)
-        Path { p in
-          p.addPath(trace)
-          p.addLine(to: CGPoint(x: g.size.width, y: g.size.height))
-          p.addLine(to: CGPoint(x: 0, y: g.size.height))
-          p.closeSubpath()
-        }.fill(
-          LinearGradient(
-            colors: [accent.opacity(0.45), accent.opacity(0.08)], startPoint: .top, endPoint: .bottom)
-        )
-        trace.stroke(Hardware.lcdText, lineWidth: 1).shadow(color: Hardware.lcdText.opacity(0.7), radius: 2)
-      }
     }
   }
 }

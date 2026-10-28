@@ -300,7 +300,6 @@ enum CanvasTool: String, CaseIterable {
   case crop = "画框"
   case base = "片基"
   case neutral = "中性灰"
-  case loupe = "放大镜"
   case calibrate = "标定中性点"
   case it8 = "IT8 色卡"
 
@@ -313,7 +312,6 @@ enum CanvasTool: String, CaseIterable {
     case .base: return "eyedropper.full"
     case .neutral: return "eyedropper"
     case .calibrate: return "target"
-    case .loupe: return "magnifyingglass"
     case .it8: return "squareshape.split.3x3"
     }
   }
@@ -332,7 +330,6 @@ enum CanvasTool: String, CaseIterable {
     case .crop: return "c"
     case .base: return "b"
     case .neutral: return "n"
-    case .loupe: return "z"
     case .calibrate, .it8: return nil
     }
   }
@@ -343,7 +340,6 @@ enum CanvasTool: String, CaseIterable {
     case .crop: what = "画框：在接触表上拖出新画框；单张中裁切"
     case .base: what = "取片基：点未曝光的橙色片基，作为去色罩的基准"
     case .neutral: what = "取中性灰：点画面中应为灰色的地方，校正白平衡"
-    case .loupe: what = "放大镜：把鼠标处放大查看"
     case .calibrate: what = "标定中性点：点选灰卡等中性灰，生成本机预设"
     case .it8: what = "IT8 色卡：按提示点色卡上的 6 个点"
     }

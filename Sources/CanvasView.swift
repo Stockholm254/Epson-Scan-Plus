@@ -132,30 +132,19 @@ final class FilmCanvasView: NSView {
     return image
   }
   private static let inset: CGFloat = 28
-  /// Points per pixel of the shown picture that fit the canvas, leaving `reserve` on the right.
-  private func fitScale(reserving reserve: CGFloat) -> CGFloat {
+  /// Points per pixel of the shown picture that fit the canvas.
+  private var fitScale: CGFloat {
     guard let cg = shown else { return 1 }
     return min(
-      max(1, bounds.width - 2 * Self.inset - reserve) / CGFloat(cg.width),
+      max(1, bounds.width - 2 * Self.inset) / CGFloat(cg.width),
       max(1, bounds.height - 2 * Self.inset) / CGFloat(cg.height))
-  }
-  /// In the contact view, a strip of glass down the right where the loupe rests clear of the film.
-  var loupeRest: CGRect? {
-    guard let model, !model.singleView, model.preferences.showLoupe, model.displayed != nil else { return nil }
-    let glass = LightTable.glassRect(in: bounds)
-    // Wide enough for the loupe at the scale the film would have without it; with it the film
-    // is smaller, and so is the loupe.
-    let width = 2 * loupeRadius(model.preferences.loupeStyle, scale: fitScale(reserving: 0)) + 36
-    guard glass.width > width * 3 else { return nil }
-    return CGRect(x: glass.maxX - width, y: glass.minY, width: width, height: glass.height)
   }
   var imageRect: CGRect {
     guard let cg = shown else { return .zero }
-    let reserve = loupeRest.map { bounds.maxX - $0.minX - Self.inset } ?? 0
-    let scale = fitScale(reserving: reserve) * CGFloat(model?.zoom ?? 1)
+    let scale = fitScale * CGFloat(model?.zoom ?? 1)
     let size = CGSize(width: CGFloat(cg.width) * scale, height: CGFloat(cg.height) * scale)
     return CGRect(
-      x: (bounds.width - reserve - size.width) / 2 + pan.x, y: (bounds.height - size.height) / 2 + pan.y,
+      x: (bounds.width - size.width) / 2 + pan.x, y: (bounds.height - size.height) / 2 + pan.y,
       width: size.width, height: size.height)
   }
   /// A canvas point in the shown picture's normalised coordinates.
@@ -291,12 +280,8 @@ final class FilmCanvasView: NSView {
         p.lineWidth = 1.5
         p.stroke()
       }
-      if let rest = loupeRest { drawLoupeRest(rest) }
     }
     if model.singleView, model.tool == .it8, let frame = model.selected { drawIT8(model.it8Marks, settings: frame.adjustments) }
-    if model.tool == .loupe, let hover, imageRect.contains(hover) {
-      drawLoupe(image: image, point: hover)
-    }
   }
   /// The IT8 target's marked points, and once four are set, where every patch will be read.
   private func drawIT8(_ marks: [CGPoint], settings: Adjustments) {
@@ -322,19 +307,6 @@ final class FilmCanvasView: NSView {
         at: CGPoint(x: c.x - 4, y: c.y - 7),
         withAttributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .bold), .foregroundColor: NSColor.black])
     }
-  }
-  /// A ring printed on the glass where the loupe rests, so it can be put back by eye.
-  private func drawLoupeRest(_ rest: CGRect) {
-    let r = loupe.radius + 6, c = CGPoint(x: rest.midX, y: rest.midY)
-    let ink = NSColor(calibratedRed: 0.42, green: 0.39, blue: 0.35, alpha: 0.32)
-    ink.setStroke()
-    let ring = NSBezierPath(ovalIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
-    ring.lineWidth = 0.8
-    ring.stroke()
-    let label = "看片镜" as NSString
-    let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: ink.withAlphaComponent(0.6)]
-    let size = label.size(withAttributes: attributes)
-    label.draw(at: CGPoint(x: c.x - size.width / 2, y: c.y + r + 6), withAttributes: attributes)
   }
   /// The lit light table, shaded by Metal when available. Leaves the glass as the clip, so the
   /// scan and frames stay on it.
@@ -390,69 +362,11 @@ final class FilmCanvasView: NSView {
     rim.fill()
     NSGraphicsContext.restoreGraphicsState()
   }
-  private func drawLoupe(image: NSImage, point: CGPoint) {
-    let diameter: CGFloat = 190
-    var center = CGPoint(x: point.x + 115, y: point.y - 85)
-    center.x = min(bounds.maxX - 105, max(105, center.x))
-    center.y = min(bounds.maxY - 105, max(105, center.y))
-    let ring = CGRect(
-      x: center.x - diameter / 2, y: center.y - diameter / 2, width: diameter, height: diameter)
-    NSGraphicsContext.saveGraphicsState()
-    let shadow = NSShadow()
-    shadow.shadowColor = NSColor.black.withAlphaComponent(0.8)
-    shadow.shadowBlurRadius = 20
-    shadow.shadowOffset = CGSize(width: 0, height: 8)
-    shadow.set()
-    NSColor.black.setFill()
-    NSBezierPath(ovalIn: ring).fill()
-    NSGraphicsContext.restoreGraphicsState()
-    NSGradient(colors: [
-      NSColor(calibratedWhite: 0.65, alpha: 1), NSColor(calibratedWhite: 0.12, alpha: 1),
-      NSColor(calibratedWhite: 0.4, alpha: 1),
-    ])?.draw(in: NSBezierPath(ovalIn: ring), angle: 70)
-    let glass = ring.insetBy(dx: 8, dy: 8)
-    NSGraphicsContext.saveGraphicsState()
-    NSBezierPath(ovalIn: glass).addClip()
-    NSColor.black.setFill()
-    glass.fill()
-    let n = shownNormal(point)
-    let r = imageRect
-    let factor = max(2, CGFloat(image.size.width) / max(1, r.width)) * 1.5
-    let scaled = CGRect(
-      x: center.x - n.x * r.width * factor, y: center.y - n.y * r.height * factor,
-      width: r.width * factor, height: r.height * factor)
-    image.draw(
-      in: scaled, from: .zero, operation: .copy, fraction: 1, respectFlipped: true,
-      hints: [.interpolation: NSImageInterpolation.none])
-    NSColor.white.withAlphaComponent(0.35).setStroke()
-    let cross = NSBezierPath()
-    cross.move(to: CGPoint(x: center.x - 6, y: center.y))
-    cross.line(to: CGPoint(x: center.x + 6, y: center.y))
-    cross.move(to: CGPoint(x: center.x, y: center.y - 6))
-    cross.line(to: CGPoint(x: center.x, y: center.y + 6))
-    cross.lineWidth = 0.5
-    cross.stroke()
-    NSGraphicsContext.restoreGraphicsState()
-    NSColor.black.setFill()
-    NSBezierPath(
-      roundedRect: CGRect(x: center.x - 22, y: ring.maxY - 19, width: 44, height: 20), xRadius: 5,
-      yRadius: 5
-    ).fill()
-    ("LOUPE" as NSString).draw(
-      at: CGPoint(x: center.x - 17, y: ring.maxY - 16),
-      withAttributes: [
-        .font: NSFont.monospacedSystemFont(ofSize: 9, weight: .medium),
-        .foregroundColor: NSColor.white,
-      ])
-  }
   override func mouseMoved(with event: NSEvent) {
     hover = convert(event.locationInWindow, from: nil)
-    // Only the magnifier tool follows the mouse; other redraws would retake the loupe's picture.
-    if model?.tool == .loupe { needsDisplay = true }
   }
   override func mouseExited(with event: NSEvent) {
     hover = nil
-    if model?.tool == .loupe { needsDisplay = true }
   }
 
   // MARK: Loupe
@@ -466,21 +380,45 @@ final class FilmCanvasView: NSView {
       }
     }
   }
-  /// The loupe at the film's scale, as the table shows it before zooming in.
+  /// On the light table the loupe lies to the film's scale, as the table shows it before zooming
+  /// in; over the single frame, which is shown far larger than life, at a size to hold in view.
   func loupeRadius(for style: LoupeStyle) -> CGFloat {
-    let reserve = loupeRest.map { bounds.maxX - $0.minX - Self.inset } ?? 0
-    return loupeRadius(style, scale: fitScale(reserving: reserve))
-  }
-  private func loupeRadius(_ style: LoupeStyle, scale: CGFloat) -> CGFloat {
-    guard let model, let cg = shown, model.physicalMM.height > 0 else { return 70 }
+    guard let model, let cg = shown else { return 70 }
+    if model.singleView { return min(130, max(70, min(bounds.width, bounds.height) * 0.14)) * CGFloat(style.baseMM / 48) }
+    guard model.physicalMM.height > 0 else { return 70 }
     let shownHeight = turn.sideways ? model.physicalMM.width : model.physicalMM.height
-    let pointsPerMM = scale * CGFloat(cg.height) / max(1, shownHeight)
+    let pointsPerMM = fitScale * CGFloat(cg.height) / max(1, shownHeight)
     return min(110, max(44, CGFloat(style.baseMM / 2) * pointsPerMM))
   }
+  /// The loupe's own on the light table. Over the single frame no more than the frame's pixels
+  /// can show, half again past one to a point, and never under 2×.
+  func loupeMagnification(for style: LoupeStyle) -> Double? {
+    guard let model, model.singleView else { return nil }
+    let pixels = loupeDetail.map { Double($0.image.width) } ?? Double(shown?.width ?? 0)
+    let perPoint = pixels / Double(max(1, imageRect.width))
+    return min(style.magnification, max(2, perPoint * 1.5))
+  }
+  /// Where the loupe first lies: the middle of the selected frame on the table, or of the picture.
+  var loupeHome: CGPoint {
+    let r = imageRect
+    var c = CGPoint(x: r.midX, y: r.midY)
+    if let model, !model.singleView, let f = model.contactFrames.first(where: { $0.id == model.selectedID }) {
+      let s = screen(f.rect.cg)
+      c = CGPoint(x: s.midX, y: s.midY)
+    }
+    return CGPoint(x: min(max(c.x, bounds.minX), bounds.maxX), y: min(max(c.y, bounds.minY), bounds.maxY))
+  }
+  private var loupeView: Bool?
   func updateLoupe() {
     guard let model else { return }
-    let hidden = model.singleView || !model.preferences.showLoupe
+    let hidden = !model.preferences.showLoupe || model.displayed == nil
     loupe.style = model.preferences.loupeStyle
+    // A new view puts the loupe back on what it shows.
+    if !hidden, loupeView != model.singleView {
+      if loupeView != nil { storedLoupeCenter = nil }
+      loupeView = model.singleView
+      loupe.layoutOnTable()
+    }
     if loupe.isHidden != hidden {
       loupe.isHidden = hidden
       if !hidden { loupe.layoutOnTable() }
@@ -599,7 +537,19 @@ final class FilmCanvasView: NSView {
     }
     // Not after a new preview, a moved frame box or a switch between raw and positive. After an
     // edit it stays until the new picture arrives, so the lens never goes blank.
-    if let model, let detail = loupeDetail, detail.positive == model.contactPositive,
+    guard let model, let detail = loupeDetail, detail.single == model.singleView else { return scene }
+    if model.singleView {
+      // The single frame fills the picture, as it is shown; not while the crop shows its surroundings.
+      if !model.editingSingle, detail.positive == !model.showNegative, let frame = model.selected, frame.id == detail.id,
+        frame.rect == detail.rect
+      {
+        scene.detail = detail.image
+        scene.detailRect = imageRect
+        if model.loupeDetailKey(frame, single: true) != detail.key {
+          DispatchQueue.main.async { [weak self] in self?.loupeMoved() }
+        }
+      }
+    } else if detail.positive == model.contactPositive,
       let frame = model.contactFrames.first(where: { $0.id == detail.id }), frame.rect == detail.rect
     {
       scene.detail = turnedDetail(detail.key, detail.image)
@@ -610,7 +560,7 @@ final class FilmCanvasView: NSView {
     }
     return scene
   }
-  private var loupeDetail: (key: String, id: UUID, rect: NormalRect, positive: Bool, image: CGImage)?
+  private var loupeDetail: (key: String, id: UUID, rect: NormalRect, positive: Bool, single: Bool, image: CGImage)?
   private var turnedLoupeDetail: (key: String, turn: QuarterTurn, image: CGImage)?
   /// The frame under the lens, turned with the table.
   private func turnedDetail(_ key: String, _ image: CGImage) -> CGImage {
@@ -622,19 +572,27 @@ final class FilmCanvasView: NSView {
     return turned
   }
   private var loupeDetailRequest: String?
-  /// Fetches the frame under the loupe at its own resolution, once per change to it.
+  /// Fetches the frame under the loupe at its own resolution, once per change to it: on the
+  /// table the frame it lies on, over the single frame that frame at full resolution.
   func loupeMoved() {
     guard let model, let center = loupe.center, imageRect.contains(center) else { return }
-    let n = normal(center)
-    guard let frame = model.contactFrames.last(where: { $0.rect.cg.contains(n) }) else { return }
-    let key = model.loupeDetailKey(frame)
+    let single = model.singleView
+    let found: FilmFrame?
+    if single {
+      found = model.editingSingle ? nil : model.selected
+    } else {
+      let n = normal(center)
+      found = model.contactFrames.last(where: { $0.rect.cg.contains(n) })
+    }
+    guard let frame = found else { return }
+    let key = model.loupeDetailKey(frame, single: single)
     guard key != loupeDetailRequest, key != loupeDetail?.key else { return }
     loupeDetailRequest = key
-    let positive = model.contactPositive
-    model.loupeDetail(for: frame) { [weak self] image in
+    let positive = single ? !model.showNegative : model.contactPositive
+    model.loupeDetail(for: frame, single: single) { [weak self] image in
       guard let self, self.loupeDetailRequest == key else { return }
       self.loupeDetailRequest = nil
-      self.loupeDetail = image.map { (key, frame.id, frame.rect, positive, $0) }
+      self.loupeDetail = image.map { (key, frame.id, frame.rect, positive, single, $0) }
       self.loupe.setNeedsRender()
     }
   }
@@ -645,11 +603,6 @@ final class FilmCanvasView: NSView {
     guard bounds.contains(p), imageRect.contains(p) else { return }
     if model.tool == .base || model.tool == .neutral || model.tool == .calibrate || model.tool == .it8 {
       model.sample(normal(p))
-      return
-    }
-    if model.tool == .loupe {
-      hover = p
-      needsDisplay = true
       return
     }
     if model.singleView {
@@ -804,6 +757,10 @@ final class FilmCanvasView: NSView {
       model?.fitView()
       pan = .zero
       needsDisplay = true
+    } else if event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+      event.charactersIgnoringModifiers?.lowercased() == AppModel.loupeShortcut
+    {
+      model?.toggleLoupe()
     } else if event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
       let key = event.charactersIgnoringModifiers?.lowercased(),
       let tool = CanvasTool.allCases.first(where: { $0.shortcut == key })
