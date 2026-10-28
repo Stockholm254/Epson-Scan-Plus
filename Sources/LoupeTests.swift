@@ -98,14 +98,16 @@ enum LoupeTests {
     // Looking into the eyecup: the lens fills a large circle, magnified as much, with colour fringes at its rim.
     let lensOnScreen: CGFloat = 120, lz = CGFloat(LoupeStyle.pentax.lens.z) * r
     let s = lensOnScreen / (CGFloat(LoupeStyle.pentax.lens.radius) * r), close = lz * s / (s - 1)
-    let near = CGRect(x: centre.x - 130, y: centre.y - 130, width: 260, height: 260)
+    let near = CGRect(x: centre.x - 160, y: centre.y - 160, width: 320, height: 320)
     var dark = scene
     dark.film = image(400, 300) { ctx in
       fill(ctx, CGRect(x: 0, y: 0, width: 400, height: 300), (0, 0, 0))
       fill(ctx, CGRect(x: 203 + 15, y: 0, width: 400, height: 300), (1, 1, 1))
       fill(ctx, CGRect(x: 200, y: 0, width: 6, height: 300), (1, 1, 1))
     }
-    let looked = renderer.render(frame: near, scale: 2, pose: pose(.pentax, eye: SIMD3(Float(centre.x), Float(centre.y), Float(close))), scene: dark)!
+    var into = pose(.pentax, eye: SIMD3(Float(centre.x), Float(centre.y), Float(close)))
+    into.cut = lensOnScreen * LoupeView.rim
+    let looked = renderer.render(frame: near, scale: 2, pose: into, scene: dark)!
     let bytes = [UInt8](looked.dataProvider!.data! as Data)
     func px(_ x: CGFloat, _ y: CGFloat) -> [Int] {
       let i = (Int((y - near.minY) * 2) * looked.width + Int((x - near.minX) * 2)) * 4
@@ -118,9 +120,9 @@ enum LoupeTests {
       if firstRed == 0 && v[0] > 120 { firstRed = x }
       if firstBlue == 0 && v[2] > 120 { firstBlue = x }
     }
-    let rim = px(centre.x + lensOnScreen * 1.15, centre.y)
-    try check(abs(stripe - 33) < 5 && rim[3] == 255 && rim[0] < 70 && rim[1] < 70,
-      "looking into the eyecup the lens fills a \(Int(lensOnScreen)) pt circle, still 5.5× (stripe \(stripe) pt), the black eyecup around it (\(rim.prefix(3)))")
+    let rim = px(centre.x + lensOnScreen * 1.05, centre.y), beyond = px(centre.x + lensOnScreen * 1.2, centre.y)
+    try check(abs(stripe - 33) < 5 && rim[3] == 255 && rim[0] < 70 && rim[1] < 70 && beyond[3] == 0,
+      "looking into the eyecup the lens fills a \(Int(lensOnScreen)) pt circle, still 5.5× (stripe \(stripe) pt), inside a thin black rim of the eyecup (\(rim.prefix(3))), the table beyond")
     try check(firstRed > 0 && firstBlue > firstRed + 0.4,
       "near the rim red and blue part a little: an edge shows in red \(firstBlue - firstRed) pt before blue")
     // The glass rim over black film: lit on the side facing the softbox, up and to the left.
@@ -192,8 +194,9 @@ enum LoupeTests {
       "the loupe lies on the selected frame on the light table")
     let side = min(canvas.bounds.width, canvas.bounds.height)
     guard let looked = loupe.eyepiece else { throw DeskError.message("FAIL: the loupe is looked into") }
-    try check(model.preferences.loupeField == .large && abs(looked.lens - 0.32 * side) < 2 && loupe.frame.width > looked.lens * 2,
-      "looked into, its lens fills a large circle, \(Int(looked.lens)) pt in radius on a \(Int(side)) pt canvas, as a real loupe fills the view")
+    try check(model.preferences.loupeField == .large && abs(looked.lens - 0.32 * side) < 2 && loupe.frame.width > looked.lens * 2
+      && looked.extent < looked.lens * 1.2,
+      "looked into, its lens fills a large circle, \(Int(looked.lens)) pt in radius on a \(Int(side)) pt canvas, as a real loupe fills the view, with only a thin rim round it")
     model.preferences.loupeField = .actual
     canvas.updateLoupe()
     try check(loupe.eyepiece == nil && abs(loupe.frame.width - (loupe.radius * 4.2).rounded()) <= 2,
@@ -251,6 +254,8 @@ enum LoupeTests {
     canvas.updateLoupe()
     settle()
     try check(!loupe.isHidden && loupe.center == canvas.loupeHome, "over the single frame the loupe is there too, on the picture's middle")
+    let spans = loupe.eyepiece?.lens ?? 0, wanted = min(canvas.imageRect.width / 2, min(canvas.bounds.width, canvas.bounds.height) / 2)
+    try check(abs(spans - wanted) < 1.5, String(format: "and its large field is just as wide as the picture: lens %.0f pt across, picture %.0f pt", spans * 2, canvas.imageRect.width))
     for _ in 0..<50 where canvas.loupeScene().detail == nil {
       canvas.updateLoupe()
       settle(0.1)

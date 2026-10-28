@@ -205,7 +205,9 @@ extension View {
 }
 
 /// A console fader. Drag the cap (hold Option for fine control), click the slot to jump,
-/// double-click to return to `detent`, or use the arrow keys (Shift for larger steps).
+/// double-click to return to `detent`, or use the arrow keys (Shift for larger steps). On macOS
+/// 26 the cap is a capsule of the system's Liquid Glass, lensing the slot under it and swelling
+/// while held, and the slot fills in amber from the detent to the value; before, a metal cap.
 struct Fader: View {
   let title: String
   @Binding var value: Double
@@ -214,7 +216,8 @@ struct Fader: View {
   @Environment(\.isEnabled) private var enabled
   @FocusState private var focused: Bool
   @State private var grab: (value: Double, x: CGFloat, fine: Bool)?
-  private let cap = CGSize(width: 12, height: 18)
+  private let glass = SystemGlass.viewClass != nil
+  private var cap: CGSize { glass ? CGSize(width: 22, height: 14) : CGSize(width: 12, height: 18) }
   private var span: Double { range.upperBound - range.lowerBound }
   private func clamped(_ v: Double) -> Double { min(max(v, range.lowerBound), range.upperBound) }
   var body: some View {
@@ -241,9 +244,23 @@ struct Fader: View {
           .overlay(RoundedRectangle(cornerRadius: 2).stroke(.black.opacity(0.8), lineWidth: 0.5))
           .frame(width: travel + 4, height: 4)
           .offset(x: cap.width / 2 - 2, y: 9)
-        FaderCap(enabled: enabled, focused: focused)
-          .frame(width: cap.width, height: cap.height)
-          .offset(x: offset(value), y: 2)
+        if glass {
+          // The slot lit from the detent, or the bottom of the range, to the value.
+          let from = offset(detent ?? range.lowerBound), to = offset(value)
+          Capsule().fill(Hardware.amber.opacity(enabled ? 0.8 : 0.3))
+            .frame(width: abs(to - from) + 2, height: 3)
+            .offset(x: cap.width / 2 + min(from, to) - 1, y: 9.5)
+          // Held, it swells about its centre, as the system's glass controls do.
+          let k: CGFloat = grab == nil ? 1 : 1.3
+          GlassCap(enabled: enabled, focused: focused)
+            .frame(width: cap.width * k, height: cap.height * k)
+            .offset(x: offset(value) - cap.width * (k - 1) / 2, y: 11 - cap.height * k / 2)
+            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: grab == nil)
+        } else {
+          FaderCap(enabled: enabled, focused: focused)
+            .frame(width: cap.width, height: cap.height)
+            .offset(x: offset(value), y: 2)
+        }
       }
       .contentShape(Rectangle())
       .gesture(
@@ -279,6 +296,19 @@ struct Fader: View {
     .accessibilityRepresentation {
       Slider(value: $value, in: range) { Text(title) }
     }
+  }
+}
+
+/// A fader's cap of the system's Liquid Glass: the slot shows through it, lensed at its rim.
+private struct GlassCap: View {
+  let enabled: Bool
+  let focused: Bool
+  var body: some View {
+    Capsule().fill(Color.white.opacity(enabled ? 0.07 : 0.02))
+      .background(SystemGlassBackground(capsule: true, radius: 7, tint: NSColor(white: 1, alpha: enabled ? 0.10 : 0.02)))
+      .overlay(Capsule().stroke(.white.opacity(enabled ? 0.35 : 0.15), lineWidth: 0.5))
+      .overlay(Capsule().stroke(Hardware.amber, lineWidth: focused ? 1.5 : 0))
+      .shadow(color: .black.opacity(0.45), radius: 2, y: 1)
   }
 }
 

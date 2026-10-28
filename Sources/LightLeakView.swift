@@ -81,7 +81,7 @@ struct LeakViewer: View {
       VStack(alignment: .leading, spacing: 8) {
         HStack(spacing: 10) {
           Text("修复前").font(.system(size: 11)).foregroundStyle(.secondary)
-          Slider(value: $lab.wipe, in: 0...1).accessibilityLabel("前后对比").disabled(lab.after == nil || lab.showReference)
+          Fader(title: "前后对比", value: $lab.wipe, range: 0...1).disabled(lab.after == nil || lab.showReference)
           Text("去漏光后").font(.system(size: 11)).foregroundStyle(.secondary)
           Text("按住看原片").font(.system(size: 11)).padding(.horizontal, 10).padding(.vertical, 4)
             .background(RoundedRectangle(cornerRadius: 4).fill(lab.holdOriginal ? Hardware.amber.opacity(0.35) : Color.white.opacity(0.08)))

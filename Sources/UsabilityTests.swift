@@ -27,6 +27,10 @@ enum UsabilityTests {
     try check(Set(toolbar.map(\.symbol)).count == toolbar.count && CanvasTool.base.label != nil && CanvasTool.neutral.label != nil
       && CanvasTool.base.label != CanvasTool.neutral.label,
       "the toolbar's tools have their own symbols, and the two samplers say which is which")
+    // macOS 26 draws Liquid Glass for this app though it is built with an earlier SDK.
+    if ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26 {
+      try check(SystemGlass.viewClass != nil, "on macOS 26 the system's Liquid Glass is found at run time, for the floating plates and the fader caps")
+    }
 
     let model = AppModel(libraryURL: folder.appendingPathComponent("usability"), scanner: IdleScanner())
     try check(model.toolHint == nil, "the select tool puts nothing on the canvas")

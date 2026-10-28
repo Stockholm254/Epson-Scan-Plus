@@ -409,6 +409,7 @@ final class FilmCanvasView: NSView {
     return CGPoint(x: min(max(c.x, bounds.minX), bounds.maxX), y: min(max(c.y, bounds.minY), bounds.maxY))
   }
   private var loupeView: Bool?
+  private var loupeWidth: CGFloat = 0
   func updateLoupe() {
     guard let model else { return }
     let hidden = !model.preferences.showLoupe || model.displayed == nil
@@ -423,6 +424,11 @@ final class FilmCanvasView: NSView {
     if loupe.isHidden != hidden {
       loupe.isHidden = hidden
       if !hidden { loupe.layoutOnTable() }
+    }
+    // Over the single frame the large field follows the picture's width, as it is zoomed.
+    if !hidden, model.singleView, abs(imageRect.width - loupeWidth) > 0.5 {
+      loupeWidth = imageRect.width
+      loupe.layoutOnTable()
     }
     if !hidden { loupeMoved() }
   }
