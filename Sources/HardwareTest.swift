@@ -128,6 +128,11 @@ enum HardwareTest {
               throw DeskError.message("The positive exported when the batch ended has the wrong size or depth")
             }
             precision += "Exported when the batch ended: \(automatic.lastPathComponent), \(ai.width) × \(ai.height), \(ai.bits)-bit/channel\n"
+            // The scan is put on the preview's scale; its fit says it lay where the preview saw it.
+            guard let levels = frame.levels, levels.usable else {
+              throw DeskError.message("The scan was not aligned to the preview (fit \(frame.levels?.fit ?? 0))")
+            }
+            precision += String(format: "Aligned to preview: fit %.4f · gain R %.4f G %.4f B %.4f\n", levels.fit, levels.gain.r, levels.gain.g, levels.gain.b)
           }
           let report =
             "Epson Scan plus hardware integration test\nDate: \(Date())\nScanner: \(model.scanner.name)\nBackend: \(model.scanner.backendID)\nAcquisition: \(raw.bits*3)-bit RGB\n\(precision)Frames detected: \(model.frames.count)\nScan: frame \(frame.name), 2400 dpi, \(raw.width) × \(raw.height)\nTIFF: \(ti.width) × \(ti.height), \(ti.bits)-bit/channel\nJPEG: \(ji.width) × \(ji.height), \(ji.bits)-bit/channel\nDust removal: disabled\nRaw: \(path)\nTIFF: \(tif.path)\nJPEG: \(jpg.path)\nRESULT: PASS\n"
