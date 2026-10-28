@@ -442,18 +442,22 @@ final class FilmCanvasView: NSView {
       }
     }
   }
-  /// On the light table the loupe lies to the film's scale, as the table shows it before zooming
-  /// in; over the single frame, which is shown far larger than life, at a size to hold in view.
-  func loupeRadius(for style: LoupeStyle) -> CGFloat {
-    guard let model, let cg = shown else { return 70 }
-    if model.singleView { return min(130, max(70, min(bounds.width, bounds.height) * 0.14)) * CGFloat(style.baseMM / 48) }
-    guard model.physicalMM.height > 0 else { return 70 }
+  /// How many points a millimetre of film takes on the light table; nil over the single frame.
+  var loupePointsPerMM: CGFloat? {
+    guard let model, !model.singleView, model.physicalMM.height > 0, let cg = shown else { return nil }
     let shownHeight = turn.sideways ? model.physicalMM.width : model.physicalMM.height
-    let pointsPerMM = fitScale * CGFloat(cg.height) / max(1, shownHeight)
-    return min(110, max(44, CGFloat(style.baseMM / 2) * pointsPerMM))
+    return fitScale * CGFloat(cg.height) / max(1, shownHeight)
   }
-  /// The loupe's own on the light table. Over the single frame no more than the frame's pixels
-  /// can show, half again past one to a point, and never under 2×.
+  /// On the light table the loupe lies to the film's scale; over the single frame, which is shown
+  /// far larger than life, at a size to hold in view.
+  func loupeRadius(for style: LoupeStyle) -> CGFloat {
+    guard let model, shown != nil else { return 70 }
+    if model.singleView { return min(130, max(70, min(bounds.width, bounds.height) * 0.14)) * CGFloat(style.baseMM / 48) }
+    guard let perMM = loupePointsPerMM else { return 70 }
+    return min(110, max(44, CGFloat(style.baseMM / 2) * perMM))
+  }
+  /// Over the single frame no more than the frame's pixels can show, half again past one to a
+  /// point, and never under 2×; nil on the light table, where the loupe's field decides it.
   func loupeMagnification(for style: LoupeStyle) -> Double? {
     guard let model, model.singleView else { return nil }
     let pixels = loupeDetail.map { Double($0.image.width) } ?? Double(shown?.width ?? 0)
@@ -789,7 +793,9 @@ final class FilmCanvasView: NSView {
       anchor: convert(event.locationInWindow, from: nil))
     needsDisplay = true
   }
+  /// The light table always shows the whole roll; only the single frame zooms.
   func setZoom(_ zoom: Double, anchor: CGPoint) {
+    guard model?.singleView == true else { return }
     let old = imageRect
     guard old.width > 0, old.height > 0 else { return }
     let n = CGPoint(x: (anchor.x - old.minX) / old.width, y: (anchor.y - old.minY) / old.height)

@@ -136,6 +136,8 @@ enum CanvasTests {
     let perMM = canvas.imageRect.height / 135.5
     try check(abs(canvas.loupeRadius(for: .pentax) - min(110, max(44, CGFloat(LoupeStyle.pentax.baseMM / 2) * perMM))) < 0.5,
       "the loupe keeps the film's scale on the turned table")
+    canvas.setZoom(3, anchor: CGPoint(x: canvas.bounds.midX, y: canvas.bounds.midY))
+    try check(model.zoom == 1, "the light table does not zoom: it always shows the whole roll")
     for i in model.frames.indices { model.frames[i].adjustments.rotation = i == 0 ? 1 : 3 }
     try check(model.contactTurn == 3, "turned the way most frames are turned, so they stand upright")
     model.preferences.contactLandscape = false
@@ -143,7 +145,9 @@ enum CanvasTests {
     model.preferences.contactLandscape = true
     model.singleView = true
     try check(model.contactTurn == 0, "single view is never turned")
+    model.zoom = 2
     model.singleView = false
+    try check(model.zoom == 1, "back on the light table the zoom is undone")
     for i in model.frames.indices { model.frames[i].adjustments.rotation = 0 }
 
     // Keys on the canvas.

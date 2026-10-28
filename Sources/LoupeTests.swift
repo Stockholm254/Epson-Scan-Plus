@@ -81,20 +81,32 @@ enum LoupeTests {
     try check(shaded > 10 && shaded > lit + 8, "the loupe stands in its shadow, away from the light: \(shaded) against \(lit)")
     let mamiya = Picture(renderer.render(frame: view, scale: 2, pose: pose(.mamiya), scene: scene)!)
     try check(abs(mamiya.stripe - 24) < 4.5, "the Mamiya loupe magnifies 4×: the stripe is \(mamiya.stripe) pt")
+    let rodenstock = Picture(renderer.render(frame: view, scale: 2, pose: pose(.rodenstock), scene: scene)!)
+    let wideCup = rodenstock.at(centre.x, centre.y - r * 0.82), wideSkirt = rodenstock.at(centre.x, centre.y - r * 0.98)
+    try check(abs(rodenstock.stripe - 18) < 3.5 && wideCup[3] == 255 && wideCup[0] < 70 && wideSkirt[1] > wideCup[1] + 60,
+      "the Rodenstock loupe magnifies 3×, its wide lens in a black eyecup on a clear skirt: the stripe is \(rodenstock.stripe) pt, the eyecup \(wideCup[1]), the skirt \(wideSkirt[1])")
+    let schneider = Picture(renderer.render(frame: view, scale: 2, pose: pose(.schneider), scene: scene)!)
+    let tallCup = schneider.at(centre.x, centre.y - r * 0.83), tube = schneider.at(centre.x, centre.y - r * 0.985)
+    try check(abs(schneider.stripe - 18) < 3.5 && tallCup[3] == 255 && tallCup[0] < 70 && tube[1] > tallCup[1] + 60,
+      "the Schneider loupe magnifies 3× too, its lens in a black eyecup above a clear tube of a skirt: the stripe is \(schneider.stripe) pt, the eyecup \(tallCup[1]), the skirt \(tube[1])")
     let lifted = Picture(renderer.render(frame: view, scale: 2, pose: pose(.pentax, lift: r * 0.12), scene: scene)!)
     try check(lifted.sharpest * 10 >= p.sharpest * 8 && abs(lifted.stripe - p.stripe) < 4,
       "picked up and moved, the loupe stays in focus and magnified: edges \(lifted.sharpest) against \(p.sharpest)")
-    // Pincushion: full magnification on the axis, more towards the rim.
+    // Pincushion: full magnification on the axis, a little more towards the rim, as slight as the
+    // real loupe's. The film at four times the canvas's resolution, so its own pixels do not blur the edge.
+    try check(LoupeStyle.allCases.allSatisfy { $0.pincushion <= 0.03 && $0.pincushion >= LoupeStyle.schneider.pincushion }
+      && LoupeStyle.pentax.pincushion > LoupeStyle.rodenstock.pincushion,
+      "the loupes bow lines at the rim no more than real ones, the Pentax a little more than the aspheric 3×, the Schneider least")
     var edge = scene
-    edge.film = image(400, 300) { ctx in
-      fill(ctx, CGRect(x: 0, y: 0, width: 400, height: 300), (0.1, 0.2, 0.8))
-      fill(ctx, CGRect(x: 207, y: 0, width: 400, height: 300), (1, 1, 1))
+    edge.film = image(1600, 1200) { ctx in
+      fill(ctx, CGRect(x: 0, y: 0, width: 1600, height: 1200), (0.1, 0.2, 0.8))
+      fill(ctx, CGRect(x: 207 * 4, y: 0, width: 1600, height: 1200), (1, 1, 1))
     }
     let wide = Picture(renderer.render(frame: view, scale: 2, pose: pose(.pentax), scene: edge)!)
     var reached: CGFloat = 0
     for x in stride(from: 203.0, to: 240.0, by: 0.5) where reached == 0 && wide.at(CGFloat(x), 150)[1] > 150 { reached = CGFloat(x) }
-    try check(reached - 203 > 4 * 5.5 * 1.02 && reached - 203 < 4 * 5.5 * 1.3,
-      "pincushion towards the rim: film 4 pt off the axis shows \(reached - 203) pt out, further than 5.5× alone would put it")
+    try check(reached - 203 > 4 * 5.5 * 0.97 && reached - 203 < 4 * 5.5 * 1.06,
+      "film 4 pt off the axis shows \(reached - 203) pt out, near the rim barely further than 5.5× alone would put it")
     // Looking into the eyecup: the lens fills a large circle, magnified as much, with colour fringes at its rim.
     let lensOnScreen: CGFloat = 120, lz = CGFloat(LoupeStyle.pentax.lens.z) * r
     let s = lensOnScreen / (CGFloat(LoupeStyle.pentax.lens.radius) * r), close = lz * s / (s - 1)
@@ -127,7 +139,7 @@ enum LoupeTests {
       "near the rim red and blue part a little: an edge shows in red \(firstBlue - firstRed) pt before blue")
     // The glass rim over black film: lit on the side facing the softbox, up and to the left.
     func luma(_ v: [Int]) -> Int { v[0] + v[1] + v[2] }
-    let d = lensOnScreen * 0.95 / 2.squareRoot()
+    let d = lensOnScreen * 0.97 / 2.squareRoot()
     let toward = px(centre.x - d, centre.y - d), away = px(centre.x - d, centre.y + d)
     try check(luma(toward) > luma(away) + 40,
       "the lens's glass rim catches the light on the side facing it: \(luma(toward)) against \(luma(away))")
@@ -225,6 +237,16 @@ enum LoupeTests {
     try check(model.preferences.loupeField == .large && abs(looked.lens - 0.32 * side) < 2 && loupe.frame.width > looked.lens * 2
       && looked.extent < looked.lens * 1.2 && abs(nearness - LoupeView.eyeNearness) < 0.01,
       "looked into, its lens fills a large circle, \(Int(looked.lens)) pt in radius on a \(Int(side)) pt canvas, as a real loupe fills the view, with only a thin rim round it")
+    // How far from the axis the lens shows the film, out to its rim.
+    func reach() -> CGFloat { loupe.style.rimReach * (loupe.eyepiece?.lens ?? 0) / CGFloat(loupe.magnification ?? 99) }
+    let tableMM = canvas.loupePointsPerMM ?? 0, frame135 = hypot(18, 12) * tableMM
+    let large = loupe.magnification ?? 0
+    try check(reach() > frame135 && large > 1.3,
+      String(format: "on the light table the 5.5× shows a whole 24 × 36 mm frame, as a real one does: %.0f pt from the axis to the rim, the frame's corner %.0f pt off, magnified %.1f× past the table", reach(), frame135, large))
+    model.preferences.loupeField = .medium
+    canvas.updateLoupe()
+    try check(reach() > frame135 && (loupe.magnification ?? 0) < large && (loupe.magnification ?? 0) >= 1,
+      String(format: "a smaller field shows the same frame, magnified less: %.1f×", loupe.magnification ?? 0))
     model.preferences.loupeField = .actual
     canvas.updateLoupe()
     try check(loupe.eyepiece == nil && abs(loupe.frame.width - (loupe.radius * 4.2).rounded()) <= 2,
@@ -276,6 +298,19 @@ enum LoupeTests {
     model.preferences.loupeStyle = .mamiya
     canvas.updateLoupe()
     try check(loupe.style == .mamiya && loupe.radius > small, "the Mamiya loupe is the larger one")
+    try check(reach() > hypot(18, 12) * (canvas.loupePointsPerMM ?? 0), "and it too shows a whole 135 frame")
+    model.preferences.loupeStyle = .rodenstock
+    canvas.updateLoupe()
+    let frame66 = hypot(28, 28) * (canvas.loupePointsPerMM ?? 0), medium = loupe.magnification ?? 0
+    try check(loupe.style == .rodenstock && reach() > frame66 && medium >= 1.2 && (loupe.eyepiece?.lens ?? 0) <= 0.46 * min(canvas.bounds.width, canvas.bounds.height) + 0.5,
+      String(format: "the 3× for medium format grows its large field, within the canvas, to show a whole 6 × 6 frame: %.0f pt to the rim, the corner %.0f pt off, %.1f×", reach(), frame66, medium))
+    model.preferences.loupeStyle = .schneider
+    canvas.updateLoupe()
+    let frame67 = hypot(28, 35) * (canvas.loupePointsPerMM ?? 0)
+    try check(loupe.style == .schneider && reach() > frame67 && (loupe.magnification ?? 0) >= 1.2,
+      String(format: "the Schneider 3× shows a whole 6 × 7 frame: %.0f pt to the rim, the corner %.0f pt off, %.1f×", reach(), frame67, loupe.magnification ?? 0))
+    model.preferences.loupeStyle = .mamiya
+    canvas.updateLoupe()
     model.singleView = true
     model.refresh()
     for _ in 0..<40 where model.rendering { settle(0.1) }

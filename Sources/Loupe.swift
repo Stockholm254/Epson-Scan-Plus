@@ -3,17 +3,87 @@ import Metal
 
 /// The loupes that can lie on the light table. Raw values are stored in settings.
 enum LoupeStyle: String, CaseIterable {
-  case pentax, mamiya
-  var title: String { self == .pentax ? "Pentax 式 5.5×" : "Mamiya 式 4×" }
-  /// Relative to the light table as it is on screen.
-  var magnification: Double { self == .pentax ? 5.5 : 4 }
+  case pentax, mamiya, rodenstock, schneider
+  var title: String {
+    switch self {
+    case .pentax: return "Pentax 式 5.5×"
+    case .mamiya: return "Mamiya 式 4×"
+    case .rodenstock: return "Rodenstock 式 3×（6×6）"
+    case .schneider: return "Schneider-Kreuznach 式 3×（6×7）"
+    }
+  }
+  /// Its own: relative to the light table seen from afar, and the most it shows over the single frame.
+  var magnification: Double {
+    switch self {
+    case .pentax: return 5.5
+    case .mamiya: return 4
+    case .rodenstock, .schneider: return 3
+    }
+  }
   /// The base's real diameter, so the loupe lies to the film's scale.
-  var baseMM: Double { self == .pentax ? 48 : 56 }
+  var baseMM: Double {
+    switch self {
+    case .pentax: return 48
+    case .mamiya: return 56
+    case .rodenstock: return 90
+    case .schneider: return 100
+    }
+  }
+  /// How much film the lens shows across, in millimetres, as the real loupe does: a whole 135
+  /// frame (43 mm corner to corner) for the 5.5× and the 4×, a whole 6 × 6 (79 mm) for the
+  /// Rodenstock 3×, and the Schneider's 7 × 7 cm field round a whole 6 × 7 (90 mm).
+  var fieldMM: Double {
+    switch self {
+    case .pentax: return 46
+    case .mamiya: return 52
+    case .rodenstock: return 84
+    case .schneider: return 92
+    }
+  }
+  /// How much more the lens magnifies at its rim than on its axis, as the real loupe does: the
+  /// Pentax pulls the corners out a little, the 4× and the aspheric 3× barely at all, the
+  /// Schneider least. No maker publishes a figure (they say free of distortion); these follow what
+  /// owners report.
+  var pincushion: Double {
+    switch self {
+    case .pentax: return 0.03
+    case .mamiya: return 0.02
+    case .rodenstock: return 0.015
+    case .schneider: return 0.01
+    }
+  }
+  /// How far out the lens shows the film at its rim, where it darkens, in lens radii before
+  /// magnifying: the pincushion and the glass's edge draw the picture in there, as the shader does.
+  var rimReach: CGFloat {
+    let rho = 0.975, x = (rho - 0.93) / 0.07, edge = x * x * (3 - 2 * x)
+    return CGFloat((1 - pincushion * rho * rho) * (rho - 0.3 * (rho - 0.93) * edge))
+  }
   /// The top's height above the base, in base radii; the shader's profiles.
-  var height: Double { self == .pentax ? 1.15 : 0.92 }
-  var index: Int32 { self == .pentax ? 0 : 1 }
+  var height: Double {
+    switch self {
+    case .pentax: return 1.15
+    case .mamiya: return 0.92
+    case .rodenstock: return 1.25
+    case .schneider: return 1.33
+    }
+  }
+  var index: Int32 {
+    switch self {
+    case .pentax: return 0
+    case .mamiya: return 1
+    case .rodenstock: return 2
+    case .schneider: return 3
+    }
+  }
   /// The eye lens's height and radius, in base radii, as the shader draws them.
-  var lens: (z: Double, radius: Double) { self == .pentax ? (1.04, 0.60) : (0.875, 0.67) }
+  var lens: (z: Double, radius: Double) {
+    switch self {
+    case .pentax: return (1.04, 0.60)
+    case .mamiya: return (0.875, 0.67)
+    case .rodenstock: return (1.16, 0.74)
+    case .schneider: return (1.24, 0.76)
+    }
+  }
 }
 
 /// How the loupe is seen: with an eye at its eyecup, the lens filling a share of the canvas as a real
@@ -66,7 +136,8 @@ final class LoupeRenderer {
     var lift: CGFloat = 0
     /// The viewer, above the table; perspective shows the barrel's far side away from the middle.
     var eye: SIMD3<Float>
-    /// Less than the loupe's own where the picture under it has fewer pixels to show.
+    /// Where not the loupe's own: on the light table as much as shows its whole field, over the
+    /// single frame no more than the picture has pixels to show.
     var magnification: Double? = nil
     /// Looked into: only this far from the lens's centre on screen is drawn, a thin rim of the
     /// eyecup round the lens; nothing of the rest of the loupe.
@@ -172,6 +243,15 @@ final class LoupeRenderer {
       int style; int samples; float cut;
     };
     constexpr sampler smooth(coord::normalized, filter::linear, mip_filter::linear, address::clamp_to_edge);
+    // Per style, in base radii: the top's height, the eye lens's height and radius, the skirt's
+    // top, and the white focusing index's span on the body's front.
+    constant float kTop[4] = {1.15, 0.92, 1.25, 1.33};
+    constant float kLensZ[4] = {1.04, 0.875, 1.16, 1.24};
+    constant float kLensR[4] = {0.60, 0.67, 0.74, 0.76};
+    constant float kSkirtTop[4] = {0.44, 0.28, 0.52, 0.46};
+    constant float kIndexLow[4] = {0.53, 0.5, 1.0, 0.7};
+    constant float kIndexHigh[4] = {0.6, 0.56, 1.06, 0.78};
+    constant float kPincushion[4] = {0.03, 0.02, 0.015, 0.01};
 
     static float box(float2 p, float2 lo, float2 hi, float r) {
       float2 q = abs(p - (lo + hi) * 0.5) - (hi - lo) * 0.5 + r;
@@ -205,13 +285,37 @@ final class LoupeRenderer {
         if (body < best.x) best = float2(body, 2.0);
         if (grip < best.x) best = float2(grip, 3.0);
         if (cup < best.x) best = float2(cup, 4.0);
-      } else {
+      } else if (style == 1) {
         float skirt = polygon4(q, float2(0.93, 0.0), float2(1.0, 0.0), float2(0.95, 0.28), float2(0.88, 0.28)) - 0.006;
         float body = polygon4(q, float2(0.40, 0.26), float2(0.915, 0.26), float2(0.745, 0.86), float2(0.40, 0.86)) - 0.01;
         float trim = box(q, float2(0.67, 0.83), float2(0.765, 0.905), 0.02);
         if (skirt < best.x) best = float2(skirt, 1.0);
         if (body < best.x) best = float2(body, 2.0);
         if (trim < best.x) best = float2(trim, 5.0);
+      } else if (style == 2) {
+        // The Rodenstock 3× for 6 × 6: a tall clear skirt, a black barrel with a ribbed focusing
+        // ring, and a rubber eyecup round the large eye lens.
+        float skirt = polygon4(q, float2(0.93, 0.0), float2(1.0, 0.0), float2(0.96, 0.52), float2(0.89, 0.52)) - 0.008;
+        float body = box(q, float2(0.40, 0.48), float2(0.92, 1.12), 0.02);
+        float ring = box(q, float2(0.86, 0.62), float2(0.955, 0.98), 0.03);
+        ring -= 0.006 * smoothstep(0.92, 0.955, q.x) * smoothstep(0.66, 0.70, q.y) * (1.0 - smoothstep(0.92, 0.96, q.y))
+          * (0.5 + 0.5 * cos(angle * 96.0));
+        float cup = box(q, float2(0.74, 1.08), float2(0.90, 1.24), 0.05);
+        if (skirt < best.x) best = float2(skirt, 1.0);
+        if (body < best.x) best = float2(body, 2.0);
+        if (ring < best.x) best = float2(ring, 3.0);
+        if (cup < best.x) best = float2(cup, 4.0);
+      } else {
+        // The Schneider 3× for 6 × 7: the clear one of its two skirts, a straight tube; a chrome
+        // band where it fits on; a black body narrowing to a rubber eyecup round the wide lens.
+        float skirt = polygon4(q, float2(0.94, 0.0), float2(1.0, 0.0), float2(1.0, 0.46), float2(0.94, 0.46)) - 0.008;
+        float body = polygon4(q, float2(0.42, 0.42), float2(0.97, 0.42), float2(0.88, 1.18), float2(0.42, 1.18)) - 0.012;
+        float band = box(q, float2(0.90, 0.42), float2(0.97, 0.50), 0.015);
+        float cup = box(q, float2(0.76, 1.14), float2(0.90, 1.32), 0.05);
+        if (skirt < best.x) best = float2(skirt, 1.0);
+        if (body < best.x) best = float2(body, 2.0);
+        if (band < best.x) best = float2(band, 5.0);
+        if (cup < best.x) best = float2(cup, 4.0);
       }
       return best;
     }
@@ -279,15 +383,15 @@ final class LoupeRenderer {
     }
     // Where the eye lens's centre is seen on the table's plane.
     static float2 lensAxis(constant Loupe& t) {
-      float3 E = t.eye.xyz, L = float3(t.center, t.lift + (t.style == 0 ? 1.04 : 0.875) * t.radius);
+      float3 E = t.eye.xyz, L = float3(t.center, t.lift + kLensZ[t.style] * t.radius);
       return E.xy + (L.xy - E.xy) * (E.z / (E.z - L.z));
     }
     static float4 trace(float2 P, constant Loupe& t, texture2d<float> table, texture2d<float> film,
                         texture2d<float> detail, float3 glow) {
       float R = t.radius;
-      float top = t.style == 0 ? 1.15 : 0.92;
-      float lensZ = t.style == 0 ? 1.04 : 0.875, lensR = t.style == 0 ? 0.60 : 0.67;
-      float skirtTop = t.style == 0 ? 0.44 : 0.28;
+      float top = kTop[t.style];
+      float lensZ = kLensZ[t.style], lensR = kLensR[t.style];
+      float skirtTop = kSkirtTop[t.style];
       float3 E = t.eye.xyz;
       float3 rd = normalize(float3(P, 0.0) - E);
       float3 base = float3(t.center, t.lift);
@@ -329,7 +433,7 @@ final class LoupeRenderer {
         else if (res.y > 4.5) { albedo = float3(0.0); f0 = float3(0.62, 0.62, 0.64); rough = 0.24; }
         // A white focusing index on the body's front.
         float facing = atan2(p.y, p.x) - M_PI_F / 2.0;
-        if (res.y > 1.5 && res.y < 2.5 && abs(facing) < 0.035 && p.z > (t.style == 0 ? 0.53 : 0.5) && p.z < (t.style == 0 ? 0.6 : 0.56)) {
+        if (res.y > 1.5 && res.y < 2.5 && abs(facing) < 0.035 && p.z > kIndexLow[t.style] && p.z < kIndexHigh[t.style]) {
           albedo = float3(0.7); rough = 0.5;
         }
         float3 F = f0 + (1.0 - f0) * pow(1.0 - nv, 5.0) * (1.0 - 0.7 * rough);
@@ -342,18 +446,19 @@ final class LoupeRenderer {
       if (lens) {
         float3 p = ro + rd * tLens, world = base + p * R;
         float rho = length(p.xy) / lensR;
-        // The film under the axis, magnified as a simple loupe magnifies it: more towards the rim,
-        // so straight lines bow outwards there (pincushion), and red and blue are magnified a
+        // The film under the axis, magnified as the loupe magnifies it: a little more towards the
+        // rim, as much as the real one, so straight lines bow outwards there (pincushion), and red
+        // and blue are magnified a
         // little differently, fringing edges near the rim (lateral colour). Measured on screen from
         // where the lens's centre is seen, so the picture is magnified as much however close the
         // eye is to the eyecup.
         float2 axis = lensAxis(t);
         float rho2 = rho * rho;
-        float2 offset = (P - axis) * (1.0 - 0.10 * rho2 - 0.08 * rho2 * rho2) / t.magnification;
-        // A thick, liquid-glass rim: past 0.86 of the radius the picture is drawn in and stretched
-        // along the rim, never folded over, and the colours part a little more.
-        float bevel = smoothstep(0.86, 1.0, rho);
-        float drawn = rho - 0.6 * (rho - 0.86) * bevel;
+        float2 offset = (P - axis) * (1.0 - kPincushion[t.style] * rho2) / t.magnification;
+        // The glass's edge: in the last few hundredths of the radius the picture is drawn in a
+        // little, never folded over, and the colours part a little more.
+        float bevel = smoothstep(0.93, 1.0, rho);
+        float drawn = rho - 0.3 * (rho - 0.93) * bevel;
         offset *= drawn / max(rho, 1e-4);
         float lod = t.blur + 0.5 * smoothstep(0.7, 1.0, rho);
         float spread = 1.0 + 0.015 * rho2 + 0.03 * bevel;
@@ -443,23 +548,39 @@ final class LoupeView: NSView {
   /// the lens's rim some 40° off its axis. Nearer, the rim is seen at a grazing angle no eye has,
   /// and the coating and the eyecup's inside mirror the whole table.
   static let eyeNearness = 2.4
+  /// On the light table the large field grows, as far as the canvas allows, to show the loupe's
+  /// whole field at least this much larger than the table does.
+  static let tableMagnification: CGFloat = 1.5
   /// Looking into the loupe: the eye on its axis above the eyecup, the loupe drawn as large as it
-  /// takes for its lens to fill the field's share of the canvas (magnification does not change
-  /// with it), and a thin rim of the eyecup round the lens. Where the eye is, how far the view
+  /// takes for its lens to fill the field's share of the canvas, and a thin rim of the eyecup round
+  /// the lens. Where the eye is, how far the view
   /// reaches on screen, the lens's radius there, and the loupe's base radius it is drawn at.
   var eyepiece: (eye: SIMD3<Float>, extent: CGFloat, lens: CGFloat, radius: CGFloat)? {
     guard let canvas, let center, let share = field.share else { return nil }
     let lens = style.lens, s = Self.eyeNearness
     let side = min(canvas.bounds.width, canvas.bounds.height)
     var target = Double(share * side)
-    // Over the single frame the large field is just as wide as the picture shown.
     if field == .large, canvas.model?.singleView == true {
+      // Over the single frame the large field is just as wide as the picture shown.
       target = Double(min(canvas.imageRect.width / 2, side * 0.5))
+    } else if field == .large, let perMM = canvas.loupePointsPerMM {
+      let whole = CGFloat(style.fieldMM / 2) * perMM * Self.tableMagnification / style.rimReach
+      target = Double(min(max(CGFloat(target), whole), side * 0.46))
     }
     let R = target / (lens.radius * s), raised = Double(lift / max(1, radius)) * R
     let lz = lens.z * R + raised, z = lz * s / (s - 1)
     let onScreen = CGFloat(target)
     return (SIMD3(Float(center.x), Float(center.y), Float(z)), onScreen * Self.rim + 2, onScreen, CGFloat(R))
+  }
+  /// Looked into on the light table, the lens shows the loupe's whole field, a whole 135 frame
+  /// for a 135 loupe, magnified as much as the lens's size on screen then allows, but never less
+  /// than the table shows it. Over the single frame, as much as its pixels allow; seen from afar on
+  /// the table, the loupe's own.
+  var magnification: Double? {
+    guard let canvas else { return nil }
+    if let single = canvas.loupeMagnification(for: style) { return single }
+    guard let view = eyepiece, let perMM = canvas.loupePointsPerMM else { return nil }
+    return Double(max(1, style.rimReach * view.lens / (CGFloat(style.fieldMM / 2) * perMM)))
   }
   /// The viewer looks into the eyecup; at the film's scale it sits in front of the table, looking
   /// down, and the loupe shows its front, more so the further back it lies.
@@ -508,7 +629,7 @@ final class LoupeView: NSView {
     let view = eyepiece
     let pose = LoupeRenderer.Pose(
       style: style, center: center, radius: view?.radius ?? radius, lift: view.map { lift / max(1, radius) * $0.radius } ?? lift,
-      eye: eye, magnification: canvas.loupeMagnification(for: style), cut: view.map { $0.lens * Self.rim })
+      eye: eye, magnification: magnification, cut: view.map { $0.lens * Self.rim })
     // While it is carried, one ray a pixel keeps up with the mouse; set down, it is antialiased.
     image = LoupeRenderer.shared.render(
       frame: frame, scale: window?.backingScaleFactor ?? 2, pose: pose, scene: canvas.loupeScene(), samples: grab == nil ? 4 : 1)

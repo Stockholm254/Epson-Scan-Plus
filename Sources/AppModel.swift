@@ -10,7 +10,12 @@ final class AppModel: ObservableObject {
   @Published var overview: CGImage?
   @Published var displayed: CGImage?
   @Published var thumbnails = [UUID: CGImage]()
-  @Published var singleView = false
+  /// Only the single frame zooms: back on the light table the whole roll shows again.
+  @Published var singleView = false {
+    didSet {
+      if !singleView, zoom != 1 { fitView() }
+    }
+  }
   @Published var showNegative = false
   @Published var tool = CanvasTool.select
   @Published var format = FilmFormat.auto

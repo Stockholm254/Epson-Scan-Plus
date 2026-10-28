@@ -185,12 +185,15 @@ struct ContentView: View {
         }.buttonStyle(HardwareKeyStyle(latched: m.tool == t)).controlSize(.small).help(t.help)
           .accessibilityLabel(t.rawValue)
       }
-      Divider().frame(height: 18)
-      Button {
-        m.fitView()
-      } label: {
-        Text("适合").font(.system(size: 11))
-      }.buttonStyle(HardwareKeyStyle()).controlSize(.small)
+      // Only the single frame zooms; the light table always shows the whole roll.
+      if m.singleView {
+        Divider().frame(height: 18)
+        Button {
+          m.fitView()
+        } label: {
+          Text("适合").font(.system(size: 11))
+        }.buttonStyle(HardwareKeyStyle()).controlSize(.small).help("缩放回适合窗口")
+      }
   }
   /// Which frame is shown, or how many there are.
   @ViewBuilder var placeLabel: some View {
@@ -199,8 +202,10 @@ struct ContentView: View {
   }
   /// Zoom, turning, mirroring and what is shown.
   @ViewBuilder var viewingControls: some View {
-      Text(String(format: "%.1f×", m.zoom)).font(.system(size: 10, design: .monospaced))
-        .foregroundStyle(.secondary).help("相对适合窗口的缩放倍率")
+      if m.singleView {
+        Text(String(format: "%.1f×", m.zoom)).font(.system(size: 10, design: .monospaced))
+          .foregroundStyle(.secondary).help("相对适合窗口的缩放倍率")
+      }
       if !m.singleView {
         Button {
           m.turnRoll(clockwise: false)
