@@ -208,6 +208,7 @@ bash build.sh
 
 - [版本记录](doc/CHANGELOG.md)
 - [胶片配置、转换与颜色](doc/film-and-color.md)
+- [去色罩原理：从片基、密度、通道斜率到输出](doc/negative-conversion.md)
 - [扫描仪接口](doc/scanner.md)
 - [去漏光：算法与和 FilmLightLab 的对照](doc/light-leak.md)
 - [构建与测试](doc/building-and-testing.md)
