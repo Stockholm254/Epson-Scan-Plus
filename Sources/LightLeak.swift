@@ -55,7 +55,12 @@ struct LeakRegion: Codable, Equatable, Identifiable {
   var aspectRatio: Double?, fillRatio: Double?, areaFraction: Double?, redSignal: Double?
 }
 
-struct LeakCrop: Codable, Equatable { var x = 0.0, y = 0.0, w = 1.0, h = 1.0 }
+struct LeakCrop: Codable, Equatable {
+  var x = 0.0, y = 0.0, w = 1.0, h = 1.0
+  /// Degrees clockwise the cut is turned about its middle, kept to the largest rectangle of its
+  /// shape inside, as a frame is straightened; nil for none. FilmLightLab has none and leaves it out.
+  var angle: Double? = nil
+}
 
 /// A pair of matching points on the original and the reference, for a manual alignment.
 struct LeakPair: Codable, Equatable { var source: [Double], target: [Double] }
@@ -424,18 +429,45 @@ extension LeakEngine {
     let W = swap ? im.height : im.width, H = swap ? im.width : im.height
     let left = Int(jsRound(clamp(c.x, 0, 0.98) * Double(W))), top = Int(jsRound(clamp(c.y, 0, 0.98) * Double(H)))
     let w = max(2, min(W - left, Int(jsRound(c.w * Double(W))))), h = max(2, min(H - top, Int(jsRound(c.h * Double(H)))))
+    /// Where (a, b) of the turned original is in `im`'s samples.
+    @inline(__always) func at(_ a: Int, _ b: Int) -> Int {
+      var sx = a, sy = b
+      switch rot {
+      case 90: (sx, sy) = (b, im.height - 1 - a)
+      case 180: (sx, sy) = (im.width - 1 - a, im.height - 1 - b)
+      case 270: (sx, sy) = (im.width - 1 - b, a)
+      default: break
+      }
+      return (sy * im.width + sx) * 3
+    }
+    if let degrees = c.angle, abs(degrees) > 0.0001 {
+      // Straightened: each pixel read between the original's, from the cut turned back about its
+      // middle; the kept rectangle lies inside the cut, so no corner is empty.
+      let t = degrees * .pi / 180, cs = cos(t), sn = sin(t)
+      let k = ImageGeometry.keep(degrees, aspect: Double(w) / Double(h))
+      let ow = max(2, Int(Double(w) * k)), oh = max(2, Int(Double(h) * k))
+      let cx = Double(left) + Double(w) / 2, cy = Double(top) + Double(h) / 2
+      let out = eachRow(oh, im.data, count: ow * oh * 3) { src, dst, y in
+        for x in 0..<ow {
+          let u = Double(x) + 0.5 - Double(ow) / 2, v = Double(y) + 0.5 - Double(oh) / 2
+          let fx = cx + u * cs + v * sn - 0.5, fy = cy - u * sn + v * cs - 0.5
+          let x0 = min(W - 2, max(0, Int(fx.rounded(.down)))), y0 = min(H - 2, max(0, Int(fy.rounded(.down))))
+          let ax = min(1, max(0, fx - Double(x0))), ay = min(1, max(0, fy - Double(y0)))
+          let i00 = at(x0, y0), i10 = at(x0 + 1, y0), i01 = at(x0, y0 + 1), i11 = at(x0 + 1, y0 + 1)
+          let d = (y * ow + x) * 3
+          for ch in 0..<3 {
+            let upper = Double(src[i00 + ch]) * (1 - ax) + Double(src[i10 + ch]) * ax
+            let lower = Double(src[i01 + ch]) * (1 - ax) + Double(src[i11 + ch]) * ax
+            dst[d + ch] = UInt16(min(65535, max(0, (upper * (1 - ay) + lower * ay).rounded())))
+          }
+        }
+      }
+      return LeakImage(width: ow, height: oh, data: out)
+    }
     if rot == 0 && left == 0 && top == 0 && w == im.width && h == im.height { return im }
     let out = eachRow(h, im.data, count: w * h * 3) { src, dst, y in
       for x in 0..<w {
-        let a = left + x, b = top + y
-        var sx = a, sy = b
-        switch rot {
-        case 90: (sx, sy) = (b, im.height - 1 - a)
-        case 180: (sx, sy) = (im.width - 1 - a, im.height - 1 - b)
-        case 270: (sx, sy) = (im.width - 1 - b, a)
-        default: break
-        }
-        let s = (sy * im.width + sx) * 3, d = (y * w + x) * 3
+        let s = at(left + x, top + y), d = (y * w + x) * 3
         dst[d] = src[s]; dst[d + 1] = src[s + 1]; dst[d + 2] = src[s + 2]
       }
     }

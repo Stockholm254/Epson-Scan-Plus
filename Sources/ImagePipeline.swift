@@ -429,6 +429,7 @@ final class ImagePipeline {
       throw DeskError.message("图像处理失败。")
     }
     if let curves = s.curves { result = applyCurves(curves, to: result) }
+    result = Self.straightened(result, degrees: s.angle ?? 0)
     if s.rotation % 4 != 0 {
       let orientation: Int32 = [1, 6, 3, 8][((s.rotation % 4) + 4) % 4]
       result = result.oriented(forExifOrientation: orientation)
@@ -438,6 +439,23 @@ final class ImagePipeline {
     }
     return result.transformed(
       by: CGAffineTransform(translationX: -result.extent.minX, y: -result.extent.minY))
+  }
+  /// `image` turned clockwise on screen by `degrees` about its middle and cut to the largest
+  /// rectangle of its own shape inside, so no corner is left empty; as ImageGeometry maps it.
+  static func straightened(_ image: CIImage, degrees: Double) -> CIImage {
+    guard abs(degrees) > 0.0001 else { return image }
+    let e = image.extent, k = CGFloat(ImageGeometry.keep(degrees, aspect: Double(e.width / max(1, e.height))))
+    let c = CGPoint(x: e.midX, y: e.midY)
+    // Core Image counts up: clockwise on screen is a negative angle here.
+    let turn = CGAffineTransform(translationX: -c.x, y: -c.y)
+      .concatenating(CGAffineTransform(rotationAngle: -CGFloat(degrees * .pi / 180)))
+      .concatenating(CGAffineTransform(translationX: c.x, y: c.y))
+    let kept = CGRect(x: c.x - e.width * k / 2, y: c.y - e.height * k / 2, width: e.width * k, height: e.height * k)
+    // Whole pixels inside the kept rectangle, so no edge pixel is one stretched from beyond the frame.
+    let inside = CGRect(
+      x: kept.minX.rounded(.up), y: kept.minY.rounded(.up),
+      width: kept.maxX.rounded(.down) - kept.minX.rounded(.up), height: kept.maxY.rounded(.down) - kept.minY.rounded(.up))
+    return image.clampedToExtent().transformed(by: turn).cropped(to: inside)
   }
   func preview(_ image: CGImage, settings: Adjustments, profile: FilmProfile) throws -> CGImage {
     let ci = try output(image, settings: settings, profile: profile)
@@ -450,6 +468,27 @@ final class ImagePipeline {
     _ image: CGImage, settings: Adjustments, profile: FilmProfile, analysis: ToneAnalysis?,
     negative: Bool, sharpener: Sharpener? = nil
   ) -> CGImage? {
+    guard let ci = shown(image, settings: settings, profile: profile, analysis: analysis, negative: negative, sharpener: sharpener) else { return nil }
+    return context.createCGImage(ci, from: ci.extent, format: .RGBA8, colorSpace: outputSpace)
+  }
+  /// Only `region` (normalised to the picture as shown, top left at 0) of `image` rendered: Core
+  /// Image works out no more of the frame than that, so a part of a 60-megapixel frame takes a
+  /// fraction of the whole.
+  func render(
+    _ image: CGImage, region: NormalRect, settings: Adjustments, profile: FilmProfile, analysis: ToneAnalysis?, negative: Bool
+  ) -> (image: CGImage, region: NormalRect)? {
+    guard let ci = shown(image, settings: settings, profile: profile, analysis: analysis, negative: negative) else { return nil }
+    let e = ci.extent
+    let r = CGRect(x: region.x * e.width, y: (1 - region.y - region.height) * e.height, width: region.width * e.width, height: region.height * e.height)
+      .integral.intersection(e)
+    guard r.width >= 1, r.height >= 1, let cg = context.createCGImage(ci, from: r, format: .RGBA8, colorSpace: outputSpace) else { return nil }
+    return (cg, NormalRect(x: r.minX / e.width, y: 1 - r.maxY / e.height, width: r.width / e.width, height: r.height / e.height))
+  }
+  /// The picture as shown, positive or negative, straightened, turned and mirrored, from the origin.
+  private func shown(
+    _ image: CGImage, settings: Adjustments, profile: FilmProfile, analysis: ToneAnalysis?,
+    negative: Bool, sharpener: Sharpener? = nil
+  ) -> CIImage? {
     var ci: CIImage
     if negative {
       ci = CIImage(cgImage: image, options: [.colorSpace: NSNull()])
@@ -465,6 +504,7 @@ final class ImagePipeline {
           "inputBVector": CIVector(x: 0, y: 0, z: mean / base.b, w: 0),
         ])
       }
+      ci = Self.straightened(ci, degrees: settings.angle ?? 0)
       ci = ci.oriented(forExifOrientation: [1, 6, 3, 8][((settings.rotation % 4) + 4) % 4])
       if settings.flipHorizontal == true {
         ci = ci.transformed(by: CGAffineTransform(scaleX: -1, y: 1))
@@ -476,8 +516,7 @@ final class ImagePipeline {
       else { return nil }
       ci = output
     }
-    ci = ci.transformed(by: CGAffineTransform(translationX: -ci.extent.minX, y: -ci.extent.minY))
-    return context.createCGImage(ci, from: ci.extent, format: .RGBA8, colorSpace: outputSpace)
+    return ci.transformed(by: CGAffineTransform(translationX: -ci.extent.minX, y: -ci.extent.minY))
   }
   func export(
     _ image: CGImage, settings: Adjustments, profile: FilmProfile, url: URL, format: ExportFormat,
@@ -572,10 +611,12 @@ final class ImagePipeline {
   /// orientation so it stays under its frame box, on the overview inverted with the first frame's
   /// base and settings. Unexposed film base prints black and the holder prints as white paper.
   func contactPrint(_ overview: CGImage, frames: [FilmFrame], profile: FilmProfile) -> CGImage? {
+    // The light table shows the film as it lies: upright, and not straightened.
     func upright(_ s: Adjustments) -> Adjustments {
       var s = s
       s.rotation = 0
       s.flipHorizontal = nil
+      s.angle = nil
       return s
     }
     guard let first = frames.first, let firstCrop = try? crop(overview, rect: first.rect) else {

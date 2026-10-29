@@ -61,6 +61,8 @@ enum MCPTests {
       "adjust changes only what it is given")
     try check(!call("undo").isError && model.settings.warmth == 0 && model.settings.exposure == 0, "and undo takes it back, as ⌘Z does")
     try check(call("adjust", ["warmth": 0.3, "rotation": 1]).isError && model.settings.warmth == 0, "an unknown setting is refused, and nothing changes")
+    try check(!call("adjust", ["angle": 3]).isError && model.settings.angle == 3 && !call("undo").isError && model.settings.angle == nil,
+      "adjust straightens the frame by an angle, and undo takes it back")
     let picked = call("pick_neutral", ["x": 0.5, "y": 0.5])
     try check(!picked.isError && model.settings.neutralSample != nil && model.settings.autoWhiteBalance,
       "pick_neutral white-balances on a point, auto white balance staying on")

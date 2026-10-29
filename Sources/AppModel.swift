@@ -223,13 +223,46 @@ final class AppModel: ObservableObject {
     guard singleView, let frame = selected else { return nil }
     let region = canvasRegion ?? frame.rect
     let raw = CGPoint(x: (p.x - region.x) / region.width, y: (p.y - region.y) / region.height)
-    return ImageGeometry.display(raw, settings: frame.adjustments)
+    return ImageGeometry.display(raw, settings: frame.adjustments, aspect: shownAspect(frame))
+  }
+  /// The frame's width over its height as it lies, which its straightening turns about, when the
+  /// single view shows it straightened: not while its crop or base is edited, when the picture is
+  /// its surroundings as they lie, with the kept part outlined.
+  func shownAspect(_ frame: FilmFrame) -> Double? {
+    guard abs(frame.adjustments.angle ?? 0) > 0.0001, !editingSingle else { return nil }
+    return frameAspect(frame)
+  }
+  /// While the straightening is being changed, and a moment after: the canvas lays a grid over
+  /// the picture to line a horizon or an edge up with.
+  @Published private(set) var straightening = false
+  private var straighteningToken = 0
+  /// The selected frame's straightening as the screen shows it: clockwise positive, mirrored or not.
+  var screenAngle: Double { (settings.angle ?? 0) * (settings.flipHorizontal == true ? -1 : 1) }
+  /// Turns the selected frame about its middle to `degrees` clockwise on the screen, cut to the
+  /// largest rectangle of its shape inside.
+  func straighten(_ degrees: Double) {
+    let a = (clamp(degrees, -45, 45) * 100).rounded() / 100 * (settings.flipHorizontal == true ? -1 : 1)
+    change("拉直") { $0.angle = abs(a) < 0.005 ? nil : a }
+    showStraighteningGrid()
+  }
+  func showStraighteningGrid() {
+    straighteningToken += 1
+    let token = straighteningToken
+    straightening = true
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+      guard let self, self.straighteningToken == token else { return }
+      self.straightening = false
+    }
+  }
+  func frameAspect(_ frame: FilmFrame) -> Double? {
+    guard let mm = frameMM(frame), mm.width > 0, mm.height > 0 else { return nil }
+    return Double(mm.width / mm.height)
   }
   /// One line on the canvas while a tool is active: where to click, and how to leave it.
   var toolHint: String? {
     switch tool {
     case .select: return nil
-    case .crop: return singleView ? "拖动四角裁切 · 方向键微调 · 回车完成 · Esc 退出" : "在灯箱上拖出新的画框 · Esc 退出"
+    case .crop: return singleView ? "拖动四角裁切 · 方向键微调 · [ ] 拉直 0.1°（⇧ 1°） · 回车完成 · Esc 退出" : "在灯箱上拖出新的画框 · Esc 退出"
     case .base: return "点未曝光的橙色片基（片间或片边），不要点景物或片夹 · Esc 退出"
     case .neutral: return "点画面中应为中性灰的地方：灰卡、白墙、水泥 · Esc 退出"
     case .highlight: return "点负片上最密、正片里应为纯白的高光：阳光下的白墙、高光反射；更亮处会剪成白 · Esc 退出"
@@ -698,6 +731,7 @@ final class AppModel: ObservableObject {
       $0.inputIsNegative = kept.inputIsNegative
       $0.rotation = kept.rotation
       $0.flipHorizontal = kept.flipHorizontal
+      $0.angle = kept.angle
     }
   }
 
@@ -888,6 +922,7 @@ final class AppModel: ObservableObject {
       let own = frames[i].adjustments
       frames[i].adjustments = s.adjustments
       frames[i].adjustments.rotation = own.rotation
+      frames[i].adjustments.angle = own.angle
       frames[i].adjustments.rollBase = own.rollBase
       frames[i].adjustments.rollSlopes = own.rollSlopes
       frames[i].adjustments.rollBasePicked = own.rollBasePicked
@@ -1201,10 +1236,11 @@ final class AppModel: ObservableObject {
       if single, let crop = image {
         image = ImagePipeline.shared.render(crop, settings: frame.adjustments, profile: p, analysis: nil, negative: !positive)
       } else if positive, let crop = image {
-        // Upright, as in the contact print, so it lies under its frame box.
+        // Upright and as it lies, as in the contact print, so it lies under its frame box.
         var s = frame.adjustments
         s.rotation = 0
         s.flipHorizontal = nil
+        s.angle = nil
         image = try? ImagePipeline.shared.preview(crop, settings: s, profile: p)
       }
       DispatchQueue.main.async { completion(image) }
@@ -1258,22 +1294,12 @@ final class AppModel: ObservableObject {
         self.detailSource = (try? self.source(for: frame, full: true)).map { (source, $0) }
       }
       var detail: Detail?
-      if let full = self.detailSource?.image {
-        let w = Double(full.width), h = Double(full.height)
-        let raw = ImageGeometry.transform(region, settings: frame.adjustments, inverse: true)
-        let px = CGRect(x: raw.x * w, y: raw.y * h, width: raw.width * w, height: raw.height * h).integral
-          .intersection(CGRect(x: 0, y: 0, width: w, height: h))
-        // Rendered upright and unmirrored, then turned as the whole frame is.
-        var upright = frame.adjustments
-        upright.rotation = 0
-        upright.flipHorizontal = nil
-        if px.width >= 1, px.height >= 1, let part = full.cropping(to: px),
-          let out = ImagePipeline.shared.render(part, settings: upright, profile: p, analysis: analysis, negative: negative),
-          let shown = ImagePipeline.shared.turned(out, quarterTurns: frame.adjustments.rotation, mirrored: frame.adjustments.flipHorizontal == true)
-        {
-          let covered = NormalRect(x: px.minX / w, y: px.minY / h, width: px.width / w, height: px.height / h)
-          detail = Detail(key: key, region: ImageGeometry.transform(covered, settings: frame.adjustments), image: shown)
-        }
+      // The whole frame as shown, straightened, turned and mirrored, of which only the part asked
+      // for is worked out.
+      if let full = self.detailSource?.image,
+        let part = ImagePipeline.shared.render(full, region: region, settings: frame.adjustments, profile: p, analysis: analysis, negative: negative)
+      {
+        detail = Detail(key: key, region: part.region, image: part.image)
       }
       DispatchQueue.main.async { completion(detail) }
     }
@@ -1397,12 +1423,15 @@ final class AppModel: ObservableObject {
         self.step(0.6, negative ? "显示负片" : "冲印正片", token)
         let context = edit ? try self.contextSource(for: frame) : nil
         let input = context?.image ?? cropped
+        // Its surroundings as they lie while the crop or base is edited, with the kept part outlined.
+        var shownSettings = frame.adjustments
+        if edit { shownSettings.angle = nil }
         // The kernel follows the size the source was loaded at, as in source(for:) and contextSource(for:).
         let loaded = edit ? 3000 : (frame.sourcePath != nil ? 3000 : 2200)
         let sharpener = negative ? nil : Sharpening.sharpener(sharpening, frame: frame, maxDimension: loaded)
         guard
           let output = ImagePipeline.shared.render(
-            input, settings: frame.adjustments, profile: p, analysis: analysis, negative: negative,
+            input, settings: shownSettings, profile: p, analysis: analysis, negative: negative,
             sharpener: sharpener)
         else { throw DeskError.message("无法生成预览") }
         self.step(0.9, "直方图", token)
@@ -1465,7 +1494,7 @@ final class AppModel: ObservableObject {
     guard let i = selectedIndex, !rendering else { return }
     if tool == .it8 {
       guard singleView, it8Marks.count < IT8Layout.marks.count else { return }
-      it8Marks.append(ImageGeometry.raw(point, settings: frames[i].adjustments))
+      it8Marks.append(ImageGeometry.raw(point, settings: frames[i].adjustments, aspect: shownAspect(frames[i])))
       status = it8Marks.count < IT8Layout.marks.count
         ? "下一个：\(IT8Layout.marks[it8Marks.count]) 的中心" : "6 个点已就位 · 检查色块位置后点「生成标定」"
       return
@@ -1479,7 +1508,7 @@ final class AppModel: ObservableObject {
       input = overview
     }
     let r = ImagePipeline.shared.samples(input, maxDimension: 2000)
-    let pt = singleView ? ImageGeometry.raw(point, settings: frames[i].adjustments) : point
+    let pt = singleView ? ImageGeometry.raw(point, settings: frames[i].adjustments, aspect: shownAspect(frames[i])) : point
     let x = Int(pt.x * Double(r.width))
     let y = Int(pt.y * Double(r.height))
     var sum = [Double](repeating: 0, count: 3)

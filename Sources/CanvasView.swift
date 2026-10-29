@@ -317,17 +317,40 @@ final class FilmCanvasView: NSView {
         in: area, from: .zero, operation: .copy, fraction: 1, respectFlipped: true,
         hints: [.interpolation: pixelsPerPixel >= 2 ? NSImageInterpolation.none : .high])
     }
+    if model.singleView, model.canvasCrop == nil, model.straightening {
+      drawGrid(in: [
+        CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY),
+        CGPoint(x: rect.maxX, y: rect.maxY), CGPoint(x: rect.minX, y: rect.maxY),
+      ])
+    }
     if model.singleView, let crop = model.canvasCrop {
       let r = screen(draft ?? crop.cg)
+      // Straightened, the part kept: the crop turned about its middle, the largest rectangle of
+      // its shape inside it, turned back onto the picture as it lies.
+      let degrees = model.screenAngle
+      let kept = abs(degrees) > 0.0001 && r.width > 0 && r.height > 0
+        ? [CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 0), CGPoint(x: 1, y: 1), CGPoint(x: 0, y: 1)].map { c -> CGPoint in
+          let q = ImageGeometry.straightened(c, degrees: degrees, aspect: Double(r.width / r.height), inverse: true)
+          return CGPoint(x: r.minX + q.x * r.width, y: r.minY + q.y * r.height)
+        } : nil
       let mask = NSBezierPath(rect: imageRect)
-      mask.appendRect(r)
+      if let kept { mask.appendPolygon(kept) } else { mask.appendRect(r) }
       mask.windingRule = .evenOdd
       NSColor.black.withAlphaComponent(model.tool == .base ? 0.18 : 0.5).setFill()
       mask.fill()
       NSColor(calibratedRed: 0.95, green: 0.71, blue: 0.38, alpha: 1).setStroke()
       let outline = NSBezierPath(rect: r)
-      outline.lineWidth = 2
+      outline.lineWidth = kept == nil ? 2 : 1
+      if kept != nil { outline.setLineDash([5, 4], count: 2, phase: 0) }
       outline.stroke()
+      if let kept {
+        if model.tool == .crop { drawGrid(in: kept, fine: model.straightening) }
+        NSColor(calibratedRed: 0.95, green: 0.71, blue: 0.38, alpha: 1).setStroke()
+        let edge = NSBezierPath()
+        edge.appendPolygon(kept)
+        edge.lineWidth = 2
+        edge.stroke()
+      }
       if model.tool == .crop {
         for p in [
           CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY),
@@ -383,7 +406,9 @@ final class FilmCanvasView: NSView {
         p.stroke()
       }
     }
-    if model.singleView, model.tool == .it8, let frame = model.selected { drawIT8(model.it8Marks, settings: frame.adjustments) }
+    if model.singleView, model.tool == .it8, let frame = model.selected {
+      drawIT8(model.it8Marks, settings: frame.adjustments, aspect: model.shownAspect(frame))
+    }
     drawLens()
   }
   /// Puts the glass bubble on the corner under `p`, as it is dragged.
@@ -471,11 +496,45 @@ final class FilmCanvasView: NSView {
       hints: [.interpolation: NSImageInterpolation.high])
     NSGraphicsContext.restoreGraphicsState()
   }
+  /// Lines across the quadrilateral `corners` (clockwise from its top left): thirds, and while it
+  /// is being straightened a finer grid of about 40 points to line a horizon or an edge up with.
+  private func drawGrid(in corners: [CGPoint], fine: Bool = true) {
+    guard corners.count == 4 else { return }
+    func at(_ u: CGFloat, _ v: CGFloat) -> CGPoint {
+      let top = CGPoint(x: corners[0].x + (corners[1].x - corners[0].x) * u, y: corners[0].y + (corners[1].y - corners[0].y) * u)
+      let bottom = CGPoint(x: corners[3].x + (corners[2].x - corners[3].x) * u, y: corners[3].y + (corners[2].y - corners[3].y) * u)
+      return CGPoint(x: top.x + (bottom.x - top.x) * v, y: top.y + (bottom.y - top.y) * v)
+    }
+    let width = hypot(corners[1].x - corners[0].x, corners[1].y - corners[0].y)
+    let height = hypot(corners[3].x - corners[0].x, corners[3].y - corners[0].y)
+    func lines(_ across: Int, _ down: Int, _ colour: NSColor, _ lineWidth: CGFloat) {
+      let path = NSBezierPath()
+      for i in 1..<max(1, across) {
+        path.move(to: at(CGFloat(i) / CGFloat(across), 0))
+        path.line(to: at(CGFloat(i) / CGFloat(across), 1))
+      }
+      for j in 1..<max(1, down) {
+        path.move(to: at(0, CGFloat(j) / CGFloat(down)))
+        path.line(to: at(1, CGFloat(j) / CGFloat(down)))
+      }
+      // Dark under light, so the lines show on a sky and on shadows alike.
+      NSColor.black.withAlphaComponent(0.35).setStroke()
+      path.lineWidth = lineWidth + 1
+      path.stroke()
+      colour.setStroke()
+      path.lineWidth = lineWidth
+      path.stroke()
+    }
+    if fine {
+      lines(max(3, Int((width / 40).rounded())), max(3, Int((height / 40).rounded())), NSColor.white.withAlphaComponent(0.28), 0.5)
+    }
+    lines(3, 3, NSColor.white.withAlphaComponent(0.7), 0.75)
+  }
   /// The IT8 target's marked points, and once four are set, where every patch will be read.
-  private func drawIT8(_ marks: [CGPoint], settings: Adjustments) {
+  private func drawIT8(_ marks: [CGPoint], settings: Adjustments, aspect: Double?) {
     let r = imageRect
     func onScreen(_ raw: CGPoint) -> CGPoint {
-      let d = ImageGeometry.display(raw, settings: settings)
+      let d = ImageGeometry.display(raw, settings: settings, aspect: aspect)
       return CGPoint(x: r.minX + d.x * r.width, y: r.minY + d.y * r.height)
     }
     let half = max(2, IT8Layout.sampleRadius(marks) * min(r.width, r.height))
@@ -1134,6 +1193,12 @@ final class FilmCanvasView: NSView {
         NormalRect(
           x: clamp(crop.x + dx, 0, 1 - crop.width), y: clamp(crop.y + dy, 0, 1 - crop.height),
           width: crop.width, height: crop.height))
+    } else if model?.singleView == true, model?.tool == .crop, [33, 30].contains(event.keyCode),
+      event.modifierFlags.intersection([.command, .control, .option]).isEmpty, let model
+    {
+      // [ and ]: a tenth of a degree, with shift a whole one.
+      let step = event.modifierFlags.contains(.shift) ? 1.0 : 0.1
+      model.straighten(model.screenAngle + (event.keyCode == 30 ? step : -step))
     } else if event.keyCode == 36 && model?.tool == .crop && model?.singleView == true {
       model?.useTool(.select)
     } else if model?.singleView == true, [123, 124].contains(event.keyCode),
@@ -1159,5 +1224,14 @@ final class FilmCanvasView: NSView {
     } else {
       super.keyDown(with: event)
     }
+  }
+}
+
+private extension NSBezierPath {
+  func appendPolygon(_ points: [CGPoint]) {
+    guard let first = points.first else { return }
+    move(to: first)
+    for p in points.dropFirst() { line(to: p) }
+    close()
   }
 }

@@ -85,8 +85,9 @@ extension MCPTools {
     Tool(name: "leak_rotate", description: "把原片转 90° 或 180°：重建正片预览，清空裁切、区域、保护区和对应点（位置随画面改变）；已有参考图时在本地重新匹配，不调用 API。可用 ⌘Z 或 undo 撤销。", properties: [
       "quarter_turns": ["type": "integer", "enum": [-1, 1, 2], "description": "1 右转 90°，-1 左转 90°，2 转 180°"],
     ], required: ["quarter_turns"]),
-    Tool(name: "leak_crop", description: "裁切转好方向的原片（0–1）：重建正片预览，清空区域、保护区和对应点；已有参考图时在本地重新匹配。x 0、y 0、w 1、h 1 为不裁切。可用 ⌘Z 或 undo 撤销。", properties: [
+    Tool(name: "leak_crop", description: "裁切转好方向的原片（0–1）：重建正片预览，清空区域、保护区和对应点；已有参考图时在本地重新匹配。x 0、y 0、w 1、h 1 为不裁切。angle 让裁切范围绕中心转动拉直（度，正数顺时针），裁去转出的空角；不给为 0。可用 ⌘Z 或 undo 撤销。", properties: [
       "x": number("左边", 0...0.9), "y": number("上边", 0...0.9), "w": number("宽", 0.05...1), "h": number("高", 0.05...1),
+      "angle": number("拉直角度（度），正数顺时针", -45...45),
     ], required: ["x", "y", "w", "h"]),
     Tool(name: "leak_clear_correction", description: "停用参考校正：只剩基础调整和局部区域；参考图留着，leak_start 可免费重新应用。可用 ⌘Z 或 undo 撤销。", properties: [:]),
     Tool(name: "leak_load_preset", description: "载入去漏光预设（Epson Scan plus 或 FilmLightLab 保存的 JSON）：参数、区域和对应点；方向或裁切不同时按预设重建。可用 ⌘Z 或 undo 撤销。", properties: [
@@ -562,17 +563,19 @@ extension MCPTools {
       return say("原片已转到 \(now)°，裁切、区域、保护区和对应点已清空。" + onMain { lab.notice } + " 可用 ⌘Z 或 undo 撤销。")
     case "leak_crop":
       try requireBase(lab)
-      try only(arguments, ["x", "y", "w", "h"])
+      try only(arguments, ["x", "y", "w", "h", "angle"])
       guard let x = try double(arguments, "x", 0...0.9), let y = try double(arguments, "y", 0...0.9),
         let w = try double(arguments, "w", 0.05...1), let h = try double(arguments, "h", 0.05...1)
       else { throw DeskError.message("需要 x、y、w、h（0–1，按转好方向的原片）。") }
+      let angle = try double(arguments, "angle", -45...45)
       try idle(lab)
       let before = onMain { lab.params.crop }
-      onMain { lab.setCrop(LeakCrop(x: x, y: y, w: w, h: h)) }
+      onMain { lab.setCrop(LeakCrop(x: x, y: y, w: w, h: h, angle: angle)) }
       try settle(lab)
       let now = onMain { lab.params.crop }
       guard now != before else { return say("裁切和现在一样，没有改。") }
-      return say(String(format: "已裁切为左 %.3f、上 %.3f、宽 %.3f、高 %.3f，区域、保护区和对应点已清空。", now.x, now.y, now.w, now.h)
+      return say(String(format: "已裁切为左 %.3f、上 %.3f、宽 %.3f、高 %.3f", now.x, now.y, now.w, now.h)
+        + (now.angle.map { String(format: "、拉直 %+.2f°", $0) } ?? "") + "，区域、保护区和对应点已清空。"
         + onMain { lab.notice } + " 可用 ⌘Z 或 undo 撤销。")
     case "leak_clear_correction":
       try requireBase(lab)

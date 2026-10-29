@@ -529,6 +529,18 @@ final class LeakLab: ObservableObject {
     save()
     notice = list.isEmpty ? "已清空对应点，按相同构图对齐。" : "已设 \(min(20, list.count)) 对对应点。点击「开始去漏光」按对应点在本地重新拟合，不调用 API。"
   }
+  /// The original turned as the job has it and not cut, about 900 pixels wide, for the crop sheet
+  /// to draw the cut on.
+  func uncutPreview(_ done: @escaping (CGImage?) -> Void) {
+    guard let j = job else { return done(nil) }
+    let rotation = params.rotation
+    DispatchQueue.global(qos: .userInitiated).async {
+      let image = (try? self.original(j)).map {
+        LeakEngine.resized(LeakEngine.cropped($0, rotation: rotation, crop: LeakCrop()), width: 900).cgImage()
+      }
+      DispatchQueue.main.async { done(image) }
+    }
+  }
   /// A new crop of the turned original: a new base, the regions, protections and landmarks drawn
   /// on the old one cleared, and the reference matched again.
   func setCrop(_ crop: LeakCrop) {
@@ -542,6 +554,7 @@ final class LeakLab: ObservableObject {
     c.y = min(0.9, max(0, c.y))
     c.w = min(1 - c.x, max(0.05, c.w))
     c.h = min(1 - c.y, max(0.05, c.h))
+    c.angle = c.angle.map { min(45, max(-45, ($0 * 100).rounded() / 100)) }.flatMap { abs($0) < 0.005 ? nil : $0 }
     guard c != params.crop else { return }
     var next = params
     next.crop = c

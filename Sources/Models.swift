@@ -74,8 +74,30 @@ struct NormalRect: Codable, Equatable {
 }
 
 /// All crop, pick and orientation coordinates use a top-left origin, independent of CI's axes.
+/// A frame is shown straightened first (turned by its angle and cut to the largest rectangle of
+/// its own shape inside), then turned by quarters and mirrored. The straightening needs the
+/// frame's shape (its width over its height); without one it is left out, as for the crop tool,
+/// which shows the frame's surroundings as they lie.
 enum ImageGeometry {
-  static func display(_ p: CGPoint, settings: Adjustments) -> CGPoint {
+  /// How much of a frame `aspect` wide to one high is kept across, turned by `degrees`.
+  static func keep(_ degrees: Double, aspect: Double) -> Double {
+    let t = abs(degrees) * .pi / 180, w = aspect
+    return min(w / (w * cos(t) + sin(t)), 1 / (w * sin(t) + cos(t)))
+  }
+  /// A point of the frame to where it shows straightened, or back: turned clockwise on screen by
+  /// `degrees` about the middle and spread by what is cut away.
+  static func straightened(_ p: CGPoint, degrees: Double, aspect: Double, inverse: Bool = false) -> CGPoint {
+    guard abs(degrees) > 0.0001, aspect > 0 else { return p }
+    let k = keep(degrees, aspect: aspect), t = degrees * .pi / 180, c = cos(t), s = sin(t)
+    if inverse {
+      let u = (Double(p.x) - 0.5) * k * aspect, v = (Double(p.y) - 0.5) * k
+      return CGPoint(x: (u * c + v * s) / aspect + 0.5, y: -u * s + v * c + 0.5)
+    }
+    let u = (Double(p.x) - 0.5) * aspect, v = Double(p.y) - 0.5
+    return CGPoint(x: (u * c - v * s) / (k * aspect) + 0.5, y: (u * s + v * c) / k + 0.5)
+  }
+  static func display(_ p: CGPoint, settings: Adjustments, aspect: Double? = nil) -> CGPoint {
+    let p = aspect.map { straightened(p, degrees: settings.angle ?? 0, aspect: $0) } ?? p
     var q: CGPoint
     switch ((settings.rotation % 4) + 4) % 4 {
     case 1: q = CGPoint(x: 1 - p.y, y: p.x)
@@ -86,15 +108,17 @@ enum ImageGeometry {
     if settings.flipHorizontal == true { q.x = 1 - q.x }
     return q
   }
-  static func raw(_ p: CGPoint, settings: Adjustments) -> CGPoint {
+  static func raw(_ p: CGPoint, settings: Adjustments, aspect: Double? = nil) -> CGPoint {
     var q = p
     if settings.flipHorizontal == true { q.x = 1 - q.x }
+    let r: CGPoint
     switch ((settings.rotation % 4) + 4) % 4 {
-    case 1: return CGPoint(x: q.y, y: 1 - q.x)
-    case 2: return CGPoint(x: 1 - q.x, y: 1 - q.y)
-    case 3: return CGPoint(x: 1 - q.y, y: q.x)
-    default: return q
+    case 1: r = CGPoint(x: q.y, y: 1 - q.x)
+    case 2: r = CGPoint(x: 1 - q.x, y: 1 - q.y)
+    case 3: r = CGPoint(x: 1 - q.y, y: q.x)
+    default: r = q
     }
+    return aspect.map { straightened(r, degrees: settings.angle ?? 0, aspect: $0, inverse: true) } ?? r
   }
   static func transform(_ rect: NormalRect, settings: Adjustments, inverse: Bool = false)
     -> NormalRect
@@ -147,6 +171,9 @@ struct Adjustments: Codable, Equatable {
   var sharpening: Double? = nil
   /// RGB and per-channel tone curves, applied after conversion; nil leaves tones as they are.
   var curves: ToneCurves? = nil
+  /// Straightening, in degrees clockwise on screen, before the quarter turns: the frame turned
+  /// about its middle and cut to the largest rectangle of its own shape inside. Nil is level.
+  var angle: Double? = nil
   /// Turns the displayed picture 90°. Rotation is applied before the mirror, so a
   /// mirrored frame needs the opposite raw step to turn the same way on screen.
   mutating func turn(clockwise: Bool) {

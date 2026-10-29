@@ -265,15 +265,40 @@ struct LeakAlignSheet: View {
 struct LeakCropSheet: View {
   @ObservedObject var lab: LeakLab
   @State private var crop = LeakCrop()
+  @State private var picture: CGImage?
+  /// While the angle is being changed, and a moment after: a fine grid to line things up with.
+  @State private var turning = 0
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       Text("裁切原片").font(.system(size: 13, weight: .semibold))
-      Text("按转好方向的原片取范围（0–1）。裁切会重建正片预览，并清空区域、保护和对应点（它们的位置随画面改变）；已有参考图会在本地重新匹配，不调用 API。")
+      Text("按转好方向的原片取范围（0–1）。「拉直」让裁切范围绕中心转动（正数顺时针），裁去转出的空角，转动时显示网格线。裁切会重建正片预览，并清空区域、保护和对应点（它们的位置随画面改变）；已有参考图会在本地重新匹配，不调用 API。")
         .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      ZStack {
+        if let picture {
+          Image(decorative: picture, scale: 1).resizable().aspectRatio(contentMode: .fit)
+            .overlay(GeometryReader { g in
+              CropRotationOverlay(crop: crop, aspect: Double(picture.width) / Double(max(1, picture.height)), fine: turning > 0)
+                .frame(width: g.size.width, height: g.size.height)
+            })
+        } else {
+          ProgressView().controlSize(.small)
+        }
+      }.frame(maxWidth: .infinity).frame(height: 220)
       row("左", \.x, 0...0.9)
       row("上", \.y, 0...0.9)
       row("宽", \.w, 0.1...1)
       row("高", \.h, 0.1...1)
+      HStack {
+        Text("拉直").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 24, alignment: .leading)
+        Fader(title: "拉直", value: Binding(get: { crop.angle ?? 0 }, set: { v in
+          let a = (v * 100).rounded() / 100
+          crop.angle = abs(a) < 0.005 ? nil : a
+          turning += 1
+          let mark = turning
+          DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { if turning == mark { turning = 0 } }
+        }), range: -15...15, detent: 0)
+        Text(String(format: "%+.2f°", crop.angle ?? 0)).lcd()
+      }
       HStack {
         Button("不裁切") { crop = LeakCrop() }
         Spacer()
@@ -284,7 +309,10 @@ struct LeakCropSheet: View {
         }
       }
     }.padding(20).frame(width: 420).buttonStyle(HardwareKeyStyle()).controlSize(.small)
-      .onAppear { crop = lab.params.crop }
+      .onAppear {
+        crop = lab.params.crop
+        lab.uncutPreview { picture = $0 }
+      }
   }
   func row(_ title: String, _ key: WritableKeyPath<LeakCrop, Double>, _ range: ClosedRange<Double>) -> some View {
     HStack {
@@ -292,5 +320,56 @@ struct LeakCropSheet: View {
       Fader(title: "裁切" + title, value: Binding(get: { crop[keyPath: key] }, set: { crop[keyPath: key] = ($0 * 1000).rounded() / 1000 }), range: range)
       Text(String(format: "%.3f", crop[keyPath: key])).lcd()
     }
+  }
+}
+
+/// Over the uncut original: the cut, and once turned the part kept, the largest rectangle of the
+/// cut's shape inside it turned back onto the original, with thirds (and a finer grid while
+/// turning) across it; outside it darkened.
+struct CropRotationOverlay: View {
+  let crop: LeakCrop
+  /// The original's width over its height.
+  let aspect: Double
+  var fine: Bool
+  var body: some View {
+    Canvas { ctx, size in
+      let cut = CGRect(x: crop.x * size.width, y: crop.y * size.height, width: crop.w * size.width, height: crop.h * size.height)
+      let degrees = crop.angle ?? 0
+      let corners = [CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 0), CGPoint(x: 1, y: 1), CGPoint(x: 0, y: 1)].map { c -> CGPoint in
+        let q = ImageGeometry.straightened(c, degrees: degrees, aspect: crop.w * aspect / max(0.0001, crop.h), inverse: true)
+        return CGPoint(x: cut.minX + q.x * cut.width, y: cut.minY + q.y * cut.height)
+      }
+      var kept = Path()
+      kept.addLines(corners)
+      kept.closeSubpath()
+      var outside = Path(CGRect(origin: .zero, size: size))
+      outside.addPath(kept)
+      ctx.fill(outside, with: .color(.black.opacity(0.5)), style: FillStyle(eoFill: true))
+      func at(_ u: Double, _ v: Double) -> CGPoint {
+        let top = CGPoint(x: corners[0].x + (corners[1].x - corners[0].x) * u, y: corners[0].y + (corners[1].y - corners[0].y) * u)
+        let bottom = CGPoint(x: corners[3].x + (corners[2].x - corners[3].x) * u, y: corners[3].y + (corners[2].y - corners[3].y) * u)
+        return CGPoint(x: top.x + (bottom.x - top.x) * v, y: top.y + (bottom.y - top.y) * v)
+      }
+      func lines(_ across: Int, _ down: Int, _ opacity: Double, _ width: CGFloat) {
+        var path = Path()
+        for i in 1..<max(1, across) {
+          path.move(to: at(Double(i) / Double(across), 0))
+          path.addLine(to: at(Double(i) / Double(across), 1))
+        }
+        for j in 1..<max(1, down) {
+          path.move(to: at(0, Double(j) / Double(down)))
+          path.addLine(to: at(1, Double(j) / Double(down)))
+        }
+        ctx.stroke(path, with: .color(.black.opacity(0.35)), lineWidth: width + 1)
+        ctx.stroke(path, with: .color(.white.opacity(opacity)), lineWidth: width)
+      }
+      if abs(degrees) > 0.0001 {
+        if fine { lines(max(3, Int(cut.width / 24)), max(3, Int(cut.height / 24)), 0.28, 0.5) }
+        lines(3, 3, 0.7, 0.75)
+        ctx.stroke(Path(cut), with: .color(Hardware.amber.opacity(0.8)), style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
+      }
+      ctx.stroke(kept, with: .color(Hardware.amber), lineWidth: 2)
+    }
+    .allowsHitTesting(false)
   }
 }

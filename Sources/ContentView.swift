@@ -462,8 +462,17 @@ struct ContentView: View {
             Button(m.tool == .crop ? "完成" : "微调") { m.useTool(m.tool == .crop ? .select : .crop) }
               .font(.system(size: 11))
             InfoButton(text: m.selected?.scanPath != nil
-              ? "在原扫描范围内无损裁切。要扩大扫描区域，请回接触表调整画框并重扫。"
-              : "画框周围保留了片基，可在单张中细调裁切，不会跳回接触表。")
+              ? "在原扫描范围内无损裁切。要扩大扫描区域，请回接触表调整画框并重扫。\n\n「拉直」让画面绕中心转动（正数顺时针，⌥ 拖动更细），裁去转出的空角，拖动时显示网格线；裁切时按 [ ] 每次 0.1°，加 ⇧ 每次 1°。接触表上的画框仍按胶片原样显示。"
+              : "画框周围保留了片基，可在单张中细调裁切，不会跳回接触表。\n\n「拉直」让画面绕中心转动（正数顺时针，⌥ 拖动更细），裁去转出的空角，拖动时显示网格线；裁切时按 [ ] 每次 0.1°，加 ⇧ 每次 1°。接触表上的画框仍按胶片原样显示。")
+          }
+          VStack(spacing: 3) {
+            HStack {
+              Text("拉直").font(.system(size: 11)).foregroundStyle(.secondary)
+              Spacer()
+              Text(String(format: "%+.2f°", m.screenAngle)).lcd()
+              Button("归零") { m.straighten(0) }.font(.system(size: 10)).disabled(m.settings.angle == nil)
+            }
+            Fader(title: "拉直", value: Binding(get: { m.screenAngle }, set: { m.straighten($0) }), range: -15...15, detent: 0)
           }
           if m.tool == .crop, let crop = m.canvasCrop {
             ForEach(0..<4, id: \.self) { edge in cropStepper(edge, crop: crop) }

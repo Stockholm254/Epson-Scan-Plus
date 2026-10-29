@@ -46,6 +46,7 @@ enum MCPTools {
       "exposure": number("曝光 EV", -2...2), "contrast": number("对比度", 0.5...1.6), "saturation": number("饱和度", 0...1.8),
       "black": number("黑点（关闭自动色阶时生效）", 0...0.4), "white": number("白点（关闭自动色阶时生效）", 0.6...1),
       "midtone": number("中间调", 0.4...2),
+      "angle": number("拉直角度（度）：画面绕中心转动，正数顺时针，裁去转出的空角，-45 到 45", -45...45),
       "auto_white_balance": ["type": "boolean", "description": "自动白平衡"], "auto_levels": ["type": "boolean", "description": "自动色阶"],
       "base_fine_ev": ["type": "array", "items": ["type": "number", "minimum": -0.5, "maximum": 0.5], "minItems": 3, "maxItems": 3,
         "description": "片基逐通道微调 [R, G, B]，单位 EV，-0.5 到 0.5"],
@@ -106,7 +107,7 @@ enum MCPTools {
   }
   /// The negative's linear reading around a point of the frame as shown, 5 × 5 pixels.
   private static func reading(_ raster: Raster, at p: CGPoint, settings: Adjustments) -> RGB {
-    let raw = ImageGeometry.raw(p, settings: settings)
+    let raw = ImageGeometry.raw(p, settings: settings, aspect: Double(raster.width) / Double(max(1, raster.height)))
     let x = Int(raw.x * Double(raster.width - 1)), y = Int(raw.y * Double(raster.height - 1))
     var sum = [0.0, 0.0, 0.0], n = 0.0
     for dy in -2...2 { for dx in -2...2 {
@@ -246,7 +247,7 @@ enum MCPTools {
         return ["x": p.x, "y": p.y, "negative_linear": rgb(v), "density_above_base": rgb(d), "positive_srgb": rgb(out)]
       })
     case "adjust":
-      let known: Set = ["warmth", "tint", "exposure", "contrast", "saturation", "black", "white", "midtone", "auto_white_balance", "auto_levels", "base_fine_ev"]
+      let known: Set = ["warmth", "tint", "exposure", "contrast", "saturation", "black", "white", "midtone", "auto_white_balance", "auto_levels", "base_fine_ev", "angle"]
       let unknown = Set(arguments.keys).subtracting(known)
       guard unknown.isEmpty else { throw DeskError.message("不认识的参数：\(unknown.sorted().joined(separator: ", "))") }
       guard !arguments.isEmpty else { throw DeskError.message("没有要改的参数。") }
@@ -260,6 +261,7 @@ enum MCPTools {
         (\.saturation, "saturation", 0...1.8), (\.black, "black", 0...0.4), (\.white, "white", 0.6...1), (\.midtone, "midtone", 0.4...2),
       ]
       let values = try numbers.compactMap { n in try value(n.1, n.2).map { (n.0, $0) } }
+      let angle = try value("angle", -45...45)
       var fine: RGB?
       if let raw = arguments["base_fine_ev"] {
         guard let list = raw as? [NSNumber], list.count == 3 else { throw DeskError.message("base_fine_ev 是 [R, G, B] 三个数。") }
@@ -279,6 +281,7 @@ enum MCPTools {
           }
           if let b = arguments["auto_levels"] as? Bool { a.autoLevels = b }
           if let fine { a.baseFine = fine }
+          if let angle { a.angle = abs(angle) < 0.005 ? nil : angle }
         }
       }
       return [["type": "text", "text": "已调整：\(arguments.keys.sorted().joined(separator: ", "))。可用 ⌘Z 或 undo 撤销。"]]
