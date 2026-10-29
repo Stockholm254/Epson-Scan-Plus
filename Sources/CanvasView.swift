@@ -127,6 +127,8 @@ final class FilmCanvasView: NSView {
   }
   var pan = CGPoint.zero
   var panStart: CGPoint?
+  /// A line being drawn to straighten the frame by, on the canvas.
+  var levelLine: (from: CGPoint, to: CGPoint)?
   /// Room at the edges taken by panels and bars floating over the canvas: the light table runs
   /// under them, the picture fits between.
   var reserved = NSEdgeInsets() {
@@ -343,6 +345,24 @@ final class FilmCanvasView: NSView {
       outline.lineWidth = kept == nil ? 2 : 1
       if kept != nil { outline.setLineDash([5, 4], count: 2, phase: 0) }
       outline.stroke()
+      if let line = levelLine {
+        let amber = NSColor(calibratedRed: 0.95, green: 0.71, blue: 0.38, alpha: 1)
+        let path = NSBezierPath()
+        path.move(to: line.from)
+        path.line(to: line.to)
+        NSColor.black.withAlphaComponent(0.5).setStroke()
+        path.lineWidth = 4
+        path.stroke()
+        amber.setStroke()
+        path.lineWidth = 2
+        path.stroke()
+        amber.setFill()
+        for end in [line.from, line.to] { NSBezierPath(ovalIn: CGRect(x: end.x - 4, y: end.y - 4, width: 8, height: 8)).fill() }
+        let a = atan2(Double(line.to.y - line.from.y), Double(line.to.x - line.from.x)) * 180 / .pi
+        (String(format: "拉直 %+.1f°", -(a - 90 * (a / 90).rounded())) as NSString).draw(
+          at: CGPoint(x: line.to.x + 10, y: line.to.y + 6),
+          withAttributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold), .foregroundColor: amber])
+      }
       if let kept {
         if model.tool == .crop { drawGrid(in: kept, fine: model.straightening) }
         NSColor(calibratedRed: 0.95, green: 0.71, blue: 0.38, alpha: 1).setStroke()
@@ -377,6 +397,21 @@ final class FilmCanvasView: NSView {
         path.lineWidth = selected ? 2 : f.enabled ? 1.5 : 1
         if !f.enabled { path.setLineDash([4, 4], count: 2, phase: 0) }
         path.stroke()
+        // Straightened, the part kept, turned on the film as it lies.
+        if let degrees = f.adjustments.angle, abs(degrees) > 0.0001, let aspect = model.frameAspect(f) {
+          let box = dragID == f.id ? (draft ?? f.rect.cg) : f.rect.cg, b = imageRect
+          let kept = [CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 0), CGPoint(x: 1, y: 1), CGPoint(x: 0, y: 1)].map { corner -> CGPoint in
+            let q = ImageGeometry.straightened(corner, degrees: degrees, aspect: aspect, inverse: true)
+            let s = turn.shown(CGPoint(x: box.minX + q.x * box.width, y: box.minY + q.y * box.height))
+            return CGPoint(x: b.minX + s.x * b.width, y: b.minY + s.y * b.height)
+          }
+          let outline = NSBezierPath()
+          outline.appendPolygon(kept)
+          outline.lineWidth = 1
+          outline.setLineDash([3, 3], count: 2, phase: 0)
+          c.withAlphaComponent(0.8).setStroke()
+          outline.stroke()
+        }
         let label = NSRect(x: r.minX, y: r.minY - 20, width: 30, height: 19)
         c.setFill()
         NSBezierPath(roundedRect: label, xRadius: 3, yRadius: 3).fill()
@@ -1040,6 +1075,12 @@ final class FilmCanvasView: NSView {
       return
     }
     if model.singleView {
+      if model.tool == .crop, model.canvasCrop != nil, !model.isWorking,
+        model.levelling || event.modifierFlags.contains(.option)
+      {
+        levelLine = (p, p)
+        return
+      }
       if model.tool == .crop, let crop = model.canvasCrop, !model.isWorking {
         dragStart = normal(p)
         dragID = model.selectedID
@@ -1086,6 +1127,11 @@ final class FilmCanvasView: NSView {
   }
   override func mouseDragged(with event: NSEvent) {
     let p = convert(event.locationInWindow, from: nil)
+    if let line = levelLine {
+      levelLine = (line.from, p)
+      needsDisplay = true
+      return
+    }
     if let start = panStart {
       pan.x += p.x - start.x
       pan.y += p.y - start.y
@@ -1128,7 +1174,15 @@ final class FilmCanvasView: NSView {
       dragID = nil
       corner = nil
       panStart = nil
+      levelLine = nil
       needsDisplay = true
+    }
+    if let line = levelLine {
+      // A click, or a line too short to tell a direction by, leaves the frame as it is.
+      if hypot(line.to.x - line.from.x, line.to.y - line.from.y) >= 12 {
+        model?.straighten(along: Double(line.to.x - line.from.x), Double(line.to.y - line.from.y))
+      }
+      return
     }
     guard let draft else { return }
     if model?.singleView == true, model?.tool == .crop {

@@ -245,6 +245,18 @@ final class AppModel: ObservableObject {
     change("拉直") { $0.angle = abs(a) < 0.005 ? nil : a }
     showStraighteningGrid()
   }
+  /// The next drag over the crop draws a line along something that should be level or upright,
+  /// a horizon or a wall, and the frame is straightened by it.
+  @Published var levelling = false
+  /// Straightens by a line drawn over the frame as it lies, `dx` and `dy` on the screen: level
+  /// when it runs nearer across, upright when nearer up and down.
+  func straighten(along dx: Double, _ dy: Double) {
+    levelling = false
+    guard hypot(dx, dy) > 0 else { return }
+    let a = atan2(dy, dx) * 180 / .pi
+    // Turned back by its tilt: a line falling to the right is turned anticlockwise.
+    straighten(-(a - 90 * (a / 90).rounded()))
+  }
   func showStraighteningGrid() {
     straighteningToken += 1
     let token = straighteningToken
@@ -262,7 +274,9 @@ final class AppModel: ObservableObject {
   var toolHint: String? {
     switch tool {
     case .select: return nil
-    case .crop: return singleView ? "拖动四角裁切 · 方向键微调 · [ ] 拉直 0.1°（⇧ 1°） · 回车完成 · Esc 退出" : "在灯箱上拖出新的画框 · Esc 退出"
+    case .crop:
+      if singleView && levelling { return "沿地平线、墙边或建筑竖线拖一条线，松手即按它拉直 · Esc 退出" }
+      return singleView ? "拖动四角裁切 · 方向键微调 · [ ] 拉直 0.1°（⇧ 1°） · ⌥ 拖一条线拉直 · 回车完成 · Esc 退出" : "在灯箱上拖出新的画框 · Esc 退出"
     case .base: return "点未曝光的橙色片基（片间或片边），不要点景物或片夹 · Esc 退出"
     case .neutral: return "点画面中应为中性灰的地方：灰卡、白墙、水泥 · Esc 退出"
     case .highlight: return "点负片上最密、正片里应为纯白的高光：阳光下的白墙、高光反射；更亮处会剪成白 · Esc 退出"
@@ -296,6 +310,7 @@ final class AppModel: ObservableObject {
   }
   func useTool(_ value: CanvasTool) {
     if value != tool { editRegionLock = nil }
+    if value != .crop { levelling = false }
     tool = value
     if value == .neutral || value == .highlight || value == .calibrate || value == .it8 { singleView = selected != nil }
     if value == .base || value == .crop { fitView() }

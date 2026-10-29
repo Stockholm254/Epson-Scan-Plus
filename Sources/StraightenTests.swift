@@ -103,6 +103,16 @@ enum StraightenTests {
     model.tool = .select
     model.straighten(0)
     try check(model.settings.angle == nil, "back to 0° it is not straightened at all")
+    // A line drawn along a horizon falling 3° to the right, and along a wall leaning 2° the other
+    // way from upright: each straightened by its tilt, clockwise on the screen whichever way the
+    // frame is mirrored.
+    model.levelling = true
+    model.straighten(along: 100 * cos(3 * .pi / 180), 100 * sin(3 * .pi / 180))
+    let level = model.screenAngle
+    model.straighten(along: -100 * sin(2 * .pi / 180), -100 * cos(2 * .pi / 180))
+    try check(abs(level + 3) < 0.01 && abs(model.screenAngle - 2) < 0.01 && !model.levelling,
+      "a line drawn along a horizon or a wall straightens the frame by its tilt: \(level)°, \(model.screenAngle)°")
+    model.straighten(0)
 
     // The light table shows the film as it lies: a straightened frame does not turn the paper.
     var straight = FilmFrame(name: "01", rect: NormalRect(x: 0.1, y: 0.1, width: 0.4, height: 0.5), format: "135")
