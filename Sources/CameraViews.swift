@@ -12,6 +12,7 @@ struct CameraStage: View {
   @State private var zoom = 1
   @State private var ring: CGFloat = 0
   @State private var magnifier = true
+  @State private var histogram = true
   var body: some View {
     HStack(spacing: 0) {
       ZStack {
@@ -25,6 +26,12 @@ struct CameraStage: View {
           } else {
             topRow.padding(.horizontal, 10).padding(.vertical, 6).glassPane(radius: 20)
               .padding(.horizontal, 12).padding(.top, 10)
+          }
+          if histogram, let h = camera.liveHistogram {
+            HStack {
+              Spacer()
+              LiveHistogram(histogram: h)
+            }.padding(.horizontal, 12).padding(.top, 8)
           }
           Spacer()
           if !Liquid.available, let toast = m.captureToast {
@@ -70,6 +77,12 @@ struct CameraStage: View {
           Image(systemName: "magnifyingglass.circle").frame(width: 16)
         }.buttonStyle(HardwareKeyStyle(latched: magnifier)).controlSize(.small)
           .help(magnifier ? "收起对焦框上的玻璃放大镜" : "在对焦框上放一个放大 4 倍的玻璃放大镜")
+        Button {
+          histogram.toggle()
+        } label: {
+          Image(systemName: "chart.bar.xaxis").frame(width: 16)
+        }.buttonStyle(HardwareKeyStyle(latched: histogram)).controlSize(.small)
+          .help(histogram ? "收起实时取景的直方图" : "在取景画面右上角显示直方图")
       }
       if Liquid.available { drop(viewing) } else { viewing }
       Spacer(minLength: 8)
@@ -135,57 +148,60 @@ struct CameraStage: View {
     let k = min((box.width - 24) / max(1, size.width), (box.height - 24) / max(1, size.height))
     return CGSize(width: size.width * k, height: size.height * k)
   }
-  /// Focusing on one row, the shot on the next. With SwiftUI's glass each group is a drop of its
-  /// own, AF and 精确对焦 drops that give under the finger, the pixel-shift files counted in beads
-  /// of glass, and each note of a picture filed rising out of the shutter as a drop pinches off.
+  /// Focusing on one row, the focus search and pixel shift on the next, and the shutter release
+  /// beside both. With SwiftUI's glass each group is a drop of its own, AF and 精确对焦 drops that
+  /// give under the finger, the pixel-shift files counted in beads of glass, and each note of a
+  /// picture filed rising out of the shutter as a drop pinches off.
   var controls: some View {
     let liquid = Liquid.available
-    return VStack(spacing: 8) {
-      HStack(spacing: 10) {
-        Button {
-          camera.autofocus()
-        } label: {
-          Label("AF", systemImage: "scope").lineLimit(1).fixedSize()
-        }.help("半按快门，在对焦框处自动对焦（相机要在 AF 模式）").environment(\.glassKeys, liquid)
-        let stepping = HStack(spacing: 3) {
-          ForEach([-7, -3, -1], id: \.self) { s in
-            Button { camera.step(s) } label: { Text(s == -7 ? "«" : s == -3 ? "‹‹" : "‹").frame(width: 16) }
-              .help("对焦往近处走（Near \(-s) 档，要手动对焦模式）")
-          }
-          FocusRing(offset: $ring) { camera.step($0) }.frame(width: 120, height: 24)
-          ForEach([1, 3, 7], id: \.self) { s in
-            Button { camera.step(s) } label: { Text(s == 7 ? "»" : s == 3 ? "››" : "›").frame(width: 16) }
-              .help("对焦往远处走（Far \(s) 档，要手动对焦模式）")
-          }
-        }
-        if liquid { drop(stepping) } else { stepping }
-        Button {
-          camera.refining ? camera.cancelRefine() : camera.refineFocus()
-        } label: {
-          Label(camera.refining ? "停止" : "精确对焦", systemImage: "camera.metering.center.weighted")
-        }.help("切到手动对焦，按对焦框里的颗粒清晰度一步步找最清楚的位置（7、3、1 档逐级）").environment(\.glassKeys, liquid)
-        Spacer(minLength: 0)
-      }
-      HStack(spacing: 10) {
-        let shifting = HStack(spacing: 10) {
-          Picker("像素位移", selection: $m.pixelShiftCount) {
-            Text("单张").tag(1)
-            Text("位移 4").tag(4)
-            Text("位移 16").tag(16)
-          }.pickerStyle(.segmented).labelsHidden().frame(width: 190)
-            .help("像素位移要先在相机上设好；这里只决定几张文件归成一组")
-          if m.pixelShiftCount > 1 { ShiftBeads(count: m.pixelShiftCount, got: m.pendingShift.count) }
-        }
-        if liquid { drop(shifting) } else { shifting }
-        Spacer()
-        ShutterKey(enabled: camera.connected && !camera.awaitingPicture, shots: camera.shots) { camera.shoot() }
-          .help(camera.awaitingPicture ? "上一张还在写入和传输，到了再拍" : "拍摄（空格）")
-          .overlay(alignment: .topTrailing) {
-            if liquid, let toast = m.captureToast {
-              DropToast(text: toast).id(toast).transition(.scale(scale: 0.3, anchor: .bottomTrailing).combined(with: .opacity))
+    return HStack(spacing: 16) {
+      VStack(spacing: 8) {
+        HStack(spacing: 10) {
+          Button {
+            camera.autofocus()
+          } label: {
+            Label("AF", systemImage: "scope").lineLimit(1).fixedSize()
+          }.help("在对焦框处自动对焦一次，对完切回手动对焦锁住焦点；快门本身不对焦").environment(\.glassKeys, liquid)
+          let stepping = HStack(spacing: 3) {
+            ForEach([-7, -3, -1], id: \.self) { s in
+              Button { camera.step(s) } label: { Text(s == -7 ? "«" : s == -3 ? "‹‹" : "‹").frame(width: 16) }
+                .help("对焦往近处走（Near \(-s) 档，要手动对焦模式）")
+            }
+            FocusRing(offset: $ring) { camera.step($0) }.frame(width: 120, height: 24)
+            ForEach([1, 3, 7], id: \.self) { s in
+              Button { camera.step(s) } label: { Text(s == 7 ? "»" : s == 3 ? "››" : "›").frame(width: 16) }
+                .help("对焦往远处走（Far \(s) 档，要手动对焦模式）")
             }
           }
+          if liquid { drop(stepping) } else { stepping }
+          Spacer(minLength: 0)
+        }
+        HStack(spacing: 10) {
+          Button {
+            camera.refining ? camera.cancelRefine() : camera.refineFocus()
+          } label: {
+            Label(camera.refining ? "停止" : "精确对焦", systemImage: "camera.metering.center.weighted").lineLimit(1).fixedSize()
+          }.help("切到手动对焦，按对焦框里的颗粒清晰度一步步找最清楚的位置（7、3、1 档逐级）").environment(\.glassKeys, liquid)
+          let shifting = HStack(spacing: 10) {
+            Picker("像素位移", selection: $m.pixelShiftCount) {
+              Text("单张").tag(1)
+              Text("位移 4").tag(4)
+              Text("位移 16").tag(16)
+            }.pickerStyle(.segmented).labelsHidden().frame(width: 190)
+              .help("像素位移要先在相机上设好；这里只决定几张文件归成一组")
+            if m.pixelShiftCount > 1 { ShiftBeads(count: m.pixelShiftCount, got: m.pendingShift.count) }
+          }
+          if liquid { drop(shifting) } else { shifting }
+          Spacer()
+        }
       }
+      ShutterKey(enabled: camera.connected && !camera.awaitingPicture, busy: camera.awaitingPicture, shots: camera.shots) { camera.shoot() }
+        .help(camera.awaitingPicture ? "上一张还在写入和传输，到了再拍" : "拍摄（空格）：只拍不对焦，对焦请按 AF")
+        .overlay(alignment: .topTrailing) {
+          if liquid, let toast = m.captureToast {
+            DropToast(text: toast).id(toast).transition(.scale(scale: 0.3, anchor: .bottomTrailing).combined(with: .opacity))
+          }
+        }
     }.buttonStyle(HardwareKeyStyle()).controlSize(.small).disabled(!camera.connected && camera.phase != .missing)
   }
 }
@@ -274,6 +290,7 @@ struct FocusCheck: View {
   @ObservedObject var m: AppModel
   @ObservedObject var camera: CameraController
   @State private var crop: CGImage?
+  @State private var histogram: Histogram?
   @State private var scale = 2
   @State private var loading = false
   var body: some View {
@@ -303,6 +320,7 @@ struct FocusCheck: View {
         Text(String(format: "清晰度 × 10⁴\nR %.1f\nG %.1f\nB %.1f", s.r * 1e4, s.g * 1e4, s.b * 1e4)).lcd(10)
           .help("这块原图的清晰度：三个通道差得多时，说明有色差，红和蓝的焦点不在同一处")
       }
+      if let histogram { LastHistogram(histogram: histogram) }
       if let url = m.lastCapture {
         Text(url.lastPathComponent).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
         Button("按对焦点重新取") { load(url) }.font(.system(size: 11))
@@ -319,11 +337,35 @@ struct FocusCheck: View {
     let point = camera.focusPoint
     AppModel.captureQueue.async {
       let image = AppModel.focusCrop(url, at: point, side: 248)
+      let counted = Histogram.sensor(url) ?? (try? ImagePipeline.shared.load(url, maxDimension: 512)).map(Histogram.picture)
       DispatchQueue.main.async {
         crop = image
+        histogram = counted
         loading = false
       }
     }
+  }
+}
+
+/// The last picture's histogram, a RAW's from the sensor's own values: how near full each channel
+/// came and how much of it was clipped, in numbers, for setting the exposure by.
+struct LastHistogram: View {
+  let histogram: Histogram
+  /// Stops below full.
+  func ev(_ v: Double) -> String { v >= 0.999 ? "  0.0" : String(format: "%+5.1f", log2(max(v, 1e-4))) }
+  var body: some View {
+    let h = histogram
+    return VStack(alignment: .leading, spacing: 6) {
+      Text(h.linear ? "上一张 RAW · 传感器原始值" : "上一张 · 相机渲染的画面").font(.system(size: 11, weight: .medium))
+      HistogramView(histogram: h).frame(width: 248, height: 64).background(Color.black.opacity(0.4))
+      Text(String(format: "亮端  R %3.0f%%  G %3.0f%%  B %3.0f%%", h.top.r * 100, h.top.g * 100, h.top.b * 100)
+        + (h.linear ? "\n距满  R \(ev(h.top.r)) G \(ev(h.top.g)) B \(ev(h.top.b)) EV" : "")
+        + String(format: "\n过曝  R %.2f%% G %.2f%% B %.2f%%", h.clipped.r * 100, h.clipped.g * 100, h.clipped.b * 100))
+        .fixedSize().lcd(10)
+    }
+    .help(h.linear
+      ? "横轴是传感器读数，按比例从黑到满量程，左右等距就是光量等比例；竖线是 1/4、1/2、3/4。亮端是每个通道最亮的 0.5% 从哪里开始；距满是它离满量程还差几档。过曝是到顶的感光点的比例，应为 0。"
+      : "这张不是无压缩 ARW，只能看相机渲染出来的画面，按它的曲线编码，不等于传感器读数。")
   }
 }
 

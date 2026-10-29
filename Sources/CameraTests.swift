@@ -113,22 +113,28 @@ enum CameraTests {
     camera.onCapture = { arrived = $0 }
     camera.receive("{\"event\":\"downloaded\",\"path\":\"\(camFolder.path)/EPS00001.ARW\",\"type\":1}")
     try check(arrived?.lastPathComponent == "EPS00001.ARW", "a picture the camera sends is handed on")
-    camera.receive(#"{"event":"shot","ok":true,"code":"0x0","focus":"skipped"}"#)
-    camera.receive(#"{"event":"shot","ok":false,"code":"0x8402","focus":"skipped"}"#)
+    camera.receive(#"{"event":"shot","ok":true,"code":"0x0"}"#)
+    camera.receive(#"{"event":"shot","ok":false,"code":"0x8402"}"#)
     try check(camera.shots == 1 && camera.message.contains("快门没有释放"),
       "each shot the camera takes flashes the shutter key once; a shutter that did not go says so")
     // As the A7R IV reports itself with the Sigma 70 on: DMF, and the magnifier's steps.
     camera.receive(#"{"event":"props","props":[{"name":"FocusMode","code":265,"type":8194,"value":6,"settable":true,"readable":true,"values":[2,4,3,6]},{"name":"Focus_Magnifier_Setting","code":285,"type":8196,"value":20971760,"settable":true,"readable":true,"values":[4294967295,47244640255,257698037759,515396075519]}]}"#)
     sent.removeAll()
     camera.shoot()
-    try check(camera.autofocusMode && sent.last?.contains("\"af\":true") == true,
-      "in DMF the shutter is half-pressed to focus before the full press, as in AF-S: a full press alone takes nothing")
+    try check(sent.last?.contains("\"mf\":true") == true && sent.last?.contains("\"af\"") == false && camera.manualFocus,
+      "the shutter does not focus: in DMF it switches the camera to manual focus first, the lens where it is")
+    camera.receive(#"{"event":"props","props":[{"name":"FocusMode","code":265,"type":8194,"value":6,"settable":true,"readable":true,"values":[2,4,3,6,1]}]}"#)
+    sent.removeAll()
+    camera.autofocus()
+    let fromAF = sent.last?.contains("\"afs\":false") == true && sent.last?.contains("\"hold\":true") == true
+    camera.autofocus()
+    try check(fromAF && sent.last?.contains("\"afs\":true") == true && camera.manualFocus,
+      "AF focuses once and holds it: in an AF mode as it is, from manual focus by way of AF-S, the camera back in manual focus after")
+    camera.receive(#"{"event":"props","props":[{"name":"FocusMode","code":265,"type":8194,"value":6,"settable":true,"readable":true,"values":[2,4,3,6]}]}"#)
     camera.step(3)
     let switched = sent.last?.contains("\"mf\":true") == true && camera.manualFocus
     camera.step(1)
     try check(switched && sent.last?.contains("\"mf\"") == false, "a focus step out of manual focus switches the camera to it first, and only once")
-    camera.receive(#"{"event":"shot","ok":true,"code":"0x0","focus":"failed"}"#)
-    try check(camera.shots == 1 && camera.message.contains("没能合焦"), "a shot the camera could not focus for says so, and is not counted")
     try check(camera.magnifications == [59, 119], "the camera's own magnifications are read from what it offers: \(camera.magnifications)")
     camera.setFocusPoint(CGPoint(x: 0.5, y: 0.5))
     sent.removeAll()
@@ -268,6 +274,25 @@ enum CameraTests {
     try arw(orientation: 1, compression: 32767).write(to: arwURL)
     try check(turned?.width == 6 && turned?.height == 8 && (try SensorRaw.nativeRGB(arwURL)) == nil,
       "turned as the camera was held; a compressed ARW is left to the system's RAW engine")
+    // The last picture's histogram from the sensor's own values: how near full each channel came
+    // (red 1000, green 2000 and 2002, blue 4000 above black, of 15871 to white), and what it clipped.
+    var bright = arw(orientation: 1)
+    bright.replaceSubrange(184..<186, with: [0xFF, 0x3F])  // the first red photosite at white
+    try bright.write(to: arwURL)
+    let span = 16383.0 - 512
+    let counted = Histogram.sensor(arwURL)
+    try check(counted.map { $0.linear && abs($0.top.g - 2002 / span) < 2.0 / 1024 && abs($0.top.b - 4000 / span) < 2.0 / 1024
+      && $0.clipped.r == 0.25 && $0.clipped.g == 0 && $0.clipped.b == 0 && $0.counts[0].reduce(0, +) == 4 } == true,
+      "a RAW's histogram is the sensor's own: green reaches \(counted.map { String(format: "%.3f", $0.top.g) } ?? "-") of full, the red site at white counts as clipped")
+    let half = CGContext(data: nil, width: 40, height: 20, bitsPerComponent: 8, bytesPerRow: 0, space: ImagePipeline.shared.outputSpace,
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    half.setFillColor(red: 1, green: 0, blue: 0, alpha: 1)
+    half.fill(CGRect(x: 0, y: 0, width: 20, height: 20))
+    half.setFillColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 1)
+    half.fill(CGRect(x: 20, y: 0, width: 20, height: 20))
+    let shown = Histogram.picture(half.makeImage()!)
+    try check(abs(shown.clipped.r - 0.5) < 0.01 && shown.clipped.g == 0 && abs(shown.top.g - 0.5) < 0.01 && !shown.linear,
+      "a picture's histogram: half of it at full red counts half the red as clipped, grey sits at the middle")
 
     // The bundled process starts the SDK, its libraries found where the app keeps them.
     let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/EpsonCameraHelper")

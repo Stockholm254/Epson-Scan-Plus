@@ -193,7 +193,11 @@ final class CameraController: ObservableObject {
   @Published private(set) var phase: Phase
   @Published private(set) var model = ""
   @Published private(set) var message = ""
-  @Published private(set) var live: CGImage?
+  @Published private(set) var live: CGImage? {
+    didSet { liveHistogram = live.map(Histogram.picture) }
+  }
+  /// The histogram of the live frame, as the camera rendered it.
+  @Published private(set) var liveHistogram: Histogram?
   @Published private(set) var liveOn = false
   @Published private(set) var frames = 0
   /// Sharpness in the focus box of the last live frame.
@@ -314,9 +318,16 @@ final class CameraController: ObservableObject {
       }
     }
   }
+  /// Focuses once at the focus point and holds it: from manual focus by way of AF-S, and the
+  /// camera left in manual focus after, so the shutter takes the picture where it focused.
   func autofocus() {
     focusResult = nil
-    send(["cmd": "af"])
+    var command: [String: Any] = ["cmd": "af", "afs": !autofocusMode, "hold": true]
+    if magnification > 0 { command["magnify"] = magnifierValue }
+    if let mode = properties["FocusMode"] {
+      properties["FocusMode"] = CameraProperty(name: mode.name, value: 1, values: mode.values, settable: mode.settable, type: mode.type)
+    }
+    send(command)
   }
   /// A focus step, nearer (negative) or farther: in manual focus only, which the camera is switched
   /// to first when it is not; until its settings come back it is taken to be so.
@@ -340,7 +351,8 @@ final class CameraController: ObservableObject {
     if magnification > 0 { set("Focus_Magnifier_Setting", magnifierValue) }
   }
   /// The shutter, once the last picture is in: the camera takes no new one while it writes and
-  /// sends the last, and says nothing.
+  /// sends the last, and says nothing. It does not focus, which is AF's: in an autofocus mode the
+  /// camera is switched to manual focus first, the lens left where it is.
   func shoot() {
     guard !awaitingPicture else {
       message = "上一张还在写入和传输，到了再拍"
@@ -350,13 +362,19 @@ final class CameraController: ObservableObject {
     receivedAtPress = received
     presses += 1
     let press = presses
-    send(["cmd": "shoot", "af": autofocusMode])
+    var command: [String: Any] = ["cmd": "shoot", "mf": autofocusMode]
+    if autofocusMode, let mode = properties["FocusMode"] {
+      if magnification > 0 { command["magnify"] = magnifierValue }
+      properties["FocusMode"] = CameraProperty(name: mode.name, value: 1, values: mode.values, settable: mode.settable, type: mode.type)
+      message = "快门只拍不对焦：已切到手动对焦，镜头停在原处；要对焦请按 AF"
+    }
+    send(command)
     // A press that brings no picture says so, rather than nothing; the shutter is free again then.
     DispatchQueue.main.asyncAfter(deadline: .now() + Self.pictureWait) { [weak self] in
       guard let self, self.presses == press, self.awaitingPicture, self.received == self.receivedAtPress else { return }
       self.awaitingPicture = false
       if self.connected {
-        self.message = "按了快门，但 \(Int(Self.pictureWait)) 秒内没有收到照片：相机可能没有拍（AF 模式下没合焦），或只存进了存储卡。请把「复制诊断信息」发给我"
+        self.message = "按了快门，但 \(Int(Self.pictureWait)) 秒内没有收到照片：相机可能没有拍，或只存进了存储卡。请把「复制诊断信息」发给我"
       }
     }
   }
@@ -537,15 +555,10 @@ final class CameraController: ObservableObject {
     case "af":
       let result = event["result"] as? String ?? ""
       focusResult = result
-      message = result == "focused" ? "已合焦" : result == "failed" ? "相机没能合焦" : "等待合焦超时"
+      message = (result == "focused" ? "已合焦" : result == "failed" ? "相机没能合焦" : "等待合焦超时") + "，已切回手动对焦，快门不会再对焦"
     case "shot":
-      let focus = event["focus"] as? String ?? ""
       if event["ok"] as? Bool == false {
         message = "快门没有释放（\(event["code"] as? String ?? "")）"
-        awaitingPicture = false
-      } else if focus == "failed" || focus == "timeout" {
-        message = "相机没能合焦，快门可能没有释放：先点画面上的对焦点、AF，或切到 MF 手动对焦"
-        // Unless its picture came after all.
         awaitingPicture = false
       } else {
         shots += 1

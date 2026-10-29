@@ -79,14 +79,18 @@ enum CameraSimulationTests {
     try check(heldBack && slow.presses == 1 && slow.arrived.count == 1 && !b.awaitingPicture,
       "a picture still being written and sent holds the shutter until it arrives, and a press meanwhile is not sent")
 
-    // Focus first: a half-press that cannot focus takes no picture, and says so.
+    // The shutter does not focus, AF does: where the camera cannot focus, AF says so and leaves it
+    // in manual focus, and the shutter then takes the picture there.
     let blind = connect("blind", "af=fail,early=200")
     let c = blind.camera
-    c.shoot()
+    c.autofocus()
     until(8) { c.message.contains("没能合焦") }
     until(2) { false }
-    try check(c.message.contains("没能合焦") && !c.awaitingPicture && blind.arrived.isEmpty && c.shots == 0,
-      "in DMF a half-press that does not focus takes nothing: the app says so and frees the shutter")
+    let afSaid = c.message.contains("没能合焦") && c.manualFocus
+    c.shoot()
+    until(8) { blind.arrived.count == 1 && !c.awaitingPicture }
+    try check(afSaid && blind.arrived.count == 1 && c.shots == 1 && c.manualFocus,
+      "AF says when the camera cannot focus and leaves it in manual focus; the shutter, which does not focus, still takes the picture")
 
     // A focus step in DMF: switched to manual focus first, the magnifier the switch ends put back.
     let manual = connect("manual", "early=200")
@@ -118,6 +122,9 @@ enum CameraSimulationTests {
     until(6) { watched.camera.frames >= 3 }
     try check(watched.camera.liveOn && watched.camera.frames >= 3 && watched.camera.live?.width == 64,
       "live view comes as pictures through the process: \(watched.camera.frames) frames")
+    let lh = watched.camera.liveHistogram
+    try check(lh.map { abs($0.top.r - 0.8) < 0.05 && abs($0.top.b - 0.3) < 0.05 && $0.clipped.values.allSatisfy { $0 == 0 } && !$0.linear } == true,
+      "each live frame comes with its histogram: brightest red \(lh.map { String(format: "%.2f", $0.top.r) } ?? "-"), nothing clipped")
 
     // No camera.
     let none = folder.appendingPathComponent("camera-simulated-none", isDirectory: true)
