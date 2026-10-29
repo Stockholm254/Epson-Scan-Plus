@@ -12,6 +12,10 @@ final class AppModel: ObservableObject {
   /// The frames' positives, as the filmstrip shows them; the library keeps a small copy of each.
   @Published var thumbnails = [UUID: CGImage]() {
     didSet {
+      // On the light table the curves' histograms are the selected positive's, as it comes.
+      if !singleView, let picture = selected.flatMap({ thumbnails[$0.id] }), picture !== selected.flatMap({ oldValue[$0.id] }) {
+        (histogram, channelHistograms) = Self.histograms(picture)
+      }
       guard !thumbnails.isEmpty, !readOnly, let folder = sessionURL else { return }
       let images = thumbnails
       DispatchQueue.global(qos: .utility).async { RollLibrary.storePositives(images, folder: folder) }
@@ -179,7 +183,15 @@ final class AppModel: ObservableObject {
   /// holder stands upright; turned the way most frames are turned to stand up, and clockwise when
   /// none are: as film lies in the V850's holder, a frame shot across then stands upright (every
   /// frame turned in this computer's projects so far was turned clockwise).
+  /// A picture a file of its own lies on the table turned and mirrored as its frame is.
+  private var lonePicture: FilmFrame? {
+    guard !singleView, scanner.previewSoFar == nil, let f = selected, let path = f.sourcePath,
+      frames.filter({ $0.sourcePath == path }).count == 1
+    else { return nil }
+    return f
+  }
   var contactTurn: Int {
+    if let f = lonePicture { return ((f.adjustments.rotation % 4) + 4) % 4 }
     let picture = scanner.previewSoFar ?? displayed
     guard !singleView, preferences.contactLandscape, let d = picture, d.height > d.width else { return 0 }
     // A preview being read is the next roll's, whose frames are not known yet: clockwise, as a new
@@ -190,6 +202,7 @@ final class AppModel: ObservableObject {
   }
   /// The light table shows the film mirrored when most frames are, as the strips would lie flipped.
   var contactMirrored: Bool {
+    if let f = lonePicture { return f.adjustments.flipHorizontal == true }
     guard scanner.previewSoFar == nil else { return false }
     let frames = contactFrames
     return !singleView && frames.filter { $0.adjustments.flipHorizontal == true }.count * 2 > frames.count
@@ -1231,14 +1244,72 @@ final class AppModel: ObservableObject {
     return [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", shown, profile.id, settings]
       .joined(separator: "|")
   }
+  /// How far the picture's render has got, while it runs: the share done and the step under way.
+  @Published private(set) var renderStep: (done: Double, label: String)?
+  /// From the render queue, for the render still wanted.
+  private func step(_ done: Double, _ label: String, _ token: Int) {
+    DispatchQueue.main.async {
+      guard self.revision == token, self.rendering else { return }
+      self.renderStep = (done, label)
+    }
+  }
+  /// A picture of the roll's own file, as the light table shows it, kept for the next time; only
+  /// on the render queue.
+  private var tableFile: (path: String, image: CGImage)?
+  private func tablePicture(_ path: String) -> CGImage? {
+    if tableFile?.path != path {
+      tableFile = (try? ImagePipeline.shared.load(URL(fileURLWithPath: path), maxDimension: 2200)).map { (path, $0) }
+    }
+    return tableFile?.image
+  }
+  /// The luminance and channel histograms of a positive, 64 bins each, each scaled to its peak.
+  static func histograms(_ image: CGImage) -> ([Double], [[Double]]) {
+    let r = ImagePipeline.shared.raster(image, maxDimension: 250)
+    var hist = [Double](repeating: 0, count: 64)
+    var channels = [[Double]](repeating: [Double](repeating: 0, count: 64), count: 3)
+    for y in 0..<r.height {
+      for x in 0..<r.width {
+        let c = r.pixel(x, y)
+        let l = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+        hist[min(63, max(0, Int(l * 63)))] += 1
+        for (i, v) in c.values.enumerated() { channels[i][min(63, max(0, Int(v * 63)))] += 1 }
+      }
+    }
+    let maxBin = hist.max() ?? 1, maxChannel = channels.joined().max() ?? 1
+    return (hist.map { $0 / max(1, maxBin) }, channels.map { $0.map { $0 / max(1, maxChannel) } })
+  }
   func refresh() {
     revision += 1
     let token = revision
     renderWork?.cancel()
+    renderStep = nil
     guard singleView, let frame = selected else {
       canvasRegion = nil
       samplingInput = nil
       toneAnalysis = nil
+      // The curves' histograms, from the selected frame's positive as the filmstrip has it.
+      if let picture = selected.flatMap({ thumbnails[$0.id] }) { (histogram, channelHistograms) = Self.histograms(picture) }
+      // A picture a file of its own (a camera's, an import) lies on the table by itself, the one
+      // selected, not the roll's first.
+      if let picked = selected, let path = picked.sourcePath, path != overviewURL?.path {
+        let onPicture = frames.filter { $0.sourcePath == path }, positive = contactPositive, p = profile
+        rendering = true
+        let work = DispatchWorkItem { [weak self] in
+          guard let self else { return }
+          self.step(0.1, "读取照片", token)
+          let picture = self.tablePicture(path)
+          if positive { self.step(0.6, "冲印正片", token) }
+          let shown = positive ? picture.flatMap { ImagePipeline.shared.contactPrint($0, frames: onPicture, profile: p) ?? $0 } : picture
+          DispatchQueue.main.async {
+            guard self.revision == token else { return }
+            if let shown { self.displayed = shown }
+            self.rendering = false
+          }
+        }
+        renderWork = work
+        renderQueue.asyncAfter(deadline: .now() + 0.07, execute: work)
+        return
+      }
       // Frames that lie on the displayed overview; imports from other files are not on it.
       let onOverview = frames.filter { $0.sourcePath == nil || $0.sourcePath == overviewURL?.path }
       guard contactPositive, let overview, !onOverview.isEmpty else {
@@ -1251,6 +1322,7 @@ final class AppModel: ObservableObject {
       let p = profile
       rendering = true
       let work = DispatchWorkItem { [weak self] in
+        self?.step(0.3, "冲印接触表", token)
         let print = ImagePipeline.shared.contactPrint(overview, frames: onOverview, profile: p)
         DispatchQueue.main.async {
           guard let self, self.revision == token else { return }
@@ -1272,9 +1344,12 @@ final class AppModel: ObservableObject {
     let work = DispatchWorkItem { [weak self] in
       guard let self else { return }
       do {
+        self.step(0.05, frame.sourcePath != nil || Self.readsScan(frame) ? "读取原图" : "读取预览", token)
         let cropped = try self.source(for: frame)
+        self.step(0.4, "分析片基、白平衡和色阶", token)
         let analysis = ImagePipeline.shared.analyze(
           cropped, settings: frame.adjustments, profile: p)
+        self.step(0.6, negative ? "显示负片" : "冲印正片", token)
         let context = edit ? try self.contextSource(for: frame) : nil
         let input = context?.image ?? cropped
         // The kernel follows the size the source was loaded at, as in source(for:) and contextSource(for:).
@@ -1285,21 +1360,8 @@ final class AppModel: ObservableObject {
             input, settings: frame.adjustments, profile: p, analysis: analysis, negative: negative,
             sharpener: sharpener)
         else { throw DeskError.message("无法生成预览") }
-        let r = ImagePipeline.shared.raster(output, maxDimension: 250)
-        var hist = [Double](repeating: 0, count: 64)
-        var channels = [[Double]](repeating: [Double](repeating: 0, count: 64), count: 3)
-        for y in 0..<r.height {
-          for x in 0..<r.width {
-            let c = r.pixel(x, y)
-            let l = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
-            hist[min(63, Int(l * 63))] += 1
-            for (i, v) in c.values.enumerated() { channels[i][min(63, max(0, Int(v * 63)))] += 1 }
-          }
-        }
-        let maxBin = hist.max() ?? 1
-        hist = hist.map { $0 / max(1, maxBin) }
-        let maxChannel = channels.joined().max() ?? 1
-        channels = channels.map { $0.map { $0 / max(1, maxChannel) } }
+        self.step(0.9, "直方图", token)
+        let (hist, channels) = Self.histograms(output)
         var pixels = CGSize(width: input.width, height: input.height)
         if frame.hasFullResolution, let path = frame.scanPath ?? frame.sourcePath {
           let info = ImagePipeline.shared.info(URL(fileURLWithPath: path))

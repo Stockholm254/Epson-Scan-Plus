@@ -181,7 +181,8 @@ struct CameraStage: View {
         }
         if liquid { drop(shifting) } else { shifting }
         Spacer()
-        ShutterKey(enabled: camera.connected, shots: camera.shots) { camera.shoot() }
+        ShutterKey(enabled: camera.connected && !camera.awaitingPicture, shots: camera.shots) { camera.shoot() }
+          .help(camera.awaitingPicture ? "上一张还在写入和传输，到了再拍" : "拍摄（空格）")
           .overlay(alignment: .topTrailing) {
             if liquid, let toast = m.captureToast {
               DropToast(text: toast).id(toast).transition(.scale(scale: 0.3, anchor: .bottomTrailing).combined(with: .opacity))

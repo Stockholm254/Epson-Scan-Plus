@@ -453,10 +453,11 @@ final class ImagePipeline {
     var ci: CIImage
     if negative {
       ci = CIImage(cgImage: image, options: [.colorSpace: NSNull()])
-      // With a film base picked, each channel divided by it: the base shows neutral grey at its own
-      // brightness, and what is left is what the layers made, which also shows whether the pick
-      // was on the base. A power-law encoding keeps neutral neutral, so no decoding is needed.
-      if settings.base != nil, let base = analysis?.base, base.values.allSatisfy({ $0 > 1e-4 }) {
+      // Each channel divided by the film base, picked or estimated: the base shows neutral grey at
+      // its own brightness, neither the mask's orange nor a raw sensor's green, and what is left is
+      // what the layers made, which also shows whether a pick was on the base. A power-law encoding
+      // keeps neutral neutral, so no decoding is needed.
+      if let base = analysis?.base, base.values.allSatisfy({ $0 > 1e-4 }) {
         let mean = (base.r + base.g + base.b) / 3
         ci = ci.applyingFilter("CIColorMatrix", parameters: [
           "inputRVector": CIVector(x: mean / base.r, y: 0, z: 0, w: 0),

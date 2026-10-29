@@ -202,9 +202,6 @@ extension ContentView {
 
   var filmTab: some View {
     VStack(alignment: .leading, spacing: 18) {
-      // First, so whether an assistant may work on the conversion is seen at once.
-      assistantPanel
-      Divider()
       sectionTitle("胶片", symbol: "film")
       TextField("输入胶片类型", text: $m.filmName).textFieldStyle(.roundedBorder).onSubmit { m.matchFilm() }
       HStack {

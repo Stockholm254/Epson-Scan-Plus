@@ -244,6 +244,9 @@ final class CameraController: ObservableObject {
   var manualFocus: Bool { properties["FocusMode"]?.value == 1 }
   /// Pictures received since connecting, to tell a shot that brought none.
   private var received = 0
+  /// A shot taken whose picture has not come yet: the camera takes no new one while it writes and
+  /// sends the last (an uncompressed RAW is 120 MB), and says nothing, so the shutter waits too.
+  @Published private(set) var awaitingPicture = false
   /// The camera's own focus magnifications, in tenths (59 is 5.9×), as it offers them: its live
   /// view then shows that part of the sensor pixel for pixel, where the app's zoom only enlarges
   /// the small live picture. None when the camera does not say.
@@ -444,6 +447,15 @@ final class CameraController: ObservableObject {
       liveOn = false
       live = nil
       message = "已断开"
+    case "warning":
+      // The lens refused a focus step (0x60003, an invalid operation, on NearFar): the camera is not
+      // in manual focus after all, so the next step switches it first.
+      if event["code"] as? String == "0x60003", (event["params"] as? [Int])?.contains(287) == true, let mode = properties["FocusMode"] {
+        if mode.value == 1 {
+          properties["FocusMode"] = CameraProperty(name: mode.name, value: 0, values: mode.values, settable: mode.settable, type: mode.type)
+        }
+        message = "相机没有接受对焦步进：它还不在手动对焦，再按一次会先切到 MF（镜头上的开关要在 AF）"
+      }
     case "error":
       let stage = event["stage"] as? String ?? ""
       message = (event["message"] as? String ?? "相机出错") + ((event["code"] as? String).map { $0 == "0x0" ? "" : "（\($0)）" } ?? "")
@@ -503,15 +515,19 @@ final class CameraController: ObservableObject {
         message = "相机没能合焦，快门可能没有释放：先点画面上的对焦点、AF，或切到 MF 手动对焦"
       } else {
         shots += 1
-        // A shot that brings no picture says so, rather than nothing.
+        awaitingPicture = true
+        // A shot that brings no picture says so, rather than nothing; the shutter is free again then.
         let before = received
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
           guard let self, self.connected, self.received == before else { return }
+          self.awaitingPicture = false
           self.message = "按了快门，但 10 秒内没有收到照片：相机可能没有拍（AF 模式下没合焦），或只存进了存储卡。请把「复制诊断信息」发给我"
         }
       }
     case "downloaded":
       received += 1
+      awaitingPicture = false
+      if let ms = event["afterShotMs"] as? Int { log.append("照片在按下快门 \(ms) ms 后到达") }
       if let path = event["path"] as? String, !path.isEmpty { onCapture?(URL(fileURLWithPath: path)) }
     default: break
     }

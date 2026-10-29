@@ -1014,8 +1014,10 @@ final class FilmCanvasView: NSView {
         (model?.zoom ?? 1) * exp(-event.scrollingDeltaY * 0.01),
         anchor: convert(event.locationInWindow, from: nil))
     } else if (model?.zoom ?? 1) > 1 {
-      pan.x -= event.scrollingDeltaX
-      pan.y -= event.scrollingDeltaY
+      // The picture follows the fingers, as a scroll view's content does with the system's own
+      // scrolling direction.
+      pan.x += event.scrollingDeltaX
+      pan.y += event.scrollingDeltaY
       clampPan()
       refreshCursorArea()
     }

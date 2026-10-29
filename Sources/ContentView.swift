@@ -136,6 +136,9 @@ struct ContentView: View {
         }
       }
     }.buttonStyle(HardwareKeyStyle()).controlSize(.regular).padding(.horizontal, 18).padding(.vertical, 11)
+      // The assistant in the middle of the bar, whatever the module: whether it may work on the
+      // conversion, seen at once, its settings a click away.
+      .overlay { AssistantKey(m: m, panel: assistantPanel) }
       .environment(\.glassKeys, true).environment(\.glassNamespace, toolbarGlass)
       .animation(Liquid.available ? Liquid.flow : nil, value: m.page)
       .animation(Liquid.available ? Liquid.flow : nil, value: m.captureSource)
@@ -293,7 +296,7 @@ struct ContentView: View {
   }
   /// What floats over the picture: the render in progress, the frame's resolution, the tool's hint.
   @ViewBuilder var canvasOverlays: some View {
-      if m.rendering { ProgressView().controlSize(.small).padding(14) }
+      if m.rendering { RenderProgress(step: m.renderStep).padding(14) }
       if m.singleView && !m.rendering {
         VStack(alignment: .trailing, spacing: 6) {
           if let frame = m.selected, !frame.hasFullResolution {
@@ -753,5 +756,49 @@ struct ContentView: View {
           get: { m.settings[keyPath: key] }, set: { v in m.change(title) { $0[keyPath: key] = v } }),
         range: range, detent: Adjustments()[keyPath: key])
     }
+  }
+}
+
+/// The picture being made: a bar for the steps done and the one under way, named; a turning
+/// wheel until the first step says where it is.
+struct RenderProgress: View {
+  let step: (done: Double, label: String)?
+  var body: some View {
+    VStack(alignment: .trailing, spacing: 5) {
+      if let step {
+        ProgressView(value: step.done).progressViewStyle(.linear).tint(Hardware.amber).frame(width: 170)
+          .animation(.easeOut(duration: 0.25), value: step.done)
+        Text(step.label).font(.system(size: 10)).foregroundStyle(Color(white: 0.85))
+      } else {
+        ProgressView().controlSize(.small)
+      }
+    }
+    .padding(.horizontal, 10).padding(.vertical, 7)
+    .floatingPlate(RoundedRectangle(cornerRadius: 7), text: Color(white: 0.9), opacity: 0.6)
+    .allowsHitTesting(false)
+    .accessibilityElement().accessibilityLabel("正在生成画面").accessibilityValue(step?.label ?? "")
+  }
+}
+
+/// The AI assistant's key: a lamp, green while one is connected, amber while one may connect,
+/// dark when it may not, and its settings in a popover.
+struct AssistantKey<Panel: View>: View {
+  @ObservedObject var m: AppModel
+  let panel: Panel
+  @State private var open = false
+  var body: some View {
+    let on = m.preferences.mcpEnabled, connected = m.mcpStatus.hasPrefix("已连接")
+    Button {
+      open.toggle()
+    } label: {
+      HStack(spacing: 6) {
+        StatusLED(lamp: connected ? .ready : .busy, size: 7).opacity(on ? 1 : 0.25)
+        Text("AI 助手").font(.system(size: 12, weight: .medium))
+        Text(connected ? "已连接" : on ? "等待连接" : "关闭").font(.system(size: 10)).foregroundStyle(.secondary)
+      }
+    }
+    .help(m.mcpStatus)
+    .popover(isPresented: $open, arrowEdge: .bottom) { panel.padding(16).frame(width: 320) }
+    .accessibilityLabel("AI 助手").accessibilityValue(m.mcpStatus)
   }
 }

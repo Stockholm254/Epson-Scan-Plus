@@ -56,6 +56,8 @@ static std::string hex(uint64_t v) {
   snprintf(b, sizeof b, "0x%llx", (unsigned long long)v);
   return b;
 }
+/// When the shutter last went down.
+static std::atomic<std::chrono::steady_clock::time_point> shotAt{std::chrono::steady_clock::now()};
 static void error(const std::string& stage, uint64_t code, const std::string& message) {
   emit("{\"event\":\"error\",\"stage\":" + quote(stage) + ",\"code\":" + quote(hex(code)) + ",\"message\":" + quote(message) + "}");
 }
@@ -293,7 +295,10 @@ class Callback : public sdk::IDeviceCallback {
     if (!list.empty()) emit("{\"event\":\"changed\",\"names\":[" + list + "]}");
   }
   void OnCompleteDownload(CrChar* filename, CrInt32u type) override {
-    emit("{\"event\":\"downloaded\",\"path\":" + quote(filename ? filename : "") + ",\"type\":" + std::to_string(type) + "}");
+    // How long after the shutter it came, for the diagnostics.
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - shotAt.load()).count();
+    emit("{\"event\":\"downloaded\",\"path\":" + quote(filename ? filename : "") + ",\"type\":" + std::to_string(type)
+      + ",\"afterShotMs\":" + std::to_string(ms) + "}");
   }
   void OnNotifyPostViewImage(CrChar* filename, CrInt32u size) override {
     emit("{\"event\":\"postview\",\"path\":" + quote(filename ? filename : "") + "}");
@@ -477,6 +482,9 @@ static void shoot(const Message& m) {
       std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
   }
+  // A half-press left held (an AF a moment ago) is let go first: the press starts from rest.
+  releaseS1();
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
   std::string focus = "skipped";
   sdk::CrError half = 0;
   if (m.on("af")) {
@@ -485,8 +493,10 @@ static void shoot(const Message& m) {
     half = writeProp(*s1, sdk::CrLockIndicator_Locked);
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
   }
+  shotAt = std::chrono::steady_clock::now();
   sdk::CrError err = sdk::SendCommand(handle, sdk::CrCommandId_Release, sdk::CrCommandParam_Down);
-  std::this_thread::sleep_for(std::chrono::milliseconds(35));
+  // Held about as long as a finger holds it; the sample's 35 ms was sometimes not taken.
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
   sdk::CrError up = sdk::SendCommand(handle, sdk::CrCommandId_Release, sdk::CrCommandParam_Up);
   if (!err) err = up;
   std::this_thread::sleep_for(std::chrono::milliseconds(1000));
