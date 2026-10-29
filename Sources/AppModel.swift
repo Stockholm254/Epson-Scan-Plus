@@ -49,7 +49,7 @@ final class AppModel: ObservableObject {
     didSet { canvasFocusRevision += 0 }
   }
   /// The files of a pixel-shift shot still to come, and the folder they go in.
-  var pendingShift = [URL]()
+  @Published var pendingShift = [URL]()
   /// The camera's last picture as it arrived, RAW or JPEG, for checking focus.
   @Published var lastCapture: URL?
   /// A note floating up over the live view for a moment: a picture filed, a group complete.

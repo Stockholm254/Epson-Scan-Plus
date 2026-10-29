@@ -42,11 +42,15 @@ struct ShutterKey: View {
           .frame(width: 46, height: 46).scaleEffect(1 + 0.35 * (1 - flash))
       }
       .frame(width: 50, height: 50)
-      .background {
-        if Hardware.glass {
-          SystemGlassBackground(capsule: true, radius: 25, tint: NSColor(white: 0, alpha: 0.18))
-        } else {
-          Circle().fill(LinearGradient(colors: [Color(white: 0.32), Color(white: 0.13)], startPoint: .top, endPoint: .bottom))
+      // With SwiftUI's glass a drop that gives under the finger, and the notes of pictures filed
+      // rise out of it.
+      .liquid(Circle(), LiquidStyle(tint: .black.opacity(0.18), interactive: true)) { key in
+        key.background {
+          if Hardware.glass {
+            SystemGlassBackground(capsule: true, radius: 25, tint: NSColor(white: 0, alpha: 0.18))
+          } else {
+            Circle().fill(LinearGradient(colors: [Color(white: 0.32), Color(white: 0.13)], startPoint: .top, endPoint: .bottom))
+          }
         }
       }
       .overlay(Circle().stroke(Color.white.opacity(0.22), lineWidth: 0.8))

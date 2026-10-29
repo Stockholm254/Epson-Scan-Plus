@@ -3,9 +3,11 @@ import SwiftUI
 
 /// The module selector: a knurled rotary switch under a glass cap, whose pointer clicks round to
 /// ① 采集, ② 去色罩 or ③ 去漏光, each engraved beside its stop with a lamp over the one it is on.
-/// Click a name to go there, or the knob to turn it on to the next.
+/// Click a name to go there, or the knob to turn it on to the next. With SwiftUI's glass a drop of
+/// amber glass lies under the module it is on and flows along to the next as the dial turns.
 struct ModuleDial: View {
   @Binding var page: AppModel.Page
+  @Namespace private var glass
   /// The pointer's angle at each stop, in degrees from straight up.
   static let angles: [Double] = [-50, 0, 50]
   var body: some View {
@@ -15,28 +17,37 @@ struct ModuleDial: View {
       knob(angle: Self.angles[index])
         .onTapGesture { set(pages[(index + 1) % pages.count]) }
         .help("转到下一个模块（⌥⌘1–3 直接转到）")
-      HStack(spacing: 2) {
-        ForEach(pages, id: \.self) { p in
-          Button {
-            set(p)
-          } label: {
-            VStack(spacing: 3) {
-              Circle().fill(p == page ? Hardware.amber : Color(white: 0.24)).frame(width: 5, height: 5)
-                .shadow(color: p == page ? Hardware.amber.opacity(0.85) : .clear, radius: 3)
-              // Engraved: dark above the letters, a faint light edge below.
-              Text("\(p.number) \(p.rawValue)").font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(p == page ? Hardware.amber : Color(white: 0.6))
-                .shadow(color: .black.opacity(0.75), radius: 0, x: 0, y: -0.6)
-                .shadow(color: .white.opacity(0.07), radius: 0, x: 0, y: 0.6)
-            }.padding(.horizontal, 6).padding(.vertical, 2).contentShape(Rectangle())
-          }.buttonStyle(.plain).help(p.help)
+      LiquidGroup(spacing: 14) {
+        HStack(spacing: 2) {
+          ForEach(pages, id: \.self) { p in
+            Button {
+              set(p)
+            } label: {
+              VStack(spacing: 3) {
+                Circle().fill(p == page ? Hardware.amber : Color(white: 0.24)).frame(width: 5, height: 5)
+                  .shadow(color: p == page ? Hardware.amber.opacity(0.85) : .clear, radius: 3)
+                // Engraved: dark above the letters, a faint light edge below.
+                Text("\(p.number) \(p.rawValue)").font(.system(size: 11, weight: .semibold))
+                  .foregroundStyle(p == page ? Hardware.amber : Color(white: 0.6))
+                  .shadow(color: .black.opacity(0.75), radius: 0, x: 0, y: -0.6)
+                  .shadow(color: .white.opacity(0.07), radius: 0, x: 0, y: 0.6)
+              }.padding(.horizontal, 6).padding(.vertical, 2)
+                .background {
+                  if p == page && Liquid.available {
+                    Color.clear.liquid(Capsule(), LiquidStyle(tint: Hardware.amber.opacity(0.24)), id: "dial", in: glass) { $0 }
+                  }
+                }
+                .contentShape(Rectangle())
+            }.buttonStyle(.plain).help(p.help)
+          }
         }
-      }
+      }.animation(Liquid.flow, value: page)
     }
     .padding(.horizontal, Hardware.glass ? 10 : 0).padding(.vertical, Hardware.glass ? 3 : 0)
     .background {
-      // In the glass look the dial sits in a pane of glass, its lamps shining through.
-      if Hardware.glass { SystemGlassBackground(capsule: true, radius: 20, tint: NSColor(white: 0, alpha: 0.22)) }
+      // In the glass look the dial sits in a pane of glass, its lamps shining through; with
+      // SwiftUI's glass the drop is the glass, on the window.
+      if Hardware.glass && !Liquid.available { SystemGlassBackground(capsule: true, radius: 20, tint: NSColor(white: 0, alpha: 0.22)) }
     }
     .accessibilityElement(children: .ignore)
     .accessibilityLabel("模块")

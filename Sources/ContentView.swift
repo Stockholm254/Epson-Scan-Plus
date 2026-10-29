@@ -7,6 +7,8 @@ private let panelColor = Color(red: 0.135, green: 0.14, blue: 0.145)
 struct ContentView: View {
   @ObservedObject var m: AppModel
   @State var showInfo = false
+  /// Where the toolbar's glass keys are named.
+  @Namespace var toolbarGlass
   /// The window's, which the Edit menu's Undo and Redo use.
   @Environment(\.undoManager) private var undoManager
   var body: some View {
@@ -69,21 +71,27 @@ struct ContentView: View {
         scannerLamp
       }.frame(width: 204, alignment: .leading)
       ModuleDial(page: $m.page)
-      if m.page == .leak {
-        LeakToolbar(lab: m.leak)
-      } else {
-      Button {
-        m.showLibrary = true
-      } label: {
-        Label("库", systemImage: "archivebox")
-      }.help("所有扫描、翻拍和导入的胶卷（⇧⌘L）")
-      if m.page == .capture {
-      Button {
-        m.importImages()
-      } label: {
-        Label("导入", systemImage: "square.and.arrow.down")
-      }.help("导入 TIFF、PNG 或 JPEG，放进库里新的一卷")
-      }
+      // The module's keys, named by place: turning the dial, the glass of each runs into the next
+      // module's key in its place, and comes or goes from its neighbour.
+      LiquidGroup(spacing: 10) {
+        HStack(spacing: 16) {
+          if m.page == .leak {
+            LeakToolbar(lab: m.leak)
+          } else {
+            Button {
+              m.showLibrary = true
+            } label: {
+              Label("库", systemImage: "archivebox")
+            }.help("所有扫描、翻拍和导入的胶卷（⇧⌘L）").toolbarGlass("left-0")
+            if m.page == .capture {
+              Button {
+                m.importImages()
+              } label: {
+                Label("导入", systemImage: "square.and.arrow.down")
+              }.help("导入 TIFF、PNG 或 JPEG，放进库里新的一卷").toolbarGlass("left-1")
+            }
+          }
+        }
       }
       Spacer()
       if m.scanBatch.isActive || m.scanner.busy {
@@ -107,22 +115,30 @@ struct ContentView: View {
           .help("整批进度按张数计算，包含当前这张的扫描进度；不是剩余时间估算")
         Button("取消") { m.cancel() }.disabled(m.scanBatch.phase == .cancelling)
       }
-      if m.page == .leak {
-        LeakExportKey(lab: m.leak)
-      } else if m.page == .capture && m.captureSource == .scanner {
-      Button {
-        m.requestPreview()
-      } label: {
-        Label("预览", systemImage: "viewfinder")
-      }.disabled(!m.scanner.ready || m.isWorking)
-      Button {
-        m.requestScanEnabled()
-      } label: {
-        Label("扫描所选 \(m.enabledCount)", systemImage: "scanner")
-      }.buttonStyle(HardwareKeyStyle(prominent: true)).disabled(
-        !m.scanner.ready || !m.hasScanTargets || m.isWorking)
+      LiquidGroup(spacing: 10) {
+        HStack(spacing: 16) {
+          if m.page == .leak {
+            LeakExportKey(lab: m.leak).toolbarGlass("right-1")
+          } else if m.page == .capture && m.captureSource == .scanner {
+            Button {
+              m.requestPreview()
+            } label: {
+              Label("预览", systemImage: "viewfinder")
+            }.disabled(!m.scanner.ready || m.isWorking).toolbarGlass("right-0")
+            Button {
+              m.requestScanEnabled()
+            } label: {
+              Label("扫描所选 \(m.enabledCount)", systemImage: "scanner")
+            }.buttonStyle(HardwareKeyStyle(prominent: true)).disabled(
+              !m.scanner.ready || !m.hasScanTargets || m.isWorking
+            ).toolbarGlass("right-1")
+          }
+        }
       }
     }.buttonStyle(HardwareKeyStyle()).controlSize(.regular).padding(.horizontal, 18).padding(.vertical, 11)
+      .environment(\.glassKeys, true).environment(\.glassNamespace, toolbarGlass)
+      .animation(Liquid.available ? Liquid.flow : nil, value: m.page)
+      .animation(Liquid.available ? Liquid.flow : nil, value: m.captureSource)
       .background {
         // In the glass look the window's own surface; the keys carry the glass.
         if !Hardware.glass {
@@ -332,6 +348,8 @@ struct ContentView: View {
     let margin: CGFloat = 8, bar: CGFloat = 54
     return ZStack {
       if cameraStage {
+        // The live view runs on, blurred, under the panels' glass.
+        CameraBackdrop(camera: m.camera)
         CameraStage(m: m, camera: m.camera)
           .clipShape(RoundedRectangle(cornerRadius: 12))
           .padding(.leading, m.preferences.leftWidth + 2 * margin + 1).padding(.trailing, m.preferences.rightWidth + 2 * margin + 1)

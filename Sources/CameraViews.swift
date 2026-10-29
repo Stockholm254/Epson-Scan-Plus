@@ -15,39 +15,60 @@ struct CameraStage: View {
   var body: some View {
     HStack(spacing: 0) {
       ZStack {
-        Color(red: 0.06, green: 0.06, blue: 0.065)
+        // In the glass look the picture runs on behind the stage, blurred; here only darkened.
+        (Hardware.glass ? Color.black.opacity(0.4) : Color(red: 0.06, green: 0.06, blue: 0.065))
         GeometryReader { geo in liveView(in: geo.size) }
         VStack(spacing: 0) {
-          HStack(spacing: 10) {
-            ChannelGels(channel: $m.channelView)
-            Picker("放大", selection: $zoom) {
-              Text("1×").tag(1)
-              Text("2×").tag(2)
-              Text("4×").tag(4)
-            }.pickerStyle(.segmented).labelsHidden().frame(width: 120).help("取景放大：按对焦框放大整幅实时取景")
-            Button {
-              magnifier.toggle()
-            } label: {
-              Image(systemName: "magnifyingglass.circle").frame(width: 16)
-            }.buttonStyle(HardwareKeyStyle(latched: magnifier)).controlSize(.small)
-              .help(magnifier ? "收起对焦框上的玻璃放大镜" : "在对焦框上放一个放大 4 倍的玻璃放大镜")
-            Spacer(minLength: 8)
-            if let s = camera.sharpness {
-              Text(String(format: "清晰度 R %.1f  G %.1f  B %.1f", s.r * 1e4, s.g * 1e4, s.b * 1e4)).lcd(10)
-                .help("对焦框里的清晰度（拉普拉斯能量 × 10⁴）：越大越清楚，只在同一画面里前后比较")
-            }
-          }.padding(.horizontal, 10).padding(.vertical, 6).glassPane(radius: 20)
-            .padding(.horizontal, 12).padding(.top, 10)
+          if Liquid.available {
+            LiquidGroup(spacing: 12) { topRow }.padding(.horizontal, 12).padding(.top, 10)
+          } else {
+            topRow.padding(.horizontal, 10).padding(.vertical, 6).glassPane(radius: 20)
+              .padding(.horizontal, 12).padding(.top, 10)
+          }
           Spacer()
-          if let toast = m.captureToast {
+          if !Liquid.available, let toast = m.captureToast {
             GlassToast(text: toast).transition(.move(edge: .bottom).combined(with: .opacity)).padding(.bottom, 8)
           }
-          controls.padding(.horizontal, 12).padding(.vertical, 10).glassPane(radius: 18)
-            .padding(.horizontal, 12).padding(.bottom, 12)
+          if Liquid.available {
+            LiquidGroup(spacing: 14) { controls }.padding(.horizontal, 12).padding(.bottom, 12)
+          } else {
+            controls.padding(.horizontal, 12).padding(.vertical, 10).glassPane(radius: 18)
+              .padding(.horizontal, 12).padding(.bottom, 12)
+          }
         }.animation(.spring(response: 0.35, dampingFraction: 0.8), value: m.captureToast)
       }
       FocusCheck(m: m, camera: camera).frame(width: 276).consolePanel().padding(8)
-    }.background(Color(red: 0.105, green: 0.11, blue: 0.115))
+    }.background(Hardware.glass ? Color.clear : Color(red: 0.105, green: 0.11, blue: 0.115))
+  }
+  /// A group of controls as a drop of glass of its own, over the picture.
+  func drop(_ group: some View) -> some View {
+    group.padding(.horizontal, 10).padding(.vertical, 5)
+      .liquid(Capsule(), LiquidStyle(tint: .black.opacity(0.22))) { $0 }
+  }
+  /// The gels, the zoom and the magnifier, and the sharpness.
+  @ViewBuilder var topRow: some View {
+    HStack(spacing: 10) {
+      ChannelGels(channel: $m.channelView)
+      let viewing = HStack(spacing: 10) {
+        Picker("放大", selection: $zoom) {
+          Text("1×").tag(1)
+          Text("2×").tag(2)
+          Text("4×").tag(4)
+        }.pickerStyle(.segmented).labelsHidden().frame(width: 120).help("取景放大：按对焦框放大整幅实时取景")
+        Button {
+          magnifier.toggle()
+        } label: {
+          Image(systemName: "magnifyingglass.circle").frame(width: 16)
+        }.buttonStyle(HardwareKeyStyle(latched: magnifier)).controlSize(.small)
+          .help(magnifier ? "收起对焦框上的玻璃放大镜" : "在对焦框上放一个放大 4 倍的玻璃放大镜")
+      }
+      if Liquid.available { drop(viewing) } else { viewing }
+      Spacer(minLength: 8)
+      if let s = camera.sharpness {
+        Text(String(format: "清晰度 R %.1f  G %.1f  B %.1f", s.r * 1e4, s.g * 1e4, s.b * 1e4)).lcd(10)
+          .help("对焦框里的清晰度（拉普拉斯能量 × 10⁴）：越大越清楚，只在同一画面里前后比较")
+      }
+    }
   }
   /// The live frame fitted to the stage, under the bars as a picture lies under glass, with the
   /// focus box and the glass bubble over it.
@@ -108,69 +129,158 @@ struct CameraStage: View {
     let k = min((box.width - 24) / max(1, size.width), (box.height - 24) / max(1, size.height))
     return CGSize(width: size.width * k, height: size.height * k)
   }
-  /// Focusing on one row, the shot on the next.
+  /// Focusing on one row, the shot on the next. With SwiftUI's glass each group is a drop of its
+  /// own, AF and 精确对焦 drops that give under the finger, the pixel-shift files counted in beads
+  /// of glass, and each note of a picture filed rising out of the shutter as a drop pinches off.
   var controls: some View {
-    VStack(spacing: 8) {
-    HStack(spacing: 10) {
-      Button {
-        camera.autofocus()
-      } label: {
-        Label("AF", systemImage: "scope").lineLimit(1).fixedSize()
-      }.help("半按快门，在对焦框处自动对焦（相机要在 AF 模式）")
-      HStack(spacing: 3) {
-        ForEach([-7, -3, -1], id: \.self) { s in
-          Button { camera.step(s) } label: { Text(s == -7 ? "«" : s == -3 ? "‹‹" : "‹").frame(width: 16) }
-            .help("对焦往近处走（Near \(-s) 档，要手动对焦模式）")
+    let liquid = Liquid.available
+    return VStack(spacing: 8) {
+      HStack(spacing: 10) {
+        Button {
+          camera.autofocus()
+        } label: {
+          Label("AF", systemImage: "scope").lineLimit(1).fixedSize()
+        }.help("半按快门，在对焦框处自动对焦（相机要在 AF 模式）").environment(\.glassKeys, liquid)
+        let stepping = HStack(spacing: 3) {
+          ForEach([-7, -3, -1], id: \.self) { s in
+            Button { camera.step(s) } label: { Text(s == -7 ? "«" : s == -3 ? "‹‹" : "‹").frame(width: 16) }
+              .help("对焦往近处走（Near \(-s) 档，要手动对焦模式）")
+          }
+          FocusRing(offset: $ring) { camera.step($0) }.frame(width: 120, height: 24)
+          ForEach([1, 3, 7], id: \.self) { s in
+            Button { camera.step(s) } label: { Text(s == 7 ? "»" : s == 3 ? "››" : "›").frame(width: 16) }
+              .help("对焦往远处走（Far \(s) 档，要手动对焦模式）")
+          }
         }
-        FocusRing(offset: $ring) { camera.step($0) }.frame(width: 120, height: 24)
-        ForEach([1, 3, 7], id: \.self) { s in
-          Button { camera.step(s) } label: { Text(s == 7 ? "»" : s == 3 ? "››" : "›").frame(width: 16) }
-            .help("对焦往远处走（Far \(s) 档，要手动对焦模式）")
-        }
+        if liquid { drop(stepping) } else { stepping }
+        Button {
+          camera.refining ? camera.cancelRefine() : camera.refineFocus()
+        } label: {
+          Label(camera.refining ? "停止" : "精确对焦", systemImage: "camera.metering.center.weighted")
+        }.help("切到手动对焦，按对焦框里的颗粒清晰度一步步找最清楚的位置（7、3、1 档逐级）").environment(\.glassKeys, liquid)
+        Spacer(minLength: 0)
       }
-      Button {
-        camera.refining ? camera.cancelRefine() : camera.refineFocus()
-      } label: {
-        Label(camera.refining ? "停止" : "精确对焦", systemImage: "camera.metering.center.weighted")
-      }.help("切到手动对焦，按对焦框里的颗粒清晰度一步步找最清楚的位置（7、3、1 档逐级）")
-      Spacer(minLength: 0)
-    }
-    HStack(spacing: 10) {
-      Picker("像素位移", selection: $m.pixelShiftCount) {
-        Text("单张").tag(1)
-        Text("位移 4").tag(4)
-        Text("位移 16").tag(16)
-      }.pickerStyle(.segmented).labelsHidden().frame(width: 190)
-        .help("像素位移要先在相机上设好；这里只决定几张文件归成一组")
-      Spacer()
-      ShutterKey(enabled: camera.connected, shots: camera.shots) { camera.shoot() }
-    }
+      HStack(spacing: 10) {
+        let shifting = HStack(spacing: 10) {
+          Picker("像素位移", selection: $m.pixelShiftCount) {
+            Text("单张").tag(1)
+            Text("位移 4").tag(4)
+            Text("位移 16").tag(16)
+          }.pickerStyle(.segmented).labelsHidden().frame(width: 190)
+            .help("像素位移要先在相机上设好；这里只决定几张文件归成一组")
+          if m.pixelShiftCount > 1 { ShiftBeads(count: m.pixelShiftCount, got: m.pendingShift.count) }
+        }
+        if liquid { drop(shifting) } else { shifting }
+        Spacer()
+        ShutterKey(enabled: camera.connected, shots: camera.shots) { camera.shoot() }
+          .overlay(alignment: .topTrailing) {
+            if liquid, let toast = m.captureToast {
+              DropToast(text: toast).id(toast).transition(.scale(scale: 0.3, anchor: .bottomTrailing).combined(with: .opacity))
+            }
+          }
+      }
     }.buttonStyle(HardwareKeyStyle()).controlSize(.small).disabled(!camera.connected && camera.phase != .missing)
   }
 }
 
 /// Red, green and blue gels to slide over the picture, panes of tinted glass: one shows that
-/// channel alone, in grey, its gel lit; a second click on it takes it away.
+/// channel alone, in grey, its gel lit; a second click on it takes it away. With SwiftUI's glass
+/// the three run together into one strip, the chosen one pinching off and lifting out of it.
 struct ChannelGels: View {
   @Binding var channel: ChannelView
+  @Namespace private var glass
+  static func tint(_ c: ChannelView) -> Color {
+    c == .r ? Color(red: 0.88, green: 0.26, blue: 0.22) : c == .g ? Color(red: 0.25, green: 0.7, blue: 0.33) : Color(red: 0.25, green: 0.48, blue: 0.9)
+  }
   var body: some View {
-    HStack(spacing: 4) {
-      ForEach([ChannelView.r, .g, .b], id: \.self) { c in
-        let tint: Color = c == .r ? Color(red: 0.88, green: 0.26, blue: 0.22) : c == .g ? Color(red: 0.25, green: 0.7, blue: 0.33) : Color(red: 0.25, green: 0.48, blue: 0.9)
-        let on = channel == c
-        Button {
-          channel = on ? .all : c
-        } label: {
-          Text(c.rawValue).font(.system(size: 11, weight: .bold)).frame(width: 26, height: 20)
-            .tintedGlass(tint, strength: on ? 0.75 : 0.3, radius: 4)
-            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.white.opacity(on ? 0.65 : 0.15), lineWidth: 0.8))
-            .shadow(color: tint.opacity(on ? 0.7 : 0), radius: 5)
-            .foregroundStyle(on ? Color.white : Color(white: 0.85))
-            .offset(y: on ? -2 : 0)
-            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: on)
-        }.buttonStyle(.plain).help(on ? "拿开滤色片，看全彩" : "只看 \(c.rawValue) 通道")
+    Group {
+      if Liquid.available {
+        LiquidGroup(spacing: 6) {
+          HStack(spacing: 1) {
+            ForEach([ChannelView.r, .g, .b], id: \.self) { c in
+              let on = channel == c
+              Button {
+                withAnimation(Liquid.flow) { channel = on ? .all : c }
+              } label: {
+                Text(c.rawValue).font(.system(size: 11, weight: .bold)).frame(width: 28, height: 22)
+                  .foregroundStyle(on ? Color.white : Color(white: 0.88))
+                  .liquid(RoundedRectangle(cornerRadius: 8), LiquidStyle(tint: Self.tint(c).opacity(on ? 0.72 : 0.34), interactive: true), id: c.rawValue, in: glass) { $0 }
+                  .padding(.horizontal, on ? 6 : 0)
+                  .offset(y: on ? -4 : 0)
+              }.buttonStyle(.plain).help(on ? "拿开滤色片，看全彩" : "只看 \(c.rawValue) 通道")
+            }
+          }
+        }
+      } else {
+        HStack(spacing: 4) {
+          ForEach([ChannelView.r, .g, .b], id: \.self) { c in
+            let tint = Self.tint(c)
+            let on = channel == c
+            Button {
+              channel = on ? .all : c
+            } label: {
+              Text(c.rawValue).font(.system(size: 11, weight: .bold)).frame(width: 26, height: 20)
+                .tintedGlass(tint, strength: on ? 0.75 : 0.3, radius: 4)
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.white.opacity(on ? 0.65 : 0.15), lineWidth: 0.8))
+                .shadow(color: tint.opacity(on ? 0.7 : 0), radius: 5)
+                .foregroundStyle(on ? Color.white : Color(white: 0.85))
+                .offset(y: on ? -2 : 0)
+                .animation(.spring(response: 0.25, dampingFraction: 0.7), value: on)
+            }.buttonStyle(.plain).help(on ? "拿开滤色片，看全彩" : "只看 \(c.rawValue) 通道")
+          }
+        }
       }
     }.accessibilityElement(children: .contain).accessibilityLabel("通道")
+  }
+}
+
+/// The live view continued under the glass around the stage.
+struct CameraBackdrop: View {
+  @ObservedObject var camera: CameraController
+  var body: some View { PictureExtension(image: camera.live) }
+}
+
+/// The files of a pixel-shift shot as beads, one lit as each comes in; when the group is complete
+/// they run together into one drop for a moment.
+struct ShiftBeads: View {
+  let count: Int
+  let got: Int
+  @State private var gathered = false
+  var body: some View {
+    let size: CGFloat = count > 8 ? 7 : 10
+    HStack(spacing: gathered ? -size * 0.8 : count > 8 ? 2 : 3) {
+      ForEach(0..<count, id: \.self) { i in
+        let lit = gathered || i < got
+        Color.clear.frame(width: size, height: size)
+          .liquid(Circle(), LiquidStyle(tint: lit ? Hardware.amber.opacity(0.85) : nil)) {
+            $0.overlay(Circle().fill(lit ? Hardware.amber : Color.white.opacity(0.16)))
+          }
+      }
+    }
+    .animation(Liquid.flow, value: got)
+    .onChange(of: got) { old, new in
+      // Back to none from some: the group came in whole.
+      guard new == 0, old > 0 else { return }
+      withAnimation(Liquid.flow) { gathered = true }
+      DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { withAnimation(Liquid.flow) { gathered = false } }
+    }
+    .help("像素位移：已收到 \(got) / \(count) 张")
+    .accessibilityElement().accessibilityLabel("像素位移").accessibilityValue("\(got) / \(count)")
+  }
+}
+
+/// A note of a picture filed, out of the shutter: a drop that grows from the key, still joined
+/// to it, and rises away until it pinches off.
+struct DropToast: View {
+  let text: String
+  @State private var risen = false
+  var body: some View {
+    Text(text).font(.system(size: 12, weight: .medium)).foregroundStyle(Color(white: 0.96)).fixedSize()
+      .padding(.horizontal, 14).padding(.vertical, 7)
+      .liquid(Capsule(), LiquidStyle(tint: .black.opacity(0.3))) { $0.glassPane(radius: 16, darken: 0.35) }
+      .offset(y: risen ? -58 : -18)
+      .allowsHitTesting(false)
+      .onAppear { withAnimation(.spring(response: 0.7, dampingFraction: 0.6).delay(0.08)) { risen = true } }
   }
 }
 

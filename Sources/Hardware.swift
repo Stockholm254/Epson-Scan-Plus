@@ -33,7 +33,9 @@ struct HardwareKeyStyle: ButtonStyle {
 }
 
 /// A key in the glass look: a clear capsule lit from within when pressed, amber while latched, and
-/// amber all over for the one action a panel leads to. It lies on glass, so it is not glass itself.
+/// amber all over for the one action a panel leads to. On a pane of glass it is not glass itself;
+/// with SwiftUI's glass the leading action is a drop of amber glass, and the toolbar's keys, which
+/// lie on the window, glass of their own, both giving under the finger.
 private struct GlassKey<Label: View>: View {
   let label: Label
   let pressed: Bool
@@ -41,19 +43,32 @@ private struct GlassKey<Label: View>: View {
   let prominent: Bool
   @Environment(\.isEnabled) private var enabled
   @Environment(\.controlSize) private var size
+  @Environment(\.glassKeys) private var own
   var body: some View {
     let compact = size == .mini || size == .small
     let shape = Capsule()
-    label
+    let face = label
       .foregroundStyle(prominent ? Color(red: 0.2, green: 0.12, blue: 0.03) : latched ? Hardware.amber : Color(white: 0.92))
       .padding(.horizontal, compact ? 9 : 13).padding(.vertical, compact ? 3 : 5.5)
+    Group {
+      if prominent || own {
+        face.liquid(shape, LiquidStyle(tint: prominent ? Hardware.amber.opacity(0.9) : latched ? Hardware.amber.opacity(0.3) : nil, interactive: true)) {
+          plate($0, shape)
+        }
+      } else {
+        plate(face, shape)
+      }
+    }
+    .scaleEffect(pressed ? 0.97 : 1)
+    .opacity(enabled ? 1 : 0.4)
+    .contentShape(shape)
+  }
+  func plate(_ face: some View, _ shape: Capsule) -> some View {
+    face
       .background(
         shape.fill(prominent ? Hardware.amber.opacity(pressed ? 0.75 : 0.92) : Color.white.opacity(pressed ? 0.2 : latched ? 0.13 : 0.07)))
       .overlay(shape.stroke(latched ? Hardware.amber.opacity(0.55) : Color.white.opacity(prominent ? 0 : 0.16), lineWidth: 0.6))
       .shadow(color: latched ? Hardware.amber.opacity(0.35) : .clear, radius: 4)
-      .scaleEffect(pressed ? 0.97 : 1)
-      .opacity(enabled ? 1 : 0.4)
-      .contentShape(shape)
   }
 }
 
@@ -222,22 +237,16 @@ extension View {
   /// which keeps the text legible by itself; built with an earlier one, the system's glass view
   /// behind light text, a little darkened. Before macOS 26, a dark translucent plate.
   @ViewBuilder func floatingPlate<S: Shape>(_ shape: S, text: Color, opacity: Double) -> some View {
-    #if compiler(>=6.2)
-      if #available(macOS 26.0, *) {
-        glassEffect(.regular, in: shape)
-      } else {
-        foregroundStyle(text).background(.black.opacity(opacity), in: shape)
-      }
-    #else
-      if SystemGlass.viewClass != nil {
-        foregroundStyle(text).background(
+    liquid(shape) { content in
+      if Hardware.glass {
+        content.foregroundStyle(text).background(
           SystemGlassBackground(
             capsule: shape is Capsule || shape is Circle, radius: (shape as? RoundedRectangle)?.cornerSize.width ?? 8,
             tint: NSColor(white: 0, alpha: opacity * 0.45)))
       } else {
-        foregroundStyle(text).background(.black.opacity(opacity), in: shape)
+        content.foregroundStyle(text).background(.black.opacity(opacity), in: shape)
       }
-    #endif
+    }
   }
   /// A readout: amber segment-display text on dark glass, or in the glass look amber figures on a
   /// smoked capsule.

@@ -14,6 +14,8 @@ struct LeakPage: View {
         range: (Preferences.rightWidths.lowerBound + 40)...(Preferences.rightWidths.upperBound + 40), panelOnLeft: false)
       LeakPanel(m: m, lab: lab).frame(width: m.preferences.rightWidth + 40).padding(Hardware.glass ? 8 : 0)
     }
+    // In the glass look the picture runs on, blurred, behind the viewer's surround and the panel.
+    .background { PictureExtension(image: lab.after ?? lab.before) }
     .onAppear {
       if lab.job == nil {
         if let f = m.selected, let origin = m.leakOrigin(f) { lab.open(origin: origin) } else { lab.restoreLast() }
@@ -94,7 +96,7 @@ struct LeakViewer: View {
         Text(lab.notice).font(.system(size: 11)).foregroundStyle(Color(white: 0.82)).fixedSize(horizontal: false, vertical: true)
           .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
       }.padding(.horizontal, 16).padding(.vertical, 10)
-    }.background(Color(red: 0.105, green: 0.11, blue: 0.115))
+    }.background(Color(red: 0.105, green: 0.11, blue: 0.115).opacity(Hardware.glass ? 0.45 : 1))
   }
   func title(_ j: LeakJob) -> String {
     let size = j.meta.map { " · \($0.width) × \($0.height)" } ?? ""
@@ -117,9 +119,10 @@ struct LeakViewer: View {
           }
           // A glass handle on the line: drag it, or anywhere on the picture, to move the line.
           if lab.after != nil && !lab.holdOriginal {
+            // With SwiftUI's glass a tall lens of clear glass, the picture seen through it.
             Image(systemName: "arrow.left.and.right").font(.system(size: 13, weight: .semibold))
-              .frame(width: 38, height: 38)
-              .floatingPlate(Circle(), text: Color(white: 0.95), opacity: 0.6)
+              .frame(width: Liquid.available ? 30 : 38, height: Liquid.available ? 72 : 38)
+              .liquid(Capsule(), LiquidStyle(clear: true)) { $0.floatingPlate(Circle(), text: Color(white: 0.95), opacity: 0.6) }
               .position(x: min(max(w * wipe, 22), w - 22), y: h / 2)
               .allowsHitTesting(false)
           }
@@ -404,27 +407,36 @@ struct LeakToolbar: View {
         lab.chooseFile()
       } label: {
         Label("导入正片", systemImage: "square.and.arrow.down")
-      }.disabled(lab.busy != nil).help("导入已去色罩、反相的正片 TIFF、PNG 或 JPEG")
-      Menu {
-        let jobs = lab.jobs()
-        if jobs.isEmpty { Text("暂无任务记录") }
-        ForEach(jobs.prefix(30)) { j in
-          Button(j.name + (j.hasReference ? " · 已有参考图" : "") + " · " + j.modified.formatted(date: .abbreviated, time: .shortened)) { lab.open(j.id) }
-        }
-        Divider()
-        Button("在 Finder 中显示任务文件夹") {
-          try? FileManager.default.createDirectory(at: lab.root, withIntermediateDirectories: true)
-          NSWorkspace.shared.activateFileViewerSelecting([lab.root])
-        }
-      } label: {
-        Label("历史任务", systemImage: "clock.arrow.circlepath")
-      }.menuStyle(.borderlessButton).fixedSize().disabled(lab.busy != nil)
+      }.disabled(lab.busy != nil).help("导入已去色罩、反相的正片 TIFF、PNG 或 JPEG").toolbarGlass("left-0")
+      // The menu is not a key: with SwiftUI's glass it gets a drop of its own, in the next place.
+      if Liquid.available {
+        history.padding(.horizontal, 12).padding(.vertical, 5)
+          .liquid(Capsule(), LiquidStyle(interactive: true)) { $0 }.toolbarGlass("left-1")
+      } else {
+        history
+      }
       Button {
         lab.showAPI = true
       } label: {
         Label("API 管理", systemImage: "key")
-      }
+      }.toolbarGlass("left-2")
     }
+  }
+  var history: some View {
+    Menu {
+      let jobs = lab.jobs()
+      if jobs.isEmpty { Text("暂无任务记录") }
+      ForEach(jobs.prefix(30)) { j in
+        Button(j.name + (j.hasReference ? " · 已有参考图" : "") + " · " + j.modified.formatted(date: .abbreviated, time: .shortened)) { lab.open(j.id) }
+      }
+      Divider()
+      Button("在 Finder 中显示任务文件夹") {
+        try? FileManager.default.createDirectory(at: lab.root, withIntermediateDirectories: true)
+        NSWorkspace.shared.activateFileViewerSelecting([lab.root])
+      }
+    } label: {
+      Label("历史任务", systemImage: "clock.arrow.circlepath")
+    }.menuStyle(.borderlessButton).fixedSize().disabled(lab.busy != nil)
   }
 }
 

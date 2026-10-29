@@ -225,7 +225,7 @@ bash build.sh
 "../Epson Scan plus.app/Contents/MacOS/EpsonScanPlus" --self-test --test-output /tmp/EpsonScanPlus-tests
 ```
 
-只需 Xcode Command Line Tools，不依赖第三方 Swift 包。翻拍要用 Sony Camera Remote SDK：它不在这个仓库里，受 Sony 的许可约束。把它的头文件放在 `../Sony-CrSDK/include`，`libCr_Core.dylib` 和 `CrAdapter/` 放在 `../Sony-CrSDK/lib`（或者用 `EPSON_SCAN_PLUS_CRSDK` 指定位置），构建时就会编进相机进程，并把 SDK 的库放进 App 的 `Contents/Frameworks`。没有 SDK 时照常构建，只是翻拍面板会提示缺少 SDK。自检、扫描仪实测和命令行导出见[构建与测试](doc/building-and-testing.md)。
+只需 Xcode Command Line Tools，不依赖第三方 Swift 包。用 Xcode（macOS 26 SDK）构建时，在 macOS 26 上还会用到 SwiftUI 的液态玻璃：会流动、会融合、按下会回弹；用 Command Line Tools 构建的是运行时取用的静态玻璃。翻拍要用 Sony Camera Remote SDK：它不在这个仓库里，受 Sony 的许可约束。把它的头文件放在 `../Sony-CrSDK/include`，`libCr_Core.dylib` 和 `CrAdapter/` 放在 `../Sony-CrSDK/lib`（或者用 `EPSON_SCAN_PLUS_CRSDK` 指定位置），构建时就会编进相机进程，并把 SDK 的库放进 App 的 `Contents/Frameworks`。没有 SDK 时照常构建，只是翻拍面板会提示缺少 SDK。自检、扫描仪实测和命令行导出见[构建与测试](doc/building-and-testing.md)。
 
 ## 文档
 
