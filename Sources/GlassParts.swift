@@ -35,11 +35,10 @@ private struct GlassPane: ViewModifier {
   }
 }
 
-/// The shutter release, as a camera's is: a glossy red button, a little domed, in a black collar
-/// with a bright chamfer, sinking under the finger, the whole key in a drop of glass that gives
-/// as it is pressed. A ring of light about the button shows amber while the camera is ready and
-/// blinks red while a picture is written and sent; a ring goes off round it each time the shutter
-/// goes.
+/// The shutter release: a round key of frosted glass with the red of the release glowing through
+/// it, sinking under the finger, the whole key in a drop of glass that gives as it is pressed. A
+/// ring of light at its edge shows amber while the camera is ready and blinks red while a picture
+/// is written and sent; a ring goes off round it each time the shutter goes.
 struct ShutterKey: View {
   let enabled: Bool
   /// A picture still on its way: the key takes no press until it is in.
@@ -76,54 +75,69 @@ struct ShutterPress: ButtonStyle {
   let enabled: Bool, busy: Bool, flash: Double, blink: Bool
   static let size: CGFloat = 66
   func makeBody(configuration: Configuration) -> some View {
-    let pressed = configuration.isPressed && enabled
-    let d = Self.size
+    ShutterFace(pressed: configuration.isPressed && enabled, enabled: enabled, busy: busy, flash: flash, blink: blink)
+      .padding(6)
+      .modifier(ShutterGlass(radius: Self.size / 2 + 6))
+      .contentShape(Circle())
+  }
+}
+
+/// The release as a round key of frosted glass: a red light behind the frost, glowing through it
+/// softly and brighter while pressed, the glass domed (lighter at the top, a soft highlight there,
+/// its rim lit from above) and grained. A ring of light at its edge shows amber while the camera
+/// is ready and blinks red while a picture is written and sent.
+private struct ShutterFace: View {
+  let pressed: Bool, enabled: Bool, busy: Bool, flash: Double, blink: Bool
+  @Environment(\.colorScheme) private var scheme
+  var body: some View {
+    let d = ShutterPress.size, light = scheme == .light
     let ring = busy ? Color(red: 1, green: 0.25, blue: 0.2) : Hardware.amber
     let lit = busy ? (blink ? 1.0 : 0.2) : enabled ? 0.9 : 0
-    return ZStack {
-      Circle().fill(Color(white: 0.06))
-        .overlay(Circle().strokeBorder(LinearGradient(colors: [Color(white: 0.75), Color(white: 0.25)], startPoint: .top, endPoint: .bottom), lineWidth: 1.4))
-        .shadow(color: .black.opacity(0.6), radius: 4, y: 2)
-      Circle().strokeBorder(ring.opacity(lit), lineWidth: 1.6)
-        .frame(width: d * 0.86, height: d * 0.86)
-        .shadow(color: ring.opacity(0.8 * lit), radius: 4)
+    ZStack {
+      // What the frost lies over: the red of the release, or grey while there is no camera.
+      Circle().fill(Color(white: light ? 0.93 : 0.12))
       Circle().fill(RadialGradient(
         colors: enabled
-          ? [Color(red: 1, green: 0.45, blue: 0.38), Color(red: 0.86, green: 0.12, blue: 0.1), Color(red: 0.45, green: 0.03, blue: 0.03)]
-          : [Color(red: 0.5, green: 0.32, blue: 0.3), Color(red: 0.34, green: 0.16, blue: 0.15), Color(red: 0.18, green: 0.07, blue: 0.07)],
-        center: UnitPoint(x: 0.45, y: 0.3), startRadius: 0, endRadius: d * 0.38))
-        .overlay(Ellipse().fill(LinearGradient(colors: [.white.opacity(pressed ? 0.25 : 0.55), .clear], startPoint: .top, endPoint: .bottom))
-          .frame(width: d * 0.36, height: d * 0.15).offset(y: -d * 0.17))
-        .frame(width: d * 0.74, height: d * 0.74)
-        .shadow(color: .black.opacity(pressed ? 0.3 : 0.6), radius: pressed ? 1 : 2.5, y: pressed ? 0.5 : 2)
-        .scaleEffect(pressed ? 0.95 : 1).offset(y: pressed ? 1 : 0)
+          ? [Color(red: 1, green: 0.42, blue: 0.34), Color(red: 0.9, green: 0.14, blue: 0.11), Color(red: 0.62, green: 0.06, blue: 0.05).opacity(0.9)]
+          : [Color(white: 0.7), Color(white: 0.55), Color(white: 0.45)],
+        center: .center, startRadius: 0, endRadius: d * 0.36))
+        .frame(width: d * 0.72, height: d * 0.72)
+        .blur(radius: 2.5)
+        .brightness(pressed ? 0.1 : 0)
+      // The frost: a veil lighter at the top, as a dome catches the light, and its grain.
+      Circle().fill(LinearGradient(
+        colors: [.white.opacity(light ? 0.5 : 0.28), .white.opacity(light ? 0.14 : 0.05)], startPoint: .top, endPoint: .bottom))
+      if let grain = Frost.grain {
+        Image(decorative: grain, scale: 2).resizable(resizingMode: .tile).opacity(0.08).blendMode(.multiply)
+          .clipShape(Circle())
+      }
+      Ellipse().fill(LinearGradient(colors: [.white.opacity(pressed ? 0.3 : 0.6), .clear], startPoint: .top, endPoint: .bottom))
+        .frame(width: d * 0.56, height: d * 0.26).offset(y: -d * 0.22)
+      Circle().strokeBorder(ring.opacity(lit), lineWidth: 2)
+        .shadow(color: ring.opacity(0.8 * lit), radius: 4)
+        .padding(2.5)
+      Circle().strokeBorder(LinearGradient(
+        colors: [.white.opacity(0.95), .white.opacity(0.3), .black.opacity(light ? 0.14 : 0.3)], startPoint: .top, endPoint: .bottom), lineWidth: 1.2)
       Circle().stroke(Color.white.opacity(0.9 * flash), lineWidth: 3)
         .frame(width: d + 8, height: d + 8).scaleEffect(1 + 0.3 * (1 - flash))
     }
     .frame(width: d, height: d)
+    .clipShape(Circle().inset(by: -10))
+    .shadow(color: .black.opacity(pressed ? 0.12 : 0.22), radius: pressed ? 2 : 5, y: pressed ? 1 : 3)
+    .scaleEffect(pressed ? 0.95 : 1)
     .animation(.spring(response: 0.16, dampingFraction: 0.6), value: pressed)
-    .padding(6)
-    .modifier(ShutterGlass(radius: d / 2 + 6))
-    .contentShape(Circle())
   }
 }
 
 /// The drop of glass the release sits in: with SwiftUI's glass one that gives under the finger,
-/// and the notes of pictures filed rise out of it; clear on light glass, smoked on the console.
+/// and the notes of pictures filed rise out of it; frost before.
 private struct ShutterGlass: ViewModifier {
   let radius: CGFloat
   @Environment(\.colorScheme) private var scheme
   func body(content: Content) -> some View {
     let light = scheme == .light
     content.liquid(Circle(), LiquidStyle(tint: light ? .white.opacity(0.2) : .black.opacity(0.18), interactive: true)) { key in
-      key.background {
-        if Hardware.glass {
-          SystemGlassBackground(capsule: true, radius: radius, tint: light ? NSColor(white: 1, alpha: 0.25) : NSColor(white: 0, alpha: 0.18))
-        } else {
-          Circle().fill(LinearGradient(colors: light ? [Color(white: 0.97), Color(white: 0.84)] : [Color(white: 0.24), Color(white: 0.11)], startPoint: .top, endPoint: .bottom))
-            .overlay(Circle().stroke(Color.black.opacity(light ? 0.12 : 0), lineWidth: 0.5))
-        }
-      }
+      key.frost(Circle(), veil: light ? 0.3 : 0.06, glassRadius: radius, capsule: true)
     }
   }
 }
