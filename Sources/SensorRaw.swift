@@ -69,7 +69,8 @@ struct SensorRaw {
     let scale = 65535.0 / 16 / Double(raw.white - raw.black.reduce(0, +) / 4)
     var out = Data(count: w * h * 6)
     data.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
-      let samples = bytes.baseAddress!.advanced(by: raw.offset)
+      // Only read, row by row, while the rows are worked out together.
+      nonisolated(unsafe) let samples = bytes.baseAddress!.advanced(by: raw.offset)
       out.withUnsafeMutableBytes { (target: UnsafeMutableRawBufferPointer) in
         let dst = target.baseAddress!.assumingMemoryBound(to: UInt16.self)
         DispatchQueue.concurrentPerform(iterations: h) { y in

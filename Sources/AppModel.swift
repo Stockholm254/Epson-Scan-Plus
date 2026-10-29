@@ -1173,10 +1173,14 @@ final class AppModel: ObservableObject {
   /// Files read to render from, at a size, kept so that a slider dragged over a frame does not
   /// read its 300 MB TIFF again each step (a quarter of a second, more the first time): the last
   /// few, never a full-resolution one, which the zoom keeps on its own.
+  ///
+  /// At full resolution the file is decoded once into memory: left to be read as it is drawn,
+  /// Core Image reads it again for each tile it renders, and a 60-megapixel frame took 11 s to
+  /// analyse and 11 more to render, against well under a second each decoded.
   private let readLock = NSLock()
   private var read = [(key: String, image: CGImage)]()
   private func load(_ url: URL, maxDimension: Int?) throws -> CGImage {
-    guard let maxDimension else { return try ImagePipeline.shared.load(url, maxDimension: nil) }
+    guard let maxDimension else { return try ImagePipeline.shared.loadDecoded(url) }
     let key = "\(url.path)@\(maxDimension)"
     readLock.lock()
     let kept = read.first { $0.key == key }?.image
@@ -1960,7 +1964,8 @@ final class AppModel: ObservableObject {
     renderQueue.async {
       do {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        for f in items {
+        // Each frame's pictures let go before the next: a 60-megapixel frame holds half a gigabyte.
+        for f in items { try autoreleasepool {
           let image = try self.source(for: f, full: true)
           let sharpener = Sharpening.sharpener(sharpening, frame: f, maxDimension: nil)
           let safeName = String(
@@ -1993,7 +1998,7 @@ final class AppModel: ObservableObject {
           encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
           try encoder.encode(sidecar).write(
             to: url.appendingPathExtension("json"), options: .atomic)
-        }
+        } }
         DispatchQueue.main.async {
           self.endExport()
           self.status = "已导出 \(items.count) 张到 \(directory.lastPathComponent)"
