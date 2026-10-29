@@ -480,20 +480,23 @@ private struct FaderCap: View {
 
 /// 135 film base behind the thumbnails, perforated along both edges.
 struct FilmBase: View {
+  @Environment(\.colorScheme) private var scheme
   var body: some View {
-    Canvas { ctx, size in
+    // The perforations show what lies behind the film: the dark console, or light glass.
+    let hole = scheme == .light ? Color(white: 0.84) : Color(white: 0.085)
+    return Canvas { ctx, size in
       ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Hardware.filmBase))
       ctx.fill(
         Path(CGRect(origin: .zero, size: size)),
         with: .linearGradient(
           Gradient(colors: [.white.opacity(0.07), .clear, .black.opacity(0.12)]),
           startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height)))
-      let hole = CGSize(width: 6, height: 4.5)
-      for y in [3, size.height - 3 - hole.height] {
-        for x in stride(from: 3, to: size.width - hole.width, by: 12) {
+      let perforation = CGSize(width: 6, height: 4.5)
+      for y in [3, size.height - 3 - perforation.height] {
+        for x in stride(from: 3, to: size.width - perforation.width, by: 12) {
           ctx.fill(
-            Path(roundedRect: CGRect(origin: CGPoint(x: x, y: y), size: hole), cornerRadius: 1.2),
-            with: .color(Color(white: 0.085)))
+            Path(roundedRect: CGRect(origin: CGPoint(x: x, y: y), size: perforation), cornerRadius: 1.2),
+            with: .color(hole))
         }
       }
     }

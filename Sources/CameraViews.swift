@@ -18,9 +18,9 @@ struct CameraStage: View {
     HStack(spacing: 0) {
       ZStack {
         // Not continued under the panels as a positive is: a negative's orange mask would colour
-        // the whole window. On light glass the live view itself, frosted past recognition and
-        // mostly grey.
-        if scheme == .light { CopyStandBackdrop(camera: camera) } else { Color(red: 0.06, green: 0.06, blue: 0.065) }
+        // the whole window. On light glass the window's ground shows, the live view itself
+        // frosted past recognition and mostly grey.
+        if scheme == .light { Color.clear } else { Color(red: 0.06, green: 0.06, blue: 0.065) }
         GeometryReader { geo in liveView(in: geo.size) }
         VStack(spacing: 0) {
           if Liquid.available {
@@ -48,7 +48,7 @@ struct CameraStage: View {
         }.animation(.spring(response: 0.35, dampingFraction: 0.8), value: m.captureToast)
       }
       FocusCheck(m: m, camera: camera).frame(width: 276).consolePanel().padding(8)
-    }.background { if scheme == .light { CopyStandBackdrop(camera: camera) } else { Color(red: 0.105, green: 0.11, blue: 0.115) } }
+    }.background { if scheme != .light { Color(red: 0.105, green: 0.11, blue: 0.115) } }
   }
   /// A group of controls as a drop of glass of its own, over the picture.
   func drop(_ group: some View) -> some View {

@@ -5,10 +5,11 @@ private let accent = Color(red: 0.91, green: 0.68, blue: 0.37)
 private let panelColor = Color(red: 0.135, green: 0.14, blue: 0.145)
 
 extension View {
-  /// The copy stand in light glass: the panels and the live view in the light look, on the live
-  /// view frosted, while the rest of the window keeps the dark console.
+  /// The window on the copy stand in light glass, on the live view frosted; every other page the
+  /// dark console.
   func copyStandGlass(_ on: Bool, camera: CameraController) -> some View {
-    environment(\.colorScheme, on ? .light : .dark).background { if on { CopyStandBackdrop(camera: camera) } }
+    background { if on { CopyStandBackdrop(camera: camera) } else { panelColor } }
+      .preferredColorScheme(on ? .light : .dark)
   }
 }
 
@@ -26,7 +27,7 @@ struct ContentView: View {
       if m.page == .leak {
         LeakPage(m: m, lab: m.leak)
       } else if Hardware.glass {
-        glassWorkspace.copyStandGlass(cameraStage, camera: m.camera)
+        glassWorkspace
       } else {
       HStack(spacing: 0) {
         leftPanel.frame(width: m.preferences.leftWidth)
@@ -38,14 +39,16 @@ struct ContentView: View {
           width: Binding(get: { m.preferences.rightWidth }, set: { m.preferences.rightWidth = $0 }),
           range: Preferences.rightWidths, panelOnLeft: false)
         rightPanel.frame(width: m.preferences.rightWidth)
-      }.copyStandGlass(cameraStage, camera: m.camera)
       }
-      Divider()
-      filmstrip
-      Divider()
-      if m.page == .leak { LeakStatus(lab: m.leak) } else { footer }
+      }
+      VStack(spacing: 0) {
+        Divider()
+        filmstrip
+        Divider()
+        if m.page == .leak { LeakStatus(lab: m.leak) } else { footer }
+      }.background { if cameraStage { LightBarSurface() } }
     }
-    .background(panelColor).preferredColorScheme(.dark).tint(accent)
+    .copyStandGlass(cameraStage, camera: m.camera).tint(accent)
     .frame(minWidth: 1120, minHeight: 760)
     .alert(
       "无法完成操作",
@@ -151,8 +154,11 @@ struct ContentView: View {
       .animation(Liquid.available ? Liquid.flow : nil, value: m.page)
       .animation(Liquid.available ? Liquid.flow : nil, value: m.captureSource)
       .background {
-        // In the glass look the window's own surface; the keys carry the glass.
-        if !Hardware.glass {
+        // In the glass look the window's own surface; the keys carry the glass. On the copy stand
+        // a strip of frost.
+        if cameraStage {
+          LightBarSurface()
+        } else if !Hardware.glass {
           LinearGradient(colors: [Color(white: 0.2), Color(white: 0.15)], startPoint: .top, endPoint: .bottom)
         }
       }
@@ -672,8 +678,9 @@ struct ContentView: View {
                     Image(decorative: cg, scale: 1).resizable().aspectRatio(contentMode: .fit)
                       .padding(2)
                   } else {
+                    // On the film, which is dark in either look.
                     Text(f.name).font(.system(size: 22, design: .monospaced)).foregroundStyle(
-                      .secondary)
+                      Color.white.opacity(0.55))
                   }
                   if f.hasFullResolution {
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(accent).frame(
@@ -711,7 +718,7 @@ struct ContentView: View {
               }.id(f.id)
             }
             if m.frames.isEmpty {
-              Text("画面列表").font(.system(size: 11)).foregroundStyle(.tertiary).frame(height: 73)
+              Text("画面列表").font(.system(size: 11)).foregroundStyle(Color.white.opacity(0.3)).frame(height: 73)
                 .padding(.horizontal, 30)
             }
           }.padding(.horizontal, 14).padding(.vertical, 11)

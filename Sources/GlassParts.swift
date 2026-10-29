@@ -257,3 +257,18 @@ extension View {
     .overlay(shape.strokeBorder(LinearGradient(colors: [.white.opacity(0.95), .white.opacity(0.3), .black.opacity(0.07)], startPoint: .top, endPoint: .bottom), lineWidth: 1))
   }
 }
+
+/// A bar across the window on the copy stand's light glass, the toolbar or the film strip's:
+/// frost over the blurred live view, Liquid Glass under it where the system has it, the panes'
+/// grain.
+struct LightBarSurface: View {
+  var body: some View {
+    ZStack {
+      if Hardware.glass { SystemGlassBackground(capsule: false, radius: 0, tint: NSColor(white: 1, alpha: 0.25)) }
+      Color.white.opacity(Hardware.glass ? 0.3 : 0.6)
+      if let grain = Frost.grain {
+        Image(decorative: grain, scale: 2).resizable(resizingMode: .tile).opacity(0.05).blendMode(.multiply)
+      }
+    }.allowsHitTesting(false)
+  }
+}
