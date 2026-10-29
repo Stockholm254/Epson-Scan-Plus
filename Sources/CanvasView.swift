@@ -569,16 +569,29 @@ final class FilmCanvasView: NSView {
     }
   }
   /// How many points a millimetre of film takes on the light table; nil over the single frame.
+  /// Points a millimetre of film takes on the canvas: on the light table from the bed's size; over
+  /// the single frame from the frame's own, as it is shown (turned, and zoomed).
   var loupePointsPerMM: CGFloat? {
-    guard let model, !model.singleView, model.physicalMM.height > 0, let cg = shown else { return nil }
+    guard let model, let cg = shown else { return nil }
+    if model.singleView {
+      guard let frame = model.selected, let mm = model.frameMM(frame), mm.width > 0, mm.height > 0 else { return nil }
+      let across = frame.adjustments.rotation % 2 == 0 ? mm.width : mm.height
+      return imageRect.width / across
+    }
+    guard model.physicalMM.height > 0 else { return nil }
     let shownHeight = turn.sideways ? model.physicalMM.width : model.physicalMM.height
     return fitScale * CGFloat(cg.height) / max(1, shownHeight)
   }
-  /// On the light table the loupe lies to the film's scale; over the single frame, which is shown
-  /// far larger than life, at a size to hold in view.
+  /// The loupe lies to the film's scale: on the light table, and over the single frame too, where
+  /// it grows with the frame as it is shown, the same loupe on the same film seen closer; as large
+  /// as the canvas holds at most.
   func loupeRadius(for style: LoupeStyle) -> CGFloat {
     guard let model, shown != nil else { return 70 }
-    if model.singleView { return min(130, max(70, min(bounds.width, bounds.height) * 0.14)) * CGFloat(style.baseMM / 48) }
+    let side = min(bounds.width, bounds.height)
+    if model.singleView {
+      guard let perMM = loupePointsPerMM else { return min(130, max(70, side * 0.14)) * CGFloat(style.baseMM / 48) }
+      return min(side * 0.45, max(44, CGFloat(style.baseMM / 2) * perMM))
+    }
     guard let perMM = loupePointsPerMM else { return 70 }
     return min(110, max(44, CGFloat(style.baseMM / 2) * perMM))
   }
@@ -586,10 +599,13 @@ final class FilmCanvasView: NSView {
   /// point, and never under 2×; nil on the light table, where the loupe's field decides it.
   func loupeMagnification(for style: LoupeStyle) -> Double? {
     guard let model, model.singleView else { return nil }
-    // The frame's own picture once it is here, else the one shown; never another frame's.
-    let detail = loupeDetail.flatMap { $0.single && $0.id == model.selectedID && !model.editingSingle ? $0.image : nil }
-    let pixels = Double(detail?.width ?? shown?.width ?? 0)
-    let perPoint = pixels / Double(max(1, imageRect.width))
+    // The frame's own pixels under the lens once they are here, else the picture shown.
+    let perPoint: Double
+    if let region = loupeRegion, region.key == model.selected.map({ model.loupeDetailKey($0, single: true) }) {
+      perPoint = Double(region.image.width) / max(1, region.region.width * Double(imageRect.width))
+    } else {
+      perPoint = Double(shown?.width ?? 0) / Double(max(1, imageRect.width))
+    }
     return min(style.magnification, max(2, perPoint * 1.5))
   }
   /// The frame the loupe was put on: it stays there as the canvas changes, until it is shown
@@ -633,6 +649,7 @@ final class FilmCanvasView: NSView {
         loupeDetail = nil
         loupeDetailRequest = nil
         loupeDetailStale = false
+        loupeRegion = nil
         turnedLoupeDetail = nil
         LoupeRenderer.shared.release()
       }
@@ -769,30 +786,44 @@ final class FilmCanvasView: NSView {
     }
     // Not after a new preview, a moved frame box or a switch between raw and positive. After an
     // edit it stays until the new picture arrives, so the lens never goes blank.
-    guard let model, let detail = loupeDetail, detail.single == model.singleView else { return scene }
+    guard let model else { return scene }
     if model.singleView {
-      // The single frame fills the picture, as it is shown; not while the crop shows its surroundings.
-      if !model.editingSingle, detail.positive == !model.showNegative, let frame = model.selected, frame.id == detail.id,
-        frame.rect == detail.rect
-      {
-        scene.detail = detail.image
-        scene.detailRect = imageRect
-        if model.loupeDetailKey(frame, single: true) != detail.key {
-          DispatchQueue.main.async { [weak self] in self?.loupeMoved() }
-        }
+      // What lies under the lens at the frame's own resolution, where it is on the picture; not
+      // while the crop shows the frame's surroundings.
+      guard !model.editingSingle, let frame = model.selected else { return scene }
+      if let region = loupeRegion, region.key == model.loupeDetailKey(frame, single: true) {
+        let r = imageRect
+        scene.detail = region.image
+        scene.detailRect = CGRect(
+          x: r.minX + region.region.x * r.width, y: r.minY + region.region.y * r.height,
+          width: region.region.width * r.width, height: region.region.height * r.height)
       }
-    } else if detail.positive == model.contactPositive,
+      if let centre = loupe.center, loupeRegion.map({ $0.key != model.loupeDetailKey(frame, single: true) || !$0.region.covers(loupeFieldRegion(around: centre, by: 1.05)) }) ?? true {
+        DispatchQueue.main.async { [weak self] in self?.loupeMoved() }
+      }
+      return scene
+    }
+    guard let detail = loupeDetail, !detail.single else { return scene }
+    if detail.positive == model.contactPositive,
       let frame = model.contactFrames.first(where: { $0.id == detail.id }), frame.rect == detail.rect
     {
       scene.detail = turnedDetail(detail.key, detail.image)
       scene.detailRect = screen(frame.rect.cg)
-      if model.loupeDetailKey(frame) != detail.key {
+      if model.loupeDetailKey(frame) + "@\(loupePixels(for: frame))" != detail.key {
         DispatchQueue.main.async { [weak self] in self?.loupeMoved() }
       }
     }
     return scene
   }
   private var loupeDetail: (key: String, id: UUID, rect: NormalRect, positive: Bool, single: Bool, image: CGImage)?
+  /// How many pixels across the loupe's picture of a frame on the table should have: as many as
+  /// the lens shows it with, the frame's size on the table times the loupe's magnification at
+  /// the screen's resolution, from 2400 to 8192.
+  private func loupePixels(for frame: FilmFrame) -> Int {
+    let r = screen(frame.rect.cg), mag = CGFloat(loupe.magnification ?? loupe.style.magnification)
+    let needed = max(r.width, r.height) * mag * (window?.backingScaleFactor ?? 2)
+    return min(8192, max(2400, Int((needed / 1024).rounded(.up)) * 1024))
+  }
   private var turnedLoupeDetail: (key: String, turn: QuarterTurn, image: CGImage)?
   /// The frame under the lens, turned with the table.
   private func turnedDetail(_ key: String, _ image: CGImage) -> CGImage {
@@ -820,7 +851,44 @@ final class FilmCanvasView: NSView {
       found = model.contactFrames.last(where: { $0.rect.cg.contains(n) })
     }
     guard let frame = found else { return }
-    requestDetail(frame, single: single)
+    if single {
+      askLoupeRegion(frame)
+    } else {
+      requestDetail(frame, single: false)
+    }
+  }
+  /// Over the single frame, what lies under the lens at the frame's own resolution, read as the
+  /// zoom reads its part: a 60-megapixel frame read whole took tens of seconds, the lens's piece
+  /// a fraction of one.
+  private(set) var loupeRegion: AppModel.Detail?
+  private var loupeRegionAsked = false
+  /// How far from the lens's centre, in canvas points, the film it shows reaches.
+  var loupeField: CGFloat {
+    let lens = loupe.eyepiece?.lens ?? CGFloat(loupe.style.lens.radius) * loupe.radius
+    return lens * loupe.style.rimReach / CGFloat(loupe.magnification ?? loupe.style.magnification)
+  }
+  private func loupeFieldRegion(around centre: CGPoint, by scale: CGFloat) -> NormalRect {
+    let r = imageRect, reach = loupeField * scale
+    let x0 = max(0, (centre.x - reach - r.minX) / r.width), y0 = max(0, (centre.y - reach - r.minY) / r.height)
+    let x1 = min(1, (centre.x + reach - r.minX) / r.width), y1 = min(1, (centre.y + reach - r.minY) / r.height)
+    return NormalRect(x: x0, y: y0, width: max(0, x1 - x0), height: max(0, y1 - y0))
+  }
+  private func askLoupeRegion(_ frame: FilmFrame) {
+    guard let model, let centre = loupe.center, !loupeRegionAsked else { return }
+    let key = model.loupeDetailKey(frame, single: true), needed = loupeFieldRegion(around: centre, by: 1.05)
+    if let kept = loupeRegion, kept.key == key, kept.region.covers(needed) { return }
+    loupeRegionAsked = true
+    // Half again round the lens's field, so a little moving needs nothing new.
+    model.renderDetail(frame, region: loupeFieldRegion(around: centre, by: 1.6)) { [weak self] detail in
+      guard let self else { return }
+      self.loupeRegionAsked = false
+      self.loupe.setNeedsRender()
+      // Moved on while it rendered: what is under the lens now. Nothing yet (the frame not yet
+      // analysed) waits for the next move or picture.
+      guard let detail else { return }
+      self.loupeRegion = detail
+      if let frame = self.model?.selected, self.model?.singleView == true { self.askLoupeRegion(frame) }
+    }
   }
   /// The part of the single frame in view at its full resolution, while zoomed in past the
   /// picture shown, and where it goes on the canvas; asked for, a moment after the view settles,
@@ -879,7 +947,9 @@ final class FilmCanvasView: NSView {
   /// marking the one under way stale.
   func requestDetail(_ frame: FilmFrame, single: Bool) {
     guard let model else { return }
-    let key = model.loupeDetailKey(frame, single: single)
+    let pixels = single ? 0 : loupePixels(for: frame)
+    // The size is part of what is asked for: a stronger loupe asks again for more pixels.
+    let key = model.loupeDetailKey(frame, single: single) + (single ? "" : "@\(pixels)")
     guard key != loupeDetailRequest, key != loupeDetail?.key else { return }
     if loupeDetailRequest != nil {
       loupeDetailStale = true
@@ -888,7 +958,7 @@ final class FilmCanvasView: NSView {
     loupeDetailRequest = key
     loupeDetailStale = false
     let positive = single ? !model.showNegative : model.contactPositive
-    model.loupeDetail(for: frame, single: single) { [weak self] image in
+    model.loupeDetail(for: frame, single: single, pixels: pixels) { [weak self] image in
       guard let self, self.loupeDetailRequest == key else { return }
       self.loupeDetailRequest = nil
       self.loupeDetail = image.map { (key, frame.id, frame.rect, positive, single, $0) }

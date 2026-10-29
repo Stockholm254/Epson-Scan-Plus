@@ -339,8 +339,10 @@ enum LoupeTests {
       settle(0.1)
     }
     let single = canvas.loupeScene(), magnification = canvas.loupeMagnification(for: loupe.style) ?? 0
-    try check(single.detail != nil && single.detailRect == canvas.imageRect && magnification >= 2 && magnification <= loupe.style.magnification,
-      String(format: "it reads the frame at full resolution, magnified %.1f×, no further than its pixels allow", magnification))
+    let reach = canvas.loupeField, under = CGRect(x: loupe.center!.x - reach, y: loupe.center!.y - reach, width: 2 * reach, height: 2 * reach)
+    try check(single.detail != nil && canvas.imageRect.insetBy(dx: -1, dy: -1).contains(single.detailRect)
+      && single.detailRect.insetBy(dx: -1, dy: -1).contains(under.intersection(canvas.imageRect)) && magnification >= 2 && magnification <= loupe.style.magnification,
+      String(format: "it reads what lies under its lens at the frame's own resolution, magnified %.1f×, no further than its pixels allow", magnification))
     // A sampler picks through the lens the point it shows there, magnified; the loupe stays put.
     let lensCentre = loupe.center!, off = CGPoint(x: lensCentre.x + (loupe.eyepiece?.lens ?? 0) * 0.5, y: lensCentre.y)
     let through = loupe.pictureThroughLens(off), shrink = (1 - loupe.style.pincushion * 0.25) / (loupe.magnification ?? 1)

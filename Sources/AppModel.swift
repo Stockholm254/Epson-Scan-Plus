@@ -1194,10 +1194,10 @@ final class AppModel: ObservableObject {
   /// The frame under the loupe from the frame's own pixels: on the light table as the contact view
   /// shows it, positive or raw (its scan, or the full-resolution preview); over the single frame
   /// as that view shows it, turned and mirrored, at full resolution.
-  func loupeDetail(for frame: FilmFrame, single: Bool = false, completion: @escaping (CGImage?) -> Void) {
+  func loupeDetail(for frame: FilmFrame, single: Bool = false, pixels: Int = 2400, completion: @escaping (CGImage?) -> Void) {
     let positive = single ? !showNegative : contactPositive, p = profile
     renderQueue.async {
-      var image = try? self.source(for: frame, full: single, maxDimension: single ? nil : 2400)
+      var image = try? self.source(for: frame, full: single, maxDimension: single ? nil : pixels)
       if single, let crop = image {
         image = ImagePipeline.shared.render(crop, settings: frame.adjustments, profile: p, analysis: nil, negative: !positive)
       } else if positive, let crop = image {
@@ -1209,6 +1209,28 @@ final class AppModel: ObservableObject {
       }
       DispatchQueue.main.async { completion(image) }
     }
+  }
+  /// A frame's size on the film, in millimetres, as it lies (before it is turned): its share of
+  /// the bed for a scan, or a file's pixels at its dpi (a camera's long side is taken as 36 mm).
+  func frameMM(_ frame: FilmFrame) -> CGSize? {
+    guard let path = frame.sourcePath else {
+      guard physicalMM.width > 0 else { return nil }
+      return CGSize(width: frame.rect.width * physicalMM.width, height: frame.rect.height * physicalMM.height)
+    }
+    guard let dpi = frame.scanDPI, dpi > 0 else { return nil }
+    let pixels = filePixels(path)
+    guard pixels.width > 0 else { return nil }
+    let mm = 25.4 / Double(dpi)
+    return CGSize(width: frame.rect.width * pixels.width * mm, height: frame.rect.height * pixels.height * mm)
+  }
+  /// A file's size in pixels, read once.
+  private var filePixelsRead = [String: CGSize]()
+  private func filePixels(_ path: String) -> CGSize {
+    if let known = filePixelsRead[path] { return known }
+    let info = ImagePipeline.shared.info(URL(fileURLWithPath: path))
+    let size = CGSize(width: info.width, height: info.height)
+    filePixelsRead[path] = size
+    return size
   }
   /// A part of the single frame at its own resolution, for the canvas zoomed in past the picture
   /// it shows: `region` in that picture's normalised coordinates, rendered as the frame is now
@@ -1226,7 +1248,8 @@ final class AppModel: ObservableObject {
   /// (its base, white balance and levels) so it matches the picture around it. Nil until the
   /// frame has been analysed.
   func renderDetail(_ frame: FilmFrame, region: NormalRect, completion: @escaping (Detail?) -> Void) {
-    guard let analysis = toneAnalysis else { return completion(nil) }
+    // Never answered at once: an asker that asks again on an answer would never stop.
+    guard let analysis = toneAnalysis else { return DispatchQueue.main.async { completion(nil) } }
     let negative = showNegative || tool == .base, p = profile, key = loupeDetailKey(frame, single: true)
     renderQueue.async {
       let source = [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", frame.sourcePath ?? ""].joined(separator: "|")

@@ -338,17 +338,18 @@ enum CanvasTests {
     zoomCanvas.model = zoomed
     zoomed.preferences.showLoupe = false
     zoomCanvas.setZoom(16, anchor: CGPoint(x: 450, y: 300))
-    for _ in 0..<200 where zoomCanvas.zoomDetail == nil { zoomCanvas.display(); settle(0.05) }
+    // The render queue may still be busy with earlier tests' work: up to half a minute.
+    for _ in 0..<600 where zoomCanvas.zoomDetail == nil { zoomCanvas.display(); settle(0.05) }
     let part = zoomCanvas.zoomDetail
     let shownWidth = Double(zoomed.displayed?.width ?? 1)
     // Turned a quarter, the shown picture is 4000 across from the source's 4000 rows.
     let perPart = part.map { Double($0.image.width) / ($0.region.width * 4000) } ?? 0
     try check(zoomed.zoom == 16 && part != nil && shownWidth < 4000 && abs(perPart - 1) < 0.02 && (part?.image.height ?? 0) > (part?.image.width ?? 0) / 4,
-      "zoomed in, the part in view is drawn from the frame's own pixels, turned as it is shown: \(part.map { "\($0.image.width) × \($0.image.height)" } ?? "none") for \(shownWidth) shown")
+      "zoomed in, the part in view is drawn from the frame's own pixels, turned as it is shown: \(part.map { "\($0.image.width) × \($0.image.height)" } ?? "none") for \(shownWidth) shown (analysed \(zoomed.toneAnalysis != nil), single \(zoomed.singleView), rendering \(zoomed.rendering), view \(zoomCanvas.imageRect))")
     let first = part?.region
     zoomCanvas.pan.x += 400
     zoomCanvas.needsDisplay = true
-    for _ in 0..<200 where zoomCanvas.zoomDetail?.region == first { zoomCanvas.display(); settle(0.05) }
+    for _ in 0..<600 where zoomCanvas.zoomDetail?.region == first { zoomCanvas.display(); settle(0.05) }
     try check(zoomCanvas.zoomDetail.map { $0.region != first } == true, "moving the view brings the part now in view")
     zoomCanvas.setZoom(1, anchor: CGPoint(x: 450, y: 300))
     zoomCanvas.display()
