@@ -3,15 +3,10 @@ import SwiftUI
 
 extension View {
   /// A pane of glass behind a group of controls floating over a picture: the system's Liquid Glass
-  /// on macOS 26, lensing what lies under it, a little darkened so light text reads; before, a dark
-  /// translucent plate of the same shape.
-  @ViewBuilder func glassPane(radius: CGFloat = 16, darken: CGFloat = 0.28) -> some View {
-    if Hardware.glass {
-      background(SystemGlassBackground(capsule: false, radius: radius, tint: NSColor(white: 0, alpha: darken)))
-        .overlay(RoundedRectangle(cornerRadius: radius).stroke(Color.white.opacity(0.1), lineWidth: 0.5))
-    } else {
-      background(RoundedRectangle(cornerRadius: radius).fill(Color(white: 0.1).opacity(0.88)))
-    }
+  /// on macOS 26, lensing what lies under it, a little darkened so light text reads (on the copy
+  /// stand's light glass frosted instead); before, a translucent plate of the same shape.
+  func glassPane(radius: CGFloat = 16, darken: CGFloat = 0.28) -> some View {
+    modifier(GlassPane(radius: radius, darken: darken))
   }
   /// Tinted glass, as a coloured gel is: the system's glass in `tint` on macOS 26, else a plate.
   @ViewBuilder func tintedGlass(_ tint: Color, strength: Double, radius: CGFloat) -> some View {
@@ -19,6 +14,23 @@ extension View {
       background(SystemGlassBackground(capsule: false, radius: radius, tint: NSColor(tint).withAlphaComponent(strength)))
     } else {
       background(RoundedRectangle(cornerRadius: radius).fill(tint.opacity(strength)))
+    }
+  }
+}
+
+private struct GlassPane: ViewModifier {
+  let radius: CGFloat, darken: CGFloat
+  @Environment(\.colorScheme) private var scheme
+  func body(content: Content) -> some View {
+    let light = scheme == .light
+    if light {
+      // Liquid Glass where the system has it, under a thin frost; frost alone before.
+      content.frost(RoundedRectangle(cornerRadius: radius), veil: Hardware.glass ? 0.18 : 0.62, glassRadius: radius)
+    } else if Hardware.glass {
+      content.background(SystemGlassBackground(capsule: false, radius: radius, tint: NSColor(white: 0, alpha: darken)))
+        .overlay(RoundedRectangle(cornerRadius: radius).stroke(Color.white.opacity(0.1), lineWidth: 0.5))
+    } else {
+      content.background(RoundedRectangle(cornerRadius: radius).fill(Color(white: 0.1).opacity(0.88)))
     }
   }
 }
@@ -91,18 +103,28 @@ struct ShutterPress: ButtonStyle {
     .frame(width: d, height: d)
     .animation(.spring(response: 0.16, dampingFraction: 0.6), value: pressed)
     .padding(6)
-    // With SwiftUI's glass a drop that gives under the finger, and the notes of pictures filed
-    // rise out of it.
-    .liquid(Circle(), LiquidStyle(tint: .black.opacity(0.18), interactive: true)) { key in
+    .modifier(ShutterGlass(radius: d / 2 + 6))
+    .contentShape(Circle())
+  }
+}
+
+/// The drop of glass the release sits in: with SwiftUI's glass one that gives under the finger,
+/// and the notes of pictures filed rise out of it; clear on light glass, smoked on the console.
+private struct ShutterGlass: ViewModifier {
+  let radius: CGFloat
+  @Environment(\.colorScheme) private var scheme
+  func body(content: Content) -> some View {
+    let light = scheme == .light
+    content.liquid(Circle(), LiquidStyle(tint: light ? .white.opacity(0.2) : .black.opacity(0.18), interactive: true)) { key in
       key.background {
         if Hardware.glass {
-          SystemGlassBackground(capsule: true, radius: d / 2 + 6, tint: NSColor(white: 0, alpha: 0.18))
+          SystemGlassBackground(capsule: true, radius: radius, tint: light ? NSColor(white: 1, alpha: 0.25) : NSColor(white: 0, alpha: 0.18))
         } else {
-          Circle().fill(LinearGradient(colors: [Color(white: 0.24), Color(white: 0.11)], startPoint: .top, endPoint: .bottom))
+          Circle().fill(LinearGradient(colors: light ? [Color(white: 0.97), Color(white: 0.84)] : [Color(white: 0.24), Color(white: 0.11)], startPoint: .top, endPoint: .bottom))
+            .overlay(Circle().stroke(Color.black.opacity(light ? 0.12 : 0), lineWidth: 0.5))
         }
       }
     }
-    .contentShape(Circle())
   }
 }
 
@@ -110,7 +132,7 @@ struct ShutterPress: ButtonStyle {
 struct GlassToast: View {
   let text: String
   var body: some View {
-    Text(text).font(.system(size: 12, weight: .medium)).foregroundStyle(Color(white: 0.95))
+    Text(text).font(.system(size: 12, weight: .medium)).foregroundStyle(Hardware.ink)
       .padding(.horizontal, 14).padding(.vertical, 7)
       .glassPane(radius: 16, darken: 0.35)
       .shadow(color: .black.opacity(0.35), radius: 8, y: 3)
@@ -125,5 +147,113 @@ extension CropLens {
     return render(
       picture, center: CGPoint(x: CGFloat(picture.width) / 2, y: CGFloat(picture.height) / 2), scale: scale,
       crop: nil, dimOutside: 0, pixels: pixels)
+  }
+}
+
+/// Frosted glass on the copy stand: what lies under the panes is the live view, blurred far past
+/// recognition, mostly grey and lightened, so the frost shows the light and dark of the negative
+/// on the stand without its orange mask colouring the window; the panes over it are a veil of white
+/// with a fine grain and a lit rim.
+enum Frost {
+  /// `image` as the ground under the panes: a few dozen pixels across, each the mean of what it
+  /// covers, smoothed again, kept to a fifth of its colour and lifted to light grey.
+  static func backdrop(_ image: CGImage) -> CGImage? {
+    let w = 32, h = max(2, Int((Double(w) * Double(image.height) / Double(max(1, image.width))).rounded()))
+    var px = [UInt8](repeating: 0, count: w * h * 4)
+    let drawn = px.withUnsafeMutableBytes { raw -> Bool in
+      guard let ctx = CGContext(
+        data: raw.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+        space: ImagePipeline.shared.outputSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+      else { return false }
+      ctx.interpolationQuality = .high
+      ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+      return true
+    }
+    guard drawn else { return nil }
+    var v = px.map { Double($0) / 255 }
+    for _ in 0..<2 {
+      var next = v
+      for y in 0..<h {
+        for x in 0..<w {
+          for c in 0..<3 {
+            var sum = 0.0, n = 0.0
+            for dy in -1...1 {
+              for dx in -1...1 {
+                let yy = min(h - 1, max(0, y + dy)), xx = min(w - 1, max(0, x + dx))
+                sum += v[(yy * w + xx) * 4 + c]
+                n += 1
+              }
+            }
+            next[(y * w + x) * 4 + c] = sum / n
+          }
+        }
+      }
+      v = next
+    }
+    for i in stride(from: 0, to: v.count, by: 4) {
+      let l = 0.2126 * v[i] + 0.7152 * v[i + 1] + 0.0722 * v[i + 2]
+      for c in 0..<3 {
+        let kept = l + 0.2 * (v[i + c] - l)
+        px[i + c] = UInt8(max(0, min(255, (0.62 + 0.34 * kept) * 255)))
+      }
+      px[i + 3] = 255
+    }
+    guard let provider = CGDataProvider(data: Data(px) as CFData) else { return nil }
+    return CGImage(
+      width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4, space: ImagePipeline.shared.outputSpace,
+      bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue), provider: provider, decode: nil,
+      shouldInterpolate: true, intent: .defaultIntent)
+  }
+  /// The frost's grain: grey noise, the same every time, laid over a pane in tiles.
+  static let grain: CGImage? = {
+    let n = 96
+    var state: UInt32 = 0x9E37_79B9
+    var px = [UInt8](repeating: 0, count: n * n * 4)
+    for i in 0..<(n * n) {
+      state = state &* 1_664_525 &+ 1_013_904_223
+      let g = UInt8(truncatingIfNeeded: state >> 24)
+      px[i * 4] = g; px[i * 4 + 1] = g; px[i * 4 + 2] = g; px[i * 4 + 3] = 255
+    }
+    guard let provider = CGDataProvider(data: Data(px) as CFData) else { return nil }
+    return CGImage(
+      width: n, height: n, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: n * 4, space: ImagePipeline.shared.outputSpace,
+      bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue), provider: provider, decode: nil,
+      shouldInterpolate: false, intent: .defaultIntent)
+  }()
+}
+
+/// The ground of the copy stand in light glass: the live view as frost would show it, or light grey
+/// until there is one.
+struct CopyStandBackdrop: View {
+  @ObservedObject var camera: CameraController
+  var body: some View {
+    // Laid over a colour that takes the space offered, so filling it never makes the view larger.
+    Color(white: 0.88).overlay {
+      if let b = camera.liveBackdrop {
+        Image(decorative: b, scale: 1).resizable().interpolation(.high).aspectRatio(contentMode: .fill)
+      }
+    }.clipped().allowsHitTesting(false)
+  }
+}
+
+extension View {
+  /// A pane of frost on light glass: Liquid Glass where the system has it (`glassRadius`), a veil of
+  /// white over it, a fine grain over all, its rim lit from above, and a soft shadow round it as of
+  /// a pane standing a little off what lies under it.
+  func frost<S: InsettableShape>(_ shape: S, veil: Double, glassRadius: CGFloat, capsule: Bool = false) -> some View {
+    background {
+      ZStack {
+        shape.stroke(Color.black.opacity(0.12), lineWidth: 5).blur(radius: 7).offset(y: 4)
+        if Hardware.glass { SystemGlassBackground(capsule: capsule, radius: glassRadius, tint: NSColor(white: 1, alpha: 0.25)) }
+        shape.fill(Color.white.opacity(veil))
+      }
+    }
+    .overlay {
+      if let grain = Frost.grain {
+        Image(decorative: grain, scale: 2).resizable(resizingMode: .tile).opacity(0.05).blendMode(.multiply)
+          .clipShape(shape).allowsHitTesting(false)
+      }
+    }
+    .overlay(shape.strokeBorder(LinearGradient(colors: [.white.opacity(0.95), .white.opacity(0.3), .black.opacity(0.07)], startPoint: .top, endPoint: .bottom), lineWidth: 1))
   }
 }

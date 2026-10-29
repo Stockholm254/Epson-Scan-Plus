@@ -4,6 +4,14 @@ import SwiftUI
 private let accent = Color(red: 0.91, green: 0.68, blue: 0.37)
 private let panelColor = Color(red: 0.135, green: 0.14, blue: 0.145)
 
+extension View {
+  /// The copy stand in light glass: the panels and the live view in the light look, on the live
+  /// view frosted, while the rest of the window keeps the dark console.
+  func copyStandGlass(_ on: Bool, camera: CameraController) -> some View {
+    environment(\.colorScheme, on ? .light : .dark).background { if on { CopyStandBackdrop(camera: camera) } }
+  }
+}
+
 struct ContentView: View {
   @ObservedObject var m: AppModel
   @State var showInfo = false
@@ -18,7 +26,7 @@ struct ContentView: View {
       if m.page == .leak {
         LeakPage(m: m, lab: m.leak)
       } else if Hardware.glass {
-        glassWorkspace
+        glassWorkspace.copyStandGlass(cameraStage, camera: m.camera)
       } else {
       HStack(spacing: 0) {
         leftPanel.frame(width: m.preferences.leftWidth)
@@ -30,7 +38,7 @@ struct ContentView: View {
           width: Binding(get: { m.preferences.rightWidth }, set: { m.preferences.rightWidth = $0 }),
           range: Preferences.rightWidths, panelOnLeft: false)
         rightPanel.frame(width: m.preferences.rightWidth)
-      }
+      }.copyStandGlass(cameraStage, camera: m.camera)
       }
       Divider()
       filmstrip

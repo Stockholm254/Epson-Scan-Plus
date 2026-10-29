@@ -571,13 +571,16 @@ struct LeakGenerateSheet: View {
 struct SectionTitle: View {
   let text: String
   let symbol: String
+  @Environment(\.colorScheme) private var scheme
   var body: some View {
+    let light = scheme == .light
     HStack(spacing: 7) {
-      Image(systemName: symbol).foregroundStyle(Hardware.amber)
+      Image(systemName: symbol).foregroundStyle(Hardware.amberText)
       Text(text).font(.system(size: 12, weight: .semibold)).tracking(1.5)
-        .foregroundStyle(Color(white: 0.8))
+        .foregroundStyle(light ? Color(white: 0.22) : Color(white: 0.8))
     }
-    .shadow(color: .black.opacity(0.9), radius: 0, y: -0.5)
-    .shadow(color: .white.opacity(0.08), radius: 0, y: 0.75)
+    // Engraved: the cut's upper edge in shadow and its lower lit, on light glass a fainter cut.
+    .shadow(color: .black.opacity(light ? 0.12 : 0.9), radius: 0, y: -0.5)
+    .shadow(color: .white.opacity(light ? 0.7 : 0.08), radius: 0, y: 0.75)
   }
 }

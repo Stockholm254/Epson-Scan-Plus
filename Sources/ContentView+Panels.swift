@@ -14,7 +14,7 @@ extension ContentView {
               m.captureSource = source
             } label: {
               Text(source.rawValue).lineLimit(1).minimumScaleFactor(0.8).frame(maxWidth: .infinity)
-                .foregroundStyle(m.captureSource == source ? Hardware.amber : Color(white: 0.8))
+                .foregroundStyle(m.captureSource == source ? Hardware.amberText : Hardware.adaptive(NSColor(white: 0.8, alpha: 1), NSColor(white: 0.2, alpha: 1)))
             }.buttonStyle(HardwareKeyStyle(latched: m.captureSource == source))
           }
         } else {
@@ -507,7 +507,7 @@ struct InfoButton: View {
       shown.toggle()
     } label: {
       Image(systemName: shown ? "info.circle.fill" : "info.circle").font(.system(size: 12))
-        .foregroundStyle(shown ? Hardware.amber : Color(white: 0.6))
+        .foregroundStyle(shown ? Hardware.amberText : Hardware.adaptive(NSColor(white: 0.6, alpha: 1), NSColor(white: 0.42, alpha: 1)))
     }.buttonStyle(.plain).help("说明").accessibilityLabel("说明")
       .popover(isPresented: $shown, arrowEdge: .trailing) {
         Text(text).font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)

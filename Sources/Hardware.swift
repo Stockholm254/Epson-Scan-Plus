@@ -10,6 +10,15 @@ enum Hardware {
   static let greasePencil = Color(red: 0.86, green: 0.24, blue: 0.17)
   static let edgePrint = Color(red: 0.98, green: 0.71, blue: 0.4)
   static let filmBase = Color(red: 0.25, green: 0.13, blue: 0.06)
+  /// A colour for each look, as the view's colour scheme is: `dark` in the dark console, `light`
+  /// on the copy stand's light glass.
+  static func adaptive(_ dark: NSColor, _ light: NSColor) -> Color {
+    Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .aqua ? light : dark })
+  }
+  /// Text on a key or a pane: light on the console, dark ink on light glass.
+  static let ink = adaptive(NSColor(white: 0.92, alpha: 1), NSColor(white: 0.13, alpha: 1))
+  /// Amber that reads on either: the console's, or a deeper one on light glass.
+  static let amberText = adaptive(NSColor(red: 0.91, green: 0.68, blue: 0.37, alpha: 1), NSColor(red: 0.66, green: 0.4, blue: 0.08, alpha: 1))
   static let metal = LinearGradient(
     colors: [Color(white: 0.175), Color(white: 0.135)], startPoint: .top, endPoint: .bottom)
   /// The system draws Liquid Glass (macOS 26): the panels float as glass over the light table and
@@ -44,11 +53,12 @@ private struct GlassKey<Label: View>: View {
   @Environment(\.isEnabled) private var enabled
   @Environment(\.controlSize) private var size
   @Environment(\.glassKeys) private var own
+  @Environment(\.colorScheme) private var scheme
   var body: some View {
     let compact = size == .mini || size == .small
     let shape = Capsule()
     let face = label
-      .foregroundStyle(prominent ? Color(red: 0.2, green: 0.12, blue: 0.03) : latched ? Hardware.amber : Color(white: 0.92))
+      .foregroundStyle(prominent ? Color(red: 0.2, green: 0.12, blue: 0.03) : latched ? Hardware.amberText : Hardware.ink)
       .padding(.horizontal, compact ? 9 : 13).padding(.vertical, compact ? 3 : 5.5)
     Group {
       if prominent || own {
@@ -64,10 +74,13 @@ private struct GlassKey<Label: View>: View {
     .contentShape(shape)
   }
   func plate(_ face: some View, _ shape: Capsule) -> some View {
-    face
-      .background(
-        shape.fill(prominent ? Hardware.amber.opacity(pressed ? 0.75 : 0.92) : Color.white.opacity(pressed ? 0.2 : latched ? 0.13 : 0.07)))
-      .overlay(shape.stroke(latched ? Hardware.amber.opacity(0.55) : Color.white.opacity(prominent ? 0 : 0.16), lineWidth: 0.6))
+    // On light glass a key is a little darker than the pane, on the console a little lighter.
+    let light = scheme == .light
+    let well = light ? Color.black.opacity(pressed ? 0.14 : latched ? 0.09 : 0.05) : Color.white.opacity(pressed ? 0.2 : latched ? 0.13 : 0.07)
+    let rim = light ? Color.black.opacity(0.14) : Color.white.opacity(0.16)
+    return face
+      .background(shape.fill(prominent ? Hardware.amber.opacity(pressed ? 0.75 : 0.92) : well))
+      .overlay(shape.stroke(latched ? Hardware.amber.opacity(0.55) : prominent ? .clear : rim, lineWidth: 0.6))
       .shadow(color: latched ? Hardware.amber.opacity(0.35) : .clear, radius: 4)
   }
 }
@@ -78,15 +91,18 @@ private struct HardwareKey<Label: View>: View {
   let prominent: Bool
   @Environment(\.isEnabled) private var enabled
   @Environment(\.controlSize) private var size
+  @Environment(\.colorScheme) private var scheme
   var body: some View {
     let compact = size == .mini || size == .small
+    let light = scheme == .light
+    // On light glass, keys of light anodised metal.
     let face =
       prominent
       ? [Color(red: 0.96, green: 0.77, blue: 0.48), Color(red: 0.8, green: 0.55, blue: 0.24)]
-      : [Color(white: 0.33), Color(white: 0.21)]
+      : light ? [Color(white: 0.99), Color(white: 0.87)] : [Color(white: 0.33), Color(white: 0.21)]
     let shape = RoundedRectangle(cornerRadius: compact ? 4 : 5)
     label
-      .foregroundStyle(prominent ? Color(red: 0.22, green: 0.13, blue: 0.03) : Color(white: 0.9))
+      .foregroundStyle(prominent ? Color(red: 0.22, green: 0.13, blue: 0.03) : light ? Color(white: 0.15) : Color(white: 0.9))
       .padding(.horizontal, compact ? 7 : 11).padding(.vertical, compact ? 2.5 : 5)
       .background(
         shape.fill(
@@ -97,12 +113,12 @@ private struct HardwareKey<Label: View>: View {
         .overlay(
           shape.strokeBorder(
             LinearGradient(
-              colors: [.white.opacity(pressed ? 0.04 : 0.2), .clear], startPoint: .top,
+              colors: [.white.opacity(pressed ? 0.04 : light ? 0.9 : 0.2), .clear], startPoint: .top,
               endPoint: .center), lineWidth: 1)
         )
-        .overlay(shape.stroke(.black.opacity(0.8), lineWidth: 1))
+        .overlay(shape.stroke(.black.opacity(light ? 0.3 : 0.8), lineWidth: 1))
         .shadow(
-          color: .black.opacity(pressed ? 0.25 : 0.6), radius: pressed ? 0.5 : 1.5,
+          color: .black.opacity(pressed ? 0.25 : light ? 0.22 : 0.6), radius: pressed ? 0.5 : 1.5,
           y: pressed ? 0.5 : 2)
       )
       .offset(y: pressed ? 1 : 0)
@@ -118,7 +134,7 @@ struct LEDToggleStyle: ToggleStyle {
       configuration.isOn.toggle()
     } label: {
       HStack(spacing: 5) {
-        Circle().fill(configuration.isOn ? Hardware.amber : Color(white: 0.12))
+        Circle().fill(configuration.isOn ? Hardware.amber : Hardware.adaptive(NSColor(white: 0.12, alpha: 1), NSColor(white: 0.78, alpha: 1)))
           .overlay(Circle().stroke(.black.opacity(0.6), lineWidth: 0.5))
           .frame(width: 6, height: 6)
           .shadow(color: configuration.isOn ? Hardware.amber.opacity(0.9) : .clear, radius: 3)
@@ -224,6 +240,8 @@ struct SystemGlassBackground: NSViewRepresentable {
   }
   func makeNSView(context: Context) -> Host { Host() }
   func updateNSView(_ host: Host, context: Context) {
+    // Light glass where the view is in the light look, though the window is dark.
+    host.appearance = NSAppearance(named: context.environment.colorScheme == .light ? .aqua : .darkAqua)
     host.capsule = capsule
     host.radius = radius
     if let glass = host.glass, glass.responds(to: NSSelectorFromString("setTintColor:")) { glass.setValue(tint, forKey: "tintColor") }
@@ -249,28 +267,52 @@ extension View {
     }
   }
   /// A readout: amber segment-display text on dark glass, or in the glass look amber figures on a
-  /// smoked capsule.
-  @ViewBuilder func lcd(_ fontSize: CGFloat = 10) -> some View {
-    if Hardware.glass {
-      font(.system(size: fontSize, weight: .medium, design: .monospaced))
-        .foregroundStyle(Hardware.lcdText)
+  /// smoked capsule; on light glass dark figures on a frosted one.
+  func lcd(_ fontSize: CGFloat = 10) -> some View { modifier(Readout(fontSize: fontSize)) }
+  /// A side panel: in the glass look a pane of Liquid Glass floating over the light table, which
+  /// shows through it; before, brushed metal. It takes every click that lands on it.
+  func consolePanel() -> some View { modifier(ConsolePanel()) }
+  /// A group of controls floating over the picture: a capsule of Liquid Glass, or a dark one.
+  func glassBar() -> some View { modifier(GlassBar()) }
+}
+
+private struct Readout: ViewModifier {
+  let fontSize: CGFloat
+  @Environment(\.colorScheme) private var scheme
+  func body(content: Content) -> some View {
+    let figures = content.font(.system(size: fontSize, weight: .medium, design: .monospaced))
+    if scheme == .light {
+      figures.foregroundStyle(Color(white: 0.13))
+        .padding(.horizontal, 7).padding(.vertical, 2)
+        .background(Capsule().fill(Color.white.opacity(0.62)))
+        .overlay(Capsule().stroke(Color.black.opacity(0.1), lineWidth: 0.5))
+    } else if Hardware.glass {
+      figures.foregroundStyle(Hardware.lcdText)
         .padding(.horizontal, 7).padding(.vertical, 2)
         .background(Capsule().fill(Color.black.opacity(0.32)))
         .overlay(Capsule().stroke(Color.white.opacity(0.1), lineWidth: 0.5))
     } else {
-      font(.system(size: fontSize, weight: .medium, design: .monospaced))
-        .foregroundStyle(Hardware.lcdText)
+      figures.foregroundStyle(Hardware.lcdText)
         .shadow(color: Hardware.lcdText.opacity(0.55), radius: 2)
         .padding(.horizontal, 5).padding(.vertical, 2)
         .background(LCDGlass())
     }
   }
-  /// A side panel: in the glass look a pane of Liquid Glass floating over the light table, which
-  /// shows through it; before, brushed metal. It takes every click that lands on it.
-  @ViewBuilder func consolePanel() -> some View {
-    if Hardware.glass {
+}
+
+private struct ConsolePanel: ViewModifier {
+  @Environment(\.colorScheme) private var scheme
+  func body(content: Content) -> some View {
+    let light = scheme == .light
+    if light {
+      // On the copy stand a pane of frost over the blurred live view, dark text on it: Liquid
+      // Glass under a veil where the system has it, the veil alone before.
+      content.clipShape(RoundedRectangle(cornerRadius: 16))
+        .frost(RoundedRectangle(cornerRadius: 16), veil: Hardware.glass ? 0.32 : 0.55, glassRadius: 16)
+        .contentShape(RoundedRectangle(cornerRadius: 16))
+    } else if Hardware.glass {
       // Smoked, so light text reads over the bright table as over the dark surround.
-      background {
+      content.background {
         ZStack {
           SystemGlassBackground(capsule: false, radius: 16, tint: NSColor(white: 0.04, alpha: 0.5))
           Color(white: 0.07).opacity(0.62)
@@ -280,17 +322,25 @@ extension View {
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.1), lineWidth: 0.5))
         .contentShape(RoundedRectangle(cornerRadius: 16))
     } else {
-      background(Hardware.metal)
+      content.background(Hardware.metal)
     }
   }
-  /// A group of controls floating over the picture: a capsule of Liquid Glass, or a dark one.
-  @ViewBuilder func glassBar() -> some View {
-    if Hardware.glass {
-      padding(.horizontal, 8).padding(.vertical, 5)
+}
+
+private struct GlassBar: ViewModifier {
+  @Environment(\.colorScheme) private var scheme
+  func body(content: Content) -> some View {
+    let light = scheme == .light
+    if light {
+      content.padding(.horizontal, 8).padding(.vertical, 5)
+        .frost(Capsule(), veil: Hardware.glass ? 0.18 : 0.62, glassRadius: 18, capsule: true)
+        .contentShape(Capsule())
+    } else if Hardware.glass {
+      content.padding(.horizontal, 8).padding(.vertical, 5)
         .background(SystemGlassBackground(capsule: true, radius: 18, tint: NSColor(white: 0, alpha: 0.28)))
         .contentShape(Capsule())
     } else {
-      padding(.horizontal, 8).padding(.vertical, 5)
+      content.padding(.horizontal, 8).padding(.vertical, 5)
         .background(Capsule().fill(Color(white: 0.1).opacity(0.88)))
         .contentShape(Capsule())
     }

@@ -194,8 +194,13 @@ final class CameraController: ObservableObject {
   @Published private(set) var model = ""
   @Published private(set) var message = ""
   @Published private(set) var live: CGImage? {
-    didSet { liveHistogram = live.map(Histogram.picture) }
+    didSet {
+      liveHistogram = live.map(Histogram.picture)
+      liveBackdrop = live.flatMap(Frost.backdrop)
+    }
   }
+  /// The live frame as frost on the copy stand shows it under its panes.
+  @Published private(set) var liveBackdrop: CGImage?
   /// The histogram of the live frame, as the camera rendered it.
   @Published private(set) var liveHistogram: Histogram?
   @Published private(set) var liveOn = false

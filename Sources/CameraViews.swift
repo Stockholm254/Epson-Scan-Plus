@@ -13,12 +13,14 @@ struct CameraStage: View {
   @State private var ring: CGFloat = 0
   @State private var magnifier = true
   @State private var histogram = true
+  @Environment(\.colorScheme) private var scheme
   var body: some View {
     HStack(spacing: 0) {
       ZStack {
         // Not continued under the panels as a positive is: a negative's orange mask would colour
-        // the whole window.
-        Color(red: 0.06, green: 0.06, blue: 0.065)
+        // the whole window. On light glass the live view itself, frosted past recognition and
+        // mostly grey.
+        if scheme == .light { CopyStandBackdrop(camera: camera) } else { Color(red: 0.06, green: 0.06, blue: 0.065) }
         GeometryReader { geo in liveView(in: geo.size) }
         VStack(spacing: 0) {
           if Liquid.available {
@@ -46,12 +48,12 @@ struct CameraStage: View {
         }.animation(.spring(response: 0.35, dampingFraction: 0.8), value: m.captureToast)
       }
       FocusCheck(m: m, camera: camera).frame(width: 276).consolePanel().padding(8)
-    }.background(Color(red: 0.105, green: 0.11, blue: 0.115))
+    }.background { if scheme == .light { CopyStandBackdrop(camera: camera) } else { Color(red: 0.105, green: 0.11, blue: 0.115) } }
   }
   /// A group of controls as a drop of glass of its own, over the picture.
   func drop(_ group: some View) -> some View {
     group.padding(.horizontal, 10).padding(.vertical, 5)
-      .liquid(Capsule(), LiquidStyle(tint: .black.opacity(0.22))) { $0 }
+      .liquid(Capsule(), LiquidStyle(tint: scheme == .light ? .white.opacity(0.25) : .black.opacity(0.22))) { $0 }
   }
   /// The zoom and the magnifier, and the sharpness.
   @ViewBuilder var topRow: some View {
@@ -219,7 +221,7 @@ struct ShiftBeads: View {
         let lit = gathered || i < got
         Color.clear.frame(width: size, height: size)
           .liquid(Circle(), LiquidStyle(tint: lit ? Hardware.amber.opacity(0.85) : nil)) {
-            $0.overlay(Circle().fill(lit ? Hardware.amber : Color.white.opacity(0.16)))
+            $0.overlay(Circle().fill(lit ? Hardware.amber : Hardware.adaptive(NSColor(white: 1, alpha: 0.16), NSColor(white: 0, alpha: 0.16))))
           }
       }
     }
@@ -241,9 +243,9 @@ struct DropToast: View {
   let text: String
   @State private var risen = false
   var body: some View {
-    Text(text).font(.system(size: 12, weight: .medium)).foregroundStyle(Color(white: 0.96)).fixedSize()
+    Text(text).font(.system(size: 12, weight: .medium)).foregroundStyle(Hardware.ink).fixedSize()
       .padding(.horizontal, 14).padding(.vertical, 7)
-      .liquid(Capsule(), LiquidStyle(tint: .black.opacity(0.3))) { $0.glassPane(radius: 16, darken: 0.35) }
+      .liquid(Capsule(), LiquidStyle(tint: Hardware.adaptive(NSColor(white: 0, alpha: 0.3), NSColor(white: 1, alpha: 0.3)))) { $0.glassPane(radius: 16, darken: 0.35) }
       .offset(y: risen ? -58 : -18)
       .allowsHitTesting(false)
       .onAppear { withAnimation(.spring(response: 0.7, dampingFraction: 0.6).delay(0.08)) { risen = true } }
@@ -315,9 +317,10 @@ struct FocusCheck: View {
           Text(loading ? "读取中…" : "拍一张后在这里看对焦").font(.system(size: 11)).foregroundStyle(.secondary)
         }
       }.frame(width: 248, height: 248)
+        .help("取的是相机文件本身的全分辨率像素（RAW 按系统默认显示），以对焦框的位置为中心。")
       if let crop {
         let s = FocusSearch.sharpness(crop, in: CGRect(x: 0, y: 0, width: 1, height: 1))
-        Text(String(format: "清晰度 × 10⁴\nR %.1f\nG %.1f\nB %.1f", s.r * 1e4, s.g * 1e4, s.b * 1e4)).lcd(10)
+        Text(String(format: "清晰度×10⁴ R %.1f G %.1f B %.1f", s.r * 1e4, s.g * 1e4, s.b * 1e4)).fixedSize().lcd(10)
           .help("这块原图的清晰度：三个通道差得多时，说明有色差，红和蓝的焦点不在同一处")
       }
       if let histogram { LastHistogram(histogram: histogram) }
@@ -325,9 +328,7 @@ struct FocusCheck: View {
         Text(url.lastPathComponent).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
         Button("按对焦点重新取") { load(url) }.font(.system(size: 11))
       }
-      Text("取的是相机文件本身的全分辨率像素（RAW 按系统默认显示），以对焦框的位置为中心。")
-        .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-      Spacer()
+      Spacer(minLength: 0)
     }.padding(16).buttonStyle(HardwareKeyStyle()).controlSize(.small)
       .onChange(of: m.lastCapture) { _, url in if let url { load(url) } }
       .onAppear { if crop == nil, let url = m.lastCapture { load(url) } }
@@ -357,7 +358,7 @@ struct LastHistogram: View {
     let h = histogram
     return VStack(alignment: .leading, spacing: 6) {
       Text(h.linear ? "上一张 RAW · 传感器原始值" : "上一张 · 相机渲染的画面").font(.system(size: 11, weight: .medium))
-      HistogramView(histogram: h).frame(width: 248, height: 64).background(Color.black.opacity(0.4))
+      HistogramView(histogram: h).frame(width: 248, height: 64)
       Text(String(format: "亮端  R %3.0f%%  G %3.0f%%  B %3.0f%%", h.top.r * 100, h.top.g * 100, h.top.b * 100)
         + (h.linear ? "\n距满  R \(ev(h.top.r)) G \(ev(h.top.g)) B \(ev(h.top.b)) EV" : "")
         + String(format: "\n过曝  R %.2f%% G %.2f%% B %.2f%%", h.clipped.r * 100, h.clipped.g * 100, h.clipped.b * 100))

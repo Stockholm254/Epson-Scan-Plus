@@ -75,9 +75,10 @@ struct Histogram: Equatable {
   }
 }
 
-/// A histogram as a camera back draws one: the three channels as light added together, so where
-/// they overlap they mix towards white, scaled to the tallest count away from the two ends, which
-/// a black border or a clipped sky would otherwise dwarf everything beside. Quarters marked.
+/// A histogram as a camera back draws one, on a dark screen in either look: the three channels as
+/// light added together, so where they overlap they mix towards white, scaled to the tallest count
+/// away from the two ends, which a black border or a clipped sky would otherwise dwarf everything
+/// beside. Quarters marked.
 struct HistogramView: View {
   let histogram: Histogram
   static let colours = [Color(red: 1, green: 0.28, blue: 0.22), Color(red: 0.3, green: 0.95, blue: 0.35), Color(red: 0.35, green: 0.55, blue: 1)]
@@ -104,6 +105,7 @@ struct HistogramView: View {
         ctx.fill(p, with: .color(Self.colours[c].opacity(0.6)))
       }
     }
+    .background(RoundedRectangle(cornerRadius: 4).fill(Color.black.opacity(0.72)))
     .accessibilityElement().accessibilityLabel("直方图")
     .accessibilityValue(String(format: "亮端 红 %.0f%%，绿 %.0f%%，蓝 %.0f%%", histogram.top.r * 100, histogram.top.g * 100, histogram.top.b * 100))
   }
@@ -117,12 +119,12 @@ struct LiveHistogram: View {
     VStack(alignment: .leading, spacing: 4) {
       HistogramView(histogram: histogram).frame(width: 180, height: 60)
       HStack(spacing: 6) {
-        Text("实时取景").font(.system(size: 9)).foregroundStyle(Color(white: 0.7))
+        Text("实时取景").font(.system(size: 9)).foregroundStyle(.secondary)
         Spacer()
         ForEach(0..<3, id: \.self) { c in
           let clipped = histogram.clipped.values[c] > 0.001
           Text(["R", "G", "B"][c]).font(.system(size: 9, weight: clipped ? .bold : .regular, design: .monospaced))
-            .foregroundStyle(clipped ? HistogramView.colours[c] : Color(white: 0.45))
+            .foregroundStyle(clipped ? HistogramView.colours[c] : Color.secondary.opacity(0.6))
         }
         if histogram.clipped.values.contains(where: { $0 > 0.001 }) {
           Text("过曝").font(.system(size: 9, weight: .medium)).foregroundStyle(Color(red: 1, green: 0.45, blue: 0.35))
@@ -130,7 +132,7 @@ struct LiveHistogram: View {
       }.frame(width: 180)
     }
     .padding(8)
-    .liquid(RoundedRectangle(cornerRadius: 12), LiquidStyle(tint: .black.opacity(0.3))) { $0.glassPane(radius: 12, darken: 0.35) }
+    .liquid(RoundedRectangle(cornerRadius: 12), LiquidStyle(tint: Hardware.adaptive(NSColor(white: 0, alpha: 0.3), NSColor(white: 1, alpha: 0.3)))) { $0.glassPane(radius: 12, darken: 0.35) }
     .help("相机实时取景的直方图。它来自相机按自己的白平衡和曲线做出的 JPEG，只作参考；RAW 有没有过曝、离满量程还差多少，看右边「上一张 RAW」。通道字母亮起表示这个通道有像素到了顶。")
   }
 }
