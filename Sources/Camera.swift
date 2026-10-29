@@ -244,6 +244,12 @@ final class CameraController: ObservableObject {
   var manualFocus: Bool { properties["FocusMode"]?.value == 1 }
   /// Pictures received since connecting, to tell a shot that brought none.
   private var received = 0
+  /// Pictures received when the shutter was last pressed, and which press that was: the picture
+  /// can come before the process says how the press went (a fast one, a JPEG or a compressed RAW,
+  /// arrives while it still waits to let the half-press go).
+  private var receivedAtPress = 0, presses = 0
+  /// What the process is started with, over this one's own: for tests, a simulated camera's setup.
+  var environment: [String: String]?
   /// A shot taken whose picture has not come yet: the camera takes no new one while it writes and
   /// sends the last (an uncompressed RAW is 120 MB), and says nothing, so the shutter waits too.
   @Published private(set) var awaitingPicture = false
@@ -333,7 +339,29 @@ final class CameraController: ObservableObject {
     // The magnifier follows the point.
     if magnification > 0 { set("Focus_Magnifier_Setting", magnifierValue) }
   }
-  func shoot() { send(["cmd": "shoot", "af": autofocusMode]) }
+  /// The shutter, once the last picture is in: the camera takes no new one while it writes and
+  /// sends the last, and says nothing.
+  func shoot() {
+    guard !awaitingPicture else {
+      message = "上一张还在写入和传输，到了再拍"
+      return
+    }
+    awaitingPicture = true
+    receivedAtPress = received
+    presses += 1
+    let press = presses
+    send(["cmd": "shoot", "af": autofocusMode])
+    // A press that brings no picture says so, rather than nothing; the shutter is free again then.
+    DispatchQueue.main.asyncAfter(deadline: .now() + Self.pictureWait) { [weak self] in
+      guard let self, self.presses == press, self.awaitingPicture, self.received == self.receivedAtPress else { return }
+      self.awaitingPicture = false
+      if self.connected {
+        self.message = "按了快门，但 \(Int(Self.pictureWait)) 秒内没有收到照片：相机可能没有拍（AF 模式下没合焦），或只存进了存储卡。请把「复制诊断信息」发给我"
+      }
+    }
+  }
+  /// How long a press waits for its picture: an uncompressed RAW of the A7R IV is 120 MB.
+  static var pictureWait: TimeInterval = 12
   /// The white balance the camera's colour-temperature setting gives.
   static let colourTemperatureMode: Int64 = 0x100
   /// Sets the colour temperature (switching white balance to it first), within what the camera takes.
@@ -374,6 +402,7 @@ final class CameraController: ObservableObject {
     let p = Process(), toHelper = Pipe(), fromHelper = Pipe()
     p.executableURL = helper
     p.currentDirectoryURL = incoming
+    if let environment { p.environment = ProcessInfo.processInfo.environment.merging(environment) { $1 } }
     p.standardInput = toHelper
     p.standardOutput = fromHelper
     p.standardError = fromHelper
@@ -387,6 +416,7 @@ final class CameraController: ObservableObject {
         self.process = nil
         self.input = nil
         self.liveOn = false
+        self.awaitingPicture = false
         if self.phase != .idle {
           self.phase = .failed
           self.message = "相机进程已退出（\(p.terminationStatus)）"
@@ -444,6 +474,7 @@ final class CameraController: ObservableObject {
       setLive(true)
     case "disconnected":
       phase = .idle
+      awaitingPicture = false
       liveOn = false
       live = nil
       message = "已断开"
@@ -511,18 +542,13 @@ final class CameraController: ObservableObject {
       let focus = event["focus"] as? String ?? ""
       if event["ok"] as? Bool == false {
         message = "快门没有释放（\(event["code"] as? String ?? "")）"
+        awaitingPicture = false
       } else if focus == "failed" || focus == "timeout" {
         message = "相机没能合焦，快门可能没有释放：先点画面上的对焦点、AF，或切到 MF 手动对焦"
+        // Unless its picture came after all.
+        awaitingPicture = false
       } else {
         shots += 1
-        awaitingPicture = true
-        // A shot that brings no picture says so, rather than nothing; the shutter is free again then.
-        let before = received
-        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
-          guard let self, self.connected, self.received == before else { return }
-          self.awaitingPicture = false
-          self.message = "按了快门，但 10 秒内没有收到照片：相机可能没有拍（AF 模式下没合焦），或只存进了存储卡。请把「复制诊断信息」发给我"
-        }
       }
     case "downloaded":
       received += 1
