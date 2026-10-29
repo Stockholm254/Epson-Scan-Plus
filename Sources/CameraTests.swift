@@ -195,6 +195,44 @@ enum CameraTests {
       && model.frames[2].sourcePath?.hasSuffix("EPS00003.JPG") == true,
       "a whole group goes into a folder of its own, and its first picture becomes the roll's next frame")
 
+    // An uncompressed ARW laid out as the A7R IV writes one, small: IFD0 pointing to the sensor's
+    // SubIFD, 14-bit RGGB, black 512, white 16383. Its cells read as they are, no matrix.
+    func arw(orientation: Int, compression: Int = 1) -> Data {
+      var d = Data()
+      func u16(_ v: Int) { d.append(UInt8(v & 0xFF)); d.append(UInt8(v >> 8 & 0xFF)) }
+      func u32(_ v: Int) { u16(v & 0xFFFF); u16(v >> 16) }
+      func entry(_ tag: Int, _ type: Int, _ count: Int, _ value: Int) { u16(tag); u16(type); u32(count); u32(value) }
+      let w = 8, h = 6, sub = 38, black = 176, strip = 184
+      d.append(contentsOf: Array("II".utf8)); u16(42); u32(8)
+      u16(2); entry(0x112, 3, 1, orientation); entry(0x14A, 4, 1, sub); u32(0)
+      u16(11)
+      entry(0x100, 3, 1, w); entry(0x101, 3, 1, h); entry(0x102, 3, 1, 14); entry(0x103, 3, 1, compression)
+      entry(0x106, 3, 1, 32803); entry(0x111, 4, 1, strip); entry(0x117, 4, 1, w * h * 2)
+      entry(0x828D, 3, 2, 2 | 2 << 16); entry(0x828E, 1, 4, 0 | 1 << 8 | 1 << 16 | 2 << 24)
+      entry(0x7310, 3, 4, black); entry(0xC61D, 3, 1, 16383); u32(0)
+      for _ in 0..<4 { u16(512) }
+      for y in 0..<h { for x in 0..<w { u16(512 + (y % 2 == 0 ? (x % 2 == 0 ? 1000 : 2000) : (x % 2 == 0 ? 2002 : 4000))) } }
+      return d
+    }
+    let arwURL = folder.appendingPathComponent("native.ARW")
+    try arw(orientation: 1).write(to: arwURL)
+    let native = try SensorRaw.nativeRGB(arwURL)
+    let bytes = native?.dataProvider?.data as Data?
+    func at(_ x: Int, _ y: Int) -> [Int] { bytes.map { b in (0..<3).map { c in let i = 2 * (3 * (y * 8 + x) + c); return Int(b[i]) | Int(b[i + 1]) << 8 } } ?? [] }
+    let scale = 65535.0 / (16383 - 512)
+    // Within half a percent: the gradient correction answers the greens' 2000 / 2002 by a step.
+    func near(_ got: [Int], _ want: [Double]) -> Bool { got.count == 3 && zip(got, want).allSatisfy { abs(Double($0) - $1 * scale) <= max(2, $1 * scale * 0.005) } }
+    // A flat field: every photosite keeps its own reading, and the others come out as flat as it.
+    try check(native?.width == 8 && native?.height == 6 && native?.bitsPerComponent == 16
+      && near(at(2, 2), [1000, 2001, 4000]) && near(at(3, 2), [1000, 2000, 4000]) && near(at(2, 3), [1000, 2002, 4000])
+      && near(at(3, 3), [1000, 2001, 4000]),
+      "an uncompressed ARW is read at the sensor's full size, each photosite's own colour as measured less the black level, the others interpolated, no colour matrix: \(at(2, 2)) \(at(3, 2)) \(at(2, 3)) \(at(3, 3))")
+    try arw(orientation: 6).write(to: arwURL)
+    let turned = try SensorRaw.nativeRGB(arwURL)
+    try arw(orientation: 1, compression: 32767).write(to: arwURL)
+    try check(turned?.width == 6 && turned?.height == 8 && (try SensorRaw.nativeRGB(arwURL)) == nil,
+      "turned as the camera was held; a compressed ARW is left to the system's RAW engine")
+
     // The bundled process starts the SDK, its libraries found where the app keeps them.
     let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/EpsonCameraHelper")
     if FileManager.default.isExecutableFile(atPath: helper.path) {

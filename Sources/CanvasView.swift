@@ -309,6 +309,14 @@ final class FilmCanvasView: NSView {
     image.draw(
       in: rect, from: .zero, operation: .copy, fraction: 1, respectFlipped: true,
       hints: [.interpolation: NSImageInterpolation.high])
+    // Zoomed in past the picture shown, the part in view from the frame's own pixels over it:
+    // square, once each is two pixels of the screen or more, so a pixel shows as one.
+    if let (detail, area) = zoomDetailInView() {
+      let pixelsPerPixel = area.width * (window?.backingScaleFactor ?? 2) / CGFloat(max(1, detail.width))
+      NSImage(cgImage: detail, size: CGSize(width: detail.width, height: detail.height)).draw(
+        in: area, from: .zero, operation: .copy, fraction: 1, respectFlipped: true,
+        hints: [.interpolation: pixelsPerPixel >= 2 ? NSImageInterpolation.none : .high])
+    }
     if model.singleView, let crop = model.canvasCrop {
       let r = screen(draft ?? crop.cg)
       let mask = NSBezierPath(rect: imageRect)
@@ -605,7 +613,7 @@ final class FilmCanvasView: NSView {
   private var loupeTurn: QuarterTurn?
   func updateLoupe() {
     guard let model else { return }
-    let hidden = !model.preferences.showLoupe || model.displayed == nil
+    let hidden = !model.preferences.showLoupe || shown == nil
     loupe.style = model.preferences.loupeStyle
     loupe.field = model.preferences.loupeField
     // A new view puts the loupe back on what it shows.
@@ -659,6 +667,8 @@ final class FilmCanvasView: NSView {
     h.combine(inLiveResize)
     guard let model else { return h.finalize() }
     h.combine(model.displayed.map(ObjectIdentifier.init))
+    // A preview being read grows under the loupe as it comes.
+    h.combine(model.scanner.previewSoFar.map(ObjectIdentifier.init))
     h.combine(turn.turns)
     h.combine(turn.mirrored)
     let r = imageRect
@@ -810,6 +820,65 @@ final class FilmCanvasView: NSView {
       found = model.contactFrames.last(where: { $0.rect.cg.contains(n) })
     }
     guard let frame = found else { return }
+    requestDetail(frame, single: single)
+  }
+  /// The part of the single frame in view at its full resolution, while zoomed in past the
+  /// picture shown, and where it goes on the canvas; asked for, a moment after the view settles,
+  /// when what there is does not cover the view or is of the frame as it was.
+  private(set) var zoomDetail: AppModel.Detail?
+  private var zoomDetailAsked: String?
+  private var zoomDetailWait: (key: String, view: NormalRect, work: DispatchWorkItem)?
+  private func zoomDetailInView() -> (CGImage, CGRect)? {
+    guard let model, model.singleView, !model.editingSingle, let frame = model.selected, let shown else { return nil }
+    let r = imageRect
+    guard r.width * (window?.backingScaleFactor ?? 2) > CGFloat(shown.width) * 1.05 else {
+      if zoomDetail != nil {
+        zoomDetail = nil
+        model.releaseDetailSource()
+      }
+      return nil
+    }
+    let view = r.intersection(visibleRect)
+    guard !view.isNull, view.width > 1, view.height > 1 else { return nil }
+    let inView = NormalRect(x: (view.minX - r.minX) / r.width, y: (view.minY - r.minY) / r.height, width: view.width / r.width, height: view.height / r.height)
+    let key = model.loupeDetailKey(frame, single: true)
+    let current = zoomDetail.flatMap { $0.key == key ? $0 : nil }
+    if current.map({ !$0.region.covers(inView) }) ?? true { askZoomDetail(frame, key: key, around: inView) }
+    guard let d = current else { return nil }
+    return (d.image, CGRect(x: r.minX + d.region.x * r.width, y: r.minY + d.region.y * r.height, width: d.region.width * r.width, height: d.region.height * r.height))
+  }
+  private func askZoomDetail(_ frame: FilmFrame, key: String, around inView: NormalRect) {
+    // Redraws that leave the view as it is keep the wait as it is; a moved view starts it again.
+    if let w = zoomDetailWait, w.key == key, w.view == inView { return }
+    zoomDetailWait?.work.cancel()
+    let work = DispatchWorkItem { [weak self] in
+      guard let self else { return }
+      self.zoomDetailWait = nil
+      guard let model = self.model, self.zoomDetailAsked == nil else {
+        // One under way: asked for again when it comes back, if it does not cover the view.
+        return
+      }
+      // A quarter of the view more on each side, so a little panning stays sharp.
+      let m = 0.25
+      let region = NormalRect(
+        x: max(0, inView.x - inView.width * m), y: max(0, inView.y - inView.height * m),
+        width: min(1, inView.x + inView.width * (1 + m)) - max(0, inView.x - inView.width * m),
+        height: min(1, inView.y + inView.height * (1 + m)) - max(0, inView.y - inView.height * m))
+      self.zoomDetailAsked = key
+      model.renderDetail(frame, region: region) { [weak self] detail in
+        guard let self else { return }
+        self.zoomDetailAsked = nil
+        if let detail { self.zoomDetail = detail }
+        self.needsDisplay = true
+      }
+    }
+    zoomDetailWait = (key, inView, work)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+  }
+  /// The frame at its own resolution, once per change to it: one at a time, a newer change only
+  /// marking the one under way stale.
+  func requestDetail(_ frame: FilmFrame, single: Bool) {
+    guard let model else { return }
     let key = model.loupeDetailKey(frame, single: single)
     guard key != loupeDetailRequest, key != loupeDetail?.key else { return }
     if loupeDetailRequest != nil {
@@ -970,7 +1039,8 @@ final class FilmCanvasView: NSView {
     let old = imageRect
     guard old.width > 0, old.height > 0 else { return }
     let n = CGPoint(x: (anchor.x - old.minX) / old.width, y: (anchor.y - old.minY) / old.height)
-    model?.zoom = clamp(zoom, 0.5, 8)
+    // Far enough that a pixel of a 60-megapixel frame is several of the screen's.
+    model?.zoom = clamp(zoom, 0.5, 32)
     let new = imageRect
     pan.x += anchor.x - (new.minX + n.x * new.width)
     pan.y += anchor.y - (new.minY + n.y * new.height)

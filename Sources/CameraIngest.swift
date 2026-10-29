@@ -131,12 +131,18 @@ extension AppModel {
     }
     return url
   }
-  /// A camera RAW decoded by the system's RAW engine with nothing of its own added: no tone curve
-  /// or boost, no baseline exposure, no lens correction, sharpening or noise reduction, and the
-  /// same fixed white balance for every frame, so the channels keep one scale across the roll.
-  /// Written linear, 16 bits a channel, as this app's scans are. (The system still applies the
-  /// camera's colour matrix; reading the sensor's own channels is left for later.)
+  /// A camera RAW as a linear 16-bit TIFF, as this app's scans are. An uncompressed ARW is read
+  /// straight from the sensor, each channel what its colour of light made, with no colour matrix
+  /// to mix them (what a negative lit by red, green and blue lights needs). Any other RAW goes
+  /// through the system's RAW engine with nothing of its own added: no tone curve or boost, no
+  /// baseline exposure, no lens correction, sharpening or noise reduction, and the same fixed
+  /// white balance for every frame, so the channels keep one scale across the roll; it still
+  /// applies the camera's colour matrix.
   static func linearTIFF(fromRAW url: URL, to out: URL) throws {
+    if let native = try SensorRaw.nativeRGB(url) {
+      try ImagePipeline.shared.saveTIFF(native, to: out, dpi: 300)
+      return
+    }
     guard let raw = CIRAWFilter(imageURL: url) else { throw DeskError.message("系统无法读取这个 RAW：\(url.lastPathComponent)") }
     raw.boostAmount = 0
     raw.baselineExposure = 0

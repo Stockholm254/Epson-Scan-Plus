@@ -23,6 +23,11 @@ struct NormalRect: Codable, Equatable {
   var height: Double
   static let full = NormalRect(x: 0, y: 0, width: 1, height: 1)
   var cg: CGRect { CGRect(x: x, y: y, width: width, height: height) }
+  /// Holds `other` whole, to within a ten-thousandth.
+  func covers(_ other: NormalRect) -> Bool {
+    let e = 1e-4
+    return other.x >= x - e && other.y >= y - e && other.x + other.width <= x + width + e && other.y + other.height <= y + height + e
+  }
   init(x: Double, y: Double, width: Double, height: Double) {
     self.x = x
     self.y = y

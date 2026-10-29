@@ -314,5 +314,44 @@ enum CanvasTests {
     scanner.finish()
     canvas.updateScanHead()
     try check(model.scanningFrames.isEmpty && canvas.scanHead.isHidden && canvas.scanHead.pose == nil, "and goes when the scan ends")
+
+    // Zoomed into a picture larger than the one shown: the part in view at its own resolution,
+    // turned as the frame is, and a new part when the view moves.
+    let big = CGContext(data: nil, width: 6000, height: 4000, bitsPerComponent: 16, bytesPerRow: 0,
+      space: CGColorSpace(name: CGColorSpace.linearSRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    for i in 0..<60 {
+      big.setFillColor(red: Double(i % 3) / 2, green: Double(i % 5) / 4, blue: 0.5, alpha: 1)
+      big.fill(CGRect(x: i * 100, y: 0, width: 100, height: 4000))
+    }
+    let bigURL = folder.appendingPathComponent("zoom-source.tif")
+    try pipe.saveTIFF(big.makeImage()!, to: bigURL, dpi: 4000)
+    let zoomed = AppModel(libraryURL: folder.appendingPathComponent("zoom-lib"))
+    try zoomed.startCameraRoll()
+    zoomed.addCapturedFrame(bigURL, original: bigURL, linear: true)
+    zoomed.turn(clockwise: true)
+    zoomed.singleView = true
+    zoomed.refresh()
+    for _ in 0..<400 where zoomed.rendering { settle(0.05) }
+    let zoomCanvas = FilmCanvasView(frame: NSRect(x: 0, y: 0, width: 900, height: 600))
+    let zoomWindow = NSWindow(contentRect: NSRect(x: -9000, y: -9000, width: 900, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+    zoomWindow.contentView = zoomCanvas
+    zoomCanvas.model = zoomed
+    zoomed.preferences.showLoupe = false
+    zoomCanvas.setZoom(16, anchor: CGPoint(x: 450, y: 300))
+    for _ in 0..<200 where zoomCanvas.zoomDetail == nil { zoomCanvas.display(); settle(0.05) }
+    let part = zoomCanvas.zoomDetail
+    let shownWidth = Double(zoomed.displayed?.width ?? 1)
+    // Turned a quarter, the shown picture is 4000 across from the source's 4000 rows.
+    let perPart = part.map { Double($0.image.width) / ($0.region.width * 4000) } ?? 0
+    try check(zoomed.zoom == 16 && part != nil && shownWidth < 4000 && abs(perPart - 1) < 0.02 && (part?.image.height ?? 0) > (part?.image.width ?? 0) / 4,
+      "zoomed in, the part in view is drawn from the frame's own pixels, turned as it is shown: \(part.map { "\($0.image.width) × \($0.image.height)" } ?? "none") for \(shownWidth) shown")
+    let first = part?.region
+    zoomCanvas.pan.x += 400
+    zoomCanvas.needsDisplay = true
+    for _ in 0..<200 where zoomCanvas.zoomDetail?.region == first { zoomCanvas.display(); settle(0.05) }
+    try check(zoomCanvas.zoomDetail.map { $0.region != first } == true, "moving the view brings the part now in view")
+    zoomCanvas.setZoom(1, anchor: CGPoint(x: 450, y: 300))
+    zoomCanvas.display()
+    try check(zoomCanvas.zoomDetail == nil, "and back at the whole frame it is let go")
   }
 }

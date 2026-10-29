@@ -180,12 +180,17 @@ final class AppModel: ObservableObject {
   /// none are: as film lies in the V850's holder, a frame shot across then stands upright (every
   /// frame turned in this computer's projects so far was turned clockwise).
   var contactTurn: Int {
-    guard !singleView, preferences.contactLandscape, let d = displayed, d.height > d.width else { return 0 }
+    let picture = scanner.previewSoFar ?? displayed
+    guard !singleView, preferences.contactLandscape, let d = picture, d.height > d.width else { return 0 }
+    // A preview being read is the next roll's, whose frames are not known yet: clockwise, as a new
+    // roll's turn out.
+    guard scanner.previewSoFar == nil else { return 1 }
     let turns = contactFrames.map { (($0.adjustments.rotation % 4) + 4) % 4 }
     return turns.filter { $0 == 3 }.count > turns.filter { $0 == 1 }.count ? 3 : 1
   }
   /// The light table shows the film mirrored when most frames are, as the strips would lie flipped.
   var contactMirrored: Bool {
+    guard scanner.previewSoFar == nil else { return false }
     let frames = contactFrames
     return !singleView && frames.filter { $0.adjustments.flipHorizontal == true }.count * 2 > frames.count
   }
@@ -1172,6 +1177,51 @@ final class AppModel: ObservableObject {
         image = try? ImagePipeline.shared.preview(crop, settings: s, profile: p)
       }
       DispatchQueue.main.async { completion(image) }
+    }
+  }
+  /// A part of the single frame at its own resolution, for the canvas zoomed in past the picture
+  /// it shows: `region` in that picture's normalised coordinates, rendered as the frame is now
+  /// (`key`, the loupe's), turned and mirrored as it is shown.
+  struct Detail {
+    var key: String
+    var region: NormalRect
+    var image: CGImage
+  }
+  /// The selected frame at its own resolution, read once for all the parts zoomed into; only on
+  /// the render queue.
+  private var detailSource: (key: String, image: CGImage)?
+  func releaseDetailSource() { renderQueue.async { self.detailSource = nil } }
+  /// `region` of the single frame at its own resolution, rendered with the whole frame's analysis
+  /// (its base, white balance and levels) so it matches the picture around it. Nil until the
+  /// frame has been analysed.
+  func renderDetail(_ frame: FilmFrame, region: NormalRect, completion: @escaping (Detail?) -> Void) {
+    guard let analysis = toneAnalysis else { return completion(nil) }
+    let negative = showNegative || tool == .base, p = profile, key = loupeDetailKey(frame, single: true)
+    renderQueue.async {
+      let source = [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", frame.sourcePath ?? ""].joined(separator: "|")
+      if self.detailSource?.key != source {
+        self.detailSource = nil
+        self.detailSource = (try? self.source(for: frame, full: true)).map { (source, $0) }
+      }
+      var detail: Detail?
+      if let full = self.detailSource?.image {
+        let w = Double(full.width), h = Double(full.height)
+        let raw = ImageGeometry.transform(region, settings: frame.adjustments, inverse: true)
+        let px = CGRect(x: raw.x * w, y: raw.y * h, width: raw.width * w, height: raw.height * h).integral
+          .intersection(CGRect(x: 0, y: 0, width: w, height: h))
+        // Rendered upright and unmirrored, then turned as the whole frame is.
+        var upright = frame.adjustments
+        upright.rotation = 0
+        upright.flipHorizontal = nil
+        if px.width >= 1, px.height >= 1, let part = full.cropping(to: px),
+          let out = ImagePipeline.shared.render(part, settings: upright, profile: p, analysis: analysis, negative: negative),
+          let shown = ImagePipeline.shared.turned(out, quarterTurns: frame.adjustments.rotation, mirrored: frame.adjustments.flipHorizontal == true)
+        {
+          let covered = NormalRect(x: px.minX / w, y: px.minY / h, width: px.width / w, height: px.height / h)
+          detail = Detail(key: key, region: ImageGeometry.transform(covered, settings: frame.adjustments), image: shown)
+        }
+      }
+      DispatchQueue.main.async { completion(detail) }
     }
   }
   /// Changes whenever the loupe's picture of `frame` would.
