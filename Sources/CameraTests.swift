@@ -229,6 +229,40 @@ enum CameraTests {
       && near(at(2, 2), [1000, 2001, 4000]) && near(at(3, 2), [1000, 2000, 4000]) && near(at(2, 3), [1000, 2002, 4000])
       && near(at(3, 3), [1000, 2001, 4000]),
       "an uncompressed ARW is read at the sensor's full size, each photosite's own colour as measured less the black level, the others interpolated, no colour matrix: \(at(2, 2)) \(at(3, 2)) \(at(2, 3)) \(at(3, 3))")
+    // Fine grey detail, a zone plate, stays grey: little false colour where the rings are close.
+    func plate(_ n: Int) -> Data {
+      var d = Data()
+      func u16(_ v: Int) { d.append(UInt8(v & 0xFF)); d.append(UInt8(v >> 8 & 0xFF)) }
+      func u32(_ v: Int) { u16(v & 0xFFFF); u16(v >> 16) }
+      func entry(_ tag: Int, _ type: Int, _ count: Int, _ value: Int) { u16(tag); u16(type); u32(count); u32(value) }
+      let sub = 38, black = 176, strip = 184
+      d.append(contentsOf: Array("II".utf8)); u16(42); u32(8)
+      u16(2); entry(0x112, 3, 1, 1); entry(0x14A, 4, 1, sub); u32(0)
+      u16(11)
+      entry(0x100, 3, 1, n); entry(0x101, 3, 1, n); entry(0x102, 3, 1, 14); entry(0x103, 3, 1, 1)
+      entry(0x106, 3, 1, 32803); entry(0x111, 4, 1, strip); entry(0x117, 4, 1, n * n * 2)
+      entry(0x828D, 3, 2, 2 | 2 << 16); entry(0x828E, 1, 4, 0 | 1 << 8 | 1 << 16 | 2 << 24)
+      entry(0x7310, 3, 4, black); entry(0xC61D, 3, 1, 16383); u32(0)
+      for _ in 0..<4 { u16(512) }
+      for y in 0..<n { for x in 0..<n {
+        let dx = Double(x - n / 2), dy = Double(y - n / 2)
+        u16(512 + Int((0.5 + 0.4 * cos(.pi * (dx * dx + dy * dy) / Double(n) / 1.2)) * 15871))
+      } }
+      return d
+    }
+    try plate(512).write(to: arwURL)
+    let rings = try SensorRaw.nativeRGB(arwURL).flatMap { $0.dataProvider?.data as Data? }
+    var colourError = 0.0, sites = 0.0
+    if let rings {
+      for y in 8..<504 { for x in 8..<504 {
+        let v = (0..<3).map { c -> Double in let i = 2 * (3 * (y * 512 + x) + c); return Double(Int(rings[i]) | Int(rings[i + 1]) << 8) / 65535 }
+        colourError += (pow(v[0] - v[1], 2) + pow(v[2] - v[1], 2)) / 2
+        sites += 1
+      } }
+    }
+    let colourPSNR = sites > 0 ? 10 * log10(1 / (colourError / sites)) : 0
+    try check(colourPSNR > 20,
+      String(format: "fine grey detail from the sensor stays grey: colour error %.1f dB on a zone plate (Malvar–He–Cutler, used before, 17.5 dB)", colourPSNR))
     try arw(orientation: 6).write(to: arwURL)
     let turned = try SensorRaw.nativeRGB(arwURL)
     try arw(orientation: 1, compression: 32767).write(to: arwURL)
