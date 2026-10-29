@@ -85,16 +85,20 @@ enum LoupeTests {
     let wideCup = rodenstock.at(centre.x, centre.y - r * 0.82), wideSkirt = rodenstock.at(centre.x, centre.y - r * 0.98)
     try check(abs(rodenstock.stripe - 18) < 3.5 && wideCup[3] == 255 && wideCup[0] < 70 && wideSkirt[1] > wideCup[1] + 60,
       "the Rodenstock loupe magnifies 3×, its wide lens in a black eyecup on a clear skirt: the stripe is \(rodenstock.stripe) pt, the eyecup \(wideCup[1]), the skirt \(wideSkirt[1])")
-    let schneider = Picture(renderer.render(frame: view, scale: 2, pose: pose(.schneider), scene: scene)!)
-    let tallCup = schneider.at(centre.x, centre.y - r * 0.83), tube = schneider.at(centre.x, centre.y - r * 0.985)
-    try check(abs(schneider.stripe - 18) < 3.5 && tallCup[3] == 255 && tallCup[0] < 70 && tube[1] > tallCup[1] + 60,
-      "the Schneider loupe magnifies 3× too, its lens in a black eyecup above a clear tube of a skirt: the stripe is \(schneider.stripe) pt, the eyecup \(tallCup[1]), the skirt \(tube[1])")
+    let peak = Picture(renderer.render(frame: view, scale: 2, pose: pose(.peak), scene: scene)!)
+    let peakCup = peak.at(centre.x, centre.y - r * 0.71), peakSkirt = peak.at(centre.x, centre.y - r * 0.965)
+    try check(abs(peak.stripe - 47) < 6 && peakCup[3] == 255 && peakCup[0] < 70 && peakSkirt[1] > peakCup[1] + 60,
+      "the Peak loupe magnifies 8×, its lens in a black eyecup on a tall clear skirt: the stripe is \(peak.stripe) pt, the eyecup \(peakCup[1]), the skirt \(peakSkirt[1])")
+    let schneider = Picture(renderer.render(frame: view, scale: 2, pose: pose(.schneider10), scene: scene)!)
+    let axis = schneider.at(centre.x, centre.y), smallCup = schneider.at(centre.x, centre.y - r * 0.58)
+    try check(schneider.stripe >= 2 * r * CGFloat(LoupeStyle.schneider10.lens.radius) * 0.85 && axis[0] > 170 && axis[2] > 170 && smallCup[3] == 255 && smallCup[0] < 70,
+      "the Schneider 10× magnifies most, the stripe filling its small lens, set in a black eyecup: \(schneider.stripe) pt, the eyecup \(smallCup[1])")
     let lifted = Picture(renderer.render(frame: view, scale: 2, pose: pose(.pentax, lift: r * 0.12), scene: scene)!)
     try check(lifted.sharpest * 10 >= p.sharpest * 8 && abs(lifted.stripe - p.stripe) < 4,
       "picked up and moved, the loupe stays in focus and magnified: edges \(lifted.sharpest) against \(p.sharpest)")
     // Pincushion: full magnification on the axis, a little more towards the rim, as slight as the
     // real loupe's. The film at four times the canvas's resolution, so its own pixels do not blur the edge.
-    try check(LoupeStyle.allCases.allSatisfy { $0.pincushion <= 0.03 && $0.pincushion >= LoupeStyle.schneider.pincushion }
+    try check(LoupeStyle.allCases.allSatisfy { $0.pincushion <= 0.03 && $0.pincushion >= LoupeStyle.schneider10.pincushion }
       && LoupeStyle.pentax.pincushion > LoupeStyle.rodenstock.pincushion,
       "the loupes bow lines at the rim no more than real ones, the Pentax a little more than the aspheric 3×, the Schneider least")
     var edge = scene
@@ -311,11 +315,15 @@ enum LoupeTests {
     let frame66 = hypot(28, 28) * (canvas.loupePointsPerMM ?? 0), medium = loupe.magnification ?? 0
     try check(loupe.style == .rodenstock && reach() > frame66 && medium >= 1.2 && (loupe.eyepiece?.lens ?? 0) <= 0.46 * min(canvas.bounds.width, canvas.bounds.height) + 0.5,
       String(format: "the 3× for medium format grows its large field, within the canvas, to show a whole 6 × 6 frame: %.0f pt to the rim, the corner %.0f pt off, %.1f×", reach(), frame66, medium))
-    model.preferences.loupeStyle = .schneider
+    model.preferences.loupeStyle = .peak
     canvas.updateLoupe()
-    let frame67 = hypot(28, 35) * (canvas.loupePointsPerMM ?? 0)
-    try check(loupe.style == .schneider && reach() > frame67 && (loupe.magnification ?? 0) >= 1.2,
-      String(format: "the Schneider 3× shows a whole 6 × 7 frame: %.0f pt to the rim, the corner %.0f pt off, %.1f×", reach(), frame67, loupe.magnification ?? 0))
+    try check(loupe.style == .peak && reach() > frame135 && (loupe.magnification ?? 0) >= 1.2,
+      String(format: "the Peak 8× shows a whole 135 frame: %.0f pt to the rim, the corner %.0f pt off, %.1f×", reach(), frame135, loupe.magnification ?? 0))
+    let eight = loupe.magnification ?? 0
+    model.preferences.loupeStyle = .schneider10
+    canvas.updateLoupe()
+    try check(loupe.style == .schneider10 && reach() < frame135 && (loupe.magnification ?? 0) > eight,
+      String(format: "the Schneider 10× shows part of a frame, magnified most: %.0f pt to the rim, %.1f×", reach(), loupe.magnification ?? 0))
     model.preferences.loupeStyle = .mamiya
     canvas.updateLoupe()
     model.singleView = true

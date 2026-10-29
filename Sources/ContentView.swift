@@ -763,7 +763,13 @@ struct ContentView: View {
 /// wheel until the first step says where it is.
 struct RenderProgress: View {
   let step: (done: Double, label: String)?
+  /// Shown only for a render that takes a while, so a slider's quick ones do not flash it.
+  @State private var due = false
   var body: some View {
+    Group { if due { bar } }
+      .onAppear { DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { due = true } }
+  }
+  var bar: some View {
     VStack(alignment: .trailing, spacing: 5) {
       if let step {
         ProgressView(value: step.done).progressViewStyle(.linear).tint(Hardware.amber).frame(width: 170)

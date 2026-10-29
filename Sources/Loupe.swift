@@ -1,15 +1,17 @@
 import AppKit
 import Metal
 
-/// The loupes that can lie on the light table. Raw values are stored in settings.
+/// The loupes that can lie on the light table. Raw values are stored in settings. The Peak 8×
+/// and the Schneider 10× are drawn from photographs: neither maker publishes their sizes.
 enum LoupeStyle: String, CaseIterable {
-  case pentax, mamiya, rodenstock, schneider
+  case pentax, mamiya, rodenstock, peak, schneider10
   var title: String {
     switch self {
     case .pentax: return "Pentax 式 5.5×"
     case .mamiya: return "Mamiya 式 4×"
     case .rodenstock: return "Rodenstock 式 3×（6×6）"
-    case .schneider: return "Schneider-Kreuznach 式 3×（6×7）"
+    case .peak: return "Peak 式 8×（135）"
+    case .schneider10: return "Schneider-Kreuznach 式 10×"
     }
   }
   /// Its own: relative to the light table seen from afar, and the most it shows over the single frame.
@@ -17,7 +19,9 @@ enum LoupeStyle: String, CaseIterable {
     switch self {
     case .pentax: return 5.5
     case .mamiya: return 4
-    case .rodenstock, .schneider: return 3
+    case .rodenstock: return 3
+    case .peak: return 8
+    case .schneider10: return 10
     }
   }
   /// The base's real diameter, so the loupe lies to the film's scale.
@@ -26,30 +30,34 @@ enum LoupeStyle: String, CaseIterable {
     case .pentax: return 48
     case .mamiya: return 56
     case .rodenstock: return 90
-    case .schneider: return 100
+    case .peak: return 52
+    case .schneider10: return 40
     }
   }
   /// How much film the lens shows across, in millimetres, as the real loupe does: a whole 135
-  /// frame (43 mm corner to corner) for the 5.5× and the 4×, a whole 6 × 6 (79 mm) for the
-  /// Rodenstock 3×, and the Schneider's 7 × 7 cm field round a whole 6 × 7 (90 mm).
+  /// frame (43 mm corner to corner) for the 5.5×, the 4× and the Peak 8×, made for 135; a whole
+  /// 6 × 6 (79 mm) for the Rodenstock 3×; and about 24 mm for the Schneider 10×, which is for
+  /// checking focus and grain in part of a frame, not for the whole.
   var fieldMM: Double {
     switch self {
     case .pentax: return 46
     case .mamiya: return 52
     case .rodenstock: return 84
-    case .schneider: return 92
+    case .peak: return 45
+    case .schneider10: return 24
     }
   }
   /// How much more the lens magnifies at its rim than on its axis, as the real loupe does: the
-  /// Pentax pulls the corners out a little, the 4× and the aspheric 3× barely at all, the
-  /// Schneider least. No maker publishes a figure (they say free of distortion); these follow what
-  /// owners report.
+  /// Pentax pulls the corners out a little, the Peak about as much, the 4× and the aspheric 3×
+  /// barely at all, the Schneider least. No maker publishes a figure (they say free of
+  /// distortion); these follow what owners report.
   var pincushion: Double {
     switch self {
     case .pentax: return 0.03
     case .mamiya: return 0.02
     case .rodenstock: return 0.015
-    case .schneider: return 0.01
+    case .peak: return 0.025
+    case .schneider10: return 0.01
     }
   }
   /// How far out the lens shows the film at its rim, where it darkens, in lens radii before
@@ -64,7 +72,8 @@ enum LoupeStyle: String, CaseIterable {
     case .pentax: return 1.15
     case .mamiya: return 0.92
     case .rodenstock: return 1.25
-    case .schneider: return 1.33
+    case .peak: return 1.42
+    case .schneider10: return 1.5
     }
   }
   var index: Int32 {
@@ -72,7 +81,8 @@ enum LoupeStyle: String, CaseIterable {
     case .pentax: return 0
     case .mamiya: return 1
     case .rodenstock: return 2
-    case .schneider: return 3
+    case .schneider10: return 3
+    case .peak: return 4
     }
   }
   /// The eye lens's height and radius, in base radii, as the shader draws them.
@@ -81,7 +91,8 @@ enum LoupeStyle: String, CaseIterable {
     case .pentax: return (1.04, 0.60)
     case .mamiya: return (0.875, 0.67)
     case .rodenstock: return (1.16, 0.74)
-    case .schneider: return (1.24, 0.76)
+    case .peak: return (1.32, 0.60)
+    case .schneider10: return (1.40, 0.48)
     }
   }
 }
@@ -247,13 +258,13 @@ final class LoupeRenderer {
     constexpr sampler smooth(coord::normalized, filter::linear, mip_filter::linear, address::clamp_to_edge);
     // Per style, in base radii: the top's height, the eye lens's height and radius, the skirt's
     // top, and the white focusing index's span on the body's front.
-    constant float kTop[4] = {1.15, 0.92, 1.25, 1.33};
-    constant float kLensZ[4] = {1.04, 0.875, 1.16, 1.24};
-    constant float kLensR[4] = {0.60, 0.67, 0.74, 0.76};
-    constant float kSkirtTop[4] = {0.44, 0.28, 0.52, 0.46};
-    constant float kIndexLow[4] = {0.53, 0.5, 1.0, 0.7};
-    constant float kIndexHigh[4] = {0.6, 0.56, 1.06, 0.78};
-    constant float kPincushion[4] = {0.03, 0.02, 0.015, 0.01};
+    constant float kTop[5] = {1.15, 0.92, 1.25, 1.5, 1.42};
+    constant float kLensZ[5] = {1.04, 0.875, 1.16, 1.40, 1.32};
+    constant float kLensR[5] = {0.60, 0.67, 0.74, 0.48, 0.60};
+    constant float kSkirtTop[5] = {0.44, 0.28, 0.52, 0.40, 0.62};
+    constant float kIndexLow[5] = {0.53, 0.5, 1.0, 0.82, 0.70};
+    constant float kIndexHigh[5] = {0.6, 0.56, 1.06, 0.88, 0.76};
+    constant float kPincushion[5] = {0.03, 0.02, 0.015, 0.01, 0.025};
 
     static float box(float2 p, float2 lo, float2 hi, float r) {
       float2 q = abs(p - (lo + hi) * 0.5) - (hi - lo) * 0.5 + r;
@@ -307,16 +318,29 @@ final class LoupeRenderer {
         if (body < best.x) best = float2(body, 2.0);
         if (ring < best.x) best = float2(ring, 3.0);
         if (cup < best.x) best = float2(cup, 4.0);
-      } else {
-        // The Schneider 3× for 6 × 7: the clear one of its two skirts, a straight tube; a chrome
-        // band where it fits on; a black body narrowing to a rubber eyecup round the wide lens.
-        float skirt = polygon4(q, float2(0.94, 0.0), float2(1.0, 0.0), float2(1.0, 0.46), float2(0.94, 0.46)) - 0.008;
-        float body = polygon4(q, float2(0.42, 0.42), float2(0.97, 0.42), float2(0.88, 1.18), float2(0.42, 1.18)) - 0.012;
-        float band = box(q, float2(0.90, 0.42), float2(0.97, 0.50), 0.015);
-        float cup = box(q, float2(0.76, 1.14), float2(0.90, 1.32), 0.05);
+      } else if (style == 3) {
+        // The Schneider 10×: a short clear skirt, a slim black cone with a chrome band where it
+        // fits on, and a rubber eyecup close round the small eye lens.
+        float skirt = polygon4(q, float2(0.92, 0.0), float2(1.0, 0.0), float2(0.98, 0.40), float2(0.90, 0.40)) - 0.008;
+        float body = polygon4(q, float2(0.40, 0.38), float2(0.96, 0.38), float2(0.70, 1.32), float2(0.40, 1.32)) - 0.012;
+        float band = box(q, float2(0.88, 0.38), float2(0.965, 0.47), 0.015);
+        float cup = box(q, float2(0.48, 1.28), float2(0.66, 1.50), 0.05);
         if (skirt < best.x) best = float2(skirt, 1.0);
         if (body < best.x) best = float2(body, 2.0);
         if (band < best.x) best = float2(band, 5.0);
+        if (cup < best.x) best = float2(cup, 4.0);
+      } else {
+        // The Peak 8× for 135: a tall clear skirt, a black barrel with a knurled focusing ring
+        // at its top, and a rubber eyecup round the eye lens.
+        float skirt = polygon4(q, float2(0.92, 0.0), float2(1.0, 0.0), float2(0.97, 0.62), float2(0.89, 0.62)) - 0.008;
+        float body = box(q, float2(0.40, 0.58), float2(0.86, 1.02), 0.02);
+        float ring = box(q, float2(0.78, 0.98), float2(0.88, 1.24), 0.03);
+        ring -= 0.006 * smoothstep(0.85, 0.88, q.x) * smoothstep(1.02, 1.05, q.y) * (1.0 - smoothstep(1.18, 1.21, q.y))
+          * (0.5 + 0.5 * cos(angle * 110.0));
+        float cup = box(q, float2(0.60, 1.20), float2(0.80, 1.42), 0.05);
+        if (skirt < best.x) best = float2(skirt, 1.0);
+        if (body < best.x) best = float2(body, 2.0);
+        if (ring < best.x) best = float2(ring, 3.0);
         if (cup < best.x) best = float2(cup, 4.0);
       }
       return best;

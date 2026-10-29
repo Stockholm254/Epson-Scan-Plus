@@ -1135,15 +1135,33 @@ final class AppModel: ObservableObject {
     else { return nil }
     return calibration.offset
   }
+  /// Files read to render from, at a size, kept so that a slider dragged over a frame does not
+  /// read its 300 MB TIFF again each step (a quarter of a second, more the first time): the last
+  /// few, never a full-resolution one, which the zoom keeps on its own.
+  private let readLock = NSLock()
+  private var read = [(key: String, image: CGImage)]()
+  private func load(_ url: URL, maxDimension: Int?) throws -> CGImage {
+    guard let maxDimension else { return try ImagePipeline.shared.load(url, maxDimension: nil) }
+    let key = "\(url.path)@\(maxDimension)"
+    readLock.lock()
+    let kept = read.first { $0.key == key }?.image
+    readLock.unlock()
+    if let kept { return kept }
+    let image = try ImagePipeline.shared.load(url, maxDimension: maxDimension)
+    readLock.lock()
+    read.removeAll { $0.key == key }
+    read.insert((key, image), at: 0)
+    if read.count > 3 { read.removeLast() }
+    readLock.unlock()
+    return image
+  }
   private func uncorrectedSource(for frame: FilmFrame, full: Bool, maxDimension: Int?) throws -> CGImage {
     if let path = frame.scanPath, frame.hasFullResolution {
-      let raw = try ImagePipeline.shared.load(
-        URL(fileURLWithPath: path), maxDimension: full ? nil : maxDimension ?? 2200)
+      let raw = try load(URL(fileURLWithPath: path), maxDimension: full ? nil : maxDimension ?? 2200)
       return try ImagePipeline.shared.crop(raw, rect: frame.rect.relative(to: frame.captureRect))
     }
     if let path = frame.sourcePath {
-      let image = try ImagePipeline.shared.load(
-        URL(fileURLWithPath: path), maxDimension: full ? nil : maxDimension ?? 3000)
+      let image = try load(URL(fileURLWithPath: path), maxDimension: full ? nil : maxDimension ?? 3000)
       return try ImagePipeline.shared.crop(image, rect: frame.rect)
     }
     guard let url = overviewURL else { throw DeskError.message("尚无图像。") }
@@ -1155,10 +1173,10 @@ final class AppModel: ObservableObject {
   func contextSource(for frame: FilmFrame) throws -> (image: CGImage, region: NormalRect) {
     let pipe = ImagePipeline.shared
     if let path = frame.sourcePath {
-      return (try pipe.load(URL(fileURLWithPath: path), maxDimension: 3000), .full)
+      return (try load(URL(fileURLWithPath: path), maxDimension: 3000), .full)
     }
     if let path = frame.scanPath, frame.hasFullResolution {
-      let scan = try pipe.load(URL(fileURLWithPath: path), maxDimension: 3000)
+      let scan = try load(URL(fileURLWithPath: path), maxDimension: 3000)
       return (corrected(scan, frame, scan: true), frame.captureRect)
     }
     guard let url = overviewURL else { throw DeskError.message("尚无图像。") }
