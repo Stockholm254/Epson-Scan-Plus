@@ -345,7 +345,7 @@ enum CanvasTests {
     // Turned a quarter, the shown picture is 4000 across from the source's 4000 rows.
     let perPart = part.map { Double($0.image.width) / ($0.region.width * 4000) } ?? 0
     try check(zoomed.zoom == 16 && part != nil && shownWidth < 4000 && abs(perPart - 1) < 0.02 && (part?.image.height ?? 0) > (part?.image.width ?? 0) / 4,
-      "zoomed in, the part in view is drawn from the frame's own pixels, turned as it is shown: \(part.map { "\($0.image.width) × \($0.image.height)" } ?? "none") for \(shownWidth) shown (analysed \(zoomed.toneAnalysis != nil), single \(zoomed.singleView), rendering \(zoomed.rendering), view \(zoomCanvas.imageRect))")
+      "zoomed in, the part in view is drawn from the frame's own pixels, turned as it is shown: \(part.map { "\($0.image.width) × \($0.image.height)" } ?? "none") for \(shownWidth) shown (analysed \(zoomed.toneAnalysis != nil), single \(zoomed.singleView), rendering \(zoomed.rendering), view \(zoomCanvas.imageRect), \(zoomCanvas.zoomDetailState), loupe \(zoomed.preferences.showLoupe))")
     let first = part?.region
     zoomCanvas.pan.x += 400
     zoomCanvas.needsDisplay = true

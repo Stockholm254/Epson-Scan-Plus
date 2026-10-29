@@ -89,20 +89,6 @@ struct GlassToast: View {
 }
 
 extension CropLens {
-  /// The glass bubble over a live frame (or any picture): `picture` about `point` (normalised),
-  /// `magnification` times as large as it is shown at `shownWidth` points across, with `box`
-  /// (normalised) outlined, `diameter` points at `backing` pixels a point.
-  static func magnifier(
-    _ picture: CGImage, at point: CGPoint, box: CGRect?, shownWidth: CGFloat, magnification: CGFloat = 4,
-    diameter: CGFloat = 148, backing: CGFloat = 2
-  ) -> CGImage? {
-    let w = CGFloat(picture.width), h = CGFloat(picture.height)
-    let scale = magnification * shownWidth / max(1, w) * backing
-    let outline = box.map { CGRect(x: $0.minX * w, y: $0.minY * h, width: $0.width * w, height: $0.height * h) }
-    return render(
-      picture, center: CGPoint(x: point.x * w, y: point.y * h), scale: scale, crop: outline, dimOutside: 0,
-      pixels: Int(diameter * backing))
-  }
   /// A whole small picture under a glass bubble, filling most of it: the library's loupe.
   static func loupe(_ picture: CGImage, diameter: CGFloat = 112, backing: CGFloat = 2) -> CGImage? {
     let pixels = Int(diameter * backing)

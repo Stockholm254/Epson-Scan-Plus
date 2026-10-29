@@ -896,6 +896,8 @@ final class FilmCanvasView: NSView {
   private(set) var zoomDetail: AppModel.Detail?
   private var zoomDetailAsked: String?
   private var zoomDetailWait: (key: String, view: NormalRect, work: DispatchWorkItem)?
+  /// For a test that waits on it.
+  var zoomDetailState: String { "asked \(zoomDetailAsked != nil), waiting \(zoomDetailWait != nil)" }
   private func zoomDetailInView() -> (CGImage, CGRect)? {
     guard let model, model.singleView, !model.editingSingle, let frame = model.selected, let shown else { return nil }
     let r = imageRect

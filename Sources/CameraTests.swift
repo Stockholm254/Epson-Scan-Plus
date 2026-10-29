@@ -147,10 +147,12 @@ enum CameraTests {
     camera.step(1)
     try check(sent.last?.contains("\"mf\":true") == true && sent.last?.contains("\"magnify\":\((Int64(59) << 32) | (Int64(160) << 16) | 240)") == true,
       "switching to manual focus to step puts the magnifier back, which the switch ends")
-    let bubble = CropLens.magnifier(picture(320, 240), at: CGPoint(x: 0.5, y: 0.5), box: camera.focusBox, shownWidth: 520, backing: 2)
+    let stage = CGSize(width: 520, height: 390), point = CGPoint(x: 260, y: 195)
+    let standing = LiveLoupe.render(picture(1024, 768), size: stage, at: point, style: .pentax, backing: 2)
     let loupe = CropLens.loupe(picture(160, 107))
-    try check(bubble?.width == 296 && loupe?.width == 224,
-      "the glass bubble over the live view and the library's loupe are drawn at the screen's resolution")
+    try check(standing.map { $0.image.width == Int($0.frame.width * 2) && $0.frame.contains(point) && CGRect(origin: .zero, size: stage).contains($0.frame) } == true
+      && loupe?.width == 224,
+      "the light table's loupe stands on the live view at the focus point, and the library's loupe, both at the screen's resolution")
     camera.receive(#"{"event":"error","stage":"enum","code":"0x8000","message":"没有找到相机"}"#)
     try check(camera.phase == .failed && camera.message.contains("没有找到相机"), "a failure is shown as the process says it")
 

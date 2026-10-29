@@ -1280,7 +1280,11 @@ final class AppModel: ObservableObject {
   }
   /// Changes whenever the loupe's picture of `frame` would.
   func loupeDetailKey(_ frame: FilmFrame, single: Bool = false) -> String {
-    let settings = (try? JSONEncoder().encode(frame.adjustments)).map { $0.base64EncodedString() } ?? ""
+    // Keys sorted: without, the encoder's order is not promised, and the same frame could ask for
+    // its picture again on every draw.
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = .sortedKeys
+    let settings = (try? encoder.encode(frame.adjustments)).map { $0.base64EncodedString() } ?? ""
     let shown = single ? "single \(!showNegative)" : "table \(contactPositive)"
     return [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", shown, profile.id, settings]
       .joined(separator: "|")

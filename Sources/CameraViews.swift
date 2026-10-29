@@ -96,16 +96,13 @@ struct CameraStage: View {
           }
         }
         .overlay(alignment: .topLeading) {
+          // The light table's loupe, the one chosen, standing on the live view at the focus point.
           if zoom == 1, camera.magnification == 0, magnifier,
-            let bubble = CropLens.magnifier(
-              shown, at: camera.focusPoint, box: nil, shownWidth: fit.width,
-              backing: NSScreen.main?.backingScaleFactor ?? 2)
+            let loupe = LiveLoupe.render(shown, size: fit, at: at, style: m.preferences.loupeStyle, backing: NSScreen.main?.backingScaleFactor ?? 2)
           {
-            let frame = CropLens.frame(for: at, in: CGRect(origin: .zero, size: fit).insetBy(dx: 6, dy: 6))
-            Image(decorative: bubble, scale: NSScreen.main?.backingScaleFactor ?? 2)
-              .frame(width: frame.width, height: frame.height)
-              .shadow(color: .black.opacity(0.5), radius: 14, y: 6)
-              .offset(x: frame.minX, y: frame.minY)
+            Image(decorative: loupe.image, scale: NSScreen.main?.backingScaleFactor ?? 2)
+              .frame(width: loupe.frame.width, height: loupe.frame.height)
+              .offset(x: loupe.frame.minX, y: loupe.frame.minY)
               .allowsHitTesting(false)
           }
         }
@@ -449,5 +446,26 @@ struct CameraPanel: View {
         Text(p?.text ?? "--").lcd(10)
       }
     }
+  }
+}
+
+/// The light table's loupe over the live view: the same ray-marched loupe, standing at the focus
+/// point, seen from in front, magnifying the live picture as much as its pixels allow (the
+/// camera's own magnifier shows the sensor's pixels; the live picture is only 1024 across).
+enum LiveLoupe {
+  static func render(_ live: CGImage, size: CGSize, at point: CGPoint, style: LoupeStyle, backing: CGFloat) -> (image: CGImage, frame: CGRect)? {
+    guard size.width > 40, size.height > 40 else { return nil }
+    let radius = min(size.width, size.height) * 0.2 * CGFloat(style.baseMM / 48).squareRoot()
+    let perPoint = Double(live.width) / Double(size.width)
+    let pose = LoupeRenderer.Pose(
+      style: style, center: point, radius: radius,
+      eye: SIMD3(Float(size.width / 2), Float(size.height), Float(max(size.width, size.height) * 2)),
+      magnification: min(style.magnification, max(2, perPoint * 1.5)))
+    let frame = CGRect(x: point.x - radius * 2.1, y: point.y - radius * 2.1, width: radius * 4.2, height: radius * 4.2)
+      .intersection(CGRect(origin: .zero, size: size)).integral
+    guard frame.width > 1, frame.height > 1 else { return nil }
+    let scene = LoupeRenderer.Scene(table: live, canvas: size, film: live, filmRect: CGRect(origin: .zero, size: size))
+    // One ray a pixel: it is drawn again for every frame the camera sends.
+    return LoupeRenderer.shared.render(frame: frame, scale: backing, pose: pose, scene: scene, samples: 1).map { ($0, frame) }
   }
 }
