@@ -128,6 +128,10 @@ struct RollSleeve: View {
     .padding(.leading, 14)
     .background {
       ZStack(alignment: .leading) {
+        // The shadow is the page's outline's, not the whole page's: a shadow of all its strips and
+        // pockets is drawn again every frame the page lifts, and took seconds a drawer.
+        RoundedRectangle(cornerRadius: 3).fill(Color(white: 0.1))
+          .shadow(color: .black.opacity(hover ? 0.6 : 0.4), radius: hover ? 12 : 5, y: hover ? 8 : 3)
         RoundedRectangle(cornerRadius: 3).fill(Color(white: 0.8).opacity(0.13))
         RoundedRectangle(cornerRadius: 3).stroke(Color.white.opacity(0.16), lineWidth: 0.6)
         VStack {
@@ -143,7 +147,6 @@ struct RollSleeve: View {
     .overlay(alignment: .topTrailing) { indexTab.offset(x: -14, y: -16) }
     .overlay(RoundedRectangle(cornerRadius: 3).stroke(current ? Hardware.amber : .clear, lineWidth: 1.5))
     .offset(y: hover ? -4 : 0)
-    .shadow(color: .black.opacity(hover ? 0.6 : 0.4), radius: hover ? 12 : 5, y: hover ? 8 : 3)
     .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hover)
     .onHover { hover = $0 }
     .contentShape(Rectangle())

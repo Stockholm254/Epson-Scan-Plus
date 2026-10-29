@@ -19,6 +19,7 @@
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -234,6 +235,17 @@ static sdk::CrError writeProp(const Known& k, int64_t value) {
   p.SetCurrentValue((uint64_t)value);
   return sdk::SetDeviceProperty(handle, &p);
 }
+/// Just after it connects, the camera takes nothing for a moment and says so with 0x8402 (called
+/// too early): what is asked of it then is asked again, for up to three seconds.
+static const sdk::CrError tooEarly = 0x8402;
+static sdk::CrError patiently(const std::function<sdk::CrError()>& call) {
+  sdk::CrError err = call();
+  for (int i = 0; i < 15 && err == tooEarly; i++) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    err = call();
+  }
+  return err;
+}
 
 class Callback : public sdk::IDeviceCallback {
  public:
@@ -377,15 +389,15 @@ static void connect(const Message& m) {
   }
   // The app sets focus, exposure and drive mode, not the camera's dials.
   if (auto k = byName("PriorityKeySettings")) {
-    err = writeProp(*k, sdk::CrPriorityKey_PCRemote);
+    err = patiently([&] { return writeProp(*k, sdk::CrPriorityKey_PCRemote); });
     if (err) logLine("切换到电脑优先失败：" + hex(err));
   }
   if (auto k = byName("StillImageStoreDestination")) {
     int64_t store = m.on("card") ? sdk::CrStillImageStoreDestination_HostPCAndMemoryCard : sdk::CrStillImageStoreDestination_HostPC;
-    err = writeProp(*k, store);
+    err = patiently([&] { return writeProp(*k, store); });
     if (err) logLine("设定保存位置失败：" + hex(err));
   }
-  if (auto k = byName("LiveView_Image_Quality")) writeProp(*k, sdk::CrPropertyLiveViewImageQuality_High);
+  if (auto k = byName("LiveView_Image_Quality")) patiently([&] { return writeProp(*k, sdk::CrPropertyLiveViewImageQuality_High); });
   emit("{\"event\":\"connected\",\"model\":" + quote(model) + ",\"cameras\":" + std::to_string(cameras->GetCount()) + "}");
 }
 static void disconnect() {
@@ -405,7 +417,7 @@ static void props() {
   for (auto& k : known) codes.push_back(k.code);
   sdk::CrDeviceProperty* list = nullptr;
   int32_t n = 0;
-  sdk::CrError err = sdk::GetSelectDeviceProperties(handle, (CrInt32u)codes.size(), codes.data(), &list, &n);
+  sdk::CrError err = patiently([&] { return sdk::GetSelectDeviceProperties(handle, (CrInt32u)codes.size(), codes.data(), &list, &n); });
   if (err != 0 || !list) { error("props", err, "读取相机设置失败"); return; }
   std::string out = "{\"event\":\"props\",\"props\":[";
   bool first = true;
@@ -450,13 +462,19 @@ static std::string autofocus() {
 static void releaseS1() {
   if (auto s1 = byName("S1")) writeProp(*s1, sdk::CrLockIndicator_Unlocked);
 }
+/// The shutter: in an autofocus mode half-pressed until the camera has focused, as its own button
+/// is, since with focus first a full press alone ends before it can focus and nothing is taken;
+/// then pressed fully, and the half-press let go once the picture is taken.
 static void shoot(const Message& m) {
   std::string focus = "skipped";
   if (m.on("af")) focus = autofocus();
   sdk::CrError err = sdk::SendCommand(handle, sdk::CrCommandId_Release, sdk::CrCommandParam_Down);
   std::this_thread::sleep_for(std::chrono::milliseconds(35));
   if (!err) err = sdk::SendCommand(handle, sdk::CrCommandId_Release, sdk::CrCommandParam_Up);
-  if (m.on("af")) releaseS1();
+  if (m.on("af")) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    releaseS1();
+  }
   emit("{\"event\":\"shot\",\"ok\":" + std::string(err ? "false" : "true") + ",\"code\":" + quote(hex(err)) + ",\"focus\":" + quote(focus) + "}");
 }
 
@@ -499,6 +517,12 @@ int main(int argc, char** argv) {
       releaseS1();
       emit("{\"event\":\"af\",\"result\":" + quote(result) + "}");
     } else if (cmd == "nearfar") {
+      // The lens steps only in manual focus: switched to it first when the app sees it is not.
+      if (m.on("mf")) {
+        sdk::CrError e = writeProp(*byName("FocusMode"), sdk::CrFocus_MF);
+        logLine(e ? "切到手动对焦失败：" + hex(e) : "已切到手动对焦");
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+      }
       sdk::CrError err = writeProp(*byName("NearFar"), (int64_t)m.num("step"));
       emit("{\"event\":\"set\",\"name\":\"NearFar\",\"ok\":" + std::string(err ? "false" : "true") + ",\"code\":" + quote(hex(err)) + "}");
     } else if (cmd == "afpoint") {

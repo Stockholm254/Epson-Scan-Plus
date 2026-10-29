@@ -237,8 +237,32 @@ final class CameraController: ObservableObject {
     let s = Self.boxSize
     return CGRect(x: min(max(focusPoint.x - s / 2, 0), 1 - s), y: min(max(focusPoint.y - s / 2, 0), 1 - s), width: s, height: s)
   }
-  /// The focus mode is one of the camera's autofocus modes.
-  var autofocusMode: Bool { (2...5).contains(properties["FocusMode"]?.value ?? 0) }
+  /// The focus mode is one of the camera's autofocus modes: AF-S, AF-C, AF-A, AF-D or DMF, which
+  /// focuses automatically before the ring takes over.
+  var autofocusMode: Bool { (2...6).contains(properties["FocusMode"]?.value ?? 0) }
+  /// Manual focus, as the lens must be for the app to step it.
+  var manualFocus: Bool { properties["FocusMode"]?.value == 1 }
+  /// Pictures received since connecting, to tell a shot that brought none.
+  private var received = 0
+  /// The camera's own focus magnifications, in tenths (59 is 5.9×), as it offers them: its live
+  /// view then shows that part of the sensor pixel for pixel, where the app's zoom only enlarges
+  /// the small live picture. None when the camera does not say.
+  var magnifications: [Int64] {
+    (properties["Focus_Magnifier_Setting"]?.values ?? []).map { $0 >> 32 }.filter { $0 > 10 }
+  }
+  /// The magnification on, in tenths; 0 off.
+  @Published private(set) var magnification: Int64 = 0
+  func magnify(_ tenths: Int64) {
+    magnification = tenths
+    set("Focus_Magnifier_Setting", magnifierValue)
+  }
+  /// The setting for the magnification at the focus point: the magnification in the high word,
+  /// the point on the camera's 640 × 480 grid in the low one; all ones is off.
+  var magnifierValue: Int64 {
+    guard magnification > 0 else { return 0xFFFF_FFFF }
+    let x = Int64((focusPoint.x * 639).rounded()), y = Int64((focusPoint.y * 479).rounded())
+    return magnification << 32 | x << 16 | y
+  }
 
   // MARK: Commands
 
@@ -259,6 +283,7 @@ final class CameraController: ObservableObject {
   func disconnect() {
     search = nil
     refining = false
+    magnification = 0
     send(["cmd": "disconnect"])
   }
   func setLive(_ on: Bool) { send(["cmd": "live", "on": on, "dir": liveFolder.path]) }
@@ -268,12 +293,24 @@ final class CameraController: ObservableObject {
     focusResult = nil
     send(["cmd": "af"])
   }
-  func step(_ size: Int) { send(["cmd": "nearfar", "step": max(-7, min(7, size))]) }
+  /// A focus step, nearer (negative) or farther: in manual focus only, which the camera is switched
+  /// to first when it is not; until its settings come back it is taken to be so.
+  func step(_ size: Int) {
+    var command: [String: Any] = ["cmd": "nearfar", "step": max(-7, min(7, size))]
+    if !manualFocus, let mode = properties["FocusMode"] {
+      command["mf"] = true
+      properties["FocusMode"] = CameraProperty(name: mode.name, value: 1, values: mode.values, settable: mode.settable, type: mode.type)
+      message = "已切到手动对焦，再步进"
+    }
+    send(command)
+  }
   /// Puts the focus point (and the app's focus box) at `p`, in the live view's normalised
   /// coordinates; the camera's grid is 640 × 480.
   func setFocusPoint(_ p: CGPoint) {
     focusPoint = CGPoint(x: min(max(p.x, 0), 1), y: min(max(p.y, 0), 1))
     send(["cmd": "afpoint", "x": Int((focusPoint.x * 639).rounded()), "y": Int((focusPoint.y * 479).rounded())])
+    // The magnifier follows the point.
+    if magnification > 0 { set("Focus_Magnifier_Setting", magnifierValue) }
   }
   func shoot() { send(["cmd": "shoot", "af": autofocusMode]) }
   /// The white balance the camera's colour-temperature setting gives.
@@ -435,12 +472,22 @@ final class CameraController: ObservableObject {
       focusResult = result
       message = result == "focused" ? "已合焦" : result == "failed" ? "相机没能合焦" : "等待合焦超时"
     case "shot":
+      let focus = event["focus"] as? String ?? ""
       if event["ok"] as? Bool == false {
         message = "快门没有释放（\(event["code"] as? String ?? "")）"
+      } else if focus == "failed" || focus == "timeout" {
+        message = "相机没能合焦，快门可能没有释放：先点画面上的对焦点、AF，或切到 MF 手动对焦"
       } else {
         shots += 1
+        // A shot that brings no picture says so, rather than nothing.
+        let before = received
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+          guard let self, self.connected, self.received == before else { return }
+          self.message = "按了快门，但 10 秒内没有收到照片：相机可能没有拍（AF 模式下没合焦），或只存进了存储卡。请把「复制诊断信息」发给我"
+        }
       }
     case "downloaded":
+      received += 1
       if let path = event["path"] as? String, !path.isEmpty { onCapture?(URL(fileURLWithPath: path)) }
     default: break
     }

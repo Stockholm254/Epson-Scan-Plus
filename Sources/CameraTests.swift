@@ -117,6 +117,28 @@ enum CameraTests {
     camera.receive(#"{"event":"shot","ok":false,"code":"0x8402","focus":"skipped"}"#)
     try check(camera.shots == 1 && camera.message.contains("快门没有释放"),
       "each shot the camera takes flashes the shutter key once; a shutter that did not go says so")
+    // As the A7R IV reports itself with the Sigma 70 on: DMF, and the magnifier's steps.
+    camera.receive(#"{"event":"props","props":[{"name":"FocusMode","code":265,"type":8194,"value":6,"settable":true,"readable":true,"values":[2,4,3,6]},{"name":"Focus_Magnifier_Setting","code":285,"type":8196,"value":20971760,"settable":true,"readable":true,"values":[4294967295,47244640255,257698037759,515396075519]}]}"#)
+    sent.removeAll()
+    camera.shoot()
+    try check(camera.autofocusMode && sent.last?.contains("\"af\":true") == true,
+      "in DMF the shutter is half-pressed to focus before the full press, as in AF-S: a full press alone takes nothing")
+    camera.step(3)
+    let switched = sent.last?.contains("\"mf\":true") == true && camera.manualFocus
+    camera.step(1)
+    try check(switched && sent.last?.contains("\"mf\"") == false, "a focus step out of manual focus switches the camera to it first, and only once")
+    camera.receive(#"{"event":"shot","ok":true,"code":"0x0","focus":"failed"}"#)
+    try check(camera.shots == 1 && camera.message.contains("没能合焦"), "a shot the camera could not focus for says so, and is not counted")
+    try check(camera.magnifications == [59, 119], "the camera's own magnifications are read from what it offers: \(camera.magnifications)")
+    camera.setFocusPoint(CGPoint(x: 0.5, y: 0.5))
+    sent.removeAll()
+    camera.magnify(119)
+    let magnified = sent.last?.contains("\"Focus_Magnifier_Setting\"") == true && sent.last?.contains("\((Int64(119) << 32) | (Int64(320) << 16) | 240)") == true
+    camera.setFocusPoint(CGPoint(x: 0.25, y: 0.5))
+    let followed = sent.last?.contains("\((Int64(119) << 32) | (Int64(160) << 16) | 240)") == true
+    camera.magnify(0)
+    try check(magnified && followed && sent.last?.contains("4294967295") == true,
+      "the camera magnifies at the focus point, follows it, and stops")
     let bubble = CropLens.magnifier(picture(320, 240), at: CGPoint(x: 0.5, y: 0.5), box: camera.focusBox, shownWidth: 520, backing: 2)
     let loupe = CropLens.loupe(picture(160, 107))
     try check(bubble?.width == 296 && loupe?.width == 224,

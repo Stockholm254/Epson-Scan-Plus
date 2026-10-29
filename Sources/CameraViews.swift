@@ -15,8 +15,9 @@ struct CameraStage: View {
   var body: some View {
     HStack(spacing: 0) {
       ZStack {
-        // In the glass look the picture runs on behind the stage, blurred; here only darkened.
-        (Hardware.glass ? Color.black.opacity(0.4) : Color(red: 0.06, green: 0.06, blue: 0.065))
+        // Not continued under the panels as a positive is: a negative's orange mask would colour
+        // the whole window.
+        Color(red: 0.06, green: 0.06, blue: 0.065)
         GeometryReader { geo in liveView(in: geo.size) }
         VStack(spacing: 0) {
           if Liquid.available {
@@ -38,7 +39,7 @@ struct CameraStage: View {
         }.animation(.spring(response: 0.35, dampingFraction: 0.8), value: m.captureToast)
       }
       FocusCheck(m: m, camera: camera).frame(width: 276).consolePanel().padding(8)
-    }.background(Hardware.glass ? Color.clear : Color(red: 0.105, green: 0.11, blue: 0.115))
+    }.background(Color(red: 0.105, green: 0.11, blue: 0.115))
   }
   /// A group of controls as a drop of glass of its own, over the picture.
   func drop(_ group: some View) -> some View {
@@ -50,11 +51,20 @@ struct CameraStage: View {
     HStack(spacing: 10) {
       ChannelGels(channel: $m.channelView)
       let viewing = HStack(spacing: 10) {
-        Picker("放大", selection: $zoom) {
-          Text("1×").tag(1)
-          Text("2×").tag(2)
-          Text("4×").tag(4)
-        }.pickerStyle(.segmented).labelsHidden().frame(width: 120).help("取景放大：按对焦框放大整幅实时取景")
+        if camera.magnifications.isEmpty {
+          Picker("放大", selection: $zoom) {
+            Text("1×").tag(1)
+            Text("2×").tag(2)
+            Text("4×").tag(4)
+          }.pickerStyle(.segmented).labelsHidden().frame(width: 120).help("取景放大：按对焦框放大实时取景（相机没有报对焦放大，只能放大取景小图）")
+        } else {
+          // The camera's own magnifier: the live view is then that part of the sensor, pixel for pixel.
+          Picker("对焦放大", selection: Binding(get: { camera.magnification }, set: { camera.magnify($0) })) {
+            Text("1×").tag(Int64(0))
+            ForEach(camera.magnifications, id: \.self) { m in Text(String(format: "%.1f×", Double(m) / 10)).tag(m) }
+          }.pickerStyle(.segmented).labelsHidden().frame(width: 150)
+            .help("相机的对焦放大：实时取景传回对焦点附近的真实像素，用来看清楚对没对上焦；点画面移对焦点前先回 1×")
+        }
         Button {
           magnifier.toggle()
         } label: {
@@ -80,14 +90,14 @@ struct CameraStage: View {
       Image(decorative: shown, scale: 1).resizable().interpolation(zoom > 1 ? .none : .high)
         .frame(width: fit.width, height: fit.height)
         .overlay {
-          if zoom == 1 {
+          if zoom == 1 && camera.magnification == 0 {
             let b = camera.focusBox
             Rectangle().stroke(Hardware.amber, lineWidth: 1.5)
               .frame(width: b.width * fit.width, height: b.height * fit.width).position(at)
           }
         }
         .overlay(alignment: .topLeading) {
-          if zoom == 1, magnifier,
+          if zoom == 1, camera.magnification == 0, magnifier,
             let bubble = CropLens.magnifier(
               shown, at: camera.focusPoint, box: nil, shownWidth: fit.width,
               backing: NSScreen.main?.backingScaleFactor ?? 2)
@@ -102,7 +112,7 @@ struct CameraStage: View {
         }
         .contentShape(Rectangle())
         .gesture(SpatialTapGesture().onEnded { tap in
-          guard zoom == 1 else { return }
+          guard zoom == 1, camera.magnification == 0 else { return }
           camera.setFocusPoint(CGPoint(x: tap.location.x / fit.width, y: tap.location.y / fit.height))
         })
         .frame(width: size.width, height: size.height)
@@ -232,12 +242,6 @@ struct ChannelGels: View {
       }
     }.accessibilityElement(children: .contain).accessibilityLabel("通道")
   }
-}
-
-/// The live view continued under the glass around the stage.
-struct CameraBackdrop: View {
-  @ObservedObject var camera: CameraController
-  var body: some View { PictureExtension(image: camera.live) }
 }
 
 /// The files of a pixel-shift shot as beads, one lit as each comes in; when the group is complete

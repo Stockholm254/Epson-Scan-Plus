@@ -348,8 +348,6 @@ struct ContentView: View {
     let margin: CGFloat = 8, bar: CGFloat = 54
     return ZStack {
       if cameraStage {
-        // The live view runs on, blurred, under the panels' glass.
-        CameraBackdrop(camera: m.camera)
         CameraStage(m: m, camera: m.camera)
           .clipShape(RoundedRectangle(cornerRadius: 12))
           .padding(.leading, m.preferences.leftWidth + 2 * margin + 1).padding(.trailing, m.preferences.rightWidth + 2 * margin + 1)
