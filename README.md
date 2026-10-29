@@ -155,7 +155,19 @@ Epson Scan plus 可以作为 [MCP](https://modelcontextprotocol.io) 服务器，
 
 助手启动的是 App 自己（`EpsonScanPlus --mcp`），它通过只有你的账户能访问的本机连接与正在运行的 App 通信，不经过网络。工具列表：`get_state`、`list_frames`、`list_presets`、`select_frame`、`preview`、`sample`、`adjust`、`pick_film_base`、`auto_film_base`、`pick_neutral`、`choose_preset`、`apply_to_roll`、`reset_adjustments`、`undo`。
 
-去漏光页也在同一个 MCP 服务器里：`leak_get_state`、`leak_list_jobs`、`leak_open`（打开本卷某张或某个任务）、`leak_start`（用已有参考图在本地修复）、`leak_set`（场景、强度、保护、基础调整）、`leak_preview`（结果 / 原片 / 参考图）、`leak_sample`（修复前后的值和该处的漏光把握）、`leak_detect`（自动检测候选区域，默认不启用）、`leak_request_reference`。生成参考图要上传并计费，助手不能替你决定：`leak_request_reference` 只在 App 里打开确认窗口，由你点确认；助手读不到 API Key，也不能导出。
+去漏光页也在同一个 MCP 服务器里。FilmLightLab 原来本机 HTTP 接口能做的，这里都能做，对照表见 [去漏光](doc/light-leak.md#通过-mcp)：
+
+- **打开和导入**：`leak_open`（本卷某张或某个任务）、`leak_import`（给出路径导入正片，原文件不改）、`leak_import_reference`（导入别处做好的干净参考图，免费）。
+- **查看**：`leak_get_state`、`leak_list_jobs`、`leak_list_regions`、`leak_preview`、`leak_sample`。
+- **修复**：`leak_start`、`leak_set`、`leak_clear_correction`。
+- **局部**：`leak_detect`、`leak_add_region`、`leak_update_region`、`leak_delete_region`、`leak_add_protection`。
+- **对齐、方向和预设**：`leak_set_landmarks`、`leak_rotate`、`leak_crop`、`leak_load_preset`。
+
+有几件事留给你在 App 里确认：
+
+- **生成参考图**：要上传缩图并计费，`leak_request_reference` 只打开确认窗口，可以预填质量和附加要求。
+- **写文件**：`leak_export`、`leak_save_preset` 只打开保存窗口，由你选位置。
+- **API Key**：助手读不到，也改不了。
 
 ## 快速开始
 

@@ -67,7 +67,7 @@ enum MCPTools {
     - 先用 get_state 和 preview 看当前结果，用 sample 在可能是中性灰的地方取点：中性灰在正片里 R、G、B 应接近，在负片里三个通道高于片基的密度之比应接近通道斜率之比。
     - 偏色先查片基（get_state 里的 film_base 和来源）；片基可疑时用 pick_film_base 点未曝光的片间，或 base_fine_ev 微调。再用 pick_neutral 或 warmth / tint。
     - 坐标是单张视图里画面的相对位置，0–1，左上为原点。
-    - 每次调整都能在 App 里用 ⌘Z 撤销，也可以调用 undo。工具不会扫描、删除或导出文件。
+    - 每次调整都能在 App 里用 ⌘Z 撤销，也可以调用 undo。转换的工具不会扫描、删除或导出文件。
     """ + "\n" + leakInstructions
 
   /// Runs `name` with `arguments` against the app. Called off the main thread by the server; state

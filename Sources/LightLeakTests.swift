@@ -392,7 +392,7 @@ enum LightLeakTests {
       return result
     }
     let names = MCPTools.tools.map(\.name)
-    try check(names.filter { $0.hasPrefix("leak_") }.count == 9 && Set(names).count == names.count && MCPTools.instructions.contains("leak_request_reference"),
+    try check(names.filter { $0.hasPrefix("leak_") }.count == 23 && Set(names).count == names.count && MCPTools.instructions.contains("leak_request_reference"),
       "the MCP server lists the 去漏光 tools beside the conversion ones")
     let opened = mcp("leak_open", ["frame": "01"])
     try check(!opened.isError && app.page == .leak && pageLab.job?.origin?.frame == frame.id && pageLab.hasBase && !FileManager.default.fileExists(atPath: pageLab.root.path),
@@ -443,6 +443,91 @@ enum LightLeakTests {
     let frameImage = try ImagePipeline.shared.load(frameExport)
     try check(frameImage.width == pageLab.job?.meta?.width && frameImage.bitsPerComponent == 16 && pageLab.errorText == nil,
       "a frame's export converts it again at full size, as its job began")
+
+    // The rest of FilmLightLab's API over MCP: a file and a reference imported, regions drawn,
+    // changed and deleted, a protection, landmarks, a turn, a crop, a preset. Writing a file stays
+    // the user's: those tools are only checked where they refuse, which opens nothing.
+    func said(_ r: (content: [[String: Any]], isError: Bool)) -> String { r.content.first?["text"] as? String ?? "" }
+    let frameJob = pageLab.job?.id
+    try check(mcp("leak_import", ["path": root.path]).isError && mcp("leak_import", ["path": "leaked.tif"]).isError
+      && mcp("leak_import", ["path": root.appendingPathComponent("missing.tif").path]).isError && pageLab.job?.id == frameJob,
+      "leak_import refuses a folder, a relative path and a file that is not there, and keeps the page")
+    let imported = mcp("leak_import", ["path": sourceURL.path])
+    let unchanged = try Data(contentsOf: sourceURL) == sourceBytes
+    try check(!imported.isError && pageLab.job?.id != frameJob && pageLab.job?.sourceName == "leaked.tif" && pageLab.job?.source != nil
+      && !pageLab.hasReference && unchanged, "leak_import copies a positive into a new job, the file itself unchanged")
+    try check(mcp("leak_export").isError && mcp("leak_save_preset", ["path": "/tmp/x.json"]).isError,
+      "leak_export refuses before there is a repair, and the save tools take no path: neither opens anything")
+    let referenced = mcp("leak_import_reference", ["path": referenceURL.path])
+    try check(!referenced.isError && pageLab.hasReference && pageLab.job?.guideName == "reference.png" && !mcp("leak_start").isError && pageLab.repaired,
+      "leak_import_reference takes a clean version from a file, free, and leak_start fits it")
+    let noClean = mcp("leak_add_region", ["x": 0.15, "y": 0.5, "rx": 0.1, "ry": 0.2])
+    let added = mcp("leak_add_region", ["x": 0.15, "y": 0.5, "rx": 0.1, "ry": 0.2, "clean_point": [0.85, 0.5], "mode": "fog"])
+    let region = pageLab.params.regions.last, regionID = region?.id ?? "-"
+    try check(noClean.isError && !added.isError && pageLab.params.regions.count == 1 && region?.enabled == true && region?.mode == "fog"
+      && region?.ref == LeakPoint(x: 0.85, y: 0.5) && region?.amount == 0.8 && said(added).contains(regionID),
+      "leak_add_region draws an ellipse on, corrected to its clean point, and wants the clean point")
+    let listed = said(mcp("leak_list_regions")).data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+    let first = (listed?["regions"] as? [[String: Any]])?.first
+    try check(first?["id"] as? String == regionID && first?["has_clean_colour"] as? Bool == true && first?["clean_point"] as? [Double] == [0.85, 0.5]
+      && listed?["protections"] is [[String: Any]], "leak_list_regions reads the regions and the protections")
+    let updated = mcp("leak_update_region", ["id": regionID, "amount": 0.4, "enabled": false])
+    try check(!updated.isError && pageLab.params.regions.first?.amount == 0.4 && pageLab.params.regions.first?.enabled == false
+      && mcp("leak_update_region", ["id": regionID, "mode": "blur"]).isError && mcp("leak_update_region", ["id": "nothing", "enabled": true]).isError,
+      "leak_update_region changes what it is given, and refuses a mode or a region it does not know")
+    _ = mcp("undo")
+    try check(pageLab.params.regions.first?.amount == 0.8 && pageLab.params.regions.first?.enabled == true, "undo takes the update back in one step")
+    let protected = mcp("leak_add_protection", ["points": [[0.5, 0.3], [0.55, 0.3]], "radius": 0.03])
+    let stroke = pageLab.params.protect.last
+    try check(!protected.isError && stroke?.shape == "stroke" && stroke?.radius == 0.03 && stroke?.points?.count == 2
+      && mcp("leak_update_region", ["id": stroke?.id ?? "", "x": 0.2]).isError,
+      "leak_add_protection paints a protection of the radius given, which can be turned on and off but not moved")
+    try check(!mcp("leak_delete_region", ["id": regionID]).isError && pageLab.params.regions.isEmpty && mcp("leak_delete_region", ["id": regionID]).isError,
+      "leak_delete_region removes a region")
+    _ = mcp("undo")
+    try check(pageLab.params.regions.first?.id == regionID, "undo brings the region back")
+    let corners = [[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]].map { ["original": $0, "reference": $0] }
+    try check(mcp("leak_set_landmarks", ["pairs": Array(corners.prefix(3))]).isError && pageLab.pairs.isEmpty
+      && !mcp("leak_set_landmarks", ["pairs": corners]).isError && pageLab.pairs.count == 4 && pageLab.pairs[1].target == [0.9, 0.1]
+      && !mcp("leak_start").isError && pageLab.model?.alignment.method == "manual-landmarks",
+      "leak_set_landmarks wants four pairs or more, and leak_start then fits by them")
+    try check(!mcp("leak_set_landmarks", ["pairs": [Any]()]).isError && pageLab.pairs.isEmpty, "an empty list clears the landmarks")
+    try check(!mcp("leak_clear_correction").isError && pageLab.model == nil && !pageLab.repaired && mcp("leak_clear_correction").isError
+      && mcp("leak_export").isError, "leak_clear_correction stops the reference's correction, and then there is nothing to export")
+    _ = mcp("undo")
+    try check(pageLab.repaired, "undo puts the correction back")
+    let aspect = Double(pageLab.before?.width ?? 1) / Double(pageLab.before?.height ?? 1)
+    let quarter = mcp("leak_rotate", ["quarter_turns": 1])
+    let turnedAspect = Double(pageLab.before?.height ?? 1) / Double(pageLab.before?.width ?? 1)
+    try check(!quarter.isError && pageLab.params.rotation == 90 && abs(turnedAspect - aspect) < 0.02 && pageLab.params.regions.isEmpty
+      && pageLab.repaired && mcp("leak_rotate", ["quarter_turns": 3]).isError,
+      "leak_rotate turns the original, clears what was drawn on it, and fits the reference again")
+    _ = mcp("undo")
+    try check(pageLab.params.rotation == 0 && pageLab.params.regions.first?.id == regionID && pageLab.repaired, "undo turns it back as it was")
+    let cropped = mcp("leak_crop", ["x": 0.1, "y": 0.1, "w": 0.8, "h": 0.8])
+    try check(!cropped.isError && pageLab.params.crop == LeakCrop(x: 0.1, y: 0.1, w: 0.8, h: 0.8) && pageLab.params.regions.isEmpty && pageLab.repaired
+      && said(mcp("leak_crop", ["x": 0.1, "y": 0.1, "w": 0.8, "h": 0.8])).contains("没有改"),
+      "leak_crop crops the original and fits the reference again; the same crop again changes nothing")
+    _ = mcp("undo")
+    try check(pageLab.params.crop == LeakCrop() && pageLab.params.regions.count == 1, "undo takes the crop back")
+    let mcpPreset = root.appendingPathComponent("mcp-preset.json")
+    _ = mcp("leak_set", ["exposure": 0.5])
+    try pageLab.savePreset(to: mcpPreset)
+    _ = mcp("leak_set", ["exposure": 0])
+    let loaded = mcp("leak_load_preset", ["path": mcpPreset.path])
+    try check(!loaded.isError && pageLab.params.exposure == 0.5 && pageLab.params.regions.count == 1
+      && mcp("leak_load_preset", ["path": sourceURL.path]).isError, "leak_load_preset loads a preset file, and only a JSON one")
+    // A key for this session only, on a lab of its own: nothing is read from or kept in the Keychain.
+    let asking = LeakLab(root: root.appendingPathComponent("asking"), credentials: LeakCredentials(store: LeakKeychain(service: "local.epscan.test.\(UUID().uuidString)")))
+    try asking.credentials.update(apiKey: "test-only-not-a-key", model: LeakOpenAI.defaultModel, remember: false)
+    asking.importFile(sourceURL)
+    asking.wait()
+    app.leak = asking
+    let prefilled = mcp("leak_request_reference", ["quality": "medium", "note": "保留天空原来的颜色"])
+    try check(!prefilled.isError && asking.showGenerate && asking.requestedQuality == "medium" && asking.requestedNote == "保留天空原来的颜色"
+      && asking.busy == nil && asking.job?.generatedAI == nil && mcp("leak_request_reference", ["quality": "low"]).isError,
+      "leak_request_reference fills the confirmation in and opens it, and nothing is sent")
+    app.leak = pageLab
   }
 }
 

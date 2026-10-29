@@ -546,6 +546,12 @@ struct LeakGenerateSheet: View {
         }.disabled(!credentials.configured)
       }
     }.padding(24).frame(width: 480)
+      .onAppear {
+        quality = lab.requestedQuality ?? quality
+        note = lab.requestedNote ?? note
+        lab.requestedQuality = nil
+        lab.requestedNote = nil
+      }
   }
 }
 

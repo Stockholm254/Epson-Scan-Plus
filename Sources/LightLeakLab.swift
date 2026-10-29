@@ -69,6 +69,9 @@ final class LeakLab: ObservableObject {
   @Published var errorText: String?
   @Published var showAPI = false
   @Published var showGenerate = false
+  /// What an assistant asked the reference to be made with, filled into the confirmation it opens.
+  var requestedQuality: String?
+  var requestedNote: String?
   let credentials: LeakCredentials
   /// Where the jobs are kept, one folder each.
   let root: URL
@@ -473,14 +476,15 @@ final class LeakLab: ObservableObject {
       return pow((p.x - x) / rx, 2) + pow((p.y - y) / ry, 2) <= 1
     }.min { hypot(($0.x ?? 0) - p.x, ($0.y ?? 0) - p.y) < hypot(($1.x ?? 0) - p.x, ($1.y ?? 0) - p.y) }
   }
-  /// A protection painted with the brush (points 0–1 of the picture): nothing is corrected under
-  /// it, whatever the fit or the detection says.
-  func addProtection(_ points: [[Double]]) {
-    guard !points.isEmpty else { return }
+  /// A protection painted with the brush (points 0–1 of the picture), `radius` across or the
+  /// brush's: nothing is corrected under it, whatever the fit or the detection says.
+  @discardableResult func addProtection(_ points: [[Double]], radius: Double? = nil) -> String? {
+    guard !points.isEmpty else { return nil }
     let r = LeakRegion(
       id: UUID().uuidString.lowercased(), name: "手绘保护区", shape: "stroke",
-      points: Array(points.prefix(2000)).map { [clamp($0[0]), clamp($0[1])] }, radius: brush)
+      points: Array(points.prefix(2000)).map { [clamp($0[0]), clamp($0[1])] }, radius: radius ?? brush)
     change("保护画笔") { $0.protect.append(r) }
+    return params.protect.contains { $0.id == r.id } ? r.id : nil
   }
   /// Leak regions and lamp protections suggested from the picture. Suggested regions stay off
   /// until ticked; detected protections replace earlier detected ones; drawn ones stay.

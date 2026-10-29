@@ -49,6 +49,35 @@ FilmLightLab 按它附带的 Adobe RGB (1998) 配置文件解码：纯 563/256 G
 
 这些操作都能 ⌘Z 撤销（对应点除外）。FilmLightLab 修订 8 及以前的旧模型不读取，点「开始去漏光」免费重新拟合。
 
+## 通过 MCP
+
+FilmLightLab 原来自己有一套本机 HTTP 接口（`server.cjs`），网页界面通过它工作。这里没有单独的接口：这些功能都并进了 App 的 MCP 服务器，和转换工具一起，助手用同一个连接。每一步都调用页面自己的操作，所以和在界面上点一样，可以 ⌘Z 撤销（对应点除外）。
+
+| FilmLightLab 接口 | MCP 工具 |
+| --- | --- |
+| `GET /api/jobs` | `leak_list_jobs`，`leak_open` 打开任务或本卷某张 |
+| `POST /api/upload?role=source` | `leak_import`：给出文件路径，复制进新任务，原文件不改 |
+| `POST /api/upload?role=guide` | `leak_import_reference`：别处做好的干净版本，免费 |
+| `GET /api/jobs/{id}` | `leak_get_state`，`leak_list_regions`（区域、保护区、对应点） |
+| `prepare`（方向、裁切） | `leak_rotate`、`leak_crop` |
+| `preview` 与 `/files/…` | `leak_preview`（结果、原片、参考图），`leak_sample` |
+| `detect` | `leak_detect` |
+| `fit`（带对应点） | `leak_set_landmarks`，然后 `leak_start` |
+| 参数 | `leak_set`、`leak_add_region`、`leak_update_region`、`leak_delete_region`、`leak_add_protection`、`leak_clear_correction` |
+| 预设 | `leak_load_preset`；`leak_save_preset` 只打开保存窗口 |
+| `generate` | `leak_request_reference`：只打开确认窗口，可预填质量和附加要求 |
+| `export` | `leak_export`：只打开导出窗口 |
+| `GET /api/ai/config` | `leak_get_state` 里的 `api_key_configured` |
+| `POST /api/ai/config` | 没有：Key 只能由用户在「API 管理」里填 |
+
+有三件事留给用户自己做：
+
+- **生成参考图**：要上传缩图，会产生费用。
+- **写文件**：导出结果、保存预设。
+- **设置 API Key**。
+
+助手只能读它给出路径的文件，而且是复制进任务读，不改原文件。它不能删除文件，也读不到 Key。
+
 ## 自检
 
-`--self-test` 里的去漏光部分：合成漏光的修复效果与漏光定位、强度 0 和手绘保护保持原像素、旋转后找到参考图方向、模型的保存与损坏模型的拒绝、sRGB 暗部的精确换算、16 位 TIFF 读写、上传 JPEG 不含 EXIF；对 OpenAI 的请求在本机替身上检查（地址、Key 只在请求头、尺寸、提示词、请求记录、401 时的说明与去除 Key）；钥匙串在临时钥匙串上检查（记住、不记住、格式错误、移除）；任务从导入、导入参考图、修复、撤销、换场景到导出与重新打开；手画区域与参考点只改区域内、保护画笔下保留原片、自动检测的候选默认不启用、4 对对应点按手动对齐拟合、裁切重建基准图、预设（含 FilmLightLab 的预设文件）往返；生成的参考图先保存再拟合；本卷照片的转换与导出；MCP 工具。全程不联网，不碰用户的钥匙串和支持文件夹。
+`--self-test` 里的去漏光部分：合成漏光的修复效果与漏光定位、强度 0 和手绘保护保持原像素、旋转后找到参考图方向、模型的保存与损坏模型的拒绝、sRGB 暗部的精确换算、16 位 TIFF 读写、上传 JPEG 不含 EXIF；对 OpenAI 的请求在本机替身上检查（地址、Key 只在请求头、尺寸、提示词、请求记录、401 时的说明与去除 Key）；钥匙串在临时钥匙串上检查（记住、不记住、格式错误、移除）；任务从导入、导入参考图、修复、撤销、换场景到导出与重新打开；手画区域与参考点只改区域内、保护画笔下保留原片、自动检测的候选默认不启用、4 对对应点按手动对齐拟合、裁切重建基准图、预设（含 FilmLightLab 的预设文件）往返；生成的参考图先保存再拟合；本卷照片的转换与导出；MCP 工具，包括导入原片和参考图、画区域并改动和删除、保护区、对应点、旋转、裁切、载入预设和预填的生成确认，以及各自的撤销。全程不联网，不碰用户的钥匙串和支持文件夹。
