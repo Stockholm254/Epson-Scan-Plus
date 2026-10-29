@@ -137,8 +137,16 @@ enum CameraTests {
     camera.setFocusPoint(CGPoint(x: 0.25, y: 0.5))
     let followed = sent.last?.contains("\((Int64(119) << 32) | (Int64(160) << 16) | 240)") == true
     camera.magnify(0)
-    try check(magnified && followed && sent.last?.contains("4294967295") == true,
-      "the camera magnifies at the focus point, follows it, and stops")
+    let whole = sent.last?.contains("\((Int64(10) << 32) | (Int64(160) << 16) | 240)") == true
+    try check(magnified && followed && whole, "the camera magnifies at the focus point, follows it, and goes back to ×1.0, the whole frame")
+    camera.magnify(119)
+    camera.receive(#"{"event":"props","props":[{"name":"FocusMode","code":265,"type":8194,"value":6,"settable":true,"readable":true,"values":[2,4,3,6]},{"name":"Focus_Magnifier_Setting","code":285,"type":8196,"value":20971760,"settable":true,"readable":true,"values":[4294967295,47244640255,257698037759,515396075519]}]}"#)
+    try check(camera.magnification == 0, "when the camera ends its magnifier by itself, the app shows 1× again")
+    camera.magnify(59)
+    sent.removeAll()
+    camera.step(1)
+    try check(sent.last?.contains("\"mf\":true") == true && sent.last?.contains("\"magnify\":\((Int64(59) << 32) | (Int64(160) << 16) | 240)") == true,
+      "switching to manual focus to step puts the magnifier back, which the switch ends")
     let bubble = CropLens.magnifier(picture(320, 240), at: CGPoint(x: 0.5, y: 0.5), box: camera.focusBox, shownWidth: 520, backing: 2)
     let loupe = CropLens.loupe(picture(160, 107))
     try check(bubble?.width == 296 && loupe?.width == 224,

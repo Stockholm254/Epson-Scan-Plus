@@ -19,11 +19,12 @@ xcrun clang++ -std=c++17 -fobjc-arc -O2 -DSTALL_SECONDS=2 -target arm64-apple-ma
 
 failures=0
 scan_args=(--scan 2400 16 14 20 20)  # 20 × 20 mm at 2400 dpi: about 330 fake reads
+extra=()  # more arguments after --output, for one scan
 start_scan() {  # name [VAR=value...]
   out="$work/$1"; shift
   mkdir "$out"
   env "$@" "$work/SaneCapture" "$work/libfake.dylib" "$helper_dir/config" "${scan_args[@]}" \
-    --output "$out/frame.tiff" > "$out/events" 2> "$out/stderr" &
+    --output "$out/frame.tiff" ${extra[@]+"${extra[@]}"} > "$out/events" 2> "$out/stderr" &
   pid=$!
 }
 wait_for() {  # event
@@ -72,6 +73,21 @@ start_scan both FAKE_SANE_STALL_SECONDS=6
 wait_for timeout; kill -INT "$pid"
 code=0; wait "$pid" || code=$?
 check "cancel after the watchdog fired is reported as cancel" 130 no '"cancelled":true' '"timedOut":false'
+
+# A preview shows as it is read: small pictures of what has come so far, renamed into place.
+extra=(--partial "$work/preview/so-far.png")
+start_scan preview
+code=0; wait "$pid" || code=$?
+extra=()
+check "a preview with pictures of it so far is still saved whole" 0 yes '"event":"partial"'
+shown=$(grep -c '"event":"partial"' "$out/events" || true)
+size=$(sips -g pixelWidth -g pixelHeight "$out/so-far.png" 2>/dev/null | awk '/pixel/ {print $2}' | tr '\n' ' ')
+if [ "$shown" -ge 3 ] && [ -n "$size" ] && [ ! -e "$out/so-far.png.part" ]; then
+  echo "PASS: $shown pictures of the preview as it was read, the last $size"
+else
+  echo "FAIL: pictures of the preview so far: $shown, last $size"
+  failures=$((failures + 1))
+fi
 
 # The app quit mid-scan: nobody reads stdout after the first line.
 out="$work/closed-stdout"

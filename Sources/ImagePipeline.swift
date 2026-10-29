@@ -453,6 +453,17 @@ final class ImagePipeline {
     var ci: CIImage
     if negative {
       ci = CIImage(cgImage: image, options: [.colorSpace: NSNull()])
+      // With a film base picked, each channel divided by it: the base shows neutral grey at its own
+      // brightness, and what is left is what the layers made, which also shows whether the pick
+      // was on the base. A power-law encoding keeps neutral neutral, so no decoding is needed.
+      if settings.base != nil, let base = analysis?.base, base.values.allSatisfy({ $0 > 1e-4 }) {
+        let mean = (base.r + base.g + base.b) / 3
+        ci = ci.applyingFilter("CIColorMatrix", parameters: [
+          "inputRVector": CIVector(x: mean / base.r, y: 0, z: 0, w: 0),
+          "inputGVector": CIVector(x: 0, y: mean / base.g, z: 0, w: 0),
+          "inputBVector": CIVector(x: 0, y: 0, z: mean / base.b, w: 0),
+        ])
+      }
       ci = ci.oriented(forExifOrientation: [1, 6, 3, 8][((settings.rotation % 4) + 4) % 4])
       if settings.flipHorizontal == true {
         ci = ci.transformed(by: CGAffineTransform(scaleX: -1, y: 1))

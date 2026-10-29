@@ -8,6 +8,7 @@
 #include <sys/file.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <chrono>
 #include <cmath>
 #include <stdexcept>
 #include <vector>
@@ -164,6 +165,56 @@ static void writeTIFF(NSString *output, const std::vector<uint8_t>& data, const 
   unlink(temp.fileSystemRepresentation);
 }
 
+// What has been read so far, small, for the app to show while a preview goes on: every
+// `step`-th pixel of every `step`-th line, about 900 across, encoded for the eye (gamma 2.2) in 8
+// bits, the lines not yet read left clear. Written beside its name and renamed over it, so the
+// app never reads half a file. Only a picture to look at: the scan itself is the TIFF.
+struct Partial {
+  NSString *path = nil;
+  int step = 1, width = 0, height = 0, done = 0;
+  std::vector<uint8_t> rgba;
+  uint8_t lut[4096];
+  std::chrono::steady_clock::time_point next;
+  void begin(const SANE_Parameters& p) {
+    step = std::max(1, (int)std::ceil(p.pixels_per_line / 900.0));
+    width = std::max(1, p.pixels_per_line / step); height = std::max(1, p.lines / step);
+    rgba.assign((size_t)width * height * 4, 0);
+    for (int i = 0; i < 4096; i++) lut[i] = (uint8_t)std::lround(255 * std::pow(i / 4095.0, 1 / 2.2));
+    next = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+  }
+  /// Every so often, and once at the end, the rows read since the last time, written out.
+  void show(const std::vector<uint8_t>& data, const SANE_Parameters& p, size_t count, bool last) {
+    if (!path || (!last && std::chrono::steady_clock::now() < next)) return;
+    next = std::chrono::steady_clock::now() + std::chrono::milliseconds(800);
+    int lines = (int)(count / p.bytes_per_line), before = done;
+    for (; done < height && done * step < lines; done++) {
+      const uint16_t *row = (const uint16_t *)(data.data() + (size_t)done * step * p.bytes_per_line);
+      uint8_t *out = rgba.data() + (size_t)done * width * 4;
+      for (int x = 0; x < width; x++) {
+        const uint16_t *px = row + (size_t)x * step * 3;
+        out[4 * x] = lut[px[0] >> 4]; out[4 * x + 1] = lut[px[1] >> 4]; out[4 * x + 2] = lut[px[2] >> 4]; out[4 * x + 3] = 255;
+      }
+    }
+    if (done == before) return;
+    CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    CGContextRef ctx = CGBitmapContextCreate(rgba.data(), width, height, 8, (size_t)width * 4, space, kCGImageAlphaPremultipliedLast);
+    CGImageRef image = ctx ? CGBitmapContextCreateImage(ctx) : nullptr;
+    NSString *temp = [path stringByAppendingString:@".part"];
+    CGImageDestinationRef dest = image ? CGImageDestinationCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:temp], CFSTR("public.png"), 1, nullptr) : nullptr;
+    bool written = false;
+    if (dest) {
+      CGImageDestinationAddImage(dest, image, nullptr);
+      written = CGImageDestinationFinalize(dest);
+      CFRelease(dest);
+    }
+    if (image) CGImageRelease(image);
+    if (ctx) CGContextRelease(ctx);
+    CGColorSpaceRelease(space);
+    if (written && rename(temp.fileSystemRepresentation, path.fileSystemRepresentation) == 0)
+      emit(@{@"event":@"partial", @"path":path, @"rows":@(std::min(lines, p.lines)), @"lines":@(p.lines)});
+  }
+};
+
 int main(int argc, char **argv) {
   @autoreleasepool {
     setbuf(stdout, nullptr);
@@ -173,7 +224,8 @@ int main(int argc, char **argv) {
     signal(SIGPIPE, SIG_IGN);
     alarm(stallSeconds);
     try {
-      require(argc == 4 || argc == 11, "Usage: SaneCapture backend config --probe | --scan dpi x y width height output");
+      require(argc == 4 || argc == 11 || argc == 13,
+        "Usage: SaneCapture backend config --probe | --scan dpi x y width height --output path [--partial path]");
       setenv("SANE_CONFIG_DIR", argv[2], 1);
       // Only serialize this app's helpers; never steal a vendor driver's session.
       NSString *lockPath = [NSTemporaryDirectory() stringByAppendingPathComponent:@"EpsonScanPlus-V850-usb.lock"];
@@ -196,6 +248,12 @@ int main(int argc, char **argv) {
       require(!strcmp(argv[9], "--output"), "Missing output flag");
       NSString *output = [NSString stringWithUTF8String:argv[10]];
       require(output.isAbsolutePath && ![[NSFileManager defaultManager] fileExistsAtPath:output], "Output must be a new absolute path");
+      Partial partial;
+      if (argc == 13) {
+        require(!strcmp(argv[11], "--partial"), "Unknown option");
+        partial.path = [NSString stringWithUTF8String:argv[12]];
+        require(partial.path.isAbsolutePath, "Partial preview path must be absolute");
+      }
       // epson2 rounds width down to eight pixels. Request an outward-aligned
       // footprint and report its real extent, so crop coordinates do not stretch.
       // Fixed-point upper bounds sit just above the pixel boundary; this also
@@ -230,6 +288,7 @@ int main(int argc, char **argv) {
       emit(@{@"event":@"parameters", @"width":@(p.pixels_per_line), @"height":@(p.lines), @"bits":@16, @"dpi":@(dpi)});
       size_t bytes = (size_t)p.bytes_per_line * p.lines, count = 0;
       std::vector<uint8_t> data(bytes), buffer(65536);
+      partial.begin(p);
       bool cancellationReported = false, timeoutReported = false;
       while (true) {
         if (cancelled && !cancellationReported) {
@@ -246,6 +305,7 @@ int main(int argc, char **argv) {
         if (n && !timedOut) alarm(stallSeconds);
         count += n;
         if (n) emit(@{@"event":@"progress", @"value":@(0.98 * count / bytes)});
+        if (n && !stopping()) partial.show(data, p, count, status == SANE_STATUS_EOF);
         // The transfer is complete; writing the TIFF must not count as a stalled scanner.
         if (status == SANE_STATUS_EOF) { s.scanning = false; alarm(0); break; }
         s.check(status, "read scan data");

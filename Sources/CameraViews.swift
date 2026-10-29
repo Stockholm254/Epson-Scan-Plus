@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// Module ①'s workspace with the camera: the live view filling the copy stand's dark base, and
-/// floating over it on glass the gels, zoom and sharpness above and the focus controls and the
+/// floating over it on glass the zoom and sharpness above and the focus controls and the
 /// shutter below. On the picture the focus box (click to move it) and a glass bubble magnifying
 /// what is under it. Beside it, on a glass pane, the last picture at full resolution about the
 /// focus point, pixel for pixel, to check focus.
@@ -46,10 +46,9 @@ struct CameraStage: View {
     group.padding(.horizontal, 10).padding(.vertical, 5)
       .liquid(Capsule(), LiquidStyle(tint: .black.opacity(0.22))) { $0 }
   }
-  /// The gels, the zoom and the magnifier, and the sharpness.
+  /// The zoom and the magnifier, and the sharpness.
   @ViewBuilder var topRow: some View {
     HStack(spacing: 10) {
-      ChannelGels(channel: $m.channelView)
       let viewing = HStack(spacing: 10) {
         if camera.magnifications.isEmpty {
           Picker("放大", selection: $zoom) {
@@ -190,57 +189,6 @@ struct CameraStage: View {
           }
       }
     }.buttonStyle(HardwareKeyStyle()).controlSize(.small).disabled(!camera.connected && camera.phase != .missing)
-  }
-}
-
-/// Red, green and blue gels to slide over the picture, panes of tinted glass: one shows that
-/// channel alone, in grey, its gel lit; a second click on it takes it away. With SwiftUI's glass
-/// the three run together into one strip, the chosen one pinching off and lifting out of it.
-struct ChannelGels: View {
-  @Binding var channel: ChannelView
-  @Namespace private var glass
-  static func tint(_ c: ChannelView) -> Color {
-    c == .r ? Color(red: 0.88, green: 0.26, blue: 0.22) : c == .g ? Color(red: 0.25, green: 0.7, blue: 0.33) : Color(red: 0.25, green: 0.48, blue: 0.9)
-  }
-  var body: some View {
-    Group {
-      if Liquid.available {
-        LiquidGroup(spacing: 6) {
-          HStack(spacing: 1) {
-            ForEach([ChannelView.r, .g, .b], id: \.self) { c in
-              let on = channel == c
-              Button {
-                withAnimation(Liquid.flow) { channel = on ? .all : c }
-              } label: {
-                Text(c.rawValue).font(.system(size: 11, weight: .bold)).frame(width: 28, height: 22)
-                  .foregroundStyle(on ? Color.white : Color(white: 0.88))
-                  .liquid(RoundedRectangle(cornerRadius: 8), LiquidStyle(tint: Self.tint(c).opacity(on ? 0.72 : 0.34), interactive: true), id: c.rawValue, in: glass) { $0 }
-                  .padding(.horizontal, on ? 6 : 0)
-                  .offset(y: on ? -4 : 0)
-              }.buttonStyle(.plain).help(on ? "拿开滤色片，看全彩" : "只看 \(c.rawValue) 通道")
-            }
-          }
-        }
-      } else {
-        HStack(spacing: 4) {
-          ForEach([ChannelView.r, .g, .b], id: \.self) { c in
-            let tint = Self.tint(c)
-            let on = channel == c
-            Button {
-              channel = on ? .all : c
-            } label: {
-              Text(c.rawValue).font(.system(size: 11, weight: .bold)).frame(width: 26, height: 20)
-                .tintedGlass(tint, strength: on ? 0.75 : 0.3, radius: 4)
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.white.opacity(on ? 0.65 : 0.15), lineWidth: 0.8))
-                .shadow(color: tint.opacity(on ? 0.7 : 0), radius: 5)
-                .foregroundStyle(on ? Color.white : Color(white: 0.85))
-                .offset(y: on ? -2 : 0)
-                .animation(.spring(response: 0.25, dampingFraction: 0.7), value: on)
-            }.buttonStyle(.plain).help(on ? "拿开滤色片，看全彩" : "只看 \(c.rawValue) 通道")
-          }
-        }
-      }
-    }.accessibilityElement(children: .contain).accessibilityLabel("通道")
   }
 }
 

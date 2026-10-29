@@ -15,6 +15,9 @@ class ScannerController: NSObject, ObservableObject, ICDeviceBrowserDelegate,
   @Published var bits = 8
   @Published var physicalMM = CGSize(width: 149.86, height: 246.38)
   @Published var log = [String]()
+  /// A preview while it is read: what the scanner has sent so far, small, the rest clear. Nil
+  /// otherwise, and once the preview is done.
+  @Published var previewSoFar: CGImage?
   /// What the next whole-holder preview asks for; ICA picks its own overview size.
   var previewDPI = 150
   private let browser = ICDeviceBrowser()

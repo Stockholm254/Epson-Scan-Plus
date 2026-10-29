@@ -257,11 +257,18 @@ final class CameraController: ObservableObject {
     set("Focus_Magnifier_Setting", magnifierValue)
   }
   /// The setting for the magnification at the focus point: the magnification in the high word,
-  /// the point on the camera's 640 × 480 grid in the low one; all ones is off.
+  /// the point on the camera's 640 × 480 grid in the low one. 1× is the camera's own ×1.0 step,
+  /// the whole frame again: the A7R IV does not take its "off" value back from a magnification.
   var magnifierValue: Int64 {
-    guard magnification > 0 else { return 0xFFFF_FFFF }
     let x = Int64((focusPoint.x * 639).rounded()), y = Int64((focusPoint.y * 479).rounded())
-    return magnification << 32 | x << 16 | y
+    return (magnification > 0 ? magnification : 10) << 32 | x << 16 | y
+  }
+  /// Where the sharpness is measured: the focus box, or with the camera magnifying, the middle of
+  /// the live view, which is then the part about the focus point.
+  var measureBox: CGRect {
+    guard magnification > 0 else { return focusBox }
+    let s = Self.boxSize
+    return CGRect(x: 0.5 - s / 2, y: 0.5 - s / 2, width: s, height: s)
   }
 
   // MARK: Commands
@@ -288,7 +295,16 @@ final class CameraController: ObservableObject {
   }
   func setLive(_ on: Bool) { send(["cmd": "live", "on": on, "dir": liveFolder.path]) }
   func refreshProperties() { send(["cmd": "props"]) }
-  func set(_ name: String, _ value: Int64) { send(["cmd": "set", "name": name, "value": value]) }
+  func set(_ name: String, _ value: Int64) {
+    send(["cmd": "set", "name": name, "value": value])
+    // Changing the focus mode ends the camera's magnifier: put back, once the camera has changed.
+    if name == "FocusMode", magnification > 0 {
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        guard let self, self.magnification > 0 else { return }
+        self.send(["cmd": "set", "name": "Focus_Magnifier_Setting", "value": self.magnifierValue])
+      }
+    }
+  }
   func autofocus() {
     focusResult = nil
     send(["cmd": "af"])
@@ -299,6 +315,8 @@ final class CameraController: ObservableObject {
     var command: [String: Any] = ["cmd": "nearfar", "step": max(-7, min(7, size))]
     if !manualFocus, let mode = properties["FocusMode"] {
       command["mf"] = true
+      // Switching ends the camera's magnifier, which the step then puts back first.
+      if magnification > 0 { command["magnify"] = magnifierValue }
       properties["FocusMode"] = CameraProperty(name: mode.name, value: 1, values: mode.values, settable: mode.settable, type: mode.type)
       message = "已切到手动对焦，再步进"
     }
@@ -437,6 +455,12 @@ final class CameraController: ObservableObject {
     case "props":
       for item in event["props"] as? [[String: Any]] ?? [] {
         guard let name = item["name"] as? String else { continue }
+        // The magnification is what the camera says it is: it ends it by itself, on a change of
+        // focus mode or after a while.
+        if name == "Focus_Magnifier_Setting", let v = (item["value"] as? NSNumber)?.int64Value {
+          let tenths = v >> 32
+          magnification = tenths > 10 && tenths != 0xFFFF_FFFF ? tenths : 0
+        }
         properties[name] = CameraProperty(
           name: name, value: (item["value"] as? NSNumber)?.int64Value ?? 0,
           values: (item["values"] as? [NSNumber])?.map(\.int64Value) ?? [],
@@ -464,7 +488,7 @@ final class CameraController: ObservableObject {
       else { return }
       live = image
       frames += 1
-      let s = FocusSearch.sharpness(image, in: focusBox)
+      let s = FocusSearch.sharpness(image, in: measureBox)
       sharpness = s
       advanceSearch(s.g)
     case "af":

@@ -216,7 +216,8 @@ final class FilmCanvasView: NSView {
   private var turnedImage: (source: CGImage, turn: QuarterTurn, image: CGImage)?
   /// The picture as the canvas shows it: the model's, turned with the table.
   var shown: CGImage? {
-    guard let cg = model?.displayed else { return nil }
+    // A preview being read shows as it comes, in place of the roll before it.
+    guard let cg = model?.scanner.previewSoFar ?? model?.displayed else { return nil }
     let t = turn
     guard !t.isIdentity else { return cg }
     if let cached = turnedImage, cached.source === cg, cached.turn == t { return cached.image }
@@ -332,7 +333,7 @@ final class FilmCanvasView: NSView {
         }
       }
     }
-    if !model.singleView {
+    if !model.singleView && model.scanner.previewSoFar == nil {
       for f in model.contactFrames {
         let r = screen(dragID == f.id ? (draft ?? f.rect.cg) : f.rect.cg)
         let selected = f.id == model.selectedID

@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import ImageIO
 
 /// A separate process owns USB only while probing/scanning. No ICA browser is started.
 final class SaneScannerController: ScannerController {
@@ -48,7 +49,8 @@ final class SaneScannerController: ScannerController {
       let dpi = [150, 300, 600].contains(previewDPI) ? previewDPI : 150
       let args = try Self.captureArguments(rect: .full, dpi: dpi, size: physicalMM, output: output)
       previewingDPI = dpi
-      launch(arguments: args, output: output, preview: true)
+      // What has been read so far, for the light table while the preview goes on.
+      launch(arguments: args + ["--partial", folder.appendingPathComponent("so-far.png").path], output: output, preview: true)
     } catch { onFailure?(error.localizedDescription) }
   }
   override func scan(rect: NormalRect, dpi: Int, directory: URL, name: String) throws {
@@ -120,6 +122,15 @@ final class SaneScannerController: ScannerController {
           case "capabilities": capability = value
           case "file": file = value["path"] as? String; receipt = value
           case "error": errorMessage = value["message"] as? String
+          case "partial":
+            guard preview, let path = value["path"] as? String,
+              let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+            else { break }
+            DispatchQueue.main.async {
+              guard let self, self.job == id, self.busy else { return }
+              self.previewSoFar = image
+            }
           case "progress":
             if let fraction = value["value"] as? Double, fraction.isFinite {
               DispatchQueue.main.async {
@@ -158,7 +169,7 @@ final class SaneScannerController: ScannerController {
       let returnedCapability = capability, returnedImage = image, returnedError = resultError, returnedDiagnostics = diagnostics, returnedReceipt = receipt
       DispatchQueue.main.async {
         guard let self, self.job == id else { return }
-        self.process = nil; self.busy = false
+        self.process = nil; self.busy = false; self.previewSoFar = nil
         guard !self.closing else { return }
         if self.cancelled {
           self.status = "扫描已取消"

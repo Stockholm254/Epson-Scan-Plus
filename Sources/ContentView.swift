@@ -219,7 +219,6 @@ struct ContentView: View {
   }
   /// Zoom, turning, mirroring and what is shown.
   @ViewBuilder var viewingControls: some View {
-    if m.singleView { ChannelGels(channel: $m.channelView) }
       if m.singleView {
         Text(String(format: "%.1f×", m.zoom)).font(.system(size: 10, design: .monospaced))
           .foregroundStyle(.secondary).help("相对适合窗口的缩放倍率")

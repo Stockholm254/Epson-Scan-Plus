@@ -423,6 +423,8 @@ final class AppModel: ObservableObject {
   func requestPreview() {
     guard !isWorking else { return }
     cancelRequested = false
+    // The preview shows on the light table as it is read.
+    if singleView { singleView = false }
     scanner.previewDPI = preferences.previewDPI
     scanner.preview()
   }
