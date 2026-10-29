@@ -22,6 +22,23 @@ enum SaneScannerTests {
     do { _ = try SaneScannerController.captureArguments(rect: .full, dpi: 6400, size: bed, output: output) }
     catch { rejected = true }
     try check(rejected, "SANE rejects oversized whole-bed RGB48 allocation")
+    // The bundled helper starts SANE and libusb on this system, with no scanner configured: built
+    // against a newer SDK, a library can call a function this system does not have.
+    let resources = Bundle.main.resourceURL!.appendingPathComponent("Scanner")
+    if FileManager.default.isExecutableFile(atPath: resources.appendingPathComponent("SaneCapture").path) {
+      let none = folder.appendingPathComponent("sane-no-devices")
+      try FileManager.default.createDirectory(at: none, withIntermediateDirectories: true)
+      try "# no devices\n".write(to: none.appendingPathComponent("epson2.conf"), atomically: true, encoding: .utf8)
+      let p = Process()
+      p.executableURL = resources.appendingPathComponent("SaneCapture")
+      p.arguments = [resources.appendingPathComponent("libsane-epson2.1.dylib").path, none.path, "--probe"]
+      p.standardOutput = FileHandle.nullDevice
+      p.standardError = FileHandle.nullDevice
+      try p.run()
+      p.waitUntilExit()
+      try check(p.terminationReason == .exit && p.terminationStatus != 0,
+        "the bundled 48-bit helper starts SANE and libusb here and, with no scanner, says so instead of crashing")
+    }
     let scanner = SaneScannerController()
     let model = AppModel(libraryURL: folder.appendingPathComponent("sane-offline"), scanner: scanner)
     model.frames = [FilmFrame(name: "01", rect: NormalRect(x: 0.1, y: 0.1, width: 0.2, height: 0.2), format: "135")]

@@ -12,12 +12,18 @@ printf '%s  %s\n' \
   f99205c903dfe2fb8990f0c531232c9a00ec9c2c66ac7cb0ce50b4af9f407a72 "$sources/sane-backends-1.4.0.tar.gz" | shasum -a 256 -c -
 if [ ! -d "$build_dir/libusb-1.0.30" ]; then tar -xjf "$sources/libusb-1.0.30.tar.bz2" -C "$build_dir"; fi
 if [ ! -d "$build_dir/sane-backends-1.4.0" ]; then tar -xzf "$sources/sane-backends-1.4.0.tar.gz" -C "$build_dir"; fi
-if [ ! -f "$runtime/lib/libusb-1.0.0.dylib" ]; then
+# configure only asks whether a function links, and against a newer SDK than the deployment
+# target one that is newer still does: weakly, and null on the systems the app runs on. pipe2 is
+# in the macOS 27 SDK, and libusb calls it straight away. Built again when these change.
+libusb_cache="ac_cv_func_pipe2=no"
+if [ ! -f "$runtime/lib/libusb-1.0.0.dylib" ] || [ "$(cat "$runtime/libusb-configure" 2>/dev/null)" != "$libusb_cache" ]; then
   (
     cd "$build_dir/libusb-1.0.30"
-    ./configure --prefix="$runtime" --disable-examples-build --disable-tests-build
+    make distclean || true
+    env $libusb_cache ./configure --prefix="$runtime" --disable-examples-build --disable-tests-build
     make -j6
     make install
+    echo "$libusb_cache" > "$runtime/libusb-configure"
   ) > "$build_dir/libusb-build.log" 2>&1
 fi
 if [ ! -f "$build_dir/sane-backends-1.4.0/backend/.libs/libsane-epson2.1.dylib" ]; then
@@ -48,5 +54,12 @@ cp "$project_dir/ThirdParty/README.md" "$destination/Licenses/README.md"
 cp "$sources/libusb-1.0.30.tar.bz2" "$sources/sane-backends-1.4.0.tar.gz" "$destination/Source/"
 cp "$project_dir/ScannerHelper/SaneCapture.mm" "$project_dir/ScannerHelper/build-scanner.sh" "$destination/Source/"
 for artifact in SaneCapture libsane-epson2.1.dylib libusb-1.0.0.dylib; do
+  # Nothing here checks availability at run time, so a weakly linked function is one the
+  # deployment target may not have.
+  if xcrun nm -um "$destination/$artifact" | grep -q "weak external"; then
+    echo "Weakly linked functions in $artifact, which macOS 14 may not have:" >&2
+    xcrun nm -um "$destination/$artifact" | grep "weak external" >&2
+    exit 1
+  fi
   codesign --force --sign - "$destination/$artifact"
 done

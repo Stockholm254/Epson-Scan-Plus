@@ -23,7 +23,7 @@ struct ModuleDial: View {
             Button {
               set(p)
             } label: {
-              VStack(spacing: 3) {
+              let name = VStack(spacing: 3) {
                 Circle().fill(p == page ? Hardware.amber : Color(white: 0.24)).frame(width: 5, height: 5)
                   .shadow(color: p == page ? Hardware.amber.opacity(0.85) : .clear, radius: 3)
                 // Engraved: dark above the letters, a faint light edge below.
@@ -31,13 +31,14 @@ struct ModuleDial: View {
                   .foregroundStyle(p == page ? Hardware.amber : Color(white: 0.6))
                   .shadow(color: .black.opacity(0.75), radius: 0, x: 0, y: -0.6)
                   .shadow(color: .white.opacity(0.07), radius: 0, x: 0, y: 0.6)
-              }.padding(.horizontal, 6).padding(.vertical, 2)
-                .background {
-                  if p == page && Liquid.available {
-                    Color.clear.liquid(Capsule(), LiquidStyle(tint: Hardware.amber.opacity(0.24)), id: "dial", in: glass) { $0 }
-                  }
-                }
-                .contentShape(Rectangle())
+              }.padding(.horizontal, 8).padding(.vertical, 2)
+              // The drop is the name's own glass, so the name lies on it, not under it.
+              if p == page && Liquid.available {
+                name.liquid(Capsule(), LiquidStyle(tint: Hardware.amber.opacity(0.1)), id: "dial", in: glass) { $0 }
+                  .contentShape(Rectangle())
+              } else {
+                name.contentShape(Rectangle())
+              }
             }.buttonStyle(.plain).help(p.help)
           }
         }
