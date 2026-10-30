@@ -100,6 +100,9 @@ enum CalibrationTests {
       && copyPreset.publication.hasPrefix("翻拍标定 · A7R IV") && copyPreset.dataSheetToe != nil && copyPreset.offsets != nil
       && copying.calibrated(for: portra) == copyPreset && scanned.calibrated(for: portra) == nil,
       "on a copy roll the neutral points make a copy-stand preset, which the film's copy rolls take and a scanned roll does not")
+    let notes = [true, false, nil].map { FilmCalibration.profile(from: fit, basedOn: portra, points: 3, scanner: "A7R IV", copyStand: true, unmixed: $0).notes }
+    try check(notes[0].contains("标定时去串色是开着的") && notes[1].contains("标定时没有去串色") && notes[2].contains("有的去了串色、有的没有"),
+      "a copy-stand preset says how its points were read, crosstalk taken out or not, as its slopes hold for that")
     let old = try JSONDecoder().decode(FilmProfile.self, from: JSONEncoder().encode(portra))
     try check(old == portra && old.offsets == nil, "presets saved without offsets still load")
   }

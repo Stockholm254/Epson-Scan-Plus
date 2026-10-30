@@ -1223,9 +1223,12 @@ final class AppModel: ObservableObject {
       }
       let fit = try FilmCalibration.fit(calibrationPoints, greenSlope: profile.slopes.g, curve: measured ? profile.dataSheetToe : nil)
       let copy = copyStandRoll
+      // How the points' frames were read: the slopes hold for that reading.
+      let readings = Set(calibrationPoints.compactMap { p in frames.first { $0.id == p.frame }.map { $0.crosstalk != nil } })
       let made = FilmCalibration.profile(
         from: fit, basedOn: profile, points: calibrationPoints.count,
-        scanner: copy ? (camera.model.isEmpty ? "A7R IV" : camera.model) : scanner.name, copyStand: copy)
+        scanner: copy ? (camera.model.isEmpty ? "A7R IV" : camera.model) : scanner.name, copyStand: copy,
+        unmixed: readings.count == 1 ? readings.first : nil)
       try made.validate()
       keepProfile(made)
       calibrationPoints = []

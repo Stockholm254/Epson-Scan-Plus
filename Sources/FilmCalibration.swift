@@ -154,12 +154,17 @@ enum FilmCalibration {
 
   /// A preset for this scanner and film, named after the preset it started from.
   /// The preset made from a fit: for the V850, or with `copyStand` for the camera and its copy light,
-  /// `scanner` then naming the camera.
-  static func profile(from fit: Fit, basedOn base: FilmProfile, points: Int, scanner: String, copyStand: Bool = false) -> FilmProfile {
+  /// `scanner` then naming the camera. `unmixed` is whether the points were read with the copy light's
+  /// crosstalk taken out (nil: some were, some not, or it is not known), which the slopes hold for.
+  static func profile(
+    from fit: Fit, basedOn base: FilmProfile, points: Int, scanner: String, copyStand: Bool = false, unmixed: Bool? = nil
+  ) -> FilmProfile {
     let date = Date().formatted(.iso8601.year().month().day())
     let film = base.id == "generic" ? "本机标定胶片" : base.name
+    let reading = unmixed.map { $0 ? "标定时去串色是开着的，用时也要开着" : "标定时没有去串色，用时也要关着" }
+      ?? "标定的点里有的去了串色、有的没有，斜率可能不准"
     let applies = copyStand
-      ? "只适用于这台相机、这组翻拍灯和同一种胶片；灯的亮度配比怎么调都不影响。标定时去串色是开着的，用时也开着"
+      ? "只适用于这台相机、这组翻拍灯和同一种胶片；灯的亮度配比怎么调都不影响。\(reading)"
       : "只适用于这台扫描仪和同一种胶片"
     return FilmProfile(
       id: "\(base.id == "generic" ? "film" : base.id)-\(copyStand ? "copy" : "v850")-\(UUID().uuidString.prefix(6).lowercased())",
