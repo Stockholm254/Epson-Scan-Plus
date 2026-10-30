@@ -167,17 +167,18 @@ struct CameraStage: View {
           Button {
             camera.autofocus()
           } label: {
-            Label("AF", systemImage: "scope").lineLimit(1).fixedSize()
-          }.glassAction().help("在对焦框处自动对焦一次，对完切回手动对焦锁住焦点；快门本身不对焦")
+            Label(camera.focusLocked ? "已锁焦" : "AF", systemImage: camera.focusLocked ? "lock.fill" : "scope").lineLimit(1).fixedSize()
+          }.glassAction(on: camera.focusLocked)
+            .help("在对焦框处自动对焦一次并锁住焦点：相机能切手动对焦就切过去；不能（镜头开关在 AF）就在 DMF 里半按按住。锁住时可以步进微调，快门不会再对焦；拍完一张会松开")
           let stepping = HStack(spacing: 3) {
-            ForEach([-7, -3, -1], id: \.self) { s in
-              Button { camera.step(s) } label: { Text(s == -7 ? "«" : s == -3 ? "‹‹" : "‹").frame(width: 16) }.glassAction()
-                .help("对焦往近处走（Near \(-s) 档，要手动对焦模式）")
+            ForEach([-6, -3, -1], id: \.self) { s in
+              Button { camera.step(s) } label: { Text(s == -6 ? "«" : s == -3 ? "‹‹" : "‹").frame(width: 16) }.glassAction()
+                .help("对焦往近处走（Near \(-s) 档）：相机在手动对焦，或按 AF 锁住焦点之后")
             }
             FocusRing(offset: $ring) { camera.step($0) }.frame(minWidth: 56, idealWidth: 120, maxWidth: 120).frame(height: 24)
-            ForEach([1, 3, 7], id: \.self) { s in
-              Button { camera.step(s) } label: { Text(s == 7 ? "»" : s == 3 ? "››" : "›").frame(width: 16) }.glassAction()
-                .help("对焦往远处走（Far \(s) 档，要手动对焦模式）")
+            ForEach([1, 3, 6], id: \.self) { s in
+              Button { camera.step(s) } label: { Text(s == 6 ? "»" : s == 3 ? "››" : "›").frame(width: 16) }.glassAction()
+                .help("对焦往远处走（Far \(s) 档）：相机在手动对焦，或按 AF 锁住焦点之后")
             }
           }
           stepping

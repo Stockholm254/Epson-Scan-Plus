@@ -121,20 +121,26 @@ enum CameraTests {
     camera.receive(#"{"event":"props","props":[{"name":"FocusMode","code":265,"type":8194,"value":6,"settable":true,"readable":true,"values":[2,4,3,6]},{"name":"Focus_Magnifier_Setting","code":285,"type":8196,"value":20971760,"settable":true,"readable":true,"values":[4294967295,47244640255,257698037759,515396075519]}]}"#)
     sent.removeAll()
     camera.shoot()
-    try check(sent.last?.contains("\"mf\":true") == true && sent.last?.contains("\"af\"") == false && camera.manualFocus,
-      "the shutter does not focus: in DMF it switches the camera to manual focus first, the lens where it is")
+    try check(sent.last?.contains("\"mf\":true") == true && sent.last?.contains("\"af\"") == false && !camera.focusLocked
+      && camera.message.contains("先按 AF 锁住焦点"),
+      "the shutter does not ask to focus: in DMF it asks for manual focus first, and says that where the camera offers none the picture will focus unless AF has locked it")
     camera.receive(#"{"event":"props","props":[{"name":"FocusMode","code":265,"type":8194,"value":6,"settable":true,"readable":true,"values":[2,4,3,6,1]}]}"#)
     sent.removeAll()
     camera.autofocus()
-    let fromAF = sent.last?.contains("\"afs\":false") == true && sent.last?.contains("\"hold\":true") == true
-    camera.autofocus()
-    try check(fromAF && sent.last?.contains("\"afs\":true") == true && camera.manualFocus,
-      "AF focuses once and holds it: in an AF mode as it is, from manual focus by way of AF-S, the camera back in manual focus after")
+    let asked = sent.last?.contains("\"cmd\":\"af\"") == true && sent.last?.contains("\"hold\":true") == true
+    camera.receive(#"{"event":"af","result":"focused","held":false,"locked":true,"noManual":true}"#)
+    try check(asked && camera.focusLocked && !camera.manualFocus && camera.message.contains("锁住了焦点"),
+      "AF asks the process to focus once and hold it; where it locks the focus with the half-press, the app says so, and claims no manual focus the camera has not reported")
+    camera.receive(#"{"event":"unlocked","why":"shot"}"#)
+    try check(!camera.focusLocked && camera.message.contains("下一张前再按 AF"), "the lock let go with a picture, the app says to press AF before the next")
     camera.receive(#"{"event":"props","props":[{"name":"FocusMode","code":265,"type":8194,"value":6,"settable":true,"readable":true,"values":[2,4,3,6]}]}"#)
-    camera.step(3)
-    let switched = sent.last?.contains("\"mf\":true") == true && camera.manualFocus
-    camera.step(1)
-    try check(switched && sent.last?.contains("\"mf\"") == false, "a focus step out of manual focus switches the camera to it first, and only once")
+    camera.step(7)
+    let capped = sent.last?.contains("\"step\":6") == true && sent.last?.contains("\"mf\"") == false && !camera.manualFocus
+    camera.receive(#"{"event":"set","name":"NearFar","ok":false,"code":"unlocked"}"#)
+    let needsAF = camera.message.contains("先按 AF 锁住焦点")
+    camera.receive(#"{"event":"set","name":"NearFar","ok":false,"code":"lensMF"}"#)
+    try check(capped && needsAF && camera.message.contains("驱动不了镜头"),
+      "a focus step goes to the process as it is, as far as 6, which decides from the camera itself; one it cannot take says why: AF first, or the lens's switch at MF")
     try check(camera.magnifications == [59, 119], "the camera's own magnifications are read from what it offers: \(camera.magnifications)")
     camera.setFocusPoint(CGPoint(x: 0.5, y: 0.5))
     sent.removeAll()
@@ -151,8 +157,8 @@ enum CameraTests {
     camera.magnify(59)
     sent.removeAll()
     camera.step(1)
-    try check(sent.last?.contains("\"mf\":true") == true && sent.last?.contains("\"magnify\":\((Int64(59) << 32) | (Int64(160) << 16) | 240)") == true,
-      "switching to manual focus to step puts the magnifier back, which the switch ends")
+    try check(sent.last?.contains("\"magnify\":\((Int64(59) << 32) | (Int64(160) << 16) | 240)") == true,
+      "a step carries the magnifier, for the process to put back should it switch the camera to manual focus, which ends it")
     let stage = CGSize(width: 520, height: 390), point = CGPoint(x: 260, y: 195)
     let standing = LiveLoupe.render(picture(1024, 768), size: stage, at: point, style: .pentax, backing: 2)
     let loupe = CropLens.loupe(picture(160, 107))

@@ -225,6 +225,12 @@ static std::string describe(const sdk::CrDeviceProperty& p, const char* name) {
 
 static std::atomic<int64_t> handle{0};
 static std::atomic<bool> connected{false};
+/// The half-press held after AF, which locks the focus where the camera has no MF on offer (the
+/// lens's switch at AF): in DMF a focus step fine-tunes it while it is held, and the shutter,
+/// pressed over it, takes the picture without focusing again. The camera lets go of it with the
+/// picture, and takes no setting while it is held.
+static std::atomic<bool> halfHeld{false};
+static void releaseS1();
 static std::mutex stateLock;
 static std::condition_variable stateChanged;
 static int connectOutcome = 0;  // 1 connected, -1 failed
@@ -425,6 +431,8 @@ static void connect(const Message& m) {
   emit("{\"event\":\"connected\",\"model\":" + quote(model) + ",\"cameras\":" + std::to_string(cameras->GetCount()) + "}");
 }
 static void disconnect() {
+  // A half-press held for the focus is let go, not left on the camera.
+  if (halfHeld && handle) releaseS1();
   stopLive();
   if (!handle) return;
   if (connected) {
@@ -484,7 +492,14 @@ static std::string autofocus() {
   return result;
 }
 static void releaseS1() {
+  halfHeld = false;
   if (auto s1 = byName("S1")) writeProp(*s1, sdk::CrLockIndicator_Unlocked);
+}
+/// Lets go of a half-press held for the focus, saying why, so the app knows the lock is gone.
+static void unlockFocus(const std::string& why) {
+  if (!halfHeld) return;
+  releaseS1();
+  emit("{\"event\":\"unlocked\",\"why\":" + quote(why) + "}");
 }
 /// The computer's priority, which the camera needs before it takes a press or a focus step (with
 /// its own it takes them and does nothing): asked for again when a dial was touched since. What it
@@ -545,6 +560,18 @@ static bool autofocusMode() {
   auto v = p.GetCurrentValue();
   return v >= sdk::CrFocus_AF_S && v <= sdk::CrFocus_DMF;
 }
+/// The camera's focus mode now, and whether it offers `mode`.
+static int64_t focusModeNow() {
+  sdk::CrDeviceProperty p;
+  return readProp(byName("FocusMode")->code, p) ? (int64_t)p.GetCurrentValue() : -1;
+}
+static bool offersFocusMode(int64_t mode) {
+  sdk::CrDeviceProperty p;
+  return readProp(byName("FocusMode")->code, p) && offers(p, mode);
+}
+/// The lens's own switch at MF: the camera is in MF and offers nothing else. It then takes no AF,
+/// and no focus step either (the lens follows only its ring).
+static bool lensAtMF() { return focusModeNow() == sdk::CrFocus_MF && !offersFocusMode(sdk::CrFocus_AF_S); }
 /// The shutter, as Sony's own sample presses it, without focusing: in an autofocus mode the camera
 /// is switched to manual focus first (with focus first it would focus on the press, or take
 /// nothing), the lens left where it is. PC priority first if the camera has not given it (with
@@ -553,25 +580,29 @@ static bool autofocusMode() {
 /// diagnostics.
 static void shoot(const Message& m) {
   std::string steps;
-  remote(steps);
-  if (m.on("locked")) {
-    // The half-press held since AF locks the focus: pressed fully over it, and held still after.
+  if (halfHeld) {
+    // The focus locked by the half-press held since AF: pressed fully over it, the picture taken
+    // where the lens is. The camera lets go of the half-press with it.
     shotAt = std::chrono::steady_clock::now();
     sdk::CrError err = sdk::SendCommand(handle, sdk::CrCommandId_Release, sdk::CrCommandParam_Down);
     std::this_thread::sleep_for(std::chrono::milliseconds(150));
     sdk::CrError up = sdk::SendCommand(handle, sdk::CrCommandId_Release, sdk::CrCommandParam_Up);
     if (!err) err = up;
-    logLine("快门（半按锁住对焦）：" + steps + "全按 " + hex(err));
-    emit("{\"event\":\"shot\",\"ok\":" + std::string(err ? "false" : "true") + ",\"code\":" + quote(hex(err)) + ",\"manual\":false}");
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    halfHeld = false;
+    logLine("快门（焦点锁住，不再对焦）：全按 " + hex(err));
+    emit("{\"event\":\"shot\",\"ok\":" + std::string(err ? "false" : "true") + ",\"code\":" + quote(hex(err)) + ",\"manual\":true,\"locked\":true}");
+    emit("{\"event\":\"unlocked\",\"why\":\"shot\"}");
     return;
   }
+  remote(steps);
   // A half-press left held (an AF a moment ago) is let go first: the press starts from rest.
   releaseS1();
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
   // Manual focus as the camera says, whatever the app last heard: in an autofocus mode the
   // half-press below would focus again.
   bool manual = ensureFocusMode(sdk::CrFocus_MF, m, steps);
-  if (!manual) logLine("相机没有切到手动对焦，这一张会先对焦");
+  if (!manual) logLine("相机不在手动对焦，焦点也没有锁住，这一张会先对焦");
   sdk::CrError half = 0;
   if (auto s1 = byName("S1")) {
     half = writeProp(*s1, sdk::CrLockIndicator_Locked);
@@ -611,6 +642,9 @@ int main(int argc, char** argv) {
     if (cmd == "connect") { connect(m); continue; }
     if (cmd == "disconnect") { disconnect(); emit("{\"event\":\"disconnected\",\"code\":\"0x0\"}"); continue; }
     if (!connected || !handle) { error(cmd, 0, "相机没有连接"); continue; }
+    // The camera takes no setting while the half-press is held: let go of it first.
+    if (cmd == "set" && m.str("name") != "S1" && m.str("name") != "NearFar") unlockFocus("set");
+    if (cmd == "live" && !m.on("on")) unlockFocus(cmd);
     if (cmd == "props") props();
     else if (cmd == "set") set(m);
     else if (cmd == "live") {
@@ -627,24 +661,57 @@ int main(int argc, char** argv) {
     } else if (cmd == "af") {
       // Focused once and held: from manual focus by way of AF-S, and back to it after, so the
       // shutter does not focus again; each switch as the camera says it is.
+      // Where the camera offers no MF (the lens's switch at AF on the A7R IV), focused in DMF and
+      // the half-press held, which locks the focus: a step then fine-tunes it, and the shutter,
+      // pressed over it, does not focus again.
       std::string steps;
+      unlockFocus("af");
       remote(steps);
-      if (!autofocusMode()) ensureFocusMode(sdk::CrFocus_AF_S, m, steps);
+      if (lensAtMF()) {
+        logLine("AF：镜头开关在 MF，相机不对焦");
+        emit("{\"event\":\"af\",\"result\":\"lensMF\",\"held\":true,\"locked\":false}");
+        continue;
+      }
+      bool mfOffered = offersFocusMode(sdk::CrFocus_MF);
+      if (!mfOffered && focusModeNow() != sdk::CrFocus_DMF) ensureFocusMode(sdk::CrFocus_DMF, m, steps);
+      else if (mfOffered && !autofocusMode()) ensureFocusMode(sdk::CrFocus_AF_S, m, steps);
       std::string result = autofocus();
-      releaseS1();
-      std::this_thread::sleep_for(std::chrono::milliseconds(150));
-      bool held = !m.on("hold") || ensureFocusMode(sdk::CrFocus_MF, m, steps);
-      logLine("AF：" + steps + result + (held ? "" : "，没能切回手动对焦"));
+      bool locked = false, held = true;
+      if (!mfOffered && result == "focused") {
+        halfHeld = true;
+        locked = true;
+      } else {
+        releaseS1();
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        held = !mfOffered ? false : (!m.on("hold") || ensureFocusMode(sdk::CrFocus_MF, m, steps));
+      }
+      logLine("AF：" + steps + result + (locked ? "，半按按住锁住焦点" : held ? "" : "，没能切回手动对焦"));
       emit("{\"event\":\"af\",\"result\":" + quote(result) + ",\"held\":" + (held ? "true" : "false")
-        + ",\"noManual\":" + (steps.find("不提供 MF") != std::string::npos ? "true" : "false") + "}");
+        + ",\"locked\":" + (locked ? "true" : "false") + ",\"noManual\":" + (mfOffered ? "false" : "true") + "}");
     } else if (cmd == "nearfar") {
       // The lens steps only in manual focus, and with the computer's priority: both as the camera
       // says, whatever the app last heard.
+      // A step moves the lens in MF the camera drives, or in DMF while the half-press holds the
+      // focus; not in AF-S, nor with the lens's own switch at MF. As far as 6 a step: the camera
+      // offers 7, and the largest Capture One sends this one is 6.
       std::string steps;
-      remote(steps);
-      bool manual = ensureFocusMode(sdk::CrFocus_MF, m, steps);
-      if (!steps.empty() || !manual) logLine("对焦步进：" + steps + (manual ? "" : "仍不在手动对焦"));
-      sdk::CrError err = patiently([&] { return writeProp(*byName("NearFar"), (int64_t)m.num("step")); });
+      int64_t step = std::max<int64_t>(-6, std::min<int64_t>(6, (int64_t)m.num("step")));
+      if (!halfHeld) {
+        remote(steps);
+        if (lensAtMF()) {
+          logLine("对焦步进：镜头开关在 MF，相机驱动不了镜头");
+          emit("{\"event\":\"set\",\"name\":\"NearFar\",\"ok\":false,\"code\":\"lensMF\"}");
+          continue;
+        }
+        bool manual = offersFocusMode(sdk::CrFocus_MF) && ensureFocusMode(sdk::CrFocus_MF, m, steps);
+        if (!manual) {
+          logLine("对焦步进：" + steps + "焦点没有锁住（先按 AF）");
+          emit("{\"event\":\"set\",\"name\":\"NearFar\",\"ok\":false,\"code\":\"unlocked\"}");
+          continue;
+        }
+        if (!steps.empty()) logLine("对焦步进：" + steps);
+      }
+      sdk::CrError err = patiently([&] { return writeProp(*byName("NearFar"), step); });
       emit("{\"event\":\"set\",\"name\":\"NearFar\",\"ok\":" + std::string(err ? "false" : "true") + ",\"code\":" + quote(hex(err)) + "}");
     } else if (cmd == "afpoint") {
       int64_t x = (int64_t)m.num("x", 320), y = (int64_t)m.num("y", 240);

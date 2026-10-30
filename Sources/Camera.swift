@@ -71,7 +71,7 @@ struct CameraProperty: Equatable {
 /// smaller size from there, both ways. A step and its reverse are taken to come back to the same
 /// place; how far a step of each size moves the lens is not known, so positions are never added up.
 struct FocusSearch {
-  static let sizes = [7, 3, 1]
+  static let sizes = [6, 3, 1]
   /// Sharper by more than this counts; live view is noisy.
   static let margin = 0.004
   private enum Stage { case start, probe, backThenProbe, backThenNarrow }
@@ -226,6 +226,12 @@ final class CameraController: ObservableObject {
   private var process: Process?
   private var input: FileHandle?
   private var pending = Data()
+  /// The focus locked by a half-press held since AF: where the camera offers no MF (the lens's
+  /// switch at AF), the way to fine-tune it with steps and to take a picture without focusing
+  /// again. The camera lets go of it with the picture.
+  @Published private(set) var focusLocked = false
+  /// 精确对焦 asked for before the focus was locked: AF first, then the search.
+  private var refineAfterAF = false
   private var search: FocusSearch?
   private var settle = 0
   private var propsQueued = false
@@ -348,24 +354,18 @@ final class CameraController: ObservableObject {
   /// camera left in manual focus after, so the shutter takes the picture where it focused.
   func autofocus() {
     focusResult = nil
+    focusLocked = false
     var command: [String: Any] = ["cmd": "af", "afs": !autofocusMode, "hold": true]
     if magnification > 0 { command["magnify"] = magnifierValue }
-    if let mode = properties["FocusMode"] {
-      properties["FocusMode"] = CameraProperty(name: mode.name, value: 1, values: mode.values, settable: mode.settable, type: mode.type)
-    }
     send(command)
   }
   /// A focus step, nearer (negative) or farther: in manual focus only, which the camera is switched
   /// to first when it is not; until its settings come back it is taken to be so.
   func step(_ size: Int) {
-    var command: [String: Any] = ["cmd": "nearfar", "step": max(-7, min(7, size))]
-    if !manualFocus, let mode = properties["FocusMode"] {
-      command["mf"] = true
-      // Switching ends the camera's magnifier, which the step then puts back first.
-      if magnification > 0 { command["magnify"] = magnifierValue }
-      properties["FocusMode"] = CameraProperty(name: mode.name, value: 1, values: mode.values, settable: mode.settable, type: mode.type)
-      message = "已切到手动对焦，再步进"
-    }
+    // The process decides from the camera itself: MF it can drive, or the focus locked in DMF.
+    var command: [String: Any] = ["cmd": "nearfar", "step": max(-6, min(6, size))]
+    // A switch to MF ends the camera's magnifier, which the step then puts back first.
+    if magnification > 0 { command["magnify"] = magnifierValue }
     send(command)
   }
   /// Puts the focus point (and the app's focus box) at `p`, in the live view's normalised
@@ -389,10 +389,11 @@ final class CameraController: ObservableObject {
     presses += 1
     let press = presses
     var command: [String: Any] = ["cmd": "shoot", "mf": autofocusMode]
-    if autofocusMode, let mode = properties["FocusMode"] {
-      if magnification > 0 { command["magnify"] = magnifierValue }
-      properties["FocusMode"] = CameraProperty(name: mode.name, value: 1, values: mode.values, settable: mode.settable, type: mode.type)
-      message = "快门只拍不对焦：已切到手动对焦，镜头停在原处；要对焦请按 AF"
+    if magnification > 0 { command["magnify"] = magnifierValue }
+    if focusLocked {
+      message = "快门：焦点锁住，不会再对焦"
+    } else if autofocusMode {
+      message = "快门：先切手动对焦；相机不提供手动对焦时，这一张会先对焦（先按 AF 锁住焦点就不会）"
     }
     send(command)
     // A press that brings no picture says so, rather than nothing; the shutter is free again then.
@@ -423,7 +424,13 @@ final class CameraController: ObservableObject {
   func refineFocus() {
     guard connected else { return }
     if !liveOn { setLive(true) }
-    if properties["FocusMode"]?.value != 1 { set("FocusMode", 1) }
+    // Steps need the focus locked where the camera offers no MF: AF first, the search after.
+    if !focusLocked && !manualFocus {
+      refineAfterAF = true
+      message = "精确对焦：先自动对焦锁住焦点…"
+      autofocus()
+      return
+    }
     search = FocusSearch()
     refining = true
     settle = 3
@@ -518,6 +525,7 @@ final class CameraController: ObservableObject {
       setLive(true)
     case "disconnected":
       phase = .idle
+      focusLocked = false
       awaitingPicture = false
       liveOn = false
       live = nil
@@ -570,8 +578,20 @@ final class CameraController: ObservableObject {
         if self?.connected == true { self?.refreshProperties() }
       }
     case "set":
-      if event["ok"] as? Bool == false {
+      if event["name"] as? String == "NearFar", event["ok"] as? Bool == false, let why = event["code"] as? String, why == "unlocked" || why == "lensMF" {
+        if refining { cancelRefine() }
+        message = why == "lensMF"
+          ? "镜头上的 AF / MF 开关在 MF：相机驱动不了镜头，步进用不了。用镜头的对焦环手动对焦，或把开关拨回 AF，按 AF 锁住焦点再步进"
+          : "步进要先按 AF 锁住焦点：相机不提供手动对焦（镜头开关在 AF），对焦后半按按住时才能微调"
+      } else if event["ok"] as? Bool == false {
         message = "设置 \(event["name"] as? String ?? "") 没有生效（\(event["code"] as? String ?? "")）"
+      }
+    case "unlocked":
+      focusLocked = false
+      switch event["why"] as? String {
+      case "shot": message = "焦点锁随这一张松开了：下一张前再按 AF。整卷不想每张对焦，就在锁焦后把镜头开关拨到 MF，焦点停在原处"
+      case "set": message = "改设置前松开了半按，焦点锁已解除：要微调或拍摄不再对焦，再按 AF"
+      default: break
       }
     case "live":
       liveOn = event["on"] as? Bool ?? false
@@ -589,6 +609,19 @@ final class CameraController: ObservableObject {
     case "af":
       let result = event["result"] as? String ?? ""
       focusResult = result
+      focusLocked = event["locked"] as? Bool ?? false
+      let refineNext = refineAfterAF
+      refineAfterAF = false
+      if result == "lensMF" {
+        message = "镜头上的 AF / MF 开关在 MF：相机不自动对焦，焦点停在原处，快门也不会对焦。要自动对焦或步进微调，把开关拨回 AF"
+        if refineNext { refineFocus() }
+        return
+      }
+      if focusLocked {
+        message = "已合焦，半按按住锁住了焦点：可以步进微调、精确对焦，快门不会再对焦（拍完一张会松开，下一张前再按 AF）"
+        if refineNext { refineFocus() }
+        return
+      }
       let said = result == "focused" ? "已合焦" : result == "failed" ? "相机没能合焦" : "等待合焦超时"
       // Held unless the camera would not go back to manual focus (the lens's AF/MF switch, say).
       message = event["noManual"] as? Bool == true

@@ -135,19 +135,47 @@ enum CameraSimulationTests {
       && !r.log.contains { $0.contains("没生效（相机优先）") },
       "a focus step with the camera's priority back takes the computer's first, and the lens moves")
 
-    // The lens's AF/MF switch at AF: the camera offers no MF. AF says so, and that the shutter will
-    // focus again; a focus step is refused at once, not after asking again and again.
-    let lens = connect("lens-at-af", "lensaf=1,early=200")
+    // The lens's AF/MF switch at AF: the camera offers no MF, as the A7R IV with the Sigma macro
+    // does. AF focuses in DMF and holds the half-press, which locks the focus: a step fine-tunes
+    // it, the shutter takes the picture without focusing again, and lets go of the lock with it.
+    let lens = connect("lens-at-af", "lensaf=1,early=200,transfer=600")
     let g = lens.camera
+    func runs() -> Int { g.log.filter { $0.contains("半按，开始对焦") }.count }
     g.autofocus()
     until(10) { g.focusResult != nil }
-    let afMessage = g.message
+    let locked = g.focusLocked && g.message.contains("锁住了焦点")
+    g.step(-1)
+    until(3) { g.log.contains { $0.contains("镜头步进 -1") } }
+    let stepped = g.log.contains { $0.contains("镜头步进 -1") }
+    let focusedOnce = runs()
+    g.shoot()
+    until(8) { lens.arrived.count == 1 && !g.awaitingPicture }
+    until(0.5) { false }
+    try check(locked && stepped && focusedOnce == 1 && runs() == 1 && lens.arrived.count == 1 && !g.focusLocked && g.message.contains("下一张前再按 AF"),
+      "with the lens's switch at AF, AF locks the focus with the half-press held in DMF: a step fine-tunes it, and the shutter takes the picture without focusing again, letting go of the lock")
     let pressed = Date()
     g.step(-1)
-    until(6) { g.message.contains("没有接受对焦步进") }
-    let stepTook = Date().timeIntervalSince(pressed)
-    try check(afMessage.contains("不提供手动对焦") && g.message.contains("拨到 MF") && stepTook < 3,
-      String(format: "with the lens's switch at AF the camera offers no MF: AF says so, and a step is refused in %.1f s, the message saying to switch the lens to MF", stepTook))
+    until(4) { g.message.contains("先按 AF 锁住焦点") }
+    try check(g.message.contains("先按 AF 锁住焦点") && Date().timeIntervalSince(pressed) < 3 && !g.log.contains { $0.contains("0x60003") },
+      "the lock gone, a step says to press AF first, at once, without sending what the camera would refuse")
+    g.refineFocus()
+    until(10) { g.refining }
+    try check(g.refining && g.focusLocked && runs() == 2, "精确对焦 without the lock focuses and locks first, then searches")
+    g.cancelRefine()
+
+    // The lens's switch at MF: the camera drives no lens and takes no AF; the shutter does not focus.
+    let ring2 = connect("lens-at-mf", "lensmf=1,early=200,transfer=600")
+    let h = ring2.camera
+    h.autofocus()
+    until(6) { h.focusResult != nil }
+    let afSaidLens = h.message.contains("开关在 MF")
+    h.step(3)
+    until(4) { h.message.contains("驱动不了镜头") }
+    let stepSaidLens = h.message.contains("驱动不了镜头")
+    h.shoot()
+    until(8) { ring2.arrived.count == 1 && !h.awaitingPicture }
+    try check(afSaidLens && stepSaidLens && ring2.arrived.count == 1 && !h.log.contains { $0.contains("半按，开始对焦") },
+      "with the lens's switch at MF, AF and a step say why they cannot, and the shutter takes the picture where the lens is")
 
     // Live view, from the camera's pictures as it hands them over.
     let still = folder.appendingPathComponent("camera-simulated-live.jpg")
