@@ -97,16 +97,17 @@ struct LiquidGroup<Content: View>: View {
   }
 }
 
-/// The picture continued past its edges, blurred and darkened, under the glass around it, as the
-/// system extends a picture under a sidebar.
+/// The picture continued past its edges, blurred, darkened in the dark appearance and lightened in
+/// the light one, under the glass around it, as the system extends a picture under a sidebar.
 struct PictureExtension: View {
   let image: CGImage?
+  @Environment(\.colorScheme) private var scheme
   var body: some View {
     if Hardware.glass, let image {
       GeometryReader { g in
         Image(decorative: image, scale: 1).resizable().interpolation(.low).scaledToFill()
           .frame(width: g.size.width, height: g.size.height).clipped()
-          .blur(radius: 48, opaque: true).saturation(1.25).brightness(-0.22)
+          .blur(radius: 48, opaque: true).saturation(1.25).brightness(scheme == .dark ? -0.22 : 0.18)
       }.allowsHitTesting(false).accessibilityHidden(true)
     }
   }
@@ -114,12 +115,12 @@ struct PictureExtension: View {
 
 extension View {
   /// The one action a bar or panel leads to, as the system draws it: prominent Liquid Glass on
-  /// macOS 26, a prominent bordered button before.
-  @ViewBuilder func leadingAction() -> some View {
+  /// macOS 26, a prominent bordered button before, in `tint`.
+  @ViewBuilder func leadingAction(_ tint: Color = Hardware.accent) -> some View {
     #if compiler(>=6.2)
-      if #available(macOS 26.0, *) { buttonStyle(.glassProminent) } else { buttonStyle(.borderedProminent) }
+      if #available(macOS 26.0, *) { buttonStyle(.glassProminent).tint(tint) } else { buttonStyle(.borderedProminent).tint(tint) }
     #else
-      buttonStyle(.borderedProminent)
+      buttonStyle(.borderedProminent).tint(tint)
     #endif
   }
   /// A key floating over the picture, as the system draws one: Liquid Glass on macOS 26, a bordered

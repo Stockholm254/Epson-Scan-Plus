@@ -16,10 +16,9 @@ struct CameraStage: View {
   var body: some View {
     HStack(spacing: 0) {
       ZStack {
-        // Not continued under the panels as a positive is: a negative's orange mask would colour
-        // the whole window. On light glass the window's ground shows, the live view itself
-        // frosted past recognition and mostly grey.
-        if scheme == .light { Color.clear } else { Color(red: 0.06, green: 0.06, blue: 0.065) }
+        // The window's ground shows: the live view itself frosted past recognition and mostly
+        // grey, so a negative's orange mask does not colour the window.
+        Color.clear
         GeometryReader { geo in liveView(in: geo.size) }
         VStack(spacing: 0) {
           if Liquid.available {
@@ -47,7 +46,7 @@ struct CameraStage: View {
           }
         }.animation(.spring(response: 0.35, dampingFraction: 0.8), value: m.captureToast)
       }
-    }.background { if scheme != .light { Color(red: 0.105, green: 0.11, blue: 0.115) } }
+    }
   }
   /// The stage's corner radius where it floats between the panels; what lies in its corners is
   /// concentric with it.
@@ -210,7 +209,7 @@ struct CameraStage: View {
             DropToast(text: toast).id(toast).transition(.scale(scale: 0.3, anchor: .bottomTrailing).combined(with: .opacity))
           }
         }
-    }.buttonStyle(KeyStyle()).controlSize(.small).disabled(!camera.connected && camera.phase != .missing)
+    }.buttonStyle(.bordered).controlSize(.small).disabled(!camera.connected && camera.phase != .missing)
   }
 }
 
@@ -405,7 +404,7 @@ struct CameraPanel: View {
           }.buttonStyle(KeyStyle(prominent: true)).disabled(camera.phase == .missing || camera.phase == .connecting)
         }
       }
-      Toggle("存储卡上也留一份", isOn: $keepOnCard).toggleStyle(.switch).font(.system(size: 11))
+      Toggle("存储卡上也留一份", isOn: $keepOnCard).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
         .disabled(camera.connected).help("连接时设定：只存到电脑，或电脑和存储卡各一份（要插卡）")
       if camera.connected {
         Divider()

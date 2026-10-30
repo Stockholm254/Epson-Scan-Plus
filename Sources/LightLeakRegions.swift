@@ -103,7 +103,7 @@ struct LeakRegionsSection: View {
           Text("\(Int((lab.brush * 1000).rounded()))‰").readout()
         }
       }
-      Toggle("在照片上显示区域", isOn: $lab.showMasks).toggleStyle(.switch).font(.system(size: 11))
+      Toggle("在照片上显示区域", isOn: $lab.showMasks).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
       HStack {
         Button("自动检测") { lab.detect() }
         Text("灵敏度").font(.system(size: 11)).foregroundStyle(.secondary)
@@ -160,7 +160,7 @@ struct LeakRegionsSection: View {
           }.buttonStyle(.plain).help("删除")
         }
         .padding(.horizontal, 6).padding(.vertical, 3)
-        .background(RoundedRectangle(cornerRadius: 4).fill(r.id == lab.selectedRegion ? Hardware.amber.opacity(0.18) : Color.white.opacity(0.04)))
+        .background(RoundedRectangle(cornerRadius: 4).fill(r.id == lab.selectedRegion ? Hardware.amber.opacity(0.18) : Color.primary.opacity(0.05)))
         .contentShape(Rectangle())
         .onTapGesture { if !protection { lab.selectedRegion = r.id } }
       }
@@ -178,7 +178,7 @@ struct LeakRegionsSection: View {
       Text(r.ref.map { String(format: "干净参考点：%.3f, %.3f", $0.x, $0.y) }
         ?? (r.target != nil || r.fog != nil ? "已标定的区域，可调强度。" : "尚未选参考点：用「参考点」点同材质、没有漏光的位置。"))
         .font(.system(size: 10)).foregroundStyle(r.ref == nil && r.target == nil && r.fog == nil ? Hardware.amber : .secondary)
-    }.padding(8).background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.04)))
+    }.padding(8).background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.05)))
   }
   func amount(_ title: String, _ value: Double, _ set: @escaping (Double) -> Void) -> some View {
     HStack {
@@ -229,7 +229,7 @@ struct LeakAlignSheet: View {
           lab.showAlign = false
         }
       }
-    }.padding(20).frame(width: 780).buttonStyle(KeyStyle()).controlSize(.small)
+    }.padding(20).frame(width: 780).buttonStyle(.bordered).controlSize(.small)
       .onAppear { pairs = lab.pairs }
   }
   var info: String {
@@ -308,7 +308,7 @@ struct LeakCropSheet: View {
           lab.showCrop = false
         }
       }
-    }.padding(20).frame(width: 420).buttonStyle(KeyStyle()).controlSize(.small)
+    }.padding(20).frame(width: 420).buttonStyle(.bordered).controlSize(.small)
       .onAppear {
         crop = lab.params.crop
         lab.uncutPreview { picture = $0 }

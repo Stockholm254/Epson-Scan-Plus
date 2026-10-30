@@ -58,10 +58,9 @@ struct ShutterKey: View {
         if busy { ProgressView().controlSize(.small) }
       }
     }
-    .leadingAction()
+    .leadingAction(Color(red: 0.86, green: 0.16, blue: 0.13))
     .buttonBorderShape(.circle)
     .controlSize(.large)
-    .tint(Color(red: 0.86, green: 0.16, blue: 0.13))
     .overlay {
       Circle().stroke(Color.white.opacity(0.9 * flash), lineWidth: 3)
         .scaleEffect(still ? 1.05 : 1.05 + 0.3 * (1 - flash)).allowsHitTesting(false)
@@ -172,16 +171,19 @@ enum Frost {
   }()
 }
 
-/// The ground of the copy stand in light glass: the live view as frost would show it, or light grey
-/// until there is one.
+/// The ground of the copy stand: the live view as frost would show it, or plain grey until there is
+/// one.
 struct CopyStandBackdrop: View {
   @ObservedObject var camera: CameraController
   @Environment(\.accessibilityReduceTransparency) private var opaque
+  @Environment(\.colorScheme) private var scheme
   var body: some View {
     // Laid over a colour that takes the space offered, so filling it never makes the view larger.
-    Color(white: 0.88).overlay {
+    // In the dark appearance the same frost, taken down to dark grey.
+    Color(white: scheme == .dark ? 0.13 : 0.88).overlay {
       if !opaque, let b = camera.liveBackdrop {
         Image(decorative: b, scale: 1).resizable().interpolation(.high).aspectRatio(contentMode: .fill)
+          .colorMultiply(Color(white: scheme == .dark ? 0.2 : 1))
       }
     }.clipped().allowsHitTesting(false)
   }

@@ -1,15 +1,13 @@
 import AppKit
 import SwiftUI
 
-private let accent = Color(red: 0.91, green: 0.68, blue: 0.37)
-private let panelColor = Color(red: 0.135, green: 0.14, blue: 0.145)
+private let accent = Hardware.accent
 
 extension View {
-  /// The window on the copy stand in light glass, on the live view frosted; every other page the
-  /// dark console.
+  /// The window in the system's appearance, light or dark, on every page; on the copy stand the live
+  /// view frosted under it all.
   func copyStandGlass(_ on: Bool, camera: CameraController) -> some View {
-    background { if on { CopyStandBackdrop(camera: camera) } else { panelColor } }
-      .preferredColorScheme(on ? .light : .dark)
+    background { if on { CopyStandBackdrop(camera: camera) } }
   }
 }
 
@@ -40,7 +38,7 @@ struct ContentView: View {
     }
     .navigationTitle("Epson Scan plus")
     .toolbar { toolbarContent }
-    .copyStandGlass(cameraStage, camera: m.camera).tint(accent)
+    .copyStandGlass(cameraStage, camera: m.camera)
     .frame(minWidth: 1120, minHeight: 760)
     .alert(
       "无法完成操作",
@@ -180,7 +178,7 @@ struct ContentView: View {
         m.toggleLoupe()
       } label: {
         Label("看片镜", systemImage: "circle.circle").font(.system(size: 11)).foregroundStyle(
-          m.preferences.showLoupe ? accent : Color(white: 0.85))
+          m.preferences.showLoupe ? Hardware.amberText : Color.primary)
       }.buttonStyle(KeyStyle(latched: m.preferences.showLoupe)).controlSize(.small)
         .help("看片镜：点一下放到所选画面上，拖动放大细看，再点一下收起 · Z。接触表和单张都能用；右键选择型号")
       if !m.singleView {
@@ -189,7 +187,7 @@ struct ContentView: View {
           m.fitView()
         } label: {
           Label("横排", systemImage: "rectangle.landscape.rotate").font(.system(size: 11)).foregroundStyle(
-            m.preferences.contactLandscape ? accent : Color(white: 0.85))
+            m.preferences.contactLandscape ? Hardware.amberText : Color.primary)
         }.buttonStyle(KeyStyle(latched: m.preferences.contactLandscape)).controlSize(.small)
           .help("把竖放的片夹横过来摆在灯箱上，胶片条横向排开，更好地利用宽屏。方向跟随多数画面的旋转，都没有旋转时顺时针转")
       }
@@ -204,7 +202,7 @@ struct ContentView: View {
           HStack(spacing: 4) {
             Image(systemName: t.symbol).frame(width: 16, height: 14)
             if let label = t.label { Text(label).font(.system(size: 11)) }
-          }.foregroundStyle(m.tool == t ? accent : Color(white: 0.85))
+          }.foregroundStyle(m.tool == t ? Hardware.amberText : Color.primary)
         }.buttonStyle(KeyStyle(latched: m.tool == t)).controlSize(.small).help(t.help)
           .accessibilityLabel(t.rawValue)
       }
@@ -215,7 +213,7 @@ struct ContentView: View {
           m.fitView()
         } label: {
           Text("适合").font(.system(size: 11))
-        }.buttonStyle(KeyStyle()).controlSize(.small).help("缩放回适合窗口")
+        }.buttonStyle(.bordered).controlSize(.small).help("缩放回适合窗口")
       }
   }
   /// Which frame is shown, or how many there are.
@@ -244,7 +242,7 @@ struct ContentView: View {
           m.mirrorRoll()
         } label: {
           Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
-            .foregroundStyle(m.contactMirrored ? accent : Color(white: 0.85))
+            .foregroundStyle(m.contactMirrored ? Hardware.amberText : Color.primary)
         }.buttonStyle(KeyStyle(latched: m.contactMirrored)).help("全卷水平镜像：修正胶片正反面放反").disabled(m.frames.isEmpty)
         Picker("显示", selection: $m.contactPositive) {
           Text("原片").tag(false)
@@ -264,7 +262,7 @@ struct ContentView: View {
         } label: {
           Image(systemName: "chevron.right")
         }.disabled(!m.canNavigate(1)).help("下一张 · →")
-        Toggle("负片", isOn: $m.showNegative).toggleStyle(.switch).font(.system(size: 11))
+        Toggle("负片", isOn: $m.showNegative).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
           .onChange(of: m.showNegative) { m.refresh() }
         Button {
           m.turn(clockwise: false)
@@ -280,7 +278,7 @@ struct ContentView: View {
           m.toggleMirror()
         } label: {
           Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
-            .foregroundStyle(m.settings.flipHorizontal == true ? accent : Color(white: 0.85))
+            .foregroundStyle(m.settings.flipHorizontal == true ? Hardware.amberText : Color.primary)
         }.buttonStyle(KeyStyle(latched: m.settings.flipHorizontal == true)).help(
           m.syncOrientation ? "全部水平镜像：修正整卷胶片正反面方向" : "水平镜像：修正胶片正反面方向")
         Button {
@@ -290,7 +288,7 @@ struct ContentView: View {
             Image(systemName: "link")
             Text("同步全部")
           }.font(.system(size: 11))
-            .foregroundStyle(m.syncOrientation ? accent : Color(white: 0.85))
+            .foregroundStyle(m.syncOrientation ? Hardware.amberText : Color.primary)
         }.buttonStyle(KeyStyle(latched: m.syncOrientation))
           .help("开启后，旋转和水平镜像同步应用到本卷全部照片")
       }
@@ -346,7 +344,7 @@ struct ContentView: View {
           placeLabel.glassBar()
           Spacer()
           HStack(spacing: 8) { viewingControls }.glassBar()
-        }.buttonStyle(KeyStyle()).controlSize(.small).padding(.horizontal, 10).padding(.bottom, 10)
+        }.buttonStyle(.bordered).controlSize(.small).padding(.horizontal, 10).padding(.bottom, 10)
       }
     }
   }
@@ -368,7 +366,7 @@ struct ContentView: View {
             get: { m.settings.curves ?? ToneCurves() },
             set: { value in m.change("曲线") { $0.curves = value.isIdentity ? nil : value } }),
           histogram: m.histogram, channels: m.channelHistograms)
-        Toggle("负片去色罩 / 反相", isOn: bool(\.inputIsNegative)).toggleStyle(.switch)
+        Toggle("负片去色罩 / 反相", isOn: bool(\.inputIsNegative)).toggleStyle(.switch).tint(Hardware.accent)
           .font(.system(size: 11))
         HStack {
           Button {
@@ -454,7 +452,7 @@ struct ContentView: View {
                   $0.neutralSample = nil
                 }
               })
-          ).toggleStyle(.switch).font(.system(size: 11))
+          ).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
           InfoButton(text: "自动白平衡按画面估计，忽略外缘 5%（不改变导出范围）。「取中性灰」用滴管点画面中应为灰色的地方，按这一点自动白平衡（「自动」保持开着）。「取高光」（Dmax）点负片上最密、正片里应为纯白的地方，比如阳光下的白墙或高光反射：各通道从暗部（或取过的中性灰）拉到这一点，它在正片里是白色。「重算白平衡」放弃取样点，按画面重新估计。")
         }
         slider("冷暖", key: \.warmth, range: -1...1)
@@ -483,7 +481,7 @@ struct ContentView: View {
         HStack {
           Text("色阶").font(.system(size: 12, weight: .medium))
           Spacer()
-          Toggle("自动", isOn: bool(\.autoLevels)).toggleStyle(.switch).font(.system(size: 11))
+          Toggle("自动", isOn: bool(\.autoLevels)).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
           InfoButton(text: "自动：按画面的密度范围设定黑白两端。关闭后用黑点、白点和中间调手动设定。")
         }
         slider("黑点", key: \.black, range: 0...0.4)
@@ -517,7 +515,7 @@ struct ContentView: View {
           Label("同步到本卷", systemImage: "square.on.square")
         }.frame(maxWidth: .infinity)
       }.padding(18).disabled(m.selected == nil || m.exporting)
-        .buttonStyle(KeyStyle()).controlSize(.small)
+        .buttonStyle(.bordered).controlSize(.small)
     }
   }
   /// Per-frame deconvolution strength, once the scanner has a measured profile.
@@ -596,7 +594,7 @@ struct ContentView: View {
               if let id = m.selectedID { m.setEnabled(id, enabled: value) }
             })
         )
-        .toggleStyle(.switch).disabled(m.selected == nil || m.isWorking)
+        .toggleStyle(.switch).tint(Hardware.accent).disabled(m.selected == nil || m.isWorking)
         Divider().frame(height: 14)
         Button("全选") { m.setAllEnabled(true) }
           .disabled(m.frames.isEmpty || m.enabledCount == m.frames.count || m.isWorking)
@@ -606,7 +604,7 @@ struct ContentView: View {
           .help("取消全部扫描和导出勾选；不删除照片、不切换当前画面")
         Text("已选 \(m.enabledCount) / \(m.frames.count)").readout()
         Spacer()
-      }.font(.system(size: 11)).controlSize(.mini).buttonStyle(KeyStyle())
+      }.font(.system(size: 11)).controlSize(.mini).buttonStyle(.bordered)
         .padding(.horizontal, 18).padding(.top, 7).padding(.bottom, 2)
       ScrollViewReader { proxy in
         ScrollView(.horizontal) {

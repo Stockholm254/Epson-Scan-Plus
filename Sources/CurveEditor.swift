@@ -35,7 +35,7 @@ struct CurveEditor: View {
       ForEach(0..<4, id: \.self) { i in
         Button(Self.names[i]) { channel = i }
           .buttonStyle(KeyStyle(latched: channel == i))
-          .foregroundStyle(curves[i].isIdentity ? Color(white: 0.85) : Self.colors[i])
+          .foregroundStyle(curves[i].isIdentity ? Color.primary : Self.colors[i])
       }
       Spacer()
       Button("重置") { curves[channel] = ToneCurve() }.disabled(curves[channel].isIdentity)

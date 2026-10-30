@@ -57,7 +57,7 @@ struct LeakViewer: View {
         } label: {
           Image(systemName: "rotate.right")
         }.help("右转 90°")
-      }.buttonStyle(KeyStyle()).controlSize(.small).disabled(!lab.hasBase || lab.busy != nil)
+      }.buttonStyle(.bordered).controlSize(.small).disabled(!lab.hasBase || lab.busy != nil)
         .padding(.horizontal, 16).padding(.vertical, 10)
       ZStack {
         if let before = lab.before {
@@ -84,14 +84,14 @@ struct LeakViewer: View {
           Fader(title: "前后对比", value: $lab.wipe, range: 0...1).disabled(lab.after == nil || lab.showReference)
           Text("去漏光后").font(.system(size: 11)).foregroundStyle(.secondary)
           Text("按住看原片").font(.system(size: 11)).padding(.horizontal, 10).padding(.vertical, 4)
-            .background(RoundedRectangle(cornerRadius: 4).fill(lab.holdOriginal ? Hardware.amber.opacity(0.35) : Color.white.opacity(0.08)))
+            .background(RoundedRectangle(cornerRadius: 4).fill(lab.holdOriginal ? Hardware.amber.opacity(0.35) : Color.primary.opacity(0.08)))
             .onLongPressGesture(minimumDuration: .infinity, maximumDistance: 60, perform: {}, onPressingChanged: { lab.holdOriginal = $0 })
             .accessibilityAddTraits(.isButton).help("按住时显示原片，松开回到当前对比")
         }
-        Text(lab.notice).font(.system(size: 11)).foregroundStyle(Color(white: 0.82)).fixedSize(horizontal: false, vertical: true)
+        Text(lab.notice).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
           .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
       }.padding(.horizontal, 16).padding(.vertical, 10)
-    }.background(Color(red: 0.105, green: 0.11, blue: 0.115).opacity(Hardware.glass ? 0.45 : 1))
+    }.background(Hardware.adaptive(NSColor(red: 0.105, green: 0.11, blue: 0.115, alpha: 1), NSColor(white: 0.93, alpha: 1)).opacity(Hardware.glass ? 0.45 : 1))
   }
   func title(_ j: LeakJob) -> String {
     let size = j.meta.map { " · \($0.width) × \($0.height)" } ?? ""
@@ -227,7 +227,7 @@ struct LeakPanel: View {
         adjustments
         Divider()
         export
-      }.padding(18).buttonStyle(KeyStyle()).controlSize(.small)
+      }.padding(18).buttonStyle(.bordered).controlSize(.small)
     }
   }
   func header(_ text: String, symbol: String, info: String) -> some View {
@@ -307,7 +307,7 @@ struct LeakPanel: View {
       Toggle(
         "保留灯光红晕和真实红色物体",
         isOn: Binding(get: { lab.params.protectHighlights }, set: { v in lab.change("保留灯光红晕") { $0.protectHighlights = v } })
-      ).toggleStyle(.switch).font(.system(size: 11)).disabled(!lab.hasBase || lab.busy != nil)
+      ).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11)).disabled(!lab.hasBase || lab.busy != nil)
       VStack(spacing: 3) {
         HStack {
           Text("去偏色强度").font(.system(size: 11)).foregroundStyle(.secondary)
@@ -533,7 +533,7 @@ struct LeakGenerateSheet: View {
       VStack(alignment: .leading, spacing: 4) {
         Text("附加要求（可选）").font(.system(size: 12, weight: .medium))
         TextEditor(text: $note).font(.system(size: 12)).frame(height: 64)
-          .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.white.opacity(0.15)))
+          .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.primary.opacity(0.15)))
           .onChange(of: note) { if note.count > 2000 { note = String(note.prefix(2000)) } }
       }
       Text("提示词要求保持原始曝光和自然高光；本地按污染程度自动减雾，单独保护亮部和局部灯光，不照搬参考曝光。只生成 1 张，不自动重试；失败或超时仍可能已计费。")

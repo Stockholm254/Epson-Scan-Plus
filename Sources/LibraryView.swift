@@ -11,6 +11,7 @@ struct LibrarySheet: View {
   @State private var loaded = false
   @State private var query = ""
   @State private var source: RollSource?
+  @Environment(\.colorScheme) private var scheme
   var shown: [RollEntry] {
     entries.filter { e in
       (source == nil || e.source == source)
@@ -38,7 +39,6 @@ struct LibrarySheet: View {
       }.padding(.horizontal, 18).padding(.vertical, 8)
     }
     .frame(minWidth: 900, idealWidth: 1080, minHeight: 620, idealHeight: 760)
-    .background(Color(red: 0.135, green: 0.14, blue: 0.145)).preferredColorScheme(.dark).tint(Hardware.amber)
     .onAppear { reload() }
   }
   var header: some View {
@@ -66,7 +66,7 @@ struct LibrarySheet: View {
           Image(systemName: "ellipsis.circle")
         }.menuStyle(.borderlessButton).fixedSize()
         Button("完成") { m.showLibrary = false }.keyboardShortcut(.cancelAction)
-      }.buttonStyle(KeyStyle()).controlSize(.regular)
+      }.buttonStyle(.bordered).controlSize(.regular)
   }
   /// The drawer of sleeves.
   var drawer: some View {
@@ -84,10 +84,10 @@ struct LibrarySheet: View {
           }
         }.padding(.horizontal, 28).padding(.vertical, 30)
       }.background {
-        // The drawer: dark steel, shaded under its front edge.
+        // The drawer: steel, dark or light as the window is, shaded under its front edge.
         ZStack(alignment: .top) {
-          LinearGradient(colors: [Color(white: 0.085), Color(white: 0.14)], startPoint: .top, endPoint: .bottom)
-          LinearGradient(colors: [.black.opacity(0.6), .clear], startPoint: .top, endPoint: .bottom).frame(height: 16)
+          LinearGradient(colors: [LibraryDrawer.steelTop, LibraryDrawer.steelBottom], startPoint: .top, endPoint: .bottom)
+          LinearGradient(colors: [.black.opacity(scheme == .dark ? 0.6 : 0.12), .clear], startPoint: .top, endPoint: .bottom).frame(height: 16)
         }
       }
   }
@@ -130,15 +130,15 @@ struct RollSleeve: View {
       ZStack(alignment: .leading) {
         // The shadow is the page's outline's, not the whole page's: a shadow of all its strips and
         // pockets is drawn again every frame the page lifts, and took seconds a drawer.
-        RoundedRectangle(cornerRadius: 3).fill(Color(white: 0.1))
-          .shadow(color: .black.opacity(hover ? 0.6 : 0.4), radius: hover ? 12 : 5, y: hover ? 8 : 3)
+        RoundedRectangle(cornerRadius: 3).fill(LibraryDrawer.page)
+          .shadow(color: .black.opacity(hover ? 0.45 : 0.25), radius: hover ? 12 : 5, y: hover ? 8 : 3)
         RoundedRectangle(cornerRadius: 3).fill(Color(white: 0.8).opacity(0.13))
-        RoundedRectangle(cornerRadius: 3).stroke(Color.white.opacity(0.16), lineWidth: 0.6)
+        RoundedRectangle(cornerRadius: 3).stroke(Color.primary.opacity(0.16), lineWidth: 0.6)
         VStack {
           ForEach(0..<3, id: \.self) { _ in
             Spacer()
-            Circle().fill(Color(white: 0.1)).frame(width: 6, height: 6)
-              .overlay(Circle().stroke(Color.white.opacity(0.18), lineWidth: 0.5))
+            Circle().fill(LibraryDrawer.steelTop).frame(width: 6, height: 6)
+              .overlay(Circle().stroke(Color.primary.opacity(0.18), lineWidth: 0.5))
           }
           Spacer()
         }.padding(.leading, 4)
@@ -194,7 +194,7 @@ struct RollSleeve: View {
           ForEach(0..<Self.perStrip, id: \.self) { c in
             pocket(c < rows[r].count ? rows[r][c] : nil)
           }
-        }.padding(2).background(Color.white.opacity(0.05))
+        }.padding(2).background(Color.primary.opacity(0.05))
           .zIndex(rows[r].contains { $0.id == hovered } ? 10 : 0)
       }
       if entry.frames.count > shownFrames.count {
@@ -211,7 +211,7 @@ struct RollSleeve: View {
   func pocket(_ frame: RollEntry.Frame?) -> some View {
     let under = frame != nil && hovered == frame?.id
     return ZStack {
-      Rectangle().fill(frame == nil ? Color.white.opacity(0.03) : Hardware.filmBase.opacity(0.85))
+      Rectangle().fill(frame == nil ? Color.primary.opacity(0.04) : Hardware.filmBase.opacity(0.85))
       if let frame, let picture = pictures[frame.id] {
         Image(decorative: picture.image, scale: 1).resizable().aspectRatio(contentMode: .fit)
       }
@@ -255,4 +255,11 @@ struct RollSleeve: View {
       DispatchQueue.main.async { pictures = found }
     }
   }
+}
+
+/// The library drawer's colours, dark or light as the window is.
+enum LibraryDrawer {
+  static let steelTop = Hardware.adaptive(NSColor(white: 0.085, alpha: 1), NSColor(white: 0.86, alpha: 1))
+  static let steelBottom = Hardware.adaptive(NSColor(white: 0.14, alpha: 1), NSColor(white: 0.92, alpha: 1))
+  static let page = Hardware.adaptive(NSColor(white: 0.1, alpha: 1), NSColor(white: 0.97, alpha: 1))
 }

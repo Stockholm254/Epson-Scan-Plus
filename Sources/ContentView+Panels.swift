@@ -34,7 +34,7 @@ extension ContentView {
             }
           }
           Spacer(minLength: 16)
-        }.padding(16).buttonStyle(KeyStyle()).controlSize(.small)
+        }.padding(16).buttonStyle(.bordered).controlSize(.small)
       }
     }
   }
@@ -69,7 +69,7 @@ extension ContentView {
         labeled("原始文件") { Text("TIFF · 16-bit 线性").font(.system(size: 12)).foregroundStyle(.secondary) }
         HStack {
           Toggle("按行合并扫描", isOn: Binding(get: { m.preferences.rowScanning }, set: { m.preferences.rowScanning = $0 }))
-            .toggleStyle(.switch).font(.system(size: 11)).disabled(m.isWorking)
+            .toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11)).disabled(m.isWorking)
           Spacer()
           InfoButton(text: "并排的几张一次扫完，再分成每张的原始文件，和单独扫描的一样保存。按 V850 实测，一个装满的 135 片夹（18 张）从约 13 分钟缩短到约 9 分钟。\n\n只在合起来更快时才合并：片夹里只有一条胶片、或一排只勾了一张时照常逐张扫；隔着一条的两张也分开扫。\n\n比一张宽的扫描窗口，扫描仪每次校准的蓝色增益不同（实测 −0.4% 到 +3.8%），黑电平也会漂；每张扫描到达时都和预览对齐，修正后和单独扫描相差不到 0.15%。只用于 48-bit 接口。")
         }
@@ -141,7 +141,7 @@ extension ContentView {
           format: "灰阶最大误差 %.3f D，扣除后 %.3f D · 色块 ΔE %.1f（最大 %.1f）",
           c.grayErrorBefore, c.grayError, c.meanDeltaE, c.maxDeltaE))
         Toggle("转换前扣除杂散光", isOn: Binding(get: { m.preferences.removeFlare }, set: { m.preferences.removeFlare = $0; m.reapplyScannerCalibration() }))
-          .toggleStyle(.switch).font(.system(size: 11))
+          .toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
       } else {
         note("尚未标定。")
       }
@@ -206,7 +206,7 @@ extension ContentView {
       }
       if m.hasSinglePictures {
         Toggle("导入的单张一起做整卷估计", isOn: Binding(get: { m.poolPictures }, set: { m.setPoolPictures($0) }))
-          .toggleStyle(.switch).font(.system(size: 11))
+          .toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
         note("一张一个文件的画面（翻拍，或一张张导入的扫描），只在它们是同一卷、用同样的设备和设置拍或扫时打开。读法不同（Gamma、位深）的文件不会混在一起。")
       }
       Divider()
@@ -224,7 +224,7 @@ extension ContentView {
         InfoButton(text: "让 Claude 等支持 MCP 的 AI 助手读取这张的转换状态（片基、通道斜率、白平衡、色阶、密度和直方图），看预览、取点，并调整去色罩和颜色，帮你判断偏色从哪里来。\n\n每次调整都能用 ⌘Z 撤销；助手不能扫描、删除或导出文件。只在本机通过只有你的账户能访问的连接工作，不经过网络。\n\nClaude Desktop：在设置 → 开发者 → 编辑配置里加入复制的配置后重启。Claude Code：在终端运行复制的命令。")
       }
       Toggle("允许 AI 助手读取和调整转换", isOn: Binding(get: { m.preferences.mcpEnabled }, set: { m.preferences.mcpEnabled = $0; m.updateMCP() }))
-        .toggleStyle(.switch).font(.system(size: 11))
+        .toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
       Text(m.mcpStatus).font(.system(size: 10)).foregroundStyle(m.preferences.mcpEnabled ? Hardware.amber : Color.secondary)
         .fixedSize(horizontal: false, vertical: true)
       HStack {
@@ -357,7 +357,7 @@ extension ContentView {
         Button("导出勾选…") { m.exportImages(all: true) }.disabled(m.enabledCount == 0 || m.isWorking)
       }.font(.system(size: 11))
       Toggle("扫描后自动导出正片", isOn: Binding(get: { m.preferences.autoExport }, set: { m.preferences.autoExport = $0 }))
-        .toggleStyle(.switch).font(.system(size: 11))
+        .toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
       Divider()
       titled("接触表", symbol: "square.grid.3x2", info:
         "把勾选的画面排成一张图片，格式同上。\n\n「预览 · 立即导出」按整幅预览的分辨率（600 dpi 预览时每张 35 mm 约 850 像素）直接生成，不扫描；已正式扫描的画面按同样的分辨率读取。\n\n「1200 dpi · 先扫描」时，尚未扫描或低于 1200 dpi 的画面先以 1200 dpi 扫描，结果保存为这些画面的原始文件，再生成 1200 dpi 的接触表。")
@@ -390,8 +390,8 @@ extension ContentView {
         }.labelsHidden()
       }
       HStack {
-        Toggle("片号", isOn: sheet.numbers).toggleStyle(.switch)
-        Toggle("标题", isOn: sheet.title).toggleStyle(.switch)
+        Toggle("片号", isOn: sheet.numbers).toggleStyle(.switch).tint(Hardware.accent)
+        Toggle("标题", isOn: sheet.title).toggleStyle(.switch).tint(Hardware.accent)
       }.font(.system(size: 11))
       Button {
         m.exportContactSheet()
@@ -470,7 +470,7 @@ extension ContentView {
           Label("下一步：② 去色罩", systemImage: "arrow.right").frame(maxWidth: .infinity)
         }.buttonStyle(KeyStyle(prominent: true)).disabled(m.frames.isEmpty)
         note("胶片名和预设在 ② 去色罩里选。")
-      }.padding(18).buttonStyle(KeyStyle()).controlSize(.small)
+      }.padding(18).buttonStyle(.bordered).controlSize(.small)
     }
       .onChange(of: m.rollName) { m.saveProject() }
       .onChange(of: m.rollNotes) { m.saveProject() }

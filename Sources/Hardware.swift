@@ -5,6 +5,10 @@ import SwiftUI
 /// them the system's own.
 enum Hardware {
   static let amber = Color(red: 0.91, green: 0.68, blue: 0.37)
+  /// The tint of the controls that are the app's own amber, the leading actions, latched keys,
+  /// switches and sliders: one colour for both appearances, set on them and not on the window, where
+  /// it would take the pop-up menus' text away.
+  static let accent = Color(red: 0.86, green: 0.56, blue: 0.18)
   static let lcdText = Color(red: 1.0, green: 0.75, blue: 0.4)
   static let lcdGlass = Color(red: 0.075, green: 0.068, blue: 0.052)
   static let greasePencil = Color(red: 0.86, green: 0.24, blue: 0.17)
@@ -41,7 +45,7 @@ struct KeyStyle: PrimitiveButtonStyle {
   var latched = false
   @ViewBuilder func makeBody(configuration: Configuration) -> some View {
     if prominent || latched {
-      Button(configuration).buttonStyle(.borderedProminent)
+      Button(configuration).buttonStyle(.borderedProminent).tint(Hardware.accent)
     } else {
       Button(configuration).buttonStyle(.bordered)
     }
@@ -195,7 +199,7 @@ struct Fader: View {
   let range: ClosedRange<Double>
   var detent: Double? = nil
   var body: some View {
-    Slider(value: $value, in: range) { Text(title) }.labelsHidden()
+    Slider(value: $value, in: range) { Text(title) }.labelsHidden().tint(Hardware.accent)
       .simultaneousGesture(TapGesture(count: 2).onEnded { if let detent { value = detent } })
       .accessibilityLabel(title)
   }
