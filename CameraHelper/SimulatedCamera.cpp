@@ -13,6 +13,8 @@
 // - Set up so (busy), for a while after a half-press is let go it takes a change of focus mode and
 //   does not make it; set up so (stepsneed), with its own priority it takes a focus step and the
 //   lens does not move.
+// - Set up so (lensaf), the lens's AF/MF switch is at AF: it offers no MF, and takes a switch to
+//   it and does nothing, as the A7R IV with the Sigma 70 mm macro does.
 // - Each half-press that focuses, and each step the lens makes, goes to stderr.
 //
 // EPSON_CAMERA_SIM sets it up, as name=value pairs separated by commas: focus (the focus mode, 6
@@ -21,7 +23,7 @@
 // shortest press taken, in milliseconds, 100), cameras (1; 0 for none found), refuse (0; 1 for a
 // camera another program has a session with, which refuses the connection), busy (milliseconds
 // after a half-press is let go that a change of focus mode is not made, 0), stepsneed (1: a focus
-// step needs the computer's priority, 0). EPSON_CAMERA_SIM_LIVE
+// step needs the computer's priority, 0), lensaf (1: the lens's switch at AF, no MF offered, 0). EPSON_CAMERA_SIM_LIVE
 // names a JPEG for its live view. What it does with a press goes to stderr, a line each.
 //
 // Not Sony's code: the functions and classes the camera process uses, declared by Sony's headers,
@@ -78,7 +80,7 @@ struct Camera {
   IDeviceCallback* callback = nullptr;
   Clock::time_point connectedAt;
   int early = 600, transfer = 1500, hold = 100, busy = 0;
-  bool focuses = true, stepsNeedPriority = false;
+  bool focuses = true, stepsNeedPriority = false, lensAF = false;
   Clock::time_point letGo;
   std::map<CrInt32u, int64_t> values;
   bool halfPressed = false, focused = false, sending = false;
@@ -105,7 +107,7 @@ void changed(std::vector<CrInt32u> codes) {
 /// The values the camera offers for a property, and the size of each.
 std::pair<std::vector<int64_t>, int> offered(CrInt32u code) {
   switch (code) {
-    case CrDeviceProperty_FocusMode: return {{2, 4, 3, 6, 1}, 2};
+    case CrDeviceProperty_FocusMode: return camera.lensAF ? std::pair<std::vector<int64_t>, int>{{2, 4, 3, 6}, 2} : std::pair<std::vector<int64_t>, int>{{2, 4, 3, 6, 1}, 2};
     case CrDeviceProperty_Focus_Magnifier_Setting:
       return {{0xFFFFFFFFLL, (10LL << 32) | 0xFFFFFFFF, (59LL << 32) | 0xFFFFFFFF, (119LL << 32) | 0xFFFFFFFF}, 8};
     case CrDeviceProperty_PriorityKeySettings: return {{1, 2}, 2};
@@ -255,6 +257,7 @@ bool Init(CrInt32u) {
   camera.focuses = setting("af", 1) != 0;
   camera.busy = setting("busy", 0);
   camera.stepsNeedPriority = setting("stepsneed", 0) != 0;
+  camera.lensAF = setting("lensaf", 0) != 0;
   camera.values[CrDeviceProperty_FocusMode] = setting("focus", 6);
   camera.values[CrDeviceProperty_PriorityKeySettings] = setting("priority", CrPriorityKey_CameraPosition);
   camera.values[CrDeviceProperty_Focus_Magnifier_Setting] = (320 << 16) | 240;
@@ -329,6 +332,11 @@ CrError SetDeviceProperty(CrDeviceHandle, CrDeviceProperty* p) {
   std::unique_lock<std::mutex> g(camera.lock);
   switch (code) {
     case CrDeviceProperty_FocusMode:
+      if (camera.lensAF && v == CrFocus_MF) {
+        g.unlock();
+        say("镜头开关在 AF，没有 MF：切换没生效");
+        return CrError_None;
+      }
       if (camera.busy && Clock::now() < camera.letGo + std::chrono::milliseconds(camera.busy)) {
         g.unlock();
         say("刚松开半按，切换对焦模式没生效");

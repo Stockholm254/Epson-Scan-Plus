@@ -152,6 +152,11 @@ static const Known known[] = {
   {"AF_Area_Position", sdk::CrDeviceProperty_AF_Area_Position, sdk::CrDataType_UInt32},
   {"NearFar", sdk::CrDeviceProperty_NearFar, sdk::CrDataType_Int16},
   {"S1", sdk::CrDeviceProperty_S1, sdk::CrDataType_UInt16},
+  // Focus without manual focus: whether the half-press focuses, a push that focuses once, and
+  // where the camera's (or the lens's) focus switch stands.
+  {"AFWithShutter", sdk::CrDeviceProperty_AFWithShutter, sdk::CrDataType_UInt8},
+  {"PushAutoFocus", sdk::CrDeviceProperty_PushAutoFocus, sdk::CrDataType_UInt16},
+  {"FocusModeSetting", sdk::CrDeviceProperty_FocusModeSetting, sdk::CrDataType_UInt8},
 };
 static const Known* byName(const std::string& name) {
   for (auto& k : known) if (name == k.name) return &k;
@@ -189,6 +194,15 @@ static int64_t current(const sdk::CrDeviceProperty& p) {
     case 4: return (type & sdk::CrDataType_SignBit) ? (int64_t)(int32_t)v : (int64_t)(uint32_t)v;
     default: return (int64_t)v;
   }
+}
+/// Whether the camera offers `value` for the property now; a property that lists none offers all.
+static bool offers(const sdk::CrDeviceProperty& p, int64_t value) {
+  uint32_t type = p.GetValueType();
+  int size = elementSize(type);
+  if (size <= 0 || !p.GetValues() || p.GetValueSize() == 0) return true;
+  uint32_t n = p.GetValueSize() / size;
+  for (uint32_t i = 0; i < n && i < 512; i++) if (element(p.GetValues() + i * size, type) == value) return true;
+  return false;
 }
 static std::string describe(const sdk::CrDeviceProperty& p, const char* name) {
   uint32_t type = p.GetValueType();
@@ -484,32 +498,42 @@ static void remote(std::string& steps) {
   steps += "电脑优先 " + hex(e) + "，";
   std::this_thread::sleep_for(std::chrono::milliseconds(500));
 }
-/// The camera in focus mode `mode` as it says it is, not as the app last heard: switched when it
-/// is not, asked again while it is busy (just after a half-press it may take the switch and not
-/// make it), and read back each time. The switch ends the magnifier, which is put back when the
-/// app had it on. What it took goes into `steps`; whether it is in that mode now.
+/// The camera in focus mode `mode` as it says it is, not as the app last heard. A mode it does not
+/// offer now is not asked for: the A7R IV with the lens's AF/MF switch at AF offers no MF, and takes
+/// the switch to it and does nothing. One it offers is asked for, and read back for two seconds,
+/// as the camera makes the change in its own time (just after a half-press it may take it and not
+/// make it, and is asked once more). The switch ends the magnifier, which is put back when the app
+/// had it on. What it took goes into `steps`; whether it is in that mode now.
 static bool ensureFocusMode(int64_t mode, const Message& m, std::string& steps) {
   const Known* k = byName("FocusMode");
   if (!k) return false;
-  auto now = [&]() -> int64_t {
-    sdk::CrDeviceProperty p;
-    return readProp(k->code, p) ? (int64_t)p.GetCurrentValue() : -1;
-  };
-  if (now() == mode) return true;
   const std::string name = mode == sdk::CrFocus_MF ? "MF" : "AF-S";
-  for (int attempt = 1; attempt <= 6; attempt++) {
-    sdk::CrError e = patiently([&] { return writeProp(*k, mode); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
-    if (now() == mode) {
-      steps += "切到 " + name + (attempt > 1 ? "（第 " + std::to_string(attempt) + " 次）" : "") + "，";
-      if (double v = m.num("magnify")) {
-        writeProp(*byName("Focus_Magnifier_Setting"), (int64_t)v);
-        std::this_thread::sleep_for(std::chrono::milliseconds(300));
-      }
-      return true;
+  sdk::CrDeviceProperty p;
+  if (readProp(k->code, p)) {
+    if ((int64_t)p.GetCurrentValue() == mode) return true;
+    if (!offers(p, mode)) {
+      steps += "相机现在不提供 " + name + "，";
+      return false;
     }
+  }
+  auto now = [&]() -> int64_t {
+    sdk::CrDeviceProperty q;
+    return readProp(k->code, q) ? (int64_t)q.GetCurrentValue() : -1;
+  };
+  for (int attempt = 1; attempt <= 2; attempt++) {
+    sdk::CrError e = writeProp(*k, mode);
     if (e) steps += "切到 " + name + " " + hex(e) + "，";
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    for (int i = 0; i < 10 && !e; i++) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(200));
+      if (now() == mode) {
+        steps += "切到 " + name + (attempt > 1 ? "（第 2 次）" : "") + "，";
+        if (double v = m.num("magnify")) {
+          writeProp(*byName("Focus_Magnifier_Setting"), (int64_t)v);
+          std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        }
+        return true;
+      }
+    }
   }
   steps += "没能切到 " + name + "，";
   return false;
@@ -530,6 +554,17 @@ static bool autofocusMode() {
 static void shoot(const Message& m) {
   std::string steps;
   remote(steps);
+  if (m.on("locked")) {
+    // The half-press held since AF locks the focus: pressed fully over it, and held still after.
+    shotAt = std::chrono::steady_clock::now();
+    sdk::CrError err = sdk::SendCommand(handle, sdk::CrCommandId_Release, sdk::CrCommandParam_Down);
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    sdk::CrError up = sdk::SendCommand(handle, sdk::CrCommandId_Release, sdk::CrCommandParam_Up);
+    if (!err) err = up;
+    logLine("快门（半按锁住对焦）：" + steps + "全按 " + hex(err));
+    emit("{\"event\":\"shot\",\"ok\":" + std::string(err ? "false" : "true") + ",\"code\":" + quote(hex(err)) + ",\"manual\":false}");
+    return;
+  }
   // A half-press left held (an AF a moment ago) is let go first: the press starts from rest.
   releaseS1();
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -600,7 +635,8 @@ int main(int argc, char** argv) {
       std::this_thread::sleep_for(std::chrono::milliseconds(150));
       bool held = !m.on("hold") || ensureFocusMode(sdk::CrFocus_MF, m, steps);
       logLine("AF：" + steps + result + (held ? "" : "，没能切回手动对焦"));
-      emit("{\"event\":\"af\",\"result\":" + quote(result) + ",\"held\":" + (held ? "true" : "false") + "}");
+      emit("{\"event\":\"af\",\"result\":" + quote(result) + ",\"held\":" + (held ? "true" : "false")
+        + ",\"noManual\":" + (steps.find("不提供 MF") != std::string::npos ? "true" : "false") + "}");
     } else if (cmd == "nearfar") {
       // The lens steps only in manual focus, and with the computer's priority: both as the camera
       // says, whatever the app last heard.

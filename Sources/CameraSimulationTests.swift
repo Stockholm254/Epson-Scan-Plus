@@ -135,6 +135,20 @@ enum CameraSimulationTests {
       && !r.log.contains { $0.contains("没生效（相机优先）") },
       "a focus step with the camera's priority back takes the computer's first, and the lens moves")
 
+    // The lens's AF/MF switch at AF: the camera offers no MF. AF says so, and that the shutter will
+    // focus again; a focus step is refused at once, not after asking again and again.
+    let lens = connect("lens-at-af", "lensaf=1,early=200")
+    let g = lens.camera
+    g.autofocus()
+    until(10) { g.focusResult != nil }
+    let afMessage = g.message
+    let pressed = Date()
+    g.step(-1)
+    until(6) { g.message.contains("没有接受对焦步进") }
+    let stepTook = Date().timeIntervalSince(pressed)
+    try check(afMessage.contains("不提供手动对焦") && g.message.contains("拨到 MF") && stepTook < 3,
+      String(format: "with the lens's switch at AF the camera offers no MF: AF says so, and a step is refused in %.1f s, the message saying to switch the lens to MF", stepTook))
+
     // Live view, from the camera's pictures as it hands them over.
     let still = folder.appendingPathComponent("camera-simulated-live.jpg")
     let draw = CGContext(data: nil, width: 64, height: 48, bitsPerComponent: 8, bytesPerRow: 0, space: ImagePipeline.shared.outputSpace,

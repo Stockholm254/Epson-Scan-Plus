@@ -529,7 +529,7 @@ final class CameraController: ObservableObject {
         if mode.value == 1 {
           properties["FocusMode"] = CameraProperty(name: mode.name, value: 0, values: mode.values, settable: mode.settable, type: mode.type)
         }
-        message = "相机没有接受对焦步进：它还不在手动对焦，再按一次会先切到 MF（镜头上的开关要在 AF）"
+        message = "相机没有接受对焦步进：它不在手动对焦。镜头上的 AF / MF 开关在 AF 时相机不提供 MF，步进用不了：把开关拨到 MF"
       }
     case "error":
       let stage = event["stage"] as? String ?? ""
@@ -591,7 +591,9 @@ final class CameraController: ObservableObject {
       focusResult = result
       let said = result == "focused" ? "已合焦" : result == "failed" ? "相机没能合焦" : "等待合焦超时"
       // Held unless the camera would not go back to manual focus (the lens's AF/MF switch, say).
-      message = event["held"] as? Bool == false
+      message = event["noManual"] as? Bool == true
+        ? said + "。相机现在不提供手动对焦（镜头上的 AF / MF 开关在 AF 时就没有 MF），按快门会再对焦一次，对焦步进也用不了：把开关拨到 MF，用「精确对焦」和步进对焦"
+        : event["held"] as? Bool == false
         ? said + "，但相机没有切回手动对焦，按快门会再对焦一次：看看镜头上的 AF / MF 开关"
         : said + "，已切回手动对焦，快门不会再对焦"
     case "shot":
