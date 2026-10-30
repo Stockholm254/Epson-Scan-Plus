@@ -357,10 +357,15 @@ struct ContentView: View {
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
         HStack(spacing: 10) {
           placeLabel.glassBar()
-          if !m.singleView && m.contactPages.count > 1 { pageControl.glassBar() }
+          // The pages' control grows out of the count beside it; the bars change as the view does.
+          if !m.singleView && m.contactPages.count > 1 {
+            pageControl.glassBar().transition(.scale(scale: 0.4, anchor: .leading).combined(with: .opacity))
+          }
           Spacer()
           HStack(spacing: 8) { viewingControls }.glassBar()
         }.buttonStyle(.bordered).controlSize(.small).padding(.horizontal, inset).padding(.bottom, inset)
+          .animation(Liquid.flow, value: m.singleView)
+          .animation(Liquid.flow, value: m.contactPages.count)
       }
     }
   }

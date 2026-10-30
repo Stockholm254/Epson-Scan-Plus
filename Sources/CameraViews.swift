@@ -12,6 +12,8 @@ struct CameraStage: View {
   @State private var ring: CGFloat = 0
   @State private var magnifier = true
   @State private var histogram = true
+  /// Where the pieces of glass over the stage are named, so one flows out of another.
+  @Namespace private var glass
   /// How tall the bars over the stage are, so the live picture lies between them.
   @State private var topBar: CGFloat = 0
   @State private var bottomBar: CGFloat = 0
@@ -57,10 +59,11 @@ struct CameraStage: View {
   /// The stage's corner radius where it floats between the panels; what lies in its corners is
   /// concentric with it.
   static let corner: CGFloat = 24
-  /// A group of controls as a drop of glass of its own, over the picture.
-  func drop(_ group: some View) -> some View {
+  /// A group of controls as a drop of glass of its own, over the picture; named `id`, it flows out
+  /// of the glass beside it as it comes, and back into it as it goes.
+  func drop(_ group: some View, id: String? = nil, tint: Color? = nil) -> some View {
     group.padding(.horizontal, 10).padding(.vertical, 5)
-      .liquid(Capsule(), LiquidStyle(tint: scheme == .light ? .white.opacity(0.25) : .black.opacity(0.22))) { $0 }
+      .liquid(Capsule(), LiquidStyle(tint: tint ?? (scheme == .light ? .white.opacity(0.25) : .black.opacity(0.22))), id: id, in: id == nil ? nil : glass) { $0 }
   }
   /// The top row as wide as the stage allows: with the live histogram's strip, or without it on a
   /// narrow stage, where it would push the window's columns past its edges.
@@ -99,17 +102,18 @@ struct CameraStage: View {
         .accessibilityLabel("放大镜").accessibilityValue(magnifier ? "开" : "关")
         .help(magnifier ? "收起对焦框上的玻璃放大镜" : "在对焦框上放一个放大 4 倍的玻璃放大镜")
       Button {
-        histogram.toggle()
+        withAnimation(Liquid.flow) { histogram.toggle() }
       } label: {
         Image(systemName: "chart.bar.xaxis").frame(width: 16)
-      }.glassAction(on: histogram).controlSize(.small)
+      }.glassAction(on: histogram).controlSize(.small).liquidName("histogram-key", in: glass)
         .accessibilityLabel("直方图").accessibilityValue(histogram ? "开" : "关")
         .help(histogram ? "收起实时取景的直方图" : "在上面这条显示实时取景的直方图")
-      Spacer(minLength: 8)
-      // The live histogram in the bar, over none of the picture.
+      // The live histogram in the bar, over none of the picture, beside its key: shown, it flows
+      // out of the key as a drop, and back into it put away.
       if strip, histogram, let h = camera.liveHistogram {
-        if Liquid.available { drop(LiveHistogramStrip(histogram: h)) } else { LiveHistogramStrip(histogram: h) }
+        if Liquid.available { drop(LiveHistogramStrip(histogram: h), id: "histogram") } else { LiveHistogramStrip(histogram: h) }
       }
+      Spacer(minLength: 8)
       if let s = camera.sharpness {
         let sharp = Text(String(format: "清晰度 R %.1f  G %.1f  B %.1f", s.r * 1e4, s.g * 1e4, s.b * 1e4)).readout(10)
           .help("对焦框里的清晰度（拉普拉斯能量 × 10⁴）：越大越清楚，只在同一画面里前后比较")
@@ -185,9 +189,19 @@ struct CameraStage: View {
           Button {
             camera.autofocus()
           } label: {
-            Label(camera.focusLocked ? "已锁焦" : "AF", systemImage: camera.focusLocked ? "lock.fill" : "scope").lineLimit(1).fixedSize()
-          }.glassAction(on: camera.focusLocked)
+            Label("AF", systemImage: "scope").lineLimit(1).fixedSize()
+          }.glassAction().liquidName("af", in: glass)
             .help("在对焦框处自动对焦一次并锁住焦点：相机能切手动对焦就切过去；不能（镜头开关在 AF）就在 DMF 里半按按住。锁住时可以步进微调，快门不会再对焦；拍完一张会松开")
+          // The lock as a drop of amber glass parting from AF, and running back into it let go.
+          if camera.focusLocked {
+            let lock = Label("已锁焦", systemImage: "lock.fill").font(.system(size: 11, weight: .medium)).lineLimit(1).fixedSize()
+              .accessibilityLabel("焦点已锁住")
+            if liquid {
+              drop(lock, id: "focus-lock", tint: Hardware.accent.opacity(0.5))
+            } else {
+              lock.padding(.horizontal, 8).padding(.vertical, 4).background(Capsule().fill(Hardware.accent.opacity(0.35)))
+            }
+          }
           let stepping = HStack(spacing: 3) {
             ForEach([-6, -3, -1], id: \.self) { s in
               Button { camera.step(s) } label: { Text(s == -6 ? "«" : s == -3 ? "‹‹" : "‹").frame(width: 16) }.glassAction()
@@ -229,6 +243,7 @@ struct CameraStage: View {
           }
         }
     }.buttonStyle(.bordered).controlSize(.small).disabled(!camera.connected && camera.phase != .missing)
+      .animation(Liquid.flow, value: camera.focusLocked)
   }
 }
 

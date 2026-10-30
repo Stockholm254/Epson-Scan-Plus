@@ -79,6 +79,22 @@ extension View {
   }
 #endif
 
+extension View {
+  /// Names this view's glass (a glass key's, say) within `namespace`, so a drop shown beside it
+  /// in a `LiquidGroup` grows out of it and runs back into it; without SwiftUI's glass, nothing.
+  @ViewBuilder func liquidName(_ id: String, in namespace: Namespace.ID) -> some View {
+    #if compiler(>=6.2)
+      if Hardware.glass, #available(macOS 26.0, *) {
+        glassEffectID(id, in: namespace)
+      } else {
+        self
+      }
+    #else
+      self
+    #endif
+  }
+}
+
 /// Pieces of glass that run together when they come within `spacing` of each other and flow
 /// between places as one material; without SwiftUI's glass, just the content.
 struct LiquidGroup<Content: View>: View {
