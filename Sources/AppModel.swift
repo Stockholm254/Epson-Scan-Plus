@@ -735,11 +735,17 @@ final class AppModel: ObservableObject {
     }
   }
   func removeSelected() {
-    guard let i = selectedIndex, !isWorking else { return }
+    guard let id = selectedID else { return }
+    remove(id)
+  }
+  /// Takes a frame out of the roll, an edit ⌘Z undoes; its files stay in the roll's folder. Taken
+  /// while selected, the one after it is selected in its place, or for the last the one before.
+  func remove(_ id: UUID) {
+    guard let i = frames.firstIndex(where: { $0.id == id }), !isWorking else { return }
     recordEdit("删除画面")
-    thumbnails[frames[i].id] = nil
+    thumbnails[id] = nil
     frames.remove(at: i)
-    selectedID = frames.first?.id
+    if selectedID == id { selectedID = frames.isEmpty ? nil : frames[min(i, frames.count - 1)].id }
     updateRollBase()
     updateRollSlopes()
     refresh()

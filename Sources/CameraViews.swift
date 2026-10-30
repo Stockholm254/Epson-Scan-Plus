@@ -3,14 +3,18 @@ import SwiftUI
 
 /// Module ①'s workspace with the camera: the live view filling the copy stand's dark base, and
 /// floating over it on glass the zoom and sharpness above and the focus controls and the
-/// shutter below. On the picture the focus box (click to move it) and a glass bubble magnifying
-/// what is under it. The last picture's focus check is in the right panel.
+/// shutter below. On the picture the focus box (click to move it). The last picture's focus check
+/// is in the right panel.
 struct CameraStage: View {
   @ObservedObject var m: AppModel
   @ObservedObject var camera: CameraController
   @State private var zoom = 1
   @State private var ring: CGFloat = 0
-  @State private var magnifier = true
+  /// The light table's loupe standing on the live view at the focus point: put away, and its key
+  /// hidden, while the frame is set (the camera's own magnifier shows the focus). `loupeKey`
+  /// brings the key back.
+  @State private var magnifier = false
+  static let loupeKey = false
   @State private var histogram = true
   /// Where the pieces of glass over the stage are named, so one flows out of another.
   @Namespace private var glass
@@ -73,7 +77,7 @@ struct CameraStage: View {
       topRow(strip: false)
     }
   }
-  /// The zoom and the magnifier, and the sharpness.
+  /// The zoom, the histogram, and the sharpness.
   @ViewBuilder func topRow(strip: Bool) -> some View {
     HStack(spacing: 10) {
       let viewing = HStack(spacing: 10) {
@@ -94,13 +98,15 @@ struct CameraStage: View {
       }
       // The pickers and the readout on drops of glass; the keys are glass themselves.
       if Liquid.available { drop(viewing) } else { viewing }
-      Button {
-        magnifier.toggle()
-      } label: {
-        Image(systemName: "magnifyingglass.circle").frame(width: 16)
-      }.glassAction(on: magnifier).controlSize(.small)
-        .accessibilityLabel("放大镜").accessibilityValue(magnifier ? "开" : "关")
-        .help(magnifier ? "收起对焦框上的玻璃放大镜" : "在对焦框上放一个放大 4 倍的玻璃放大镜")
+      if Self.loupeKey {
+        Button {
+          magnifier.toggle()
+        } label: {
+          Image(systemName: "magnifyingglass.circle").frame(width: 16)
+        }.glassAction(on: magnifier).controlSize(.small)
+          .accessibilityLabel("放大镜").accessibilityValue(magnifier ? "开" : "关")
+          .help(magnifier ? "收起对焦框上的玻璃放大镜" : "在对焦框上放一个放大 4 倍的玻璃放大镜")
+      }
       Button {
         withAnimation(Liquid.flow) { histogram.toggle() }
       } label: {
@@ -122,7 +128,7 @@ struct CameraStage: View {
     }
   }
   /// The live frame fitted to the stage, under the bars as a picture lies under glass, with the
-  /// focus box and the glass bubble over it.
+  /// focus box over it.
   @ViewBuilder func liveView(in size: CGSize) -> some View {
     if let live = camera.live {
       let shown = view(live)
@@ -177,10 +183,10 @@ struct CameraStage: View {
     let k = min((box.width - 24) / max(1, size.width), (box.height - 24) / max(1, size.height))
     return CGSize(width: size.width * k, height: size.height * k)
   }
-  /// Focusing on one row, the focus search and pixel shift on the next, and the shutter release
-  /// beside both. With SwiftUI's glass each group is a drop of its own, AF and 精确对焦 drops that
-  /// give under the finger, the pixel-shift files counted in beads of glass, and each note of a
-  /// picture filed rising out of the shutter as a drop pinches off.
+  /// Focusing on one row, pixel shift on the next, and the shutter release beside both. With
+  /// SwiftUI's glass each group is a drop of its own, AF a drop that gives under the finger, the
+  /// pixel-shift files counted in beads of glass, and each note of a picture filed rising out of
+  /// the shutter as a drop pinches off.
   var controls: some View {
     let liquid = Liquid.available
     return HStack(spacing: 16) {
@@ -217,11 +223,6 @@ struct CameraStage: View {
           Spacer(minLength: 0)
         }
         HStack(spacing: 10) {
-          Button {
-            camera.refining ? camera.cancelRefine() : camera.refineFocus()
-          } label: {
-            Label(camera.refining ? "停止" : "精确对焦", systemImage: "camera.metering.center.weighted").lineLimit(1).fixedSize()
-          }.glassAction().help("切到手动对焦，按对焦框里的颗粒清晰度一步步找最清楚的位置（7、3、1 档逐级）")
           let shifting = HStack(spacing: 10) {
             Picker("像素位移", selection: $m.pixelShiftCount) {
               Text("单张").tag(1)
@@ -360,7 +361,7 @@ struct FocusCheck: View {
       }.clipped()
         .help("取的是相机文件本身的全分辨率像素（RAW 按系统默认显示），以对焦框的位置为中心。")
       if let crop {
-        let s = FocusSearch.sharpness(crop, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        let s = Sharpness.measure(crop, in: CGRect(x: 0, y: 0, width: 1, height: 1))
         Text(String(format: "清晰度×10⁴ R %.1f G %.1f B %.1f", s.r * 1e4, s.g * 1e4, s.b * 1e4)).fixedSize().readout(10)
           .help("这块原图的清晰度：三个通道差得多时，说明有色差，红和蓝的焦点不在同一处")
       }
@@ -480,7 +481,7 @@ struct CameraPanel: View {
         }
         setting("区域", "FocusArea")
         if let f = camera.properties["FocusIndication"] { labeled("状态", f.text) }
-        Text("点取景画面移动对焦点：对焦区域要是「自由点」。精确对焦会切到 MF。")
+        Text("点取景画面移动对焦点：对焦区域要是「自由点」。")
           .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         Divider()
         Text("文件").font(.system(size: 12, weight: .medium))

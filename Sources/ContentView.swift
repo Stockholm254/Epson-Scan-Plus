@@ -625,6 +625,15 @@ struct ContentView: View {
           .help("取消全部扫描和导出勾选；不删除照片、不切换当前画面")
         Text("已选 \(m.enabledCount) / \(m.frames.count)").readout()
         Spacer()
+        // On the copy stand, with no canvas to take the delete key, the strip deletes the pictures.
+        if cameraStage {
+          Button {
+            m.removeSelected()
+          } label: {
+            Label("删除", systemImage: "trash")
+          }.disabled(m.selected == nil || m.isWorking)
+            .help("从这一卷删除当前这张，⌘Z 可以撤销；原文件留在这一卷的文件夹里。也可以在胶片条上右键某一张删除")
+        }
       }.font(.system(size: 11)).controlSize(.mini).buttonStyle(.bordered)
         .padding(.horizontal, 18).padding(.top, 7).padding(.bottom, 2)
       ScrollViewReader { proxy in
@@ -666,6 +675,11 @@ struct ContentView: View {
                 }.onTapGesture(count: 2) {
                   m.open(f.id)
                   m.focusCanvas()
+                }
+                .contextMenu {
+                  if m.page != .leak {
+                    Button("删除这张", systemImage: "trash", role: .destructive) { m.remove(f.id) }.disabled(m.isWorking)
+                  }
                 }
                 // Edge print, as exposed along the film beside each frame.
                 HStack {

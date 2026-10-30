@@ -66,71 +66,12 @@ struct CameraProperty: Equatable {
   }
 }
 
-/// The app's own focusing: the lens is stepped (the SDK's Near/Far, sizes 7, 3, then 1) while the
-/// picture in the focus box gets sharper, one step back when it gets blurrier, and then the next
-/// smaller size from there, both ways. A step and its reverse are taken to come back to the same
-/// place; how far a step of each size moves the lens is not known, so positions are never added up.
-struct FocusSearch {
-  static let sizes = [6, 3, 1]
-  /// Sharper by more than this counts; live view is noisy.
-  static let margin = 0.004
-  private enum Stage { case start, probe, backThenProbe, backThenNarrow }
-  private var stage = Stage.start
-  private var size = 0
-  private var direction = 1
-  private var best = 0.0
-  private var improved = false
-  private var reversed = false
-  private(set) var moves = 0
-  private(set) var done = false
-  var step: Int { direction * Self.sizes[size] }
-  /// Where the lens is now measures `sharpness`: the step to take next, or nil when it is focused.
-  mutating func next(_ sharpness: Double) -> Int? {
-    guard !done else { return nil }
-    moves += 1
-    if moves > 60 {
-      done = true
-      return nil
-    }
-    switch stage {
-    case .start:
-      best = sharpness
-      stage = .probe
-      return step
-    case .probe:
-      if sharpness > best * (1 + Self.margin) {
-        best = sharpness
-        improved = true
-        return step
-      }
-      if !improved && !reversed {
-        // Blurrier straight away: back to where it was, then the other way.
-        reversed = true
-        direction = -direction
-        stage = .backThenProbe
-        return step
-      }
-      stage = .backThenNarrow
-      return -step
-    case .backThenProbe:
-      stage = .probe
-      return step
-    case .backThenNarrow:
-      size += 1
-      guard size < Self.sizes.count else {
-        done = true
-        return nil
-      }
-      improved = false
-      reversed = false
-      stage = .probe
-      return step
-    }
-  }
-
+/// How sharp the picture in the focus box is: the readout over the live view, and the focus
+/// check of the last picture.
+enum Sharpness {
   /// How sharp `image` is in `box` (normalised, from the top left), channel by channel: the mean
   /// squared Laplacian, which grows as edges and grain come into focus.
-  static func sharpness(_ image: CGImage, in box: CGRect) -> RGB {
+  static func measure(_ image: CGImage, in box: CGRect) -> RGB {
     let r = CGRect(
       x: box.minX * CGFloat(image.width), y: box.minY * CGFloat(image.height),
       width: box.width * CGFloat(image.width), height: box.height * CGFloat(image.height)
@@ -209,7 +150,6 @@ final class CameraController: ObservableObject {
   @Published private(set) var sharpness: RGB?
   @Published private(set) var properties = [String: CameraProperty]()
   @Published private(set) var focusResult: String?
-  @Published private(set) var refining = false
   /// Shots the camera has taken since connecting.
   @Published private(set) var shots = 0
   @Published private(set) var log = [String]()
@@ -230,10 +170,6 @@ final class CameraController: ObservableObject {
   /// switch at AF), the way to fine-tune it with steps and to take a picture without focusing
   /// again. The camera lets go of it with the picture.
   @Published private(set) var focusLocked = false
-  /// 精确对焦 asked for before the focus was locked: AF first, then the search.
-  private var refineAfterAF = false
-  private var search: FocusSearch?
-  private var settle = 0
   private var propsQueued = false
 
   init(
@@ -333,8 +269,6 @@ final class CameraController: ObservableObject {
     send(["cmd": "connect", "save": incoming.path, "card": keepOnCard])
   }
   func disconnect() {
-    search = nil
-    refining = false
     magnification = 0
     send(["cmd": "disconnect"])
   }
@@ -418,28 +352,6 @@ final class CameraController: ObservableObject {
   func nudgeColourTemperature(by kelvin: Int64) {
     guard let now = properties["Colortemp"]?.value else { return setColourTemperature(5500) }
     setColourTemperature(now + kelvin)
-  }
-  /// Focuses by the sharpness of the live view in the focus box: needs live view and manual focus,
-  /// which it switches to.
-  func refineFocus() {
-    guard connected else { return }
-    if !liveOn { setLive(true) }
-    // Steps need the focus locked where the camera offers no MF: AF first, the search after.
-    if !focusLocked && !manualFocus {
-      refineAfterAF = true
-      message = "精确对焦：先自动对焦锁住焦点…"
-      autofocus()
-      return
-    }
-    search = FocusSearch()
-    refining = true
-    settle = 3
-    message = "精确对焦中…"
-  }
-  func cancelRefine() {
-    search = nil
-    refining = false
-    message = "已停止精确对焦"
   }
   func quit() {
     send(["cmd": "quit"])
@@ -551,10 +463,6 @@ final class CameraController: ObservableObject {
           note("占着相机的程序：" + rivals.joined(separator: "、"))
         }
       }
-      if refining {
-        search = nil
-        refining = false
-      }
     case "props":
       for item in event["props"] as? [[String: Any]] ?? [] {
         guard let name = item["name"] as? String else { continue }
@@ -579,7 +487,6 @@ final class CameraController: ObservableObject {
       }
     case "set":
       if event["name"] as? String == "NearFar", event["ok"] as? Bool == false, let why = event["code"] as? String, why == "unlocked" || why == "lensMF" {
-        if refining { cancelRefine() }
         message = why == "lensMF"
           ? "镜头上的 AF / MF 开关在 MF：相机驱动不了镜头，步进用不了。用镜头的对焦环手动对焦，或把开关拨回 AF，按 AF 锁住焦点再步进"
           : "步进要先按 AF 锁住焦点：相机不提供手动对焦（镜头开关在 AF），对焦后半按按住时才能微调"
@@ -603,29 +510,23 @@ final class CameraController: ObservableObject {
       else { return }
       live = image
       frames += 1
-      let s = FocusSearch.sharpness(image, in: measureBox)
-      sharpness = s
-      advanceSearch(s.g)
+      sharpness = Sharpness.measure(image, in: measureBox)
     case "af":
       let result = event["result"] as? String ?? ""
       focusResult = result
       focusLocked = event["locked"] as? Bool ?? false
-      let refineNext = refineAfterAF
-      refineAfterAF = false
       if result == "lensMF" {
         message = "镜头上的 AF / MF 开关在 MF：相机不自动对焦，焦点停在原处，快门也不会对焦。要自动对焦或步进微调，把开关拨回 AF"
-        if refineNext { refineFocus() }
         return
       }
       if focusLocked {
-        message = "已合焦，半按按住锁住了焦点：可以步进微调、精确对焦，快门不会再对焦（拍完一张会松开，下一张前再按 AF）"
-        if refineNext { refineFocus() }
+        message = "已合焦，半按按住锁住了焦点：可以步进微调，快门不会再对焦（拍完一张会松开，下一张前再按 AF）"
         return
       }
       let said = result == "focused" ? "已合焦" : result == "failed" ? "相机没能合焦" : "等待合焦超时"
       // Held unless the camera would not go back to manual focus (the lens's AF/MF switch, say).
       message = event["noManual"] as? Bool == true
-        ? said + "。相机现在不提供手动对焦（镜头上的 AF / MF 开关在 AF 时就没有 MF），按快门会再对焦一次，对焦步进也用不了：把开关拨到 MF，用「精确对焦」和步进对焦"
+        ? said + "。相机现在不提供手动对焦（镜头上的 AF / MF 开关在 AF 时就没有 MF），按快门会再对焦一次，对焦步进也用不了：把开关拨到 MF，用镜头的对焦环手动对焦"
         : event["held"] as? Bool == false
         ? said + "，但相机没有切回手动对焦，按快门会再对焦一次：看看镜头上的 AF / MF 开关"
         : said + "，已切回手动对焦，快门不会再对焦"
@@ -643,23 +544,6 @@ final class CameraController: ObservableObject {
       if let ms = event["afterShotMs"] as? Int { log.append("照片在按下快门 \(ms) ms 后到达") }
       if let path = event["path"] as? String, !path.isEmpty { onCapture?(URL(fileURLWithPath: path)) }
     default: break
-    }
-  }
-  /// The next step of the focus search, once the lens has settled for a few frames.
-  private func advanceSearch(_ sharpness: Double) {
-    guard var s = search else { return }
-    if settle > 0 {
-      settle -= 1
-      return
-    }
-    if let next = s.next(sharpness) {
-      search = s
-      step(next)
-      settle = 3
-    } else {
-      search = nil
-      refining = false
-      message = String(format: "精确对焦完成：清晰度 %.4f，移动 %d 步", sharpness, s.moves)
     }
   }
 }

@@ -73,9 +73,21 @@ enum WorkflowTests {
     model.select(model.frames[2].id)
     let removed = model.frames[2].id
     model.removeSelected()
-    try check(model.frames.count == 2, "a frame is deleted")
+    try check(model.frames.count == 2 && model.selectedID == model.frames[1].id,
+      "a frame is deleted, and the one before it, the last now, is selected in its place")
     undo.undo()
     try check(model.frames.count == 3 && model.frames[2].id == removed, "undo brings a deleted frame back")
+    let middle = model.frames[1].id, after = model.frames[2].id
+    model.select(middle)
+    model.removeSelected()
+    let nextSelected = model.selectedID == after
+    undo.undo()
+    model.select(model.frames[0].id)
+    model.remove(middle)
+    try check(nextSelected && model.frames.count == 2 && model.selectedID == model.frames[0].id && !model.frames.contains { $0.id == middle },
+      "deleting a frame selects the one after it; one deleted from the film strip while another is selected leaves the selection")
+    undo.undo()
+    try check(model.frames.count == 3 && model.frames[1].id == middle, "and undo brings that one back too")
     model.addFrame(NormalRect(x: 0.1, y: 0.75, width: 0.2, height: 0.2))
     undo.undo()
     try check(model.frames.count == 3, "undo takes an added frame away")

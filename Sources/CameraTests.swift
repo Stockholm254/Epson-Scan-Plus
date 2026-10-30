@@ -51,17 +51,9 @@ enum CameraTests {
     try check(range.isRange && range.nearest(5640) == 5600 && range.nearest(12000) == 9900 && range.nearest(1000) == 2500,
       "a colour temperature is kept within the camera's range, on its 100 K steps")
 
-    // The focus search on simulated optics: sharpness peaks at one lens position.
-    var landed = [Int]()
-    for peak in [-18, -4, 0, 5, 23] {
-      var position = 0, search = FocusSearch()
-      while let step = search.next(exp(-pow(Double(position - peak), 2) / 72) + 0.001) { position += step }
-      landed.append(position - peak)
-    }
-    try check(landed.allSatisfy { abs($0) <= 1 },
-      "the app's focus search, steps of 7, 3 and 1, finds the sharpest place to within one step: \(landed)")
-    let sharp = FocusSearch.sharpness(picture(128, 128), in: CGRect(x: 0, y: 0, width: 1, height: 1))
-    let soft = FocusSearch.sharpness(picture(128, 128, blur: true), in: CGRect(x: 0, y: 0, width: 1, height: 1))
+    // The sharpness the live view and the focus check read out.
+    let sharp = Sharpness.measure(picture(128, 128), in: CGRect(x: 0, y: 0, width: 1, height: 1))
+    let soft = Sharpness.measure(picture(128, 128, blur: true), in: CGRect(x: 0, y: 0, width: 1, height: 1))
     try check(sharp.g > soft.g * 20, "a sharp picture measures sharper than a soft one")
 
     // The channel gels.
@@ -103,12 +95,6 @@ enum CameraTests {
     camera.setFocusPoint(CGPoint(x: 0.25, y: 0.75))
     try check(sent.last?.contains("\"afpoint\"") == true && sent.last?.contains("\"x\":160") == true && sent.last?.contains("\"y\":359") == true,
       "a click on the live view moves the camera's focus point on its 640 × 480 grid")
-    sent.removeAll()
-    camera.refineFocus()
-    for _ in 0..<200 where camera.refining { camera.receive("{\"event\":\"frame\",\"path\":\"\(live.path)\",\"n\":2}") }
-    let steps = sent.filter { $0.contains("\"nearfar\"") }.count
-    try check(!camera.refining && steps >= 4 && !sent.contains { $0.contains("FocusMode") },
-      "the focus search steps the lens as frames come, waits for each to settle, and stops: \(steps) steps")
     var arrived: URL?
     camera.onCapture = { arrived = $0 }
     camera.receive("{\"event\":\"downloaded\",\"path\":\"\(camFolder.path)/EPS00001.ARW\",\"type\":1}")

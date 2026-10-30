@@ -158,10 +158,6 @@ enum CameraSimulationTests {
     until(4) { g.message.contains("先按 AF 锁住焦点") }
     try check(g.message.contains("先按 AF 锁住焦点") && Date().timeIntervalSince(pressed) < 3 && !g.log.contains { $0.contains("0x60003") },
       "the lock gone, a step says to press AF first, at once, without sending what the camera would refuse")
-    g.refineFocus()
-    until(10) { g.refining }
-    try check(g.refining && g.focusLocked && runs() == 2, "精确对焦 without the lock focuses and locks first, then searches")
-    g.cancelRefine()
 
     // The lens's switch at MF: the camera drives no lens and takes no AF; the shutter does not focus.
     let ring2 = connect("lens-at-mf", "lensmf=1,early=200,transfer=600")
