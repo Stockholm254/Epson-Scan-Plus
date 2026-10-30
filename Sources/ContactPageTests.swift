@@ -141,6 +141,20 @@ enum ContactPageTests {
     // A layer keeps its transition under kCATransition, whatever key it was added with.
     let slid = (canvas.layer?.animation(forKey: kCATransition) as? CATransition).map { still ? $0.type == .fade : $0.type == .push && $0.subtype == .fromRight } == true
     try check(slid, "in single view the next frame slides in from the side it lies on")
+    // The same frame sharper, a full scan in place of its preview, fades up; the same picture again
+    // plays nothing.
+    func picture(_ side: Int) -> CGImage {
+      CGContext(data: nil, width: side, height: side * 2 / 3, bitsPerComponent: 8, bytesPerRow: 0, space: ImagePipeline.shared.outputSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!.makeImage()!
+    }
+    canvas.layer?.removeAllAnimations()
+    canvas.transitionPicture(picture(300), play: false)
+    canvas.transitionPicture(picture(300), play: true)
+    let same = canvas.layer?.animation(forKey: kCATransition) == nil
+    canvas.transitionPicture(picture(1200), play: true)
+    let sharper = canvas.layer?.animation(forKey: kCATransition) as? CATransition
+    try check(same && sharper?.type == .fade && abs((sharper?.duration ?? 0) - 0.35) < 0.01,
+      "the same frame come sharper, a full scan for its preview, fades up; a picture of the same size plays nothing")
     // Back to the table: the view draws back from the frame.
     model.showSingle(false)
     let closing = canvas.change

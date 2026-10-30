@@ -685,13 +685,10 @@ struct ContentView: View {
             .padding(.horizontal, 4).padding(.top, 4)
         }.frame(height: 114)
           .onChange(of: m.selectedID) { _, id in
-            // The strip follows the frame shown, gliding along, or at once with Reduce Motion.
+            // The strip follows the frame shown. Not animated: an animated scrollTo leaves this
+            // horizontal strip where it was, in the change or out of it.
             guard let id else { return }
-            if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-              proxy.scrollTo(id, anchor: .center)
-            } else {
-              withAnimation(.smooth(duration: 0.4)) { proxy.scrollTo(id, anchor: .center) }
-            }
+            proxy.scrollTo(id, anchor: .center)
           }
       }
     }
