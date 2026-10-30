@@ -10,8 +10,13 @@ extension AppModel {
   static let sheetPerStrip = 6, sheetStrips = 6
   static var sheetPerPage: Int { sheetPerStrip * sheetStrips }
 
-  /// Frames of files of their own, in the roll's order.
-  var sheetFrames: [FilmFrame] { frames.filter { $0.sourcePath != nil } }
+  /// Frames of files of their own, in the roll's order: not those of a scanned holder, nor those
+  /// found together on one imported picture of a holder, which lie on it as scanned.
+  var sheetFrames: [FilmFrame] {
+    var shared = [String: Int]()
+    for f in frames { if let path = f.sourcePath { shared[path, default: 0] += 1 } }
+    return frames.filter { f in f.sourcePath.map { shared[$0] == 1 } ?? false }
+  }
   /// The holder's preview first when frames lie on it, then a page for every 36 frames of their own.
   var contactPages: [ContactPage] {
     var pages = [ContactPage]()

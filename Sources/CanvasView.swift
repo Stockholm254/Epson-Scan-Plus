@@ -1299,7 +1299,8 @@ final class FilmCanvasView: NSView {
     }
     guard !model.isWorking else { return }
     dragStart = normal(p)
-    if model.tool == .crop {
+    // A missed frame is drawn on the holder's picture; a laid-out page is not one.
+    if model.tool == .crop, !model.onSheetPage {
       draft = CGRect(origin: dragStart!, size: .zero)
       return
     }

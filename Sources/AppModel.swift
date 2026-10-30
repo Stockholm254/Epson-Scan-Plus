@@ -140,6 +140,14 @@ final class AppModel: ObservableObject {
   private var scanStarted: Date?
   private var cancelRequested = false
   private var revision = 0
+  /// The render last asked for, as the render queue may read it.
+  private let wantedLock = NSLock()
+  private var wantedRevision = 0
+  private func isCurrent(_ token: Int) -> Bool {
+    wantedLock.lock()
+    defer { wantedLock.unlock() }
+    return wantedRevision == token
+  }
   private let renderQueue = DispatchQueue(label: "epscan.render", qos: .userInitiated)
   private var renderWork: DispatchWorkItem?
   private var cancellables = Set<AnyCancellable>()
@@ -401,7 +409,8 @@ final class AppModel: ObservableObject {
   /// The frames on the light table's page shown: laid out from their own files, or on the holder.
   var contactFrames: [FilmFrame] {
     if onSheetPage { return sheetPageFrames }
-    return frames.filter { $0.sourcePath == nil }
+    let own = Set(sheetFrames.map(\.id))
+    return frames.filter { !own.contains($0.id) }
   }
   init(libraryURL: URL, scanner: ScannerController = ScannerController(), preferences: Preferences = Preferences()) {
     self.libraryURL = libraryURL
@@ -624,19 +633,9 @@ final class AppModel: ObservableObject {
       fitView()
       editRegionLock = nil
     }
+    // A frame of a file of its own lies on a page of the contact sheet, read from its file: the
+    // holder's picture stays the holder's.
     selectedID = id
-    if let path = selected?.sourcePath, path != overviewURL?.path {
-      let url = URL(fileURLWithPath: path)
-      if let image = try? ImagePipeline.shared.load(url, maxDimension: 2200) {
-        overview = image
-        overviewURL = url
-        let info = ImagePipeline.shared.info(url)
-        overviewDPI = info.dpi > 0 ? info.dpi : Double(dpi)
-        physicalMM = CGSize(
-          width: Double(info.width) / overviewDPI * 25.4,
-          height: Double(info.height) / overviewDPI * 25.4)
-      }
-    }
     refresh()
   }
   func tightenExistingBorders() {
@@ -1258,7 +1257,8 @@ final class AppModel: ObservableObject {
     readLock.lock()
     read.removeAll { $0.key == key }
     read.insert((key, image), at: 0)
-    if read.count > 3 { read.removeLast() }
+    // The frame shown and the two either side of it, read ahead, and one more.
+    if read.count > 4 { read.removeLast() }
     readLock.unlock()
     return image
   }
@@ -1417,6 +1417,9 @@ final class AppModel: ObservableObject {
   func refresh() {
     revision += 1
     let token = revision
+    wantedLock.lock()
+    wantedRevision = token
+    wantedLock.unlock()
     renderWork?.cancel()
     renderStep = nil
     guard singleView, let frame = selected else {
@@ -1542,6 +1545,7 @@ final class AppModel: ObservableObject {
           self.channelHistograms = channels
           self.rendering = false
           self.sourceSummary = summary
+          self.readAhead(around: frame, token: token)
         }
       } catch {
         DispatchQueue.main.async {
@@ -1553,6 +1557,19 @@ final class AppModel: ObservableObject {
     }
     renderWork = work
     renderQueue.asyncAfter(deadline: .now() + 0.07, execute: work)
+  }
+  /// The frames either side of the one shown, read from their files while it is looked at, so that
+  /// → and ← show them as soon as they are drawn: after the frame's own render, on the same queue,
+  /// the one after first. Another render wanted first, the rest is left.
+  private func readAhead(around frame: FilmFrame, token: Int) {
+    guard singleView, let i = frames.firstIndex(where: { $0.id == frame.id }) else { return }
+    let around = [i + 1, i - 1].filter(frames.indices.contains).map { frames[$0] }
+    renderQueue.async { [weak self] in
+      for f in around {
+        guard let self, self.isCurrent(token) else { return }
+        _ = try? self.source(for: f)
+      }
+    }
   }
   func updateThumbnails() {
     guard overview != nil else { return }

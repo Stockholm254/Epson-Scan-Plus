@@ -259,6 +259,27 @@ final class CameraController: ObservableObject {
   private var receivedAtPress = 0, presses = 0
   /// What the process is started with, over this one's own: for tests, a simulated camera's setup.
   var environment: [String: String]?
+  /// Programs that take the camera for themselves whenever it comes on the cable, through macOS's
+  /// image capture or Sony's own SDK: with one of them open the camera refuses this app, or is not
+  /// found. By the start of their bundle identifiers, with the names said.
+  static let rivals: [(id: String, name: String)] = [
+    ("com.captureone.captureone", "Capture One"), ("com.phaseone.captureone", "Capture One"),
+    ("com.adobe.mas.lightroomCC", "Lightroom"), ("com.adobe.lightroomCC", "Lightroom"),
+    ("com.adobe.LightroomClassicCC", "Lightroom Classic"), ("com.apple.Photos", "照片"),
+    ("com.apple.Image_Capture", "图像捕捉"), ("com.sony.Remote", "Imaging Edge Remote"),
+  ]
+  /// The rivals among the programs `running`, by bundle identifier, each named once.
+  static func rivals(among running: [String]) -> [String] {
+    var names = [String]()
+    for id in running {
+      if let rival = rivals.first(where: { id.hasPrefix($0.id) }), !names.contains(rival.name) { names.append(rival.name) }
+    }
+    return names
+  }
+  /// The bundle identifiers of the programs open, as the Dock shows them: others for tests.
+  var running: () -> [String] = {
+    NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular }.compactMap(\.bundleIdentifier)
+  }
   /// A shot taken whose picture has not come yet: the camera takes no new one while it writes and
   /// sends the last (an uncompressed RAW is 120 MB), and says nothing, so the shutter waits too.
   @Published private(set) var awaitingPicture = false
@@ -514,6 +535,14 @@ final class CameraController: ObservableObject {
       let stage = event["stage"] as? String ?? ""
       message = (event["message"] as? String ?? "相机出错") + ((event["code"] as? String).map { $0 == "0x0" ? "" : "（\($0)）" } ?? "")
       if stage == "enum" || stage == "connect" || stage == "init" { phase = .failed }
+      // A camera not found or refused is most often held by a program open beside this one.
+      if stage == "enum" || stage == "connect" {
+        let rivals = Self.rivals(among: running())
+        if !rivals.isEmpty {
+          message += "。\(rivals.joined(separator: "、")) 开着，会占住相机：请退出它们（⌘Q），把相机关机再开，再连接"
+          note("占着相机的程序：" + rivals.joined(separator: "、"))
+        }
+      }
       if refining {
         search = nil
         refining = false
