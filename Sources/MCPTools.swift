@@ -52,6 +52,9 @@ enum MCPTools {
         "description": "片基逐通道微调 [R, G, B]，单位 EV，-0.5 到 0.5"],
     ]),
     Tool(name: "pick_film_base", description: "在指定位置取片基（只应点在未曝光的橙色片基上，例如画面边缘的片间）；会关闭自动白平衡以保留取样。", properties: point, required: ["x", "y"]),
+    Tool(name: "auto_crop", description: "翻拍的照片自动裁切：按片框的四条边裁到画面以内，并按边拉直。默认只裁选中的这张；whole_roll 为 true 时整卷一起裁。和本卷其他张的画面大小对照，改正找错的边。可用 undo 撤销，原文件不改。", properties: [
+      "whole_roll": ["type": "boolean", "description": "整卷一起裁，默认 false"],
+    ]),
     Tool(name: "auto_film_base", description: "放弃手动片基，改用自动片基：扫描的卷用整卷片间测得的，翻拍和单张照片用片边的未曝光片基，都没有时按本张最薄处估计。", properties: [:]),
     Tool(name: "pick_neutral", description: "把指定位置作为中性灰，按它自动白平衡（灰卡、白墙、水泥等）。", properties: point, required: ["x", "y"]),
     Tool(name: "pick_highlight", description: "把指定位置作为高光（Dmax）：负片上最密、正片里应为纯白的地方（阳光下的白墙、高光反射）。各通道以它为白点对齐，它在正片里是白色；更亮的地方会剪成白。", properties: point, required: ["x", "y"]),
@@ -78,6 +81,7 @@ enum MCPTools {
     - 先用 get_state 和 preview 看当前结果，用 sample 在可能是中性灰的地方取点：中性灰在正片里 R、G、B 应接近，在负片里三个通道高于片基的密度之比应接近通道斜率之比。
     - 偏色先查片基（get_state 里的 film_base 和来源）；片基可疑时用 pick_film_base 点未曝光的片间，或 base_fine_ev 微调。再用 pick_neutral 或 warmth / tint。
     - 坐标是单张视图里画面的相对位置，0–1，左上为原点。
+    - 翻拍的照片四周带着片基、漏光或片夹时，先用 auto_crop 裁到画面（whole_roll 整卷一起），再看和取样：自动白平衡和色阶只看裁切以内。
     - 每次调整都能在 App 里用 ⌘Z 撤销，也可以调用 undo。转换的工具不会扫描、删除或导出文件。
     预设标定（calibration_*）定的是这种胶片在这台设备上各通道的反差（斜率），让灰从暗到亮都是灰；它不改白平衡，也不套色卡，胶片的风格保留。用户说「帮这卷做翻拍标定」时：
     1. 先确认胶片预设对（get_state，必要时 choose_preset），并用 calibration_clear 清掉旧点。
@@ -407,6 +411,27 @@ enum MCPTools {
       }
       if let error = result.error { throw DeskError.message(error) }
       return [["type": "text", "text": result.status + "。这一卷现在用「\(result.name)」。"]]
+    case "auto_crop":
+      _ = try selected(model)
+      let roll = arguments["whole_roll"] as? Bool ?? false
+      // It looks at the pictures apart from the main thread and finishes on it: waited for here,
+      // or, called on the main thread, by letting it run.
+      let finished = DispatchSemaphore(value: 0)
+      var said: String?
+      onMain {
+        model.autoCrop(roll: roll) { text in
+          said = text
+          finished.signal()
+        }
+      }
+      let end = Date().addingTimeInterval(120)
+      if Thread.isMainThread {
+        while said == nil && Date() < end { RunLoop.current.run(until: Date().addingTimeInterval(0.05)) }
+      } else {
+        _ = finished.wait(timeout: .now() + 120)
+      }
+      guard let said else { throw DeskError.message("自动裁切超时。") }
+      return [["type": "text", "text": said]]
     case "auto_film_base":
       _ = try selected(model)
       onMain { model.change("自动片基") { $0.base = nil; $0.basePicked = nil; $0.baseFine = nil } }

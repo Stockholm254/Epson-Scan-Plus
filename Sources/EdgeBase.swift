@@ -24,41 +24,9 @@ extension ImagePipeline {
   func edgeBase(_ image: CGImage) -> EdgeBase {
     let s = samples(image, maxDimension: 960), w = s.width, h = s.height
     guard w > 40, h > 40 else { return EdgeBase(base: nil, areas: []) }
-    // Smoothed by a 3 × 3 box first: the base's grain alone would break its evenness.
-    var smooth = [RGB](repeating: .zero, count: w * h)
-    for y in 0..<h {
-      for x in 0..<w {
-        var sum = [0.0, 0.0, 0.0]
-        for dy in -1...1 {
-          for dx in -1...1 {
-            let p = s.pixel(x + dx, y + dy)
-            sum[0] += p.r
-            sum[1] += p.g
-            sum[2] += p.b
-          }
-        }
-        smooth[y * w + x] = RGB(sum.map { $0 / 9 })
-      }
-    }
+    // Smoothed first: the base's grain alone would break its evenness.
+    let smooth = smoothed(s), bare = bareLight(s)
     func at(_ x: Int, _ y: Int) -> RGB { smooth[y * w + x] }
-    // Where each channel clips: a pile of pixels at its very top (bare light past the film, read
-    // as full by the sensor however the file scales it), else nearly 1.
-    let clip = (0..<3).map { c -> Double in
-      var top = 0.0
-      for i in stride(from: c, to: s.values.count, by: 4) { top = max(top, Double(s.values[i])) }
-      var piled = 0
-      for i in stride(from: c, to: s.values.count, by: 4) where Double(s.values[i]) >= top - 0.002 { piled += 1 }
-      return top > 0.3 && piled >= w * h / 500 ? top - 0.004 : 0.99
-    }
-    // Bare light, and 3 px about it: shrunk and smoothed, its rim reads as film that is not clipped.
-    var bare = [Bool](repeating: false, count: w * h)
-    for y in 0..<h {
-      for x in 0..<w {
-        let p = s.pixel(x, y)
-        guard p.r >= clip[0] || p.g >= clip[1] || p.b >= clip[2] else { continue }
-        for yy in max(0, y - 3)...min(h - 1, y + 3) { for xx in max(0, x - 3)...min(w - 1, x + 3) { bare[yy * w + xx] = true } }
-      }
-    }
     func clipped(_ x: Int, _ y: Int) -> Bool { bare[min(h - 1, max(0, y)) * w + min(w - 1, max(0, x))] }
     // The picture's clearest film, inside its margins: the base is at least as clear, lit as well.
     var inner = [Double]()
@@ -185,6 +153,48 @@ extension ImagePipeline {
       NormalRect(x: Double($0.x) / Double(gw), y: Double($0.y) / Double(gh), width: Double($0.length) / Double(gw), height: Double($0.rows) / Double(gh))
     }
     return EdgeBase(base: base, areas: areas)
+  }
+  /// `s` smoothed by a 3 × 3 box.
+  func smoothed(_ s: Samples) -> [RGB] {
+    let w = s.width, h = s.height
+    var smooth = [RGB](repeating: .zero, count: w * h)
+    for y in 0..<h {
+      for x in 0..<w {
+        var sum = [0.0, 0.0, 0.0]
+        for dy in -1...1 {
+          for dx in -1...1 {
+            let p = s.pixel(x + dx, y + dy)
+            sum[0] += p.r
+            sum[1] += p.g
+            sum[2] += p.b
+          }
+        }
+        smooth[y * w + x] = RGB(sum.map { $0 / 9 })
+      }
+    }
+    return smooth
+  }
+  /// Where `s` shows bare light past the film, and 3 px about it: shrunk and smoothed, its rim reads
+  /// as film that is not clipped. Each channel clips where a pile of pixels sits at its very top
+  /// (read as full by the sensor however the file scales it), else at nearly 1.
+  func bareLight(_ s: Samples) -> [Bool] {
+    let w = s.width, h = s.height
+    let clip = (0..<3).map { c -> Double in
+      var top = 0.0
+      for i in stride(from: c, to: s.values.count, by: 4) { top = max(top, Double(s.values[i])) }
+      var piled = 0
+      for i in stride(from: c, to: s.values.count, by: 4) where Double(s.values[i]) >= top - 0.002 { piled += 1 }
+      return top > 0.3 && piled >= w * h / 500 ? top - 0.004 : 0.99
+    }
+    var bare = [Bool](repeating: false, count: w * h)
+    for y in 0..<h {
+      for x in 0..<w {
+        let p = s.pixel(x, y)
+        guard p.r >= clip[0] || p.g >= clip[1] || p.b >= clip[2] else { continue }
+        for yy in max(0, y - 3)...min(h - 1, y + 3) { for xx in max(0, x - 3)...min(w - 1, x + 3) { bare[yy * w + xx] = true } }
+      }
+    }
+    return bare
   }
   /// One base for a roll from its frames' edges: those whose base shares the colour most of them
   /// have (within 4%), their median. Which frames it came from, with it.

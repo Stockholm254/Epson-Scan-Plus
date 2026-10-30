@@ -703,6 +703,71 @@ final class AppModel: ObservableObject {
     saveProject()
     updateThumbnails()
   }
+  /// Crops copy shots to their pictures, inside the frame's edges and straightened by them: the
+  /// selected one, or with `roll` every one of the roll. Each is checked against the roll's others
+  /// (copied at one magnification, its pictures are about one size), so for one frame the four
+  /// either side of it are looked at too. One edit, undone together; the files are left as they
+  /// are. `done` is told what it did.
+  func autoCrop(roll: Bool, done: ((String) -> Void)? = nil) {
+    let copies = frames.filter(isSinglePicture)
+    let finish = { (said: String) in
+      self.status = said
+      done?(said)
+    }
+    guard !isWorking else { return finish("正在处理别的，稍后再自动裁切") }
+    let targets: [FilmFrame], looked: [FilmFrame]
+    if roll {
+      targets = copies
+      looked = copies
+    } else {
+      guard let selected, let i = copies.firstIndex(where: { $0.id == selected.id }) else {
+        return finish("自动裁切用于翻拍或单独导入的照片（一个文件一张）")
+      }
+      targets = [selected]
+      looked = Array(copies[max(0, i - 4)...min(copies.count - 1, i + 4)])
+    }
+    guard !targets.isEmpty else { return finish("这一卷没有翻拍的照片可以自动裁切") }
+    status = targets.count > 1 ? "正在找 \(targets.count) 张的画面边…" : "正在找画面的边…"
+    let project = sessionURL
+    renderQueue.async {
+      let pipe = ImagePipeline.shared
+      let edges = FrameEdges.agreeing(looked.map { f in (try? self.edgeSource(for: f, maxDimension: 1600)).flatMap { $0 }.flatMap(pipe.frameEdges) })
+      var crops = [UUID: PictureCrop]()
+      for (f, e) in zip(looked, edges) { crops[f.id] = e.flatMap { pipe.crop($0) } }
+      DispatchQueue.main.async {
+        guard self.sessionURL == project else { return }
+        // Each one a step of its own, however soon after the last.
+        self.recordEdit("自动裁切", key: UUID().uuidString)
+        var cropped = [FilmFrame](), missed = [String]()
+        for f in targets {
+          guard let i = self.frames.firstIndex(where: { $0.id == f.id }) else { continue }
+          guard let crop = crops[f.id] else {
+            missed.append(self.frames[i].name)
+            continue
+          }
+          if self.frames[i].initialRect == nil { self.frames[i].initialRect = self.frames[i].rect }
+          self.frames[i].rect = crop.rect
+          self.frames[i].adjustments.angle = crop.angle
+          cropped.append(self.frames[i])
+        }
+        if !cropped.isEmpty {
+          self.updateRollBase()
+          self.refresh()
+          self.saveProject()
+          self.updateThumbnails()
+        }
+        let not = missed.isEmpty ? "" : "第 " + missed.joined(separator: "、") + " 张没找到片框的边"
+        if cropped.isEmpty {
+          finish(not + " · 可用「微调」手动裁切")
+        } else if targets.count == 1, let f = cropped.first {
+          let turn = f.adjustments.angle.map { String(format: "拉直 %+.2f°", $0) } ?? "画面是正的"
+          finish("已自动裁切 · \(turn) · ⌘Z 撤销 · 原文件未改动")
+        } else {
+          finish("已自动裁切 \(cropped.count) 张" + (not.isEmpty ? "" : " · " + not) + " · ⌘Z 撤销 · 原文件未改动")
+        }
+      }
+    }
+  }
   func addFrame(_ rect: NormalRect) {
     guard rect.width > 0.008, rect.height > 0.008 else { return }
     recordEdit("添加画面")
@@ -941,9 +1006,9 @@ final class AppModel: ObservableObject {
   @Published var showBaseAreas = false
   /// The picture's file, whole and small, as it reads for the edge base: crosstalk taken out as
   /// the frame has it.
-  private func edgeSource(for frame: FilmFrame) throws -> CGImage? {
+  private func edgeSource(for frame: FilmFrame, maxDimension: Int = 800) throws -> CGImage? {
     guard let path = frame.sourcePath else { return nil }
-    let image = try ImagePipeline.shared.load(URL(fileURLWithPath: path), maxDimension: 800)
+    let image = try ImagePipeline.shared.load(URL(fileURLWithPath: path), maxDimension: maxDimension)
     return ImagePipeline.shared.corrected(image, crosstalk: frame.crosstalk, flat: frame.flatField)
   }
   /// Looks for the unexposed film at the edges of the roll's pictures not yet looked at, apart from
