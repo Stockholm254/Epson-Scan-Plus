@@ -149,3 +149,24 @@ struct PictureExtension: View {
     }
   }
 }
+
+extension View {
+  /// The one action a bar or panel leads to, as the system draws it: prominent Liquid Glass on
+  /// macOS 26, a prominent bordered button before.
+  @ViewBuilder func leadingAction() -> some View {
+    #if compiler(>=6.2)
+      if #available(macOS 26.0, *) { buttonStyle(.glassProminent) } else { buttonStyle(.borderedProminent) }
+    #else
+      buttonStyle(.borderedProminent)
+    #endif
+  }
+  /// A key floating over the picture, as the system draws one: Liquid Glass on macOS 26, a bordered
+  /// button before.
+  @ViewBuilder func glassAction() -> some View {
+    #if compiler(>=6.2)
+      if #available(macOS 26.0, *) { buttonStyle(.glass) } else { buttonStyle(.bordered) }
+    #else
+      buttonStyle(.bordered)
+    #endif
+  }
+}

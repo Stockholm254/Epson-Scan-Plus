@@ -51,7 +51,7 @@ extension ContentView {
           Spacer(minLength: 16)
         }.padding(16).buttonStyle(HardwareKeyStyle()).controlSize(.small)
       }
-    }.consolePanel()
+    }
   }
 
   // MARK: Scan
@@ -486,7 +486,7 @@ extension ContentView {
         }.buttonStyle(HardwareKeyStyle(prominent: true)).disabled(m.frames.isEmpty)
         note("胶片名和预设在 ② 去色罩里选。")
       }.padding(18).buttonStyle(HardwareKeyStyle()).controlSize(.small)
-    }.consolePanel()
+    }
       .onChange(of: m.rollName) { m.saveProject() }
       .onChange(of: m.rollNotes) { m.saveProject() }
   }
@@ -526,31 +526,6 @@ struct InfoButton: View {
   }
 }
 
-/// A draggable edge between a side panel and the workspace; the width is kept in settings.
-struct PanelDivider: View {
-  @Binding var width: Double
-  let range: ClosedRange<Double>
-  /// The panel sits left of the divider (dragging right widens it) or right of it.
-  let panelOnLeft: Bool
-  @State private var start: Double?
-  var body: some View {
-    // Between floating glass panels only the grab area is there.
-    Rectangle().fill(Color.black.opacity(Hardware.glass ? 0 : 0.5)).frame(width: 1)
-      .overlay(Color.clear.frame(width: 8).contentShape(Rectangle()))
-      .onHover { inside in inside ? NSCursor.resizeLeftRight.push() : NSCursor.pop() }
-      .gesture(
-        DragGesture(minimumDistance: 1, coordinateSpace: .global)
-          .onChanged { drag in
-            let base = start ?? width
-            start = base
-            let delta = Double(drag.translation.width) * (panelOnLeft ? 1 : -1)
-            width = min(range.upperBound, max(range.lowerBound, base + delta))
-          }
-          .onEnded { _ in start = nil })
-      .help("拖动调整面板宽度")
-      .zIndex(1)  // keep the grab area above the workspace next to it
-  }
-}
 
 /// The measured horizontal and vertical MTF against lp/mm, with 50% and 10% guides.
 struct MTFChart: View {

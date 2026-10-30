@@ -86,7 +86,7 @@ enum ScanProgressTests {
 
     // Render only our own toolbar into an offscreen bitmap, never capture the user's desktop.
     let toolbar = NSHostingView(
-      rootView: ContentView(m: model).toolbar
+      rootView: ContentView(m: model).scanProgress.padding(12)
         .background(Color(red: 0.135, green: 0.14, blue: 0.145)).preferredColorScheme(.dark)
         .tint(Color(red: 0.91, green: 0.68, blue: 0.37)))
     toolbar.frame = CGRect(x: 0, y: 0, width: 1120, height: 64)

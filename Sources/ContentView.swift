@@ -16,38 +16,34 @@ extension View {
 struct ContentView: View {
   @ObservedObject var m: AppModel
   @State var showInfo = false
-  /// Where the toolbar's glass keys are named.
-  @Namespace var toolbarGlass
   /// The window's, which the Edit menu's Undo and Redo use.
   @Environment(\.undoManager) private var undoManager
+  /// The sidebar shown or hidden by the toolbar's key; the 去漏光 page has none.
+  @State private var sidebar = NavigationSplitViewVisibility.all
+  @State private var inspector = true
   var body: some View {
-    VStack(spacing: 0) {
-      toolbar
-      Divider()
-      if m.page == .leak {
-        LeakPage(m: m, lab: m.leak)
-      } else if Hardware.glass {
-        glassWorkspace
-      } else {
-      HStack(spacing: 0) {
-        leftPanel.frame(width: m.preferences.leftWidth)
-        PanelDivider(
-          width: Binding(get: { m.preferences.leftWidth }, set: { m.preferences.leftWidth = $0 }),
-          range: Preferences.leftWidths, panelOnLeft: true)
-        workspace
-        PanelDivider(
-          width: Binding(get: { m.preferences.rightWidth }, set: { m.preferences.rightWidth = $0 }),
-          range: Preferences.rightWidths, panelOnLeft: false)
-        rightPanel.frame(width: m.preferences.rightWidth)
-      }
-      }
+    // The system's window: a sidebar for the module's settings, the workspace with the film strip
+    // under it, and an inspector for the frame, all under the system's toolbar.
+    NavigationSplitView(columnVisibility: Binding(get: { m.page == .leak ? .detailOnly : sidebar }, set: { if m.page != .leak { sidebar = $0 } })) {
+      leftPanel
+        .navigationSplitViewColumnWidth(min: Preferences.leftWidths.lowerBound, ideal: m.preferences.leftWidth, max: Preferences.leftWidths.upperBound)
+    } detail: {
       VStack(spacing: 0) {
-        Divider()
-        filmstrip
-        Divider()
-        if m.page == .leak { LeakStatus(lab: m.leak) } else { footer }
-      }.background { if cameraStage { LightBarSurface() } }
+        if m.page == .leak { LeakPage(m: m, lab: m.leak) } else { workspace }
+        VStack(spacing: 0) {
+          Divider()
+          filmstrip
+          Divider()
+          if m.page == .leak { LeakStatus(lab: m.leak) } else { footer }
+        }.background { if cameraStage { LightBarSurface() } }
+      }
+      .inspector(isPresented: $inspector) {
+        Group { if m.page == .leak { LeakPanel(m: m, lab: m.leak) } else { rightPanel } }
+          .inspectorColumnWidth(min: Preferences.rightWidths.lowerBound, ideal: m.preferences.rightWidth, max: Preferences.rightWidths.upperBound + 40)
+      }
     }
+    .navigationTitle("Epson Scan plus")
+    .toolbar { toolbarContent }
     .copyStandGlass(cameraStage, camera: m.camera).tint(accent)
     .frame(minWidth: 1120, minHeight: 760)
     .alert(
@@ -73,104 +69,80 @@ struct ContentView: View {
       if page == .leak { m.leak.undoManager = undoManager } else { m.leak.save() }
     }
   }
-  /// The toolbar, its keys down to their icons where the window is too narrow for their names.
-  var toolbar: some View {
-    ViewThatFits(in: .horizontal) {
-      toolbarRow
-      toolbarRow.labelStyle(.iconOnly)
-    }
-  }
-  var toolbarRow: some View {
-    HStack(spacing: 16) {
-      HStack(spacing: 7) {
-        Image(systemName: "camera.aperture").foregroundStyle(accent)
-        Text("Epson Scan plus").font(.system(size: 15, weight: .semibold))
-        Spacer(minLength: 4)
-        scannerLamp
-      }.frame(width: 204, alignment: .leading)
-      ModuleDial(page: $m.page)
-      // The module's keys, named by place: turning the dial, the glass of each runs into the next
-      // module's key in its place, and comes or goes from its neighbour.
-      LiquidGroup(spacing: 10) {
-        HStack(spacing: 16) {
-          if m.page == .leak {
-            LeakToolbar(lab: m.leak)
-          } else {
-            Button {
-              m.showLibrary = true
-            } label: {
-              Label("库", systemImage: "archivebox")
-            }.help("所有扫描、翻拍和导入的胶卷（⇧⌘L）").toolbarGlass("left-0")
-            if m.page == .capture {
-              Button {
-                m.importImages()
-              } label: {
-                Label("导入", systemImage: "square.and.arrow.down")
-              }.help("导入 TIFF、PNG 或 JPEG，放进库里新的一卷").toolbarGlass("left-1")
-            }
-          }
+  /// The window's toolbar, the system's: the scanner's lamp by the title, the module dial in the
+  /// middle, the module's keys after the title, and the assistant, the batch's progress, the
+  /// module's leading action and the inspector's key at the trailing end. The system groups them
+  /// on its glass and folds what does not fit into its overflow menu.
+  @ToolbarContentBuilder var toolbarContent: some ToolbarContent {
+    ToolbarItem(placement: .navigation) { scannerLamp }
+    ToolbarItemGroup(placement: .navigation) {
+      if m.page == .leak {
+        LeakToolbar(lab: m.leak)
+      } else {
+        Button {
+          m.showLibrary = true
+        } label: {
+          Label("库", systemImage: "archivebox")
+        }.help("所有扫描、翻拍和导入的胶卷（⇧⌘L）")
+        if m.page == .capture {
+          Button {
+            m.importImages()
+          } label: {
+            Label("导入", systemImage: "square.and.arrow.down")
+          }.help("导入 TIFF、PNG 或 JPEG，放进库里新的一卷")
         }
-      }.fixedSize()
-      Spacer(minLength: 8)
-      // The assistant in the middle of the bar, whatever the module: whether it may work on the
-      // conversion, seen at once, its settings a click away; in the bar's flow, so a narrow window
-      // never lays it over the keys.
-      AssistantKey(m: m, panel: assistantPanel)
-      Spacer(minLength: 8)
+      }
+    }
+    ToolbarItem(placement: .principal) { ModuleDial(page: $m.page) }
+    ToolbarItem(placement: .primaryAction) { AssistantKey(m: m, panel: assistantPanel) }
+    ToolbarItemGroup(placement: .primaryAction) {
       if m.scanBatch.isActive || m.scanner.busy {
-        VStack(alignment: .leading, spacing: 4) {
-          Text(
-            m.scanBatch.isActive
-              ? m.scanProgressLabel
-              : "预览 · \(Int(ScanBatchProgress.normalized(m.scanner.progress) * 100))%"
-          )
-          .font(.system(size: 11)).monospacedDigit().lineLimit(1)
-          ProgressView(
-            value: m.scanBatch.isActive
-              ? m.scanProgressFraction : ScanBatchProgress.normalized(m.scanner.progress)
-          )
-          .accessibilityLabel(m.scanBatch.isActive ? "整批扫描进度" : "预览进度")
-          .accessibilityValue(m.scanBatch.isActive ? m.scanProgressLabel : m.scanner.status)
-          if let hint = m.scanner.cancellationHint {
-            Text(hint).font(.system(size: 10)).foregroundStyle(.secondary)
-          }
-        }.frame(width: 180)
-          .help("整批进度按张数计算，包含当前这张的扫描进度；不是剩余时间估算")
+        scanProgress
         Button("取消") { m.cancel() }.disabled(m.scanBatch.phase == .cancelling)
       }
-      LiquidGroup(spacing: 10) {
-        HStack(spacing: 16) {
-          if m.page == .leak {
-            LeakExportKey(lab: m.leak).toolbarGlass("right-1")
-          } else if m.page == .capture && m.captureSource == .scanner {
-            Button {
-              m.requestPreview()
-            } label: {
-              Label("预览", systemImage: "viewfinder")
-            }.disabled(!m.scanner.ready || m.isWorking).toolbarGlass("right-0")
-            Button {
-              m.requestScanEnabled()
-            } label: {
-              Label("扫描所选 \(m.enabledCount)", systemImage: "scanner")
-            }.buttonStyle(HardwareKeyStyle(prominent: true)).disabled(
-              !m.scanner.ready || !m.hasScanTargets || m.isWorking
-            ).toolbarGlass("right-1")
-          }
-        }
-      }.fixedSize()
-    }.buttonStyle(HardwareKeyStyle()).controlSize(.regular).padding(.horizontal, 18).padding(.vertical, 11)
-      .environment(\.glassKeys, true).environment(\.glassNamespace, toolbarGlass)
-      .animation(Liquid.available ? Liquid.flow : nil, value: m.page)
-      .animation(Liquid.available ? Liquid.flow : nil, value: m.captureSource)
-      .background {
-        // In the glass look the window's own surface; the keys carry the glass. On the copy stand
-        // a strip of frost.
-        if cameraStage {
-          LightBarSurface()
-        } else if !Hardware.glass {
-          LinearGradient(colors: [Color(white: 0.2), Color(white: 0.15)], startPoint: .top, endPoint: .bottom)
-        }
+      if m.page == .leak {
+        LeakExportKey(lab: m.leak)
+      } else if m.page == .capture && m.captureSource == .scanner {
+        Button {
+          m.requestPreview()
+        } label: {
+          Label("预览", systemImage: "viewfinder")
+        }.disabled(!m.scanner.ready || m.isWorking)
+        Button {
+          m.requestScanEnabled()
+        } label: {
+          Label("扫描所选 \(m.enabledCount)", systemImage: "scanner")
+        }.leadingAction().disabled(!m.scanner.ready || !m.hasScanTargets || m.isWorking)
       }
+    }
+    ToolbarItem(placement: .primaryAction) {
+      Button {
+        inspector.toggle()
+      } label: {
+        Label(inspector ? "隐藏检查器" : "显示检查器", systemImage: "sidebar.trailing")
+      }.help(inspector ? "隐藏右边的检查器" : "显示右边的检查器")
+    }
+  }
+  /// The batch's progress, frames counted with the one being scanned.
+  var scanProgress: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Text(
+        m.scanBatch.isActive
+          ? m.scanProgressLabel
+          : "预览 · \(Int(ScanBatchProgress.normalized(m.scanner.progress) * 100))%"
+      )
+      .font(.system(size: 11)).monospacedDigit().lineLimit(1)
+      ProgressView(
+        value: m.scanBatch.isActive
+          ? m.scanProgressFraction : ScanBatchProgress.normalized(m.scanner.progress)
+      )
+      .accessibilityLabel(m.scanBatch.isActive ? "整批扫描进度" : "预览进度")
+      .accessibilityValue(m.scanBatch.isActive ? m.scanProgressLabel : m.scanner.status)
+      if let hint = m.scanner.cancellationHint {
+        Text(hint).font(.system(size: 10)).foregroundStyle(.secondary)
+      }
+    }.frame(width: 180)
+      .help("整批进度按张数计算，包含当前这张的扫描进度；不是剩余时间估算")
   }
   /// The scanner's front-panel lamp with a short LCD status; the full status is in the tooltip.
   var scannerLamp: some View {
@@ -380,57 +352,6 @@ struct ContentView: View {
       }.buttonStyle(HardwareKeyStyle()).controlSize(.small).padding(.horizontal, 16).padding(.vertical, 9)
     }.background(Color(red: 0.105, green: 0.11, blue: 0.115))
   }
-  /// In the glass look the canvas fills the workspace: the side panels float over it as panes of
-  /// Liquid Glass and its rows as glass groups, the light table running under them all and the
-  /// picture fitting between.
-  var glassWorkspace: some View {
-    let margin: CGFloat = 8, bar: CGFloat = 54
-    return ZStack {
-      if cameraStage {
-        CameraStage(m: m, camera: m.camera)
-          .clipShape(RoundedRectangle(cornerRadius: CameraStage.corner))
-          .padding(.leading, m.preferences.leftWidth + 2 * margin + 1).padding(.trailing, m.preferences.rightWidth + 2 * margin + 1)
-          .padding(.vertical, margin)
-      } else {
-        ScanCanvas(
-          model: m,
-          reserved: NSEdgeInsets(
-            top: bar, left: m.preferences.leftWidth + 2 * margin + 1, bottom: bar, right: m.preferences.rightWidth + 2 * margin + 1)
-        ).frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
-      }
-      HStack(spacing: 0) {
-        leftPanel.frame(width: m.preferences.leftWidth).padding([.leading, .vertical], margin)
-        Spacer().frame(width: margin)
-        PanelDivider(
-          width: Binding(get: { m.preferences.leftWidth }, set: { m.preferences.leftWidth = $0 }),
-          range: Preferences.leftWidths, panelOnLeft: true)
-        if cameraStage {
-          Spacer()
-        } else {
-        VStack(spacing: 0) {
-          ViewThatFits(in: .horizontal) {
-            glassToolRow
-            glassToolRow.labelStyle(.iconOnly)
-          }.lineLimit(1).padding(.horizontal, 10).padding(.top, 10)
-          ZStack(alignment: .topTrailing) {
-            Color.clear
-            canvasOverlays
-          }.frame(maxWidth: .infinity, maxHeight: .infinity)
-          HStack(spacing: 10) {
-            placeLabel.glassBar()
-            Spacer()
-            HStack(spacing: 8) { viewingControls }.glassBar()
-          }.buttonStyle(HardwareKeyStyle()).controlSize(.small).padding(.horizontal, 10).padding(.bottom, 10)
-        }
-        }
-        PanelDivider(
-          width: Binding(get: { m.preferences.rightWidth }, set: { m.preferences.rightWidth = $0 }),
-          range: Preferences.rightWidths, panelOnLeft: false)
-        Spacer().frame(width: margin)
-        rightPanel.frame(width: m.preferences.rightWidth).padding([.trailing, .vertical], margin)
-      }
-    }
-  }
   /// Module ① keeps the roll's name and notes on the right; module ② the adjustments.
   @ViewBuilder var rightPanel: some View {
     if m.page == .capture { rollPanel } else { adjustPanel }
@@ -599,7 +520,7 @@ struct ContentView: View {
         }.frame(maxWidth: .infinity)
       }.padding(18).disabled(m.selected == nil || m.exporting)
         .buttonStyle(HardwareKeyStyle()).controlSize(.small)
-    }.consolePanel()
+    }
   }
   /// Per-frame deconvolution strength, once the scanner has a measured profile.
   var sharpeningControl: some View {

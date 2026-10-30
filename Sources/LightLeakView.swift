@@ -7,13 +7,8 @@ struct LeakPage: View {
   @ObservedObject var m: AppModel
   @ObservedObject var lab: LeakLab
   var body: some View {
-    HStack(spacing: 0) {
-      LeakViewer(lab: lab, choose: lab.chooseFile).frame(maxWidth: .infinity, maxHeight: .infinity)
-      PanelDivider(
-        width: Binding(get: { m.preferences.rightWidth + 40 }, set: { m.preferences.rightWidth = $0 - 40 }),
-        range: (Preferences.rightWidths.lowerBound + 40)...(Preferences.rightWidths.upperBound + 40), panelOnLeft: false)
-      LeakPanel(m: m, lab: lab).frame(width: m.preferences.rightWidth + 40).padding(Hardware.glass ? 8 : 0)
-    }
+    // The panel is the window's inspector.
+    LeakViewer(lab: lab, choose: lab.chooseFile).frame(maxWidth: .infinity, maxHeight: .infinity)
     // In the glass look the picture runs on, blurred, behind the viewer's surround and the panel.
     .background { PictureExtension(image: lab.after ?? lab.before) }
     .onAppear {
@@ -233,7 +228,7 @@ struct LeakPanel: View {
         Divider()
         export
       }.padding(18).buttonStyle(HardwareKeyStyle()).controlSize(.small)
-    }.consolePanel()
+    }
   }
   func header(_ text: String, symbol: String, info: String) -> some View {
     HStack {
@@ -392,7 +387,7 @@ struct LeakPanel: View {
         lab.chooseExport()
       } label: {
         Label("导出 16 位 TIFF…", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity)
-      }.buttonStyle(HardwareKeyStyle(prominent: true)).disabled(!lab.repaired || lab.busy != nil)
+      }.leadingAction().disabled(!lab.repaired || lab.busy != nil)
       note(lab.repaired ? "可以导出。请先检查灯光红晕、红色物体及边缘。" : "完成去漏光后可导出。")
     }
   }
@@ -407,19 +402,13 @@ struct LeakToolbar: View {
         lab.chooseFile()
       } label: {
         Label("导入正片", systemImage: "square.and.arrow.down")
-      }.disabled(lab.busy != nil).help("导入已去色罩、反相的正片 TIFF、PNG 或 JPEG").toolbarGlass("left-0")
-      // The menu is not a key: with SwiftUI's glass it gets a drop of its own, in the next place.
-      if Liquid.available {
-        history.padding(.horizontal, 12).padding(.vertical, 5)
-          .liquid(Capsule(), LiquidStyle(interactive: true)) { $0 }.toolbarGlass("left-1")
-      } else {
-        history
-      }
+      }.disabled(lab.busy != nil).help("导入已去色罩、反相的正片 TIFF、PNG 或 JPEG")
+      history
       Button {
         lab.showAPI = true
       } label: {
         Label("API 管理", systemImage: "key")
-      }.toolbarGlass("left-2")
+      }
     }
   }
   var history: some View {
@@ -448,7 +437,7 @@ struct LeakExportKey: View {
       lab.chooseExport()
     } label: {
       Label("导出 16 位 TIFF", systemImage: "square.and.arrow.up")
-    }.buttonStyle(HardwareKeyStyle(prominent: true)).disabled(!lab.repaired || lab.busy != nil)
+    }.leadingAction().disabled(!lab.repaired || lab.busy != nil)
   }
 }
 
