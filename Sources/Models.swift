@@ -16,6 +16,47 @@ struct RGB: Codable, Equatable {
   init(_ v: [Double]) { self.init(r: v[0], g: v[1], b: v[2]) }
 }
 
+/// How a camera's channels mix the red, green and blue lights of a copy stand: `m` row by row, a
+/// row each camera channel and a column each light, each light read as 1 in its own channel.
+/// Light adds up, so the mix is undone exactly in the linear readings, before the film base
+/// divides them out; a density mix only comes near it. Under white light, whose spectrum is
+/// continuous, no such matrix holds.
+struct Crosstalk: Codable, Equatable {
+  var m: [Double]
+  /// The A7R IV under the author's copy light, from an IT8.7/1 target lit by each light alone
+  /// (2026-10-29): the blue light reads 34% in green, the green 12% and 11% in red and blue.
+  static let measured = Crosstalk(m: [
+    1, 0.11926, 0.04549,
+    0.14866, 1, 0.33603,
+    0.02556, 0.10633, 1,
+  ])
+  /// The rows of the matrix that takes the mix out.
+  var inverse: [Double] {
+    let a = m
+    let c0 = a[4] * a[8] - a[5] * a[7], c1 = a[5] * a[6] - a[3] * a[8], c2 = a[3] * a[7] - a[4] * a[6]
+    let det = a[0] * c0 + a[1] * c1 + a[2] * c2
+    return [
+      c0, a[2] * a[7] - a[1] * a[8], a[1] * a[5] - a[2] * a[4],
+      c1, a[0] * a[8] - a[2] * a[6], a[2] * a[3] - a[0] * a[5],
+      c2, a[1] * a[6] - a[0] * a[7], a[0] * a[4] - a[1] * a[3],
+    ].map { $0 / det }
+  }
+  /// A reading with the mix taken out: what each light alone gave. Never quite nothing, so that a
+  /// density can still be taken of it.
+  func unmixed(_ v: RGB) -> RGB { Self.times(inverse, v) }
+  /// A reading with the mix put back, as the camera read it.
+  func mixed(_ v: RGB) -> RGB { Self.times(m, v) }
+  private static func times(_ a: [Double], _ v: RGB) -> RGB {
+    RGB((0..<3).map { max(1e-6, a[3 * $0] * v.r + a[3 * $0 + 1] * v.g + a[3 * $0 + 2] * v.b) })
+  }
+  /// A reading taken with `from` out of it (nil: as read) put as it reads with `to` out instead.
+  static func moved(_ v: RGB, from: Crosstalk?, to: Crosstalk?) -> RGB {
+    guard from != to else { return v }
+    let read = from?.mixed(v) ?? v
+    return to?.unmixed(read) ?? read
+  }
+}
+
 struct NormalRect: Codable, Equatable {
   var x: Double
   var y: Double
@@ -275,6 +316,13 @@ struct FilmFrame: Identifiable, Codable {
   /// The scan's levels against the preview, measured when it arrives (or when a project from
   /// before 0.4.9 is opened); conversion puts the scan on the preview's scale with it.
   var levels: LevelRegistration? = nil
+  /// A camera RAW read straight from its sensor, in the camera's own channels (not through the
+  /// system's RAW engine, which applies the camera's colour matrix). Nil in projects from before
+  /// it was recorded, until the file is looked at.
+  var sensorRead: Bool? = nil
+  /// The copy light's crosstalk taken out of the picture as read, before anything is measured on
+  /// it; nil keeps it as the sensor read it.
+  var crosstalk: Crosstalk? = nil
   var captureRect: NormalRect { scanRect ?? rect }
   var hasFullResolution: Bool {
     sourcePath != nil || (scanPath != nil && captureRect.contains(rect))

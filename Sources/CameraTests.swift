@@ -1,9 +1,10 @@
 import AppKit
 import Foundation
 
-/// The camera without a camera: the settings as the camera shows them, the app's focus search on
-/// simulated optics, the controller fed the process's events, pictures arriving in a camera roll
-/// (pixel-shift groups too), the channel gels, and the bundled process starting the SDK.
+/// The camera without a camera: the settings as the camera shows them, the sharpness readout, the
+/// controller fed the process's events, pictures arriving in a camera roll (pixel-shift groups
+/// too), the copy light's crosstalk taken out of them, the channel gels, and the bundled process
+/// starting the SDK.
 enum CameraTests {
   static func run(folder: URL) throws {
     func check(_ value: Bool, _ label: String) throws {
@@ -294,6 +295,64 @@ enum CameraTests {
     let shown = Histogram.picture(half.makeImage()!)
     try check(abs(shown.clipped.r - 0.5) < 0.01 && shown.clipped.g == 0 && abs(shown.top.g - 0.5) < 0.01 && !shown.linear,
       "a picture's histogram: half of it at full red counts half the red as clipped, grey sits at the middle")
+
+    // The copy light's crosstalk: undone exactly, and a reading moved between the ways of reading.
+    let mix = Crosstalk.measured, undo = mix.inverse
+    let product = (0..<9).map { i in (0..<3).map { mix.m[3 * (i / 3) + $0] * undo[3 * $0 + i % 3] }.reduce(0, +) }
+    let reading = RGB(r: 0.3, g: 0.5, b: 0.2)
+    func close(_ a: RGB, _ b: RGB, _ e: Double = 1e-9) -> Bool { zip(a.values, b.values).allSatisfy { abs($0 - $1) < e } }
+    try check(product.enumerated().allSatisfy { abs($0.element - ($0.offset % 4 == 0 ? 1 : 0)) < 1e-9 }
+      && close(mix.unmixed(mix.mixed(reading)), reading) && Crosstalk.moved(reading, from: nil, to: mix) == mix.unmixed(reading)
+      && close(Crosstalk.moved(mix.unmixed(reading), from: mix, to: nil), reading) && Crosstalk.moved(reading, from: mix, to: mix) == reading,
+      "the copy light's crosstalk is undone exactly, and a reading moves from one way of reading the picture to the other and back")
+    // A picture read from the sensor is told from one the system's RAW engine decoded, in old projects too.
+    try arw(orientation: 1).write(to: arwURL)
+    let mixRoot = folder.appendingPathComponent("crosstalk", isDirectory: true)
+    try? FileManager.default.removeItem(at: mixRoot)
+    let decodedDir = mixRoot.appendingPathComponent("Decoded", isDirectory: true)
+    try FileManager.default.createDirectory(at: decodedDir, withIntermediateDirectories: true)
+    let sensorTIFF = decodedDir.appendingPathComponent("native.tif")
+    let fromSensor = try AppModel.linearTIFF(fromRAW: arwURL, to: sensorTIFF)
+    let engine = CGContext(data: nil, width: 8, height: 6, bitsPerComponent: 16, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.linearSRGB)!,
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder16Little.rawValue)!
+    engine.setFillColor(red: 0.2, green: 0.3, blue: 0.4, alpha: 1)
+    engine.fill(CGRect(x: 0, y: 0, width: 8, height: 6))
+    let engineTIFF = decodedDir.appendingPathComponent("engine.tif")
+    try pipe.saveTIFF(engine.makeImage()!, to: engineTIFF, dpi: 300)
+    let elsewhere = mixRoot.appendingPathComponent("native.tif")
+    try FileManager.default.copyItem(at: sensorTIFF, to: elsewhere)
+    try check(fromSensor && AppModel.readFromSensor(sensorTIFF.path) && !AppModel.readFromSensor(engineTIFF.path) && !AppModel.readFromSensor(elsewhere.path),
+      "a RAW read from the sensor says so, and its TIFF in a roll's Decoded folder is told from the RAW engine's, which has alpha")
+    // It comes into the roll with the crosstalk taken out of its linear readings, before anything is
+    // measured on it; turned off for the roll, it reads as the sensor did, a base picked moving with it.
+    let mixSuite = "EpsonScanPlus.tests.\(UUID().uuidString)"
+    let mixDefaults = UserDefaults(suiteName: mixSuite)!
+    defer { mixDefaults.removePersistentDomain(forName: mixSuite) }
+    let unmixing = AppModel(libraryURL: mixRoot.appendingPathComponent("library"), preferences: Preferences(defaults: mixDefaults))
+    let edits = UndoManager()
+    edits.groupsByEvent = false
+    unmixing.undoManager = edits
+    unmixing.addCapturedFrame(sensorTIFF, original: arwURL, linear: true, sensor: true)
+    func read(_ f: FilmFrame) throws -> RGB { pipe.samples(try unmixing.source(for: f, full: true), maxDimension: 8).pixel(3, 3) }
+    let asRead = pipe.samples(try pipe.loadDecoded(sensorTIFF), maxDimension: 8).pixel(3, 3)
+    let unmixedRead = try read(unmixing.frames[0])
+    try check(unmixing.preferences.removeCrosstalk && unmixing.frames[0].sensorRead == true && unmixing.frames[0].crosstalk == mix
+      && unmixing.hasSensorPictures && unmixing.crosstalkRemoved && close(unmixedRead, mix.unmixed(asRead), 1e-3),
+      "a picture read from the sensor comes into the roll with the copy light's crosstalk taken out of its linear readings: \(asRead.values) reads \(unmixedRead.values)")
+    let picked = RGB(r: 0.4, g: 0.3, b: 0.2)
+    unmixing.change("取片基") { $0.base = picked }
+    unmixing.removeCrosstalk(false)
+    let plain = unmixing.frames[0]
+    try check(plain.crosstalk == nil && !unmixing.crosstalkRemoved && !unmixing.preferences.removeCrosstalk
+      && close(plain.adjustments.base ?? .zero, mix.mixed(picked), 1e-9) && close(try read(plain), asRead, 1e-3),
+      "turned off for the roll, its pictures read as the sensor read them, and the base picked moves with them")
+    edits.undo()
+    try check(unmixing.frames[0].crosstalk == mix && close(unmixing.frames[0].adjustments.base ?? .zero, picked, 1e-9),
+      "undo takes the crosstalk out again, the base as it was picked")
+    unmixing.removeCrosstalk(false)
+    unmixing.addCapturedFrame(sensorTIFF, original: arwURL, linear: true, sensor: true)
+    try check(unmixing.frames.count == 2 && unmixing.frames[1].crosstalk == nil && unmixing.frames[1].sensorRead == true,
+      "the roll's next picture is read as the roll's others are")
 
     // The bundled process starts the SDK, its libraries found where the app keeps them.
     let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/EpsonCameraHelper")

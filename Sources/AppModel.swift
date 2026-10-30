@@ -836,9 +836,12 @@ final class AppModel: ObservableObject {
       guard var f = frames.first(where: { $0.id == old.id }) else { return old }
       // A base picked for the roll is the user's own, so it goes back with the edits.
       let picked = f.adjustments.rollBasePicked == true || old.adjustments.rollBasePicked == true
-      let rollBase = picked ? old.adjustments.rollBase : f.adjustments.rollBase ?? old.adjustments.rollBase
+      // How its pixels are read goes back too; the base the app measured is read again with it.
+      let measured = f.adjustments.rollBase.map { Crosstalk.moved($0, from: f.crosstalk, to: old.crosstalk) }
+      let rollBase = picked ? old.adjustments.rollBase : measured ?? old.adjustments.rollBase
       let rollSlopes = f.adjustments.rollSlopes ?? old.adjustments.rollSlopes
       (f.name, f.rect, f.initialRect, f.enabled, f.format) = (old.name, old.rect, old.initialRect, old.enabled, old.format)
+      f.crosstalk = old.crosstalk
       f.adjustments = old.adjustments
       (f.adjustments.rollBase, f.adjustments.rollSlopes) = (rollBase, rollSlopes)
       return f
@@ -865,8 +868,9 @@ final class AppModel: ObservableObject {
   /// roll that came after it.
   func updateRollBase() {
     if let overview {
+      // A picture with the copy light's crosstalk taken out no longer reads as the overview does.
       let onOverview = frames.indices.filter {
-        frames[$0].adjustments.rollBasePicked != true
+        frames[$0].adjustments.rollBasePicked != true && frames[$0].crosstalk == nil
           && (frames[$0].sourcePath == nil ? overviewBackendID == "epson2-linear-v1" : frames[$0].sourcePath == overviewURL?.path)
       }
       if !onOverview.isEmpty {
@@ -908,6 +912,37 @@ final class AppModel: ObservableObject {
     var perFile = [String: Int]()
     for path in frames.compactMap(\.sourcePath) { perFile[path, default: 0] += 1 }
     return perFile.values.filter { $0 == 1 }.count >= 2
+  }
+  /// The roll has pictures read from a camera's sensor, which can have the copy light's crosstalk
+  /// taken out; and whether they have.
+  var hasSensorPictures: Bool { frames.contains { $0.sensorRead == true } }
+  var crosstalkRemoved: Bool { frames.contains { $0.sensorRead == true && $0.crosstalk != nil } }
+  /// Takes the copy light's crosstalk out of the roll's pictures read from the sensor, or puts it
+  /// back, as one edit; the roll's next pictures, and the next roll's, follow. What was read off
+  /// the pictures (a base picked, the grey and the white picked, the roll's base) is read again
+  /// as the pictures now are: the same light mixed it, so it comes out of a reading as out of a
+  /// pixel.
+  func removeCrosstalk(_ on: Bool) {
+    let to: Crosstalk? = on ? .measured : nil
+    let affected = frames.indices.filter { frames[$0].sensorRead == true && frames[$0].crosstalk != to }
+    preferences.removeCrosstalk = on
+    guard !affected.isEmpty, !isWorking else { return }
+    recordEdit(on ? "去串色" : "保留串色")
+    for i in affected {
+      let from = frames[i].crosstalk
+      func moved(_ v: RGB?) -> RGB? { v.map { Crosstalk.moved($0, from: from, to: to) } }
+      frames[i].adjustments.base = moved(frames[i].adjustments.base)
+      frames[i].adjustments.rollBase = moved(frames[i].adjustments.rollBase)
+      frames[i].adjustments.neutralSample = moved(frames[i].adjustments.neutralSample)
+      frames[i].adjustments.highlightSample = moved(frames[i].adjustments.highlightSample)
+      frames[i].crosstalk = to
+    }
+    status = on ? "已去掉翻拍光源的串色 · \(affected.count) 张" : "已保留串色 · \(affected.count) 张"
+    updateRollBase()
+    updateRollSlopes()
+    refresh()
+    updateThumbnails()
+    saveProject()
   }
   /// Measures the roll's pictures that are a file each together, or each apart again.
   func setPoolPictures(_ pool: Bool) {
@@ -1252,14 +1287,19 @@ final class AppModel: ObservableObject {
   /// analyse and 11 more to render, against well under a second each decoded.
   private let readLock = NSLock()
   private var read = [(key: String, image: CGImage)]()
-  private func load(_ url: URL, maxDimension: Int?) throws -> CGImage {
-    guard let maxDimension else { return try ImagePipeline.shared.loadDecoded(url) }
-    let key = "\(url.path)@\(maxDimension)"
+  ///
+  /// With `crosstalk`, it is taken out as the file is read, so whatever is measured on the picture
+  /// measures it without.
+  private func load(_ url: URL, maxDimension: Int?, crosstalk: Crosstalk? = nil) throws -> CGImage {
+    let pipe = ImagePipeline.shared
+    func unmixed(_ image: CGImage) -> CGImage { crosstalk.map { pipe.unmixed(image, by: $0) } ?? image }
+    guard let maxDimension else { return unmixed(try pipe.loadDecoded(url)) }
+    let key = "\(url.path)@\(maxDimension)" + (crosstalk.map { "-\($0.m)" } ?? "")
     readLock.lock()
     let kept = read.first { $0.key == key }?.image
     readLock.unlock()
     if let kept { return kept }
-    let image = try ImagePipeline.shared.load(url, maxDimension: maxDimension)
+    let image = unmixed(try pipe.load(url, maxDimension: maxDimension))
     readLock.lock()
     read.removeAll { $0.key == key }
     read.insert((key, image), at: 0)
@@ -1274,7 +1314,7 @@ final class AppModel: ObservableObject {
       return try ImagePipeline.shared.crop(raw, rect: frame.rect.relative(to: frame.captureRect))
     }
     if let path = frame.sourcePath {
-      let image = try load(URL(fileURLWithPath: path), maxDimension: full ? nil : maxDimension ?? 3000)
+      let image = try load(URL(fileURLWithPath: path), maxDimension: full ? nil : maxDimension ?? 3000, crosstalk: frame.crosstalk)
       return try ImagePipeline.shared.crop(image, rect: frame.rect)
     }
     guard let url = overviewURL else { throw DeskError.message("尚无图像。") }
@@ -1286,7 +1326,7 @@ final class AppModel: ObservableObject {
   func contextSource(for frame: FilmFrame) throws -> (image: CGImage, region: NormalRect) {
     let pipe = ImagePipeline.shared
     if let path = frame.sourcePath {
-      return (try load(URL(fileURLWithPath: path), maxDimension: 3000), .full)
+      return (try load(URL(fileURLWithPath: path), maxDimension: 3000, crosstalk: frame.crosstalk), .full)
     }
     if let path = frame.scanPath, frame.hasFullResolution {
       let scan = try load(URL(fileURLWithPath: path), maxDimension: 3000)
@@ -2308,6 +2348,7 @@ final class AppModel: ObservableObject {
         f.scanPath = f.scanPath.map { ProjectFiles.resolve($0, relative: f.scanFile, in: folder) }
         f.sourcePath = f.sourcePath.map { ProjectFiles.resolve($0, relative: f.sourceFile, in: folder) }
         (f.scanFile, f.sourceFile) = (nil, nil)
+        if f.sensorRead == nil, let path = f.sourcePath, f.adjustments.inputGamma == 1 { f.sensorRead = Self.readFromSensor(path) }
         return f
       }
       clearEdits()

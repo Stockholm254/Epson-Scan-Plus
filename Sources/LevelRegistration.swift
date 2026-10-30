@@ -118,6 +118,25 @@ extension ImagePipeline {
     else { return image }
     return cg
   }
+  /// `image`, linear, with the copy light's crosstalk taken out of every pixel, as
+  /// `Crosstalk.unmixed` takes it out of a reading: kept above nothing, so each still has a density.
+  func unmixed(_ image: CGImage, by crosstalk: Crosstalk) -> CGImage {
+    let k = crosstalk.inverse, least = 1.0 / 65535
+    let filter = CIFilter(name: "CIColorMatrix")!
+    filter.setValue(CIImage(cgImage: image, options: [.colorSpace: NSNull()]), forKey: kCIInputImageKey)
+    filter.setValue(CIVector(x: k[0], y: k[1], z: k[2], w: 0), forKey: "inputRVector")
+    filter.setValue(CIVector(x: k[3], y: k[4], z: k[5], w: 0), forKey: "inputGVector")
+    filter.setValue(CIVector(x: k[6], y: k[7], z: k[8], w: 0), forKey: "inputBVector")
+    let clamp = CIFilter(name: "CIColorClamp")!
+    clamp.setValue(filter.outputImage, forKey: kCIInputImageKey)
+    clamp.setValue(CIVector(x: least, y: least, z: least, w: 0), forKey: "inputMinComponents")
+    clamp.setValue(CIVector(x: 1, y: 1, z: 1, w: 1), forKey: "inputMaxComponents")
+    let extent = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+    guard let out = clamp.outputImage,
+      let cg = context.createCGImage(out.cropped(to: extent), from: extent, format: .RGBA16, colorSpace: image.colorSpace ?? outputSpace)
+    else { return image }
+    return cg
+  }
 }
 
 /// An image's linear RGB, 0–1, for reading pixels.

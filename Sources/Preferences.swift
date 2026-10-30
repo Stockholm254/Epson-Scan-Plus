@@ -136,6 +136,9 @@ final class Preferences: ObservableObject {
     didSet { defaults?.set(scannerCalibration.flatMap { try? JSONEncoder().encode($0) }, forKey: "scannerCalibration") }
   }
   @Published var removeFlare: Bool { didSet { defaults?.set(removeFlare, forKey: "removeFlare") } }
+  /// Pictures read from the camera's sensor have the copy light's crosstalk taken out as they come
+  /// in, as the roll last chose. On unless turned off.
+  @Published var removeCrosstalk: Bool { didSet { defaults?.set(removeCrosstalk, forKey: "removeCrosstalk") } }
   /// The scanner's measured MTF; sharpening stays off until a target has been measured.
   @Published var sharpening: SharpeningProfile? {
     didSet { defaults?.set(sharpening.flatMap { try? JSONEncoder().encode($0) }, forKey: "sharpening") }
@@ -169,6 +172,7 @@ final class Preferences: ObservableObject {
     sharpening = defaults?.data(forKey: "sharpening").flatMap { try? JSONDecoder().decode(SharpeningProfile.self, from: $0) }
     scannerCalibration = defaults?.data(forKey: "scannerCalibration").flatMap { try? JSONDecoder().decode(ScannerCalibration.self, from: $0) }
     removeFlare = defaults?.object(forKey: "removeFlare") as? Bool ?? true
+    removeCrosstalk = defaults?.object(forKey: "removeCrosstalk") as? Bool ?? true
     customProfiles = defaults?.data(forKey: "customProfiles").flatMap { try? JSONDecoder().decode([FilmProfile].self, from: $0) } ?? []
     autoExport = defaults.map { $0.object(forKey: "autoExport") as? Bool ?? true } ?? false
     let dpi = defaults?.integer(forKey: "previewDPI") ?? 0

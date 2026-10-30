@@ -67,12 +67,13 @@ extension AppModel {
     status = raw ? "正在解码 \(file.lastPathComponent)…" : "已收到 \(file.lastPathComponent)"
     Self.captureQueue.async {
       var result: Result<URL, Error>
+      var sensor = false
       if raw {
         let decoded = root.appendingPathComponent("Decoded", isDirectory: true)
         let out = Self.unused(decoded.appendingPathComponent(file.deletingPathExtension().lastPathComponent + ".tif"))
         result = Result {
           try FileManager.default.createDirectory(at: decoded, withIntermediateDirectories: true)
-          try Self.linearTIFF(fromRAW: file, to: out)
+          sensor = try Self.linearTIFF(fromRAW: file, to: out)
           return out
         }
       } else {
@@ -80,14 +81,16 @@ extension AppModel {
       }
       DispatchQueue.main.async {
         switch result {
-        case .success(let picture): self.addCapturedFrame(picture, original: file, linear: raw)
+        case .success(let picture): self.addCapturedFrame(picture, original: file, linear: raw, sensor: sensor)
         case .failure(let error): self.errorText = "解码 \(file.lastPathComponent) 失败：\(error.localizedDescription)"
         }
       }
     }
   }
-  /// `picture` as the roll's next frame; a RAW's is linear (input gamma 1), a JPEG's is not.
-  func addCapturedFrame(_ picture: URL, original: URL, linear: Bool) {
+  /// `picture` as the roll's next frame; a RAW's is linear (input gamma 1), a JPEG's is not. Read
+  /// from the `sensor`, it has the copy light's crosstalk taken out, or not, as the roll's other
+  /// such frames have, or as last chosen for a roll's first.
+  func addCapturedFrame(_ picture: URL, original: URL, linear: Bool, sensor: Bool = false) {
     let info = ImagePipeline.shared.info(picture)
     // The long side taken as the 36 mm of a 135 frame filling it; only the export's dpi follows it.
     let dpi = info.width > 0 ? Double(max(info.width, info.height)) / 36 * 25.4 : 300
@@ -96,6 +99,10 @@ extension AppModel {
     f.sourceBits = info.bits
     f.scanDPI = Int(dpi.rounded())
     f.adjustments.inputGamma = linear ? 1 : 2.2
+    f.sensorRead = sensor
+    if sensor {
+      f.crosstalk = frames.first { $0.sensorRead == true }.map(\.crosstalk) ?? (preferences.removeCrosstalk ? .measured : nil)
+    }
     if overview == nil || overviewURL == nil {
       overviewURL = picture
       overview = try? ImagePipeline.shared.load(picture, maxDimension: 2200)
@@ -138,11 +145,11 @@ extension AppModel {
   /// through the system's RAW engine with nothing of its own added: no tone curve or boost, no
   /// baseline exposure, no lens correction, sharpening or noise reduction, and the same fixed
   /// white balance for every frame, so the channels keep one scale across the roll; it still
-  /// applies the camera's colour matrix.
-  static func linearTIFF(fromRAW url: URL, to out: URL) throws {
+  /// applies the camera's colour matrix. True when it was read from the sensor.
+  @discardableResult static func linearTIFF(fromRAW url: URL, to out: URL) throws -> Bool {
     if let native = try SensorRaw.nativeRGB(url) {
       try ImagePipeline.shared.saveTIFF(native, to: out, dpi: 300)
-      return
+      return true
     }
     guard let raw = CIRAWFilter(imageURL: url) else { throw DeskError.message("系统无法读取这个 RAW：\(url.lastPathComponent)") }
     raw.boostAmount = 0
@@ -167,6 +174,18 @@ extension AppModel {
       throw DeskError.message("RAW 解码失败：\(url.lastPathComponent)")
     }
     try ImagePipeline.shared.saveTIFF(cg, to: out, dpi: 300)
+    return false
+  }
+  /// Whether the TIFF at `path` is one `linearTIFF` read from a camera's sensor: decoded into a
+  /// roll's Decoded folder, red, green and blue with no alpha, which the system's RAW engine adds.
+  /// For projects from before frames recorded it.
+  static func readFromSensor(_ path: String) -> Bool {
+    let url = URL(fileURLWithPath: path)
+    guard url.deletingLastPathComponent().lastPathComponent == "Decoded",
+      let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+      let p = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any]
+    else { return false }
+    return !(p[kCGImagePropertyHasAlpha] as? Bool ?? false) && p[kCGImagePropertyDepth] as? Int == 16
   }
   /// A piece of `url` (the camera's own file) about `point`, normalised, `side` pixels across at
   /// full resolution, as the camera renders it: for checking focus pixel by pixel.
