@@ -547,7 +547,7 @@ final class CameraController: ObservableObject {
       if stage == "enum" || stage == "connect" {
         let rivals = Self.rivals(among: running())
         if !rivals.isEmpty {
-          message += "。\(rivals.joined(separator: "、")) 开着，会占住相机：请退出它们（⌘Q），把相机关机再开，再连接"
+          message += "。\(rivals.joined(separator: "、")) 开着，会占住相机：请退出\(rivals.count > 1 ? "它们" : "它")（⌘Q），把相机关机再开，再连接"
           note("占着相机的程序：" + rivals.joined(separator: "、"))
         }
       }
