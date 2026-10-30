@@ -589,13 +589,18 @@ final class CameraController: ObservableObject {
     case "af":
       let result = event["result"] as? String ?? ""
       focusResult = result
-      message = (result == "focused" ? "已合焦" : result == "failed" ? "相机没能合焦" : "等待合焦超时") + "，已切回手动对焦，快门不会再对焦"
+      let said = result == "focused" ? "已合焦" : result == "failed" ? "相机没能合焦" : "等待合焦超时"
+      // Held unless the camera would not go back to manual focus (the lens's AF/MF switch, say).
+      message = event["held"] as? Bool == false
+        ? said + "，但相机没有切回手动对焦，按快门会再对焦一次：看看镜头上的 AF / MF 开关"
+        : said + "，已切回手动对焦，快门不会再对焦"
     case "shot":
       if event["ok"] as? Bool == false {
         message = "快门没有释放（\(event["code"] as? String ?? "")）"
         awaitingPicture = false
       } else {
         shots += 1
+        if event["manual"] as? Bool == false { message = "相机没有切到手动对焦，这一张先对了焦：看看镜头上的 AF / MF 开关" }
       }
     case "downloaded":
       received += 1

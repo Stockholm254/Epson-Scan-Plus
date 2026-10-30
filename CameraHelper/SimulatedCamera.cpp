@@ -10,11 +10,18 @@
 // - While it writes and sends a picture it takes no new one, and says nothing.
 // - A focus step outside manual focus is refused with the 0x60003 warning on NearFar.
 // - Changing the focus mode ends its magnifier.
+// - Set up so (busy), for a while after a half-press is let go it takes a change of focus mode and
+//   does not make it; set up so (stepsneed), with its own priority it takes a focus step and the
+//   lens does not move.
+// - Each half-press that focuses, and each step the lens makes, goes to stderr.
 //
 // EPSON_CAMERA_SIM sets it up, as name=value pairs separated by commas: focus (the focus mode, 6
 // DMF), priority (1 the camera's, 2 the computer's), early (milliseconds of 0x8402 after connecting,
 // 600), transfer (milliseconds a picture takes to arrive, 1500), af (ok or fail), hold (the
-// shortest press taken, in milliseconds, 100), cameras (1; 0 for none found). EPSON_CAMERA_SIM_LIVE
+// shortest press taken, in milliseconds, 100), cameras (1; 0 for none found), refuse (0; 1 for a
+// camera another program has a session with, which refuses the connection), busy (milliseconds
+// after a half-press is let go that a change of focus mode is not made, 0), stepsneed (1: a focus
+// step needs the computer's priority, 0). EPSON_CAMERA_SIM_LIVE
 // names a JPEG for its live view. What it does with a press goes to stderr, a line each.
 //
 // Not Sony's code: the functions and classes the camera process uses, declared by Sony's headers,
@@ -70,8 +77,9 @@ struct Camera {
   std::mutex lock;
   IDeviceCallback* callback = nullptr;
   Clock::time_point connectedAt;
-  int early = 600, transfer = 1500, hold = 100;
-  bool focuses = true;
+  int early = 600, transfer = 1500, hold = 100, busy = 0;
+  bool focuses = true, stepsNeedPriority = false;
+  Clock::time_point letGo;
   std::map<CrInt32u, int64_t> values;
   bool halfPressed = false, focused = false, sending = false;
   Clock::time_point downAt;
@@ -245,6 +253,8 @@ bool Init(CrInt32u) {
   camera.transfer = setting("transfer", 1500);
   camera.hold = setting("hold", 100);
   camera.focuses = setting("af", 1) != 0;
+  camera.busy = setting("busy", 0);
+  camera.stepsNeedPriority = setting("stepsneed", 0) != 0;
   camera.values[CrDeviceProperty_FocusMode] = setting("focus", 6);
   camera.values[CrDeviceProperty_PriorityKeySettings] = setting("priority", CrPriorityKey_CameraPosition);
   camera.values[CrDeviceProperty_Focus_Magnifier_Setting] = (320 << 16) | 240;
@@ -265,6 +275,10 @@ CrError Connect(ICrCameraObjectInfo*, IDeviceCallback* callback, CrDeviceHandle*
   camera.callback = callback;
   *handle = 1;
   later(150, [] {
+    if (setting("refuse", 0)) {
+      if (camera.callback) camera.callback->OnError(CrError_Connect_SessionAlreadyOpened);
+      return;
+    }
     {
       std::lock_guard<std::mutex> g(camera.lock);
       camera.connectedAt = Clock::now();
@@ -315,6 +329,11 @@ CrError SetDeviceProperty(CrDeviceHandle, CrDeviceProperty* p) {
   std::unique_lock<std::mutex> g(camera.lock);
   switch (code) {
     case CrDeviceProperty_FocusMode:
+      if (camera.busy && Clock::now() < camera.letGo + std::chrono::milliseconds(camera.busy)) {
+        g.unlock();
+        say("刚松开半按，切换对焦模式没生效");
+        return CrError_None;
+      }
       camera.values[code] = v;
       // A change of focus mode ends the magnifier.
       camera.values[CrDeviceProperty_Focus_Magnifier_Setting] &= 0xFFFFFFFF;
@@ -326,6 +345,12 @@ CrError SetDeviceProperty(CrDeviceHandle, CrDeviceProperty* p) {
         g.unlock();
         say("对焦步进被拒绝（不在 MF）");
         later(20, [] { if (camera.callback) camera.callback->OnWarningExt(CrWarningExt_OperationInvalid, CrDeviceProperty_NearFar, 0, 0); });
+      } else if (camera.stepsNeedPriority && camera.values[CrDeviceProperty_PriorityKeySettings] != CrPriorityKey_PCRemote) {
+        g.unlock();
+        say("对焦步进没生效（相机优先）");
+      } else {
+        g.unlock();
+        say("镜头步进 " + std::to_string(v));
       }
       return CrError_None;
     case CrDeviceProperty_S1:
@@ -334,6 +359,7 @@ CrError SetDeviceProperty(CrDeviceHandle, CrDeviceProperty* p) {
         camera.halfPressed = true;
         if (autofocusing()) {
           g.unlock();
+          say("半按，开始对焦");
           later(300, [] {
             {
               std::lock_guard<std::mutex> g(camera.lock);
@@ -345,6 +371,7 @@ CrError SetDeviceProperty(CrDeviceHandle, CrDeviceProperty* p) {
           });
         }
       } else {
+        if (camera.halfPressed) camera.letGo = Clock::now();
         camera.halfPressed = camera.focused = false;
         camera.values[CrDeviceProperty_FocusIndication] = CrFocusIndicator_Unlocked;
       }

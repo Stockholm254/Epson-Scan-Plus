@@ -159,8 +159,17 @@ enum CameraTests {
     try check(standing.map { $0.image.width == Int($0.frame.width * 2) && $0.frame.contains(point) && CGRect(origin: .zero, size: stage).contains($0.frame) } == true
       && loupe?.width == 224,
       "the light table's loupe stands on the live view at the focus point, and the library's loupe, both at the screen's resolution")
+    camera.running = { ["com.apple.finder"] }
     camera.receive(#"{"event":"error","stage":"enum","code":"0x8000","message":"没有找到相机"}"#)
-    try check(camera.phase == .failed && camera.message.contains("没有找到相机"), "a failure is shown as the process says it")
+    try check(camera.phase == .failed && camera.message == "没有找到相机（0x8000）", "a failure is shown as the process says it")
+    camera.running = { ["com.apple.finder", "com.captureone.captureone16", "com.adobe.mas.lightroomCC", "com.captureone.captureone16"] }
+    camera.receive(#"{"event":"error","stage":"connect","code":"0x8210","message":"相机拒绝了连接：别的程序已经和它连着"}"#)
+    try check(camera.phase == .failed && camera.message.hasPrefix("相机拒绝了连接：别的程序已经和它连着（0x8210）。Capture One、Lightroom 开着")
+      && camera.message.contains("⌘Q") && camera.log.last == "占着相机的程序：Capture One、Lightroom",
+      "a camera refused names the programs open that hold it, each once, and says to quit them")
+    try check(CameraController.rivals(among: ["com.adobe.LightroomClassicCC7", "com.apple.Photos", "com.apple.Image_Capture", "com.sony.Remote", "com.sony.Viewer", "com.apple.Preview"])
+      == ["Lightroom Classic", "照片", "图像捕捉", "Imaging Edge Remote"],
+      "the programs that take the camera are told from the ones that only look at pictures")
 
     // Pictures arriving in a camera roll.
     let lib = folder.appendingPathComponent("camera-library", isDirectory: true)

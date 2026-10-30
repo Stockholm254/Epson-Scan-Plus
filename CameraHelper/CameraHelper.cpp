@@ -214,6 +214,7 @@ static std::atomic<bool> connected{false};
 static std::mutex stateLock;
 static std::condition_variable stateChanged;
 static int connectOutcome = 0;  // 1 connected, -1 failed
+static uint32_t refusal = 0;    // what the camera said when it failed to connect
 static uint32_t lastFocus = 0;
 static int focusSerial = 0;
 static sdk::ICrEnumCameraObjectInfo* cameras = nullptr;
@@ -261,13 +262,13 @@ class Callback : public sdk::IDeviceCallback {
     connected = false;
     emit("{\"event\":\"disconnected\",\"code\":" + quote(hex(err)) + "}");
     std::lock_guard<std::mutex> g(stateLock);
-    if (connectOutcome == 0) connectOutcome = -1;
+    if (connectOutcome == 0) connectOutcome = -1, refusal = err;
     stateChanged.notify_all();
   }
   void OnError(CrInt32u err) override {
     error("camera", err, "相机报告错误");
     std::lock_guard<std::mutex> g(stateLock);
-    if (connectOutcome == 0) connectOutcome = -1;
+    if (connectOutcome == 0) connectOutcome = -1, refusal = err;
     stateChanged.notify_all();
   }
   void OnWarning(CrInt32u w) override {
@@ -371,6 +372,7 @@ static void connect(const Message& m) {
   {
     std::lock_guard<std::mutex> g(stateLock);
     connectOutcome = 0;
+    refusal = 0;
   }
   int64_t h = 0;
   err = sdk::Connect(info, &callback, &h, sdk::CrSdkControlMode_Remote, sdk::CrReconnecting_ON);
@@ -381,7 +383,10 @@ static void connect(const Message& m) {
     stateChanged.wait_for(g, std::chrono::seconds(15), [] { return connectOutcome != 0; });
     if (connectOutcome != 1) {
       g.unlock();
-      error("connect", 0, connectOutcome == 0 ? "等待相机响应超时" : "相机拒绝了连接");
+      // Refused with a session already open (0x8210): another program has the camera.
+      error("connect", refusal, connectOutcome == 0 ? "等待相机响应超时"
+        : refusal == sdk::CrError_Connect_SessionAlreadyOpened ? "相机拒绝了连接：别的程序已经和它连着"
+        : "相机拒绝了连接：可能有别的程序占着它");
       sdk::ReleaseDevice(handle);
       handle = 0;
       return;
@@ -467,16 +472,54 @@ static std::string autofocus() {
 static void releaseS1() {
   if (auto s1 = byName("S1")) writeProp(*s1, sdk::CrLockIndicator_Unlocked);
 }
-/// Switches the camera's focus mode and gives it a moment; the switch ends its magnifier, which is
-/// put back when the app had it on.
-static void focusMode(int64_t mode, const Message& m) {
-  sdk::CrError e = writeProp(*byName("FocusMode"), mode);
-  logLine(e ? "切换对焦模式失败：" + hex(e) : mode == sdk::CrFocus_MF ? "已切到手动对焦" : "已切到 AF-S");
-  std::this_thread::sleep_for(std::chrono::milliseconds(300));
-  if (double v = m.num("magnify")) {
-    writeProp(*byName("Focus_Magnifier_Setting"), (int64_t)v);
+/// The computer's priority, which the camera needs before it takes a press or a focus step (with
+/// its own it takes them and does nothing): asked for again when a dial was touched since. What it
+/// answered goes into `steps`.
+static void remote(std::string& steps) {
+  auto k = byName("PriorityKeySettings");
+  if (!k) return;
+  sdk::CrDeviceProperty p;
+  if (readProp(k->code, p) && p.GetCurrentValue() == sdk::CrPriorityKey_PCRemote) return;
+  sdk::CrError e = patiently([&] { return writeProp(*k, sdk::CrPriorityKey_PCRemote); });
+  steps += "电脑优先 " + hex(e) + "，";
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+}
+/// The camera in focus mode `mode` as it says it is, not as the app last heard: switched when it
+/// is not, asked again while it is busy (just after a half-press it may take the switch and not
+/// make it), and read back each time. The switch ends the magnifier, which is put back when the
+/// app had it on. What it took goes into `steps`; whether it is in that mode now.
+static bool ensureFocusMode(int64_t mode, const Message& m, std::string& steps) {
+  const Known* k = byName("FocusMode");
+  if (!k) return false;
+  auto now = [&]() -> int64_t {
+    sdk::CrDeviceProperty p;
+    return readProp(k->code, p) ? (int64_t)p.GetCurrentValue() : -1;
+  };
+  if (now() == mode) return true;
+  const std::string name = mode == sdk::CrFocus_MF ? "MF" : "AF-S";
+  for (int attempt = 1; attempt <= 6; attempt++) {
+    sdk::CrError e = patiently([&] { return writeProp(*k, mode); });
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    if (now() == mode) {
+      steps += "切到 " + name + (attempt > 1 ? "（第 " + std::to_string(attempt) + " 次）" : "") + "，";
+      if (double v = m.num("magnify")) {
+        writeProp(*byName("Focus_Magnifier_Setting"), (int64_t)v);
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+      }
+      return true;
+    }
+    if (e) steps += "切到 " + name + " " + hex(e) + "，";
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
   }
+  steps += "没能切到 " + name + "，";
+  return false;
+}
+/// Whether the camera's focus mode is one it autofocuses in (DMF among them).
+static bool autofocusMode() {
+  sdk::CrDeviceProperty p;
+  if (!readProp(byName("FocusMode")->code, p)) return false;
+  auto v = p.GetCurrentValue();
+  return v >= sdk::CrFocus_AF_S && v <= sdk::CrFocus_DMF;
 }
 /// The shutter, as Sony's own sample presses it, without focusing: in an autofocus mode the camera
 /// is switched to manual focus first (with focus first it would focus on the press, or take
@@ -486,18 +529,14 @@ static void focusMode(int64_t mode, const Message& m) {
 /// diagnostics.
 static void shoot(const Message& m) {
   std::string steps;
-  if (auto k = byName("PriorityKeySettings")) {
-    sdk::CrDeviceProperty p;
-    if (!readProp(k->code, p) || p.GetCurrentValue() != sdk::CrPriorityKey_PCRemote) {
-      sdk::CrError e = patiently([&] { return writeProp(*k, sdk::CrPriorityKey_PCRemote); });
-      steps += "电脑优先 " + hex(e) + "，";
-      std::this_thread::sleep_for(std::chrono::milliseconds(500));
-    }
-  }
+  remote(steps);
   // A half-press left held (an AF a moment ago) is let go first: the press starts from rest.
   releaseS1();
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
-  if (m.on("mf")) focusMode(sdk::CrFocus_MF, m);
+  // Manual focus as the camera says, whatever the app last heard: in an autofocus mode the
+  // half-press below would focus again.
+  bool manual = ensureFocusMode(sdk::CrFocus_MF, m, steps);
+  if (!manual) logLine("相机没有切到手动对焦，这一张会先对焦");
   sdk::CrError half = 0;
   if (auto s1 = byName("S1")) {
     half = writeProp(*s1, sdk::CrLockIndicator_Locked);
@@ -511,8 +550,9 @@ static void shoot(const Message& m) {
   if (!err) err = up;
   std::this_thread::sleep_for(std::chrono::milliseconds(1000));
   releaseS1();
-  logLine("快门：" + steps + (m.on("mf") ? "切到 MF，" : "") + "半按 " + hex(half) + "，全按 " + hex(err));
-  emit("{\"event\":\"shot\",\"ok\":" + std::string(err ? "false" : "true") + ",\"code\":" + quote(hex(err)) + "}");
+  logLine("快门：" + steps + "半按 " + hex(half) + "，全按 " + hex(err));
+  emit("{\"event\":\"shot\",\"ok\":" + std::string(err ? "false" : "true") + ",\"code\":" + quote(hex(err))
+    + ",\"manual\":" + (manual ? "true" : "false") + "}");
 }
 
 int main(int argc, char** argv) {
@@ -551,16 +591,24 @@ int main(int argc, char** argv) {
       emit(std::string("{\"event\":\"live\",\"on\":") + (liveOn ? "true" : "false") + "}");
     } else if (cmd == "af") {
       // Focused once and held: from manual focus by way of AF-S, and back to it after, so the
-      // shutter does not focus again.
-      if (m.on("afs")) focusMode(sdk::CrFocus_AF_S, m);
+      // shutter does not focus again; each switch as the camera says it is.
+      std::string steps;
+      remote(steps);
+      if (!autofocusMode()) ensureFocusMode(sdk::CrFocus_AF_S, m, steps);
       std::string result = autofocus();
       releaseS1();
-      if (m.on("hold")) focusMode(sdk::CrFocus_MF, m);
-      emit("{\"event\":\"af\",\"result\":" + quote(result) + "}");
+      std::this_thread::sleep_for(std::chrono::milliseconds(150));
+      bool held = !m.on("hold") || ensureFocusMode(sdk::CrFocus_MF, m, steps);
+      logLine("AF：" + steps + result + (held ? "" : "，没能切回手动对焦"));
+      emit("{\"event\":\"af\",\"result\":" + quote(result) + ",\"held\":" + (held ? "true" : "false") + "}");
     } else if (cmd == "nearfar") {
-      // The lens steps only in manual focus: switched to it first when the app sees it is not.
-      if (m.on("mf")) focusMode(sdk::CrFocus_MF, m);
-      sdk::CrError err = writeProp(*byName("NearFar"), (int64_t)m.num("step"));
+      // The lens steps only in manual focus, and with the computer's priority: both as the camera
+      // says, whatever the app last heard.
+      std::string steps;
+      remote(steps);
+      bool manual = ensureFocusMode(sdk::CrFocus_MF, m, steps);
+      if (!steps.empty() || !manual) logLine("对焦步进：" + steps + (manual ? "" : "仍不在手动对焦"));
+      sdk::CrError err = patiently([&] { return writeProp(*byName("NearFar"), (int64_t)m.num("step")); });
       emit("{\"event\":\"set\",\"name\":\"NearFar\",\"ok\":" + std::string(err ? "false" : "true") + ",\"code\":" + quote(hex(err)) + "}");
     } else if (cmd == "afpoint") {
       int64_t x = (int64_t)m.num("x", 320), y = (int64_t)m.num("y", 240);
