@@ -398,6 +398,7 @@ struct ContentView: View {
           Button("自动片基") {
             m.change("自动片基") {
               $0.base = nil
+              $0.basePicked = nil
               $0.baseFine = nil
             }
           }
@@ -417,15 +418,30 @@ struct ContentView: View {
             Text("片基微调 · EV").font(.system(size: 11, weight: .medium))
             Spacer()
             Button("归零") { m.change("片基微调") { $0.baseFine = nil } }.font(.system(size: 10))
-            InfoButton(text: "「取片基」只点未曝光的橙色片基（片间或片边），不点景物或片夹；「自动片基」按整卷片间的未曝光区或本张最薄处估计。片间测不到片基的卷（翻拍，或一张一个文件导入），在片头或片边取一次片基，点「整卷共用这个片基」，整卷都用它。\n\n微调按 EV 逐通道改变片基，不会被自动白平衡抵消。")
+            InfoButton(text: "「取片基」只点未曝光的橙色片基（片间或片边），不点景物或片夹；「自动片基」：扫描的卷按整卷片间的未曝光区；翻拍和一张一个文件导入的照片，按这一张片边的未曝光片基（片边看不到时用最近一张看得到的），都没有时按本张最薄处估计。打开「标出」在单张上看取的是哪里。片边也不准时，在片头或片边取一次片基，点「整卷共用这个片基」，整卷都用它。\n\n微调按 EV 逐通道改变片基，不会被自动白平衡抵消。")
           }
           ForEach(0..<3, id: \.self) { channel in baseSlider(channel) }
           if let base = m.toneAnalysis?.base ?? m.settings.base ?? m.settings.rollBase {
             Text(String(format: "基准 RGB  %.3f  %.3f  %.3f", base.r, base.g, base.b)).font(
               .system(size: 9, design: .monospaced)
             ).foregroundStyle(.secondary)
-            Text(m.settings.base != nil ? "片基来自手动取样" : m.settings.rollBasePicked == true ? "片基来自整卷共用的手动取样" : m.settings.rollBase != nil ? "片基来自整卷片间未曝光区" : "片基按本张最薄的片区估计")
-              .font(.system(size: 10)).foregroundStyle(.secondary)
+            if let f = m.selected {
+              HStack(alignment: .firstTextBaseline) {
+                Text(m.baseSource(f)).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 4)
+                // Where it was read: picked by hand on this frame, or at the edges of the frame its
+                // base came from.
+                if f.adjustments.base != nil, f.adjustments.basePicked != nil {
+                  Toggle("标出", isOn: $m.showBaseAreas).toggleStyle(.switch).controlSize(.mini).font(.system(size: 10))
+                    .help("在单张上标出手动取片基的地方")
+                } else if f.adjustments.base == nil, f.adjustments.rollBasePicked != true,
+                  let i = m.frames.firstIndex(where: { $0.id == f.id }), let from = m.edgeBaseSource(i)
+                {
+                  Toggle("标出", isOn: $m.showBaseAreas).toggleStyle(.switch).controlSize(.mini).font(.system(size: 10))
+                    .help(from == i ? "在单张上标出这一张片边里取作片基的地方" : "片基取自第 \(m.frames[from].name) 张的片边；切到那一张能看到标出的地方")
+                }
+              }
+            }
           }
         }
         if m.singleView {

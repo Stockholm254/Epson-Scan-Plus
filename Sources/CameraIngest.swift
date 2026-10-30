@@ -120,6 +120,7 @@ extension AppModel {
     updateThumbnails()
     updateRollSlopes()
     saveProject()
+    measureEdgeBases()
   }
   /// Shows `text` over the live view for three seconds, unless another note takes its place.
   func toast(_ text: String) {

@@ -478,6 +478,18 @@ final class FilmCanvasView: NSView {
     if model.singleView, model.tool == .it8, let frame = model.selected {
       drawIT8(model.it8Marks, settings: frame.adjustments, aspect: model.shownAspect(frame))
     }
+    // Where the film base was read: picked by hand, or at the frame's edges; asked for, or while a
+    // base is being picked.
+    if model.singleView, let frame = model.selected, model.tool == .base || model.showBaseAreas {
+      let s = frame.adjustments
+      let own = model.frames.firstIndex { $0.id == frame.id }.map { model.edgeBaseSource($0) == $0 } ?? false
+      if let found = frame.edgeBase, found.base != nil, model.tool == .base || own && s.base == nil && s.rollBasePicked != true {
+        drawBaseAreas(found.areas, frame: frame, aspect: model.shownAspect(frame))
+      }
+      if s.base != nil, let picked = s.basePicked {
+        drawBasePick(picked, settings: s, aspect: model.shownAspect(frame))
+      }
+    }
     drawLens()
   }
   /// Puts the glass bubble on the corner under `p`, as it is dragged.
@@ -600,6 +612,64 @@ final class FilmCanvasView: NSView {
     lines(3, 3, NSColor.white.withAlphaComponent(0.7), 0.75)
   }
   /// The IT8 target's marked points, and once four are set, where every patch will be read.
+  /// Where the base was picked by hand: a ring about the square read, in the frame as cropped.
+  private func drawBasePick(_ place: NormalRect, settings: Adjustments, aspect: Double?) {
+    let r = imageRect
+    let d = ImageGeometry.display(CGPoint(x: place.x + place.width / 2, y: place.y + place.height / 2), settings: settings, aspect: aspect)
+    let c = CGPoint(x: r.minX + d.x * r.width, y: r.minY + d.y * r.height)
+    let radius = max(6, place.width * r.width / 2 + 3)
+    let amber = NSColor(calibratedRed: 0.95, green: 0.71, blue: 0.38, alpha: 1)
+    let ring = NSBezierPath(ovalIn: CGRect(x: c.x - radius, y: c.y - radius, width: 2 * radius, height: 2 * radius))
+    ring.lineWidth = 2
+    NSColor.black.withAlphaComponent(0.5).setStroke()
+    ring.stroke()
+    ring.lineWidth = 1.2
+    amber.setStroke()
+    ring.stroke()
+    let text = "手动片基" as NSString
+    let font = NSFont.systemFont(ofSize: 11, weight: .medium)
+    let size = text.size(withAttributes: [.font: font])
+    let label = NSRect(x: min(c.x + radius + 4, r.maxX - size.width - 14), y: max(r.minY + 2, c.y - size.height / 2 - 3), width: size.width + 12, height: size.height + 6)
+    amber.setFill()
+    NSBezierPath(roundedRect: label, xRadius: 4, yRadius: 4).fill()
+    text.draw(at: CGPoint(x: label.minX + 6, y: label.minY + 3), withAttributes: [.font: font, .foregroundColor: NSColor.black])
+  }
+  /// The cells of the frame's edges read as its film base, filled over the picture through its
+  /// crop, turn and mirror, with a note at the largest.
+  private func drawBaseAreas(_ areas: [NormalRect], frame: FilmFrame, aspect: Double?) {
+    guard !areas.isEmpty else { return }
+    let r = imageRect, crop = frame.rect
+    func onScreen(_ p: CGPoint) -> CGPoint {
+      let q = CGPoint(x: (p.x - crop.x) / max(1e-6, crop.width), y: (p.y - crop.y) / max(1e-6, crop.height))
+      let d = ImageGeometry.display(q, settings: frame.adjustments, aspect: aspect)
+      return CGPoint(x: r.minX + d.x * r.width, y: r.minY + d.y * r.height)
+    }
+    let amber = NSColor(calibratedRed: 0.95, green: 0.71, blue: 0.38, alpha: 1)
+    NSGraphicsContext.saveGraphicsState()
+    NSBezierPath(rect: r).addClip()
+    let cells = NSBezierPath()
+    for a in areas {
+      cells.appendPolygon([
+        CGPoint(x: a.x, y: a.y), CGPoint(x: a.x + a.width, y: a.y),
+        CGPoint(x: a.x + a.width, y: a.y + a.height), CGPoint(x: a.x, y: a.y + a.height),
+      ].map(onScreen))
+    }
+    amber.withAlphaComponent(0.45).setFill()
+    cells.fill()
+    NSGraphicsContext.restoreGraphicsState()
+    guard let largest = areas.max(by: { $0.width * $0.height < $1.width * $1.height }) else { return }
+    let at = onScreen(CGPoint(x: largest.x + largest.width / 2, y: largest.y + largest.height / 2))
+    let text = "片基取样" as NSString
+    let font = NSFont.systemFont(ofSize: 11, weight: .medium)
+    let size = text.size(withAttributes: [.font: font])
+    let label = NSRect(
+      x: min(max(r.minX + 4, at.x - size.width / 2 - 6), r.maxX - size.width - 16),
+      y: min(max(r.minY + 4, at.y - size.height / 2 - 3), r.maxY - size.height - 10),
+      width: size.width + 12, height: size.height + 6)
+    amber.setFill()
+    NSBezierPath(roundedRect: label, xRadius: 4, yRadius: 4).fill()
+    text.draw(at: CGPoint(x: label.minX + 6, y: label.minY + 3), withAttributes: [.font: font, .foregroundColor: NSColor.black])
+  }
   private func drawIT8(_ marks: [CGPoint], settings: Adjustments, aspect: Double?) {
     let r = imageRect
     func onScreen(_ raw: CGPoint) -> CGPoint {

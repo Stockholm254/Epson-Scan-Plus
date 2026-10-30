@@ -190,6 +190,9 @@ struct Adjustments: Codable, Equatable {
   var inputGamma = 2.2
   var inputIsNegative = true
   var base: RGB? = nil
+  /// Where `base` was picked on the frame, normalised in the frame as cropped; nil when it came
+  /// from elsewhere (the light table, an assistant).
+  var basePicked: NormalRect? = nil
   /// The roll's film base, measured by the app between the frames; used when `base` is nil.
   var rollBase: RGB? = nil
   /// The roll base was picked by hand once, on the leader or a frame's edge, and shared with the
@@ -323,6 +326,8 @@ struct FilmFrame: Identifiable, Codable {
   /// The copy light's crosstalk taken out of the picture as read, before anything is measured on
   /// it; nil keeps it as the sensor read it.
   var crosstalk: Crosstalk? = nil
+  /// The unexposed film at the picture's edges, for a picture a file each; nil until looked for.
+  var edgeBase: EdgeBase? = nil
   var captureRect: NormalRect { scanRect ?? rect }
   var hasFullResolution: Bool {
     sourcePath != nil || (scanPath != nil && captureRect.contains(rect))

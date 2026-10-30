@@ -52,7 +52,7 @@ enum MCPTools {
         "description": "片基逐通道微调 [R, G, B]，单位 EV，-0.5 到 0.5"],
     ]),
     Tool(name: "pick_film_base", description: "在指定位置取片基（只应点在未曝光的橙色片基上，例如画面边缘的片间）；会关闭自动白平衡以保留取样。", properties: point, required: ["x", "y"]),
-    Tool(name: "auto_film_base", description: "放弃手动片基，改用整卷片间测得的片基或本张最薄处的估计。", properties: [:]),
+    Tool(name: "auto_film_base", description: "放弃手动片基，改用自动片基：扫描的卷用整卷片间测得的，翻拍和单张照片用片边的未曝光片基，都没有时按本张最薄处估计。", properties: [:]),
     Tool(name: "pick_neutral", description: "把指定位置作为中性灰，按它自动白平衡（灰卡、白墙、水泥等）。", properties: point, required: ["x", "y"]),
     Tool(name: "pick_highlight", description: "把指定位置作为高光（Dmax）：负片上最密、正片里应为纯白的地方（阳光下的白墙、高光反射）。各通道以它为白点对齐，它在正片里是白色；更亮的地方会剪成白。", properties: point, required: ["x", "y"]),
     Tool(name: "choose_preset", description: "选用胶片预设（按名称，部分匹配，如 \"Portra 160\"）。", properties: ["name": ["type": "string"]], required: ["name"]),
@@ -163,9 +163,13 @@ enum MCPTools {
       var preset: [String: Any] = ["name": profile.name, "id": profile.id, "source": profile.publication, "channel_slopes": rgb(profile.slopes)]
       if let toe = profile.toe { preset["toe"] = rgb(toe) }
       if let offsets = profile.offsets { preset["calibrated_neutral_offsets"] = rgb(offsets) }
+      let fromEdges: String? = onMain {
+        guard let i = model.frames.firstIndex(where: { $0.id == frame.id }), let from = model.edgeBaseSource(i) else { return nil }
+        return from == i ? "the unexposed film at this frame's edges" : "the unexposed film at the edges of frame \(model.frames[from].name)"
+      }
       var base: [String: Any] = ["rgb": rgb(analysis.base),
         "source": s.base != nil ? "manual pick" : s.rollBasePicked == true ? "picked once and shared with the roll"
-          : s.rollBase != nil ? "measured between frames of the roll" : "estimated from the thinnest part of this frame"]
+          : fromEdges ?? (s.rollBase != nil ? "measured between frames of the roll" : "estimated from the thinnest part of this frame")]
       if let fine = s.baseFine { base["fine_ev"] = rgb(fine) }
       var state = summary
       state["frame"] = framePart
@@ -301,7 +305,7 @@ enum MCPTools {
       return [["type": "text", "text": said[name] ?? "已按中性点自动白平衡：\(reading)。"]]
     case "auto_film_base":
       _ = try selected(model)
-      onMain { model.change("自动片基") { $0.base = nil; $0.baseFine = nil } }
+      onMain { model.change("自动片基") { $0.base = nil; $0.basePicked = nil; $0.baseFine = nil } }
       return [["type": "text", "text": "已改用自动片基。"]]
     case "choose_preset":
       guard let wanted = (arguments["name"] as? String)?.lowercased(), !wanted.isEmpty else { throw DeskError.message("需要预设名称 name。") }

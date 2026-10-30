@@ -317,7 +317,7 @@ final class AppModel: ObservableObject {
     case .crop:
       if singleView && levelling { return "沿地平线、墙边或建筑竖线拖一条线，松手即按它拉直 · Esc 退出" }
       return singleView ? "拖动四角裁切 · 方向键微调 · [ ] 拉直 0.1°（⇧ 1°） · ⌥ 拖一条线拉直 · 回车完成 · Esc 退出" : "在灯箱上拖出新的画框 · Esc 退出"
-    case .base: return "点未曝光的橙色片基（片间或片边），不要点景物或片夹 · Esc 退出"
+    case .base: return "点未曝光的橙色片基（片间或片边），不要点景物或片夹；琥珀色是自动找到的片基 · Esc 退出"
     case .neutral: return "点画面中应为中性灰的地方：灰卡、白墙、水泥 · Esc 退出"
     case .highlight: return "点负片上最密、正片里应为纯白的高光：阳光下的白墙、高光反射；更亮处会剪成白 · Esc 退出"
     case .calibrate:
@@ -841,6 +841,7 @@ final class AppModel: ObservableObject {
       let rollBase = picked ? old.adjustments.rollBase : measured ?? old.adjustments.rollBase
       let rollSlopes = f.adjustments.rollSlopes ?? old.adjustments.rollSlopes
       (f.name, f.rect, f.initialRect, f.enabled, f.format) = (old.name, old.rect, old.initialRect, old.enabled, old.format)
+      if let read = f.edgeBase?.base { f.edgeBase?.base = Crosstalk.moved(read, from: f.crosstalk, to: old.crosstalk) }
       f.crosstalk = old.crosstalk
       f.adjustments = old.adjustments
       (f.adjustments.rollBase, f.adjustments.rollSlopes) = (rollBase, rollSlopes)
@@ -878,6 +879,12 @@ final class AppModel: ObservableObject {
         for i in onOverview { frames[i].adjustments.rollBase = base }
       }
     }
+    // Pictures a file each, as a camera takes them: the unexposed film at their own edges, or where
+    // a picture's edges show none, that of the nearest one in the roll whose do (shot under the
+    // light as it was set then). A base picked for the roll, below, comes first.
+    for i in frames.indices where frames[i].adjustments.rollBasePicked != true {
+      if let from = edgeBaseSource(i), let base = frames[from].edgeBase?.base { frames[i].adjustments.rollBase = base }
+    }
     for group in Self.rollGroups(frames, poolPictures: true) {
       guard let shared = group.first(where: { $0.adjustments.rollBasePicked == true })?.adjustments.rollBase else { continue }
       let ids = Set(group.map(\.id))
@@ -886,6 +893,72 @@ final class AppModel: ObservableObject {
         frames[i].adjustments.rollBasePicked = true
       }
     }
+  }
+  /// Whether the frame is a picture a file each, as a camera or an import of single pictures gives.
+  func isSinglePicture(_ f: FilmFrame) -> Bool {
+    guard let path = f.sourcePath else { return false }
+    return frames.lazy.filter { $0.sourcePath == path }.count == 1
+  }
+  /// The frame whose edges give frame `i` its base: its own, or the nearest picture of its roll (read
+  /// alike) whose edges show the base. Where three or more show one, a reading no other picture
+  /// shares the colour of (within 4% in red and blue against green) is passed over: more likely the
+  /// holder or the picture than the film, while a light balanced again shows in the pictures after.
+  /// Nil when none does, or the frame is not a picture a file each.
+  func edgeBaseSource(_ i: Int) -> Int? {
+    guard frames.indices.contains(i), isSinglePicture(frames[i]) else { return nil }
+    let mine = frames[i]
+    let alike = frames.indices.filter {
+      frames[$0].edgeBase?.base != nil && isSinglePicture(frames[$0])
+        && frames[$0].adjustments.inputGamma == mine.adjustments.inputGamma && frames[$0].sourceBits == mine.sourceBits
+    }
+    func colour(_ j: Int) -> (Double, Double) {
+      let b = frames[j].edgeBase?.base ?? .one
+      return (log(b.r / b.g), log(b.b / b.g))
+    }
+    let trusted = alike.count < 3 ? alike : alike.filter { j in
+      alike.contains { k in k != j && abs(colour(k).0 - colour(j).0) < 0.04 && abs(colour(k).1 - colour(j).1) < 0.04 }
+    }
+    if trusted.contains(i) { return i }
+    return trusted.min { abs($0 - i) < abs($1 - i) }
+  }
+  /// Where the frame's film base comes from, as the panel says it.
+  func baseSource(_ f: FilmFrame) -> String {
+    if f.adjustments.base != nil { return "片基来自手动取样" }
+    if f.adjustments.rollBasePicked == true { return "片基来自整卷共用的手动取样" }
+    if let i = frames.firstIndex(where: { $0.id == f.id }), let from = edgeBaseSource(i) {
+      return from == i ? "片基来自这一张片边的未曝光片基" : "这一张片边没找到片基，用第 \(frames[from].name) 张片边的"
+    }
+    if f.adjustments.rollBase != nil { return "片基来自整卷片间未曝光区" }
+    return isSinglePicture(f) && f.edgeBase != nil ? "片边没找到未曝光片基，按本张最薄的片区估计" : "片基按本张最薄的片区估计"
+  }
+  /// Shows on the single frame where its film base was read at its edges.
+  @Published var showBaseAreas = false
+  /// The picture's file, whole and small, as it reads for the edge base: crosstalk taken out as
+  /// the frame has it.
+  private func edgeSource(for frame: FilmFrame) throws -> CGImage? {
+    guard let path = frame.sourcePath else { return nil }
+    let image = try ImagePipeline.shared.load(URL(fileURLWithPath: path), maxDimension: 800)
+    return frame.crosstalk.map { ImagePipeline.shared.unmixed(image, by: $0) } ?? image
+  }
+  /// Looks for the unexposed film at the edges of the roll's pictures not yet looked at, apart from
+  /// the main thread, then converts with what it found. `wait` looks before returning.
+  func measureEdgeBases(wait: Bool = false) {
+    let pending = frames.filter { $0.edgeBase == nil && isSinglePicture($0) }
+    guard !pending.isEmpty else { return }
+    let project = sessionURL
+    let measure = { pending.compactMap { f in (try? self.edgeSource(for: f)).flatMap { $0 }.map { (f.id, ImagePipeline.shared.edgeBase($0)) } } }
+    let apply = { (results: [(UUID, EdgeBase)]) in
+      guard self.sessionURL == project else { return }
+      for (id, found) in results {
+        if let i = self.frames.firstIndex(where: { $0.id == id }), self.frames[i].edgeBase == nil { self.frames[i].edgeBase = found }
+      }
+      self.updateRollBase()
+      self.updateRollSlopes()
+      self.refresh()
+      self.updateThumbnails()
+      self.saveProject()
+    }
+    if wait { apply(measure()) } else { renderQueue.async { let r = measure(); DispatchQueue.main.async { apply(r) } } }
   }
   /// The frames measured together as one roll, for the channel slopes and a shared film base:
   /// the scanned frames; each file holding several frames, an imported strip, on its own; and the
@@ -935,6 +1008,7 @@ final class AppModel: ObservableObject {
       frames[i].adjustments.rollBase = moved(frames[i].adjustments.rollBase)
       frames[i].adjustments.neutralSample = moved(frames[i].adjustments.neutralSample)
       frames[i].adjustments.highlightSample = moved(frames[i].adjustments.highlightSample)
+      frames[i].edgeBase?.base = moved(frames[i].edgeBase?.base)
       frames[i].crosstalk = to
     }
     status = on ? "已去掉翻拍光源的串色 · \(affected.count) 张" : "已保留串色 · \(affected.count) 张"
@@ -1683,7 +1757,11 @@ final class AppModel: ObservableObject {
       return
     }
     if tool == .base {
-      setFilmBase(color)
+      let at = singleView
+        ? NormalRect(x: pt.x - Double(radius) / Double(r.width), y: pt.y - Double(radius) / Double(r.height),
+          width: Double(2 * radius + 1) / Double(r.width), height: Double(2 * radius + 1) / Double(r.height))
+        : nil
+      setFilmBase(color, at: at)
     } else if tool == .neutral {
       setNeutral(color)
     } else if tool == .highlight {
@@ -1694,9 +1772,10 @@ final class AppModel: ObservableObject {
   }
   /// The film base from a reading of unexposed film; the white balance is left as picked, not
   /// recalculated. One edit to undo, whether picked on the canvas or by an assistant.
-  func setFilmBase(_ color: RGB) {
+  func setFilmBase(_ color: RGB, at place: NormalRect? = nil) {
     change("取片基") {
       $0.base = color
+      $0.basePicked = place
       $0.baseFine = nil
       $0.manualBalance = nil
       $0.neutralSample = nil
@@ -2055,6 +2134,7 @@ final class AppModel: ObservableObject {
       updateThumbnails()
       updateRollSlopes()
       saveProject()
+      measureEdgeBases()
     } catch { errorText = error.localizedDescription }
   }
   func exportImages(all: Bool) {
@@ -2370,7 +2450,10 @@ final class AppModel: ObservableObject {
       refresh()
       updateThumbnails()
       status = overviewPath == p.overviewPath ? "已打开工程" : "已打开工程 · 工程文件夹已移动，按新位置读取文件"
-      if !readOnly { registerMissingLevels() }
+      if !readOnly {
+        registerMissingLevels()
+        measureEdgeBases()
+      }
     } catch { errorText = error.localizedDescription }
   }
   func openEpson() {
