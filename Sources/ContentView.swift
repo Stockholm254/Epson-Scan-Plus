@@ -64,8 +64,9 @@ struct ContentView: View {
     }
   }
   /// The window's toolbar, the system's: the scanner's lamp by the title, the modules in the
-  /// middle, the module's keys after the title, and the assistant, the batch's progress, the
-  /// module's leading action and the inspector's key at the trailing end. The system groups them
+  /// middle with the assistant, the module's keys after the title, and the module's leading
+  /// action and the inspector's key at the trailing end. A scan's progress is in the workspace's
+  /// status line, where it never lies across into the inspector. The system groups them
   /// on its glass and folds what does not fit into its overflow menu.
   @ToolbarContentBuilder var toolbarContent: some ToolbarContent {
     ToolbarItem(placement: .navigation) { scannerLamp }
@@ -92,12 +93,9 @@ struct ContentView: View {
         ForEach(AppModel.Page.allCases, id: \.self) { p in Text("\(p.number) \(p.rawValue)").tag(p) }
       }.pickerStyle(.segmented).labelsHidden().help("模块（⌥⌘1–3）")
     }
-    ToolbarItem(placement: .primaryAction) { AssistantKey(m: m, panel: assistantPanel) }
+    // The assistant by the modules, in the middle, clear of the inspector's part of the toolbar.
+    ToolbarItem(placement: .status) { AssistantKey(m: m, panel: assistantPanel) }
     ToolbarItemGroup(placement: .primaryAction) {
-      if m.scanBatch.isActive || m.scanner.busy {
-        scanProgress
-        Button("取消") { m.cancel() }.disabled(m.scanBatch.phase == .cancelling)
-      }
       if m.page == .leak {
         LeakExportKey(lab: m.leak)
       } else if m.page == .capture && m.captureSource == .scanner {
@@ -121,8 +119,8 @@ struct ContentView: View {
       }.help(inspector ? "隐藏右边的检查器" : "显示右边的检查器")
     }
   }
-  /// The batch's progress, frames counted with the one being scanned: on one line, as tall as
-  /// the toolbar's other items; while cancelling, what the scanner does first in its place.
+  /// The batch's progress, frames counted with the one being scanned, on one line; while
+  /// cancelling, what the scanner does first in its place.
   var scanProgress: some View {
     let label = m.scanBatch.isActive
       ? m.scanProgressLabel : "预览 · \(Int(ScanBatchProgress.normalized(m.scanner.progress) * 100))%"
@@ -131,7 +129,7 @@ struct ContentView: View {
       Text(hint ?? label)
         .font(.system(size: 11)).monospacedDigit().lineLimit(1).truncationMode(.tail)
         .foregroundStyle(hint == nil ? Color.primary : Color.secondary)
-        .frame(maxWidth: 190, alignment: .leading)
+        .frame(maxWidth: 190, alignment: .trailing)
       ProgressView(
         value: m.scanBatch.isActive
           ? m.scanProgressFraction : ScanBatchProgress.normalized(m.scanner.progress)
@@ -687,10 +685,15 @@ struct ContentView: View {
       }
     }
   }
+  /// The workspace's status line, and a scan's progress at its end with the key to cancel it.
   var footer: some View {
     HStack(spacing: 12) {
       if m.exporting { ProgressView().controlSize(.small) }
       Text(m.activityStatus).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+      if m.scanBatch.isActive || m.scanner.busy {
+        scanProgress
+        Button("取消") { m.cancel() }.disabled(m.scanBatch.phase == .cancelling).controlSize(.small)
+      }
     }.padding(.horizontal, 18).padding(.vertical, 7)
   }
   var profileInfo: some View {
@@ -772,7 +775,8 @@ struct RenderProgress: View {
 }
 
 /// The AI assistant's key: a lamp, green while one is connected, amber while one may connect,
-/// dark when it may not, and its settings in a popover.
+/// dark when it may not, and its name; the state in words in its tooltip, so the key stays narrow
+/// in the middle of the toolbar. Its settings in a popover.
 struct AssistantKey<Panel: View>: View {
   @ObservedObject var m: AppModel
   let panel: Panel
@@ -785,10 +789,9 @@ struct AssistantKey<Panel: View>: View {
       HStack(spacing: 6) {
         StatusLED(lamp: connected ? .ready : .busy, size: 7).opacity(on ? 1 : 0.25)
         Text("AI 助手").font(.system(size: 12, weight: .medium))
-        Text(connected ? "已连接" : on ? "等待连接" : "关闭").font(.system(size: 10)).foregroundStyle(.secondary)
       }
     }
-    .help(m.mcpStatus)
+    .help((connected ? "已连接" : on ? "等待连接" : "关闭") + " · " + m.mcpStatus)
     .popover(isPresented: $open, arrowEdge: .bottom) { panel.padding(16).frame(width: 320) }
     .accessibilityLabel("AI 助手").accessibilityValue(m.mcpStatus)
   }
