@@ -101,6 +101,7 @@ extension AppModel {
     f.adjustments.inputGamma = linear ? 1 : 2.2
     f.sensorRead = sensor
     if sensor {
+      f.adjustments.colourNoise = 1
       f.crosstalk = frames.first { $0.sensorRead == true }.map(\.crosstalk) ?? (preferences.removeCrosstalk ? .measured : nil)
     }
     if overview == nil || overviewURL == nil {

@@ -187,6 +187,20 @@ struct Adjustments: Codable, Equatable {
   var midtone = 1.0
   var contrast = 1.0
   var saturation = 1.0
+  /// Black and white run out softly, as on paper: a toe under the darkest tones and a shoulder over
+  /// the brightest, and the shadows' colour kept. Nil is on; false is the straight cut.
+  var softEnds: Bool? = nil
+  var softEndsOn: Bool {
+    get { softEnds != false }
+    set { softEnds = newValue ? nil : false }
+  }
+  /// Colour noise smoothed away, the grain's lightness left as it is: 0 (or nil) off, 1 as a copy
+  /// shot comes in with.
+  var colourNoise: Double? = nil
+  var colourNoiseAmount: Double {
+    get { colourNoise ?? 0 }
+    set { colourNoise = newValue }
+  }
   var inputGamma = 2.2
   var inputIsNegative = true
   var base: RGB? = nil

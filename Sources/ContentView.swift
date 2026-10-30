@@ -533,8 +533,14 @@ struct ContentView: View {
         slider("曝光 · EV", key: \.exposure, range: -2...2, format: "%+.2f")
         slider("对比度", key: \.contrast, range: 0.5...1.6)
         Divider()
-        Text("色彩").font(.system(size: 12, weight: .medium))
+        HStack {
+          Text("色彩").font(.system(size: 12, weight: .medium))
+          Spacer()
+          InfoButton(text: "色彩降噪只平滑颜色、不动明度：传感器和去串色带来的彩色噪点（尤其是蓝黄）会去掉，胶片颗粒的明暗结构保留。翻拍的照片默认 1。\n\n柔和的暗部和高光：最暗的地方不硬切成纯黑，而是平滑地压下去，暗部的颜色和层次因此保留下来，并略微补一点暗部的饱和度；最亮的地方用柔和的肩部收向白，不硬顶到白。像相纸那样，中间段不变。")
+        }
         slider("饱和度", key: \.saturation, range: 0...1.8)
+        slider("色彩降噪", key: \.colourNoiseAmount, range: 0...2)
+        Toggle("柔和的暗部和高光", isOn: bool(\.softEndsOn)).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
         Divider()
         sharpeningControl
         DisclosureGroup {

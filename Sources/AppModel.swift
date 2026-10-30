@@ -797,6 +797,8 @@ final class AppModel: ObservableObject {
       $0.rotation = kept.rotation
       $0.flipHorizontal = kept.flipHorizontal
       $0.angle = kept.angle
+      // How the picture was read, not a setting: a copy shot keeps its colour noise reduction.
+      $0.colourNoise = kept.colourNoise
     }
   }
 
@@ -2439,6 +2441,8 @@ final class AppModel: ObservableObject {
         f.sourcePath = f.sourcePath.map { ProjectFiles.resolve($0, relative: f.sourceFile, in: folder) }
         (f.scanFile, f.sourceFile) = (nil, nil)
         if f.sensorRead == nil, let path = f.sourcePath, f.adjustments.inputGamma == 1 { f.sensorRead = Self.readFromSensor(path) }
+        // Copy shots read from the sensor have their colour noise smoothed, as new ones come in.
+        if f.sensorRead == true && f.adjustments.colourNoise == nil { f.adjustments.colourNoise = 1 }
         return f
       }
       clearEdits()

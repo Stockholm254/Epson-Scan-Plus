@@ -42,6 +42,13 @@ final class ImagePipeline {
   ])
   let outputSpace = CGColorSpace(name: CGColorSpace.sRGB)!
   static let shared = ImagePipeline()
+  /// The ends run out as on paper (`Adjustments.softEnds`): under `softToe` the blacks fall smoothly
+  /// towards nothing instead of being cut, the darkest 0.5% of a frame coming out a little above
+  /// black (t/e), so their channels still differ and keep their colour; over `softShoulder` the
+  /// highlights roll off towards white, never quite reaching it; and the shadows get up to
+  /// `shadowColour` more saturation, less as they lighten, as colour runs out there on a screen.
+  /// In the kernel's output values (encoded, 0-1).
+  static var softToe = 0.05, softShoulder = 0.9, shadowColour = 0.3
   // Exposure (tone.x, in EV) is a print exposure: a shift of log exposure, 0.30103 per stop,
   // applied before the levels and clipping so −EV recovers highlights. Positive input scales the
   // linear value instead, through its encoding gamma.
@@ -52,7 +59,7 @@ final class ImagePipeline {
     source: ImagePipeline.negativeSource.replacingOccurrences(
       of: "return vec4(clamp(q,0.0,1.0),1.0);", with: "return vec4(q,1.0);"))
   private static let negativeSource = """
-      kernel vec4 negative(__sample p, vec3 base, vec3 slope, vec3 toe, vec3 gain, vec3 balance, vec4 levels, vec4 tone, vec4 color, float inverted) {
+      kernel vec4 negative(__sample p, vec3 base, vec3 slope, vec3 toe, vec3 gain, vec3 balance, vec4 levels, vec4 tone, vec4 color, vec4 ends, float inverted) {
         vec3 v = max(p.rgb, vec3(0.000001));
         vec3 e = log(max(base,vec3(0.000001))/v) * (color.w / 2.302585093) / slope;
         e += toe * log(max(vec3(1.0) - exp(-e / max(toe, vec3(0.000001))), vec3(0.02)));
@@ -61,13 +68,31 @@ final class ImagePipeline {
         q = (q - vec3(levels.z)) / max(levels.w-levels.z,0.01);
         q += vec3(color.x * 0.12 + color.y * 0.05, -color.y * 0.10, -color.x * 0.12 + color.y * 0.05);
         q = (q-vec3(0.5))*tone.z+vec3(0.5);
+        // Each side's curve only works out its own side, so a far value (the holder, opaque) does not
+        // overflow the other's exp into infinity and come out as nothing.
+        if (ends.x > 0.0) { vec3 t = vec3(ends.x); q = mix(t * exp(min(q, t) / t - vec3(1.0)), q, step(t, q)); }
+        if (ends.y < 1.0) { float r = 1.0 - ends.y; vec3 o = max(q, vec3(ends.y)) - vec3(ends.y); q = mix(q, vec3(ends.y) + r * (vec3(1.0) - exp(-o / r)), step(vec3(ends.y), q)); }
         q = clamp(q,0.0,1.0);
         q = pow(q,vec3(1.0/max(tone.y,0.1)));
         float l = dot(q,vec3(0.2126,0.7152,0.0722));
-        q = mix(vec3(l),q,tone.w);
+        q = mix(vec3(l),q,tone.w * (1.0 + ends.z * (1.0 - l) * (1.0 - l)));
         return vec4(clamp(q,0.0,1.0),1.0);
       }
       """
+  /// Each pixel's colour apart from its lightness (luma), and the two put back together.
+  private static let colourOfLuma = CIColorKernel(source: "kernel vec4 colourOf(__sample p) { float l = dot(p.rgb, vec3(0.2126, 0.7152, 0.0722)); return vec4(p.rgb - vec3(l), p.a); }")
+  private static let lumaWithColour = CIColorKernel(source: "kernel vec4 withColour(__sample p, __sample c) { float l = dot(p.rgb, vec3(0.2126, 0.7152, 0.0722)); return vec4(vec3(l) + c.rgb, p.a); }")
+  /// `image` with its colour smoothed over `radius` pixels and its lightness kept exactly: colour
+  /// noise (the sensor's, and what taking the crosstalk out adds to it) goes, the grain stays. The
+  /// colour has no lightness of its own, so its blur leaves the luma as it was. Scaled with the
+  /// picture, as a smaller one has its noise averaged away already.
+  func colourSmoothed(_ image: CIImage, radius: Double) -> CIImage {
+    guard radius >= 0.3, let split = Self.colourOfLuma, let join = Self.lumaWithColour,
+      let colour = split.apply(extent: image.extent, arguments: [image])
+    else { return image }
+    let smooth = colour.clampedToExtent().applyingGaussianBlur(sigma: radius).cropped(to: image.extent)
+    return join.apply(extent: image.extent, arguments: [image, smooth]) ?? image
+  }
   /// Tone curves as a lookup: each channel reads its own row entry from a `n` × 1 table.
   let curveKernel: CIKernel? = CIKernel(
     source: """
@@ -423,10 +448,16 @@ final class ImagePipeline {
       ci, v(effectiveBase), v(Self.slopes(s, profile).slopes), v(Self.toe(s, profile)), v(a.gain), v(a.balance),
       CIVector(x: a.low, y: a.high, z: s.black, w: s.white),
       CIVector(x: s.exposure, y: s.midtone, z: s.contrast, w: s.saturation),
-      CIVector(x: s.warmth, y: s.tint, z: 0, w: s.inputGamma), s.inputIsNegative ? 1.0 : 0.0,
+      CIVector(x: s.warmth, y: s.tint, z: 0, w: s.inputGamma),
+      s.softEndsOn && s.inputIsNegative
+        ? CIVector(x: Self.softToe, y: Self.softShoulder, z: Self.shadowColour, w: 0) : CIVector(x: 0, y: 2, z: 0, w: 0),
+      s.inputIsNegative ? 1.0 : 0.0,
     ]
     guard var result = kernel.apply(extent: ci.extent, arguments: args) else {
       throw DeskError.message("图像处理失败。")
+    }
+    if let amount = s.colourNoise, amount > 0 {
+      result = colourSmoothed(result, radius: amount * 0.0002 * Double(max(ci.extent.width, ci.extent.height)))
     }
     if let curves = s.curves { result = applyCurves(curves, to: result) }
     result = Self.straightened(result, degrees: s.angle ?? 0)

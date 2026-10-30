@@ -1,3 +1,4 @@
+import CoreImage
 import CoreGraphics
 import Foundation
 
@@ -63,13 +64,20 @@ enum ToneTests {
     // Exposure is a print exposure in density, applied before clipping. The red-tinted band's
     // red channel holds the frame's brightest values, so it is what clips at 0 EV.
     func highlights(_ r: Raster) -> [Double] { (w - 12..<w).map { r.pixel($0, h * 3 / 8).r * 255 } }
-    let even = highlights(matching)
-    var darker = defaults
+    // Cut straight at the ends, as before the soft shoulder.
+    var straight = defaults
+    straight.softEnds = false
+    let even = highlights(try render(straight, portra))
+    var darker = straight
     darker.exposure = -1
     let recovered = highlights(try render(darker, portra))
     try check(even.last! > 254.5 && recovered.last! < 250 && recovered.last! > recovered.first! + 3,
       String(format: "−1 EV recovers clipped highlights with gradation: %.0f…%.0f, was %.0f…%.0f",
         recovered.first!, recovered.last!, even.first!, even.last!))
+    let shouldered = highlights(matching)
+    try check(shouldered.last! < 254 && shouldered.last! > shouldered.first! + 2 && shouldered.first! > even.first! - 12,
+      String(format: "with soft ends the same highlights roll off short of white, graded, at 0 EV: %.0f…%.0f",
+        shouldered.first!, shouldered.last!))
     var brighter = defaults
     brighter.exposure = 1
     let mid = matching.pixel(w / 2, 4).g * 255, lifted = try render(brighter, portra).pixel(w / 2, 4).g * 255
@@ -86,5 +94,38 @@ enum ToneTests {
     positive.exposure = 1
     let stop = pipe.raster(try pipe.preview(grey, settings: positive, profile: generic)).pixel(4, 4).g * 255
     try check(abs(stop - 102 * pow(2, 1 / 2.2)) < 2.5, String(format: "+1 EV on positive input: 102 → %.0f", stop))
+
+    // Colour noise smoothed: a grey with speckles of colour, and of lightness, on it. The colour goes,
+    // the lightness (the grain) stays where it was, to the last level.
+    let side = 160
+    var speckled = [Float](repeating: 1, count: side * side * 4)
+    var seed: UInt32 = 7
+    func noise() -> Float { seed = seed &* 1_664_525 &+ 1_013_904_223; return Float(seed >> 8) / Float(1 << 24) - 0.5 }
+    for i in 0..<(side * side) {
+      let grain = 0.5 + 0.1 * noise(), tint = (r: 0.08 * noise(), b: 0.08 * noise())
+      let g = grain - 0.2126 * tint.r - 0.0722 * tint.b
+      speckled[i * 4] = grain + tint.r - 0.2126 * tint.r - 0.0722 * tint.b
+      speckled[i * 4 + 1] = g
+      speckled[i * 4 + 2] = grain + tint.b - 0.2126 * tint.r - 0.0722 * tint.b
+    }
+    let field = CIImage(
+      bitmapData: speckled.withUnsafeBufferPointer { Data(buffer: $0) }, bytesPerRow: side * 16,
+      size: CGSize(width: side, height: side), format: .RGBAf, colorSpace: nil)
+    func readout(_ image: CIImage) -> [Float] {
+      var px = [Float](repeating: 0, count: side * side * 4)
+      px.withUnsafeMutableBytes { pipe.context.render(image, toBitmap: $0.baseAddress!, rowBytes: side * 16, bounds: image.extent, format: .RGBAf, colorSpace: nil) }
+      return px
+    }
+    let before = readout(field), after = readout(pipe.colourSmoothed(field, radius: 2))
+    func luma(_ p: [Float], _ i: Int) -> Float { 0.2126 * p[i * 4] + 0.7152 * p[i * 4 + 1] + 0.0722 * p[i * 4 + 2] }
+    func spread(_ p: [Float], _ c: Int) -> Float {
+      let v = (0..<(side * side)).map { p[$0 * 4 + c] - luma(p, $0) }
+      let m = v.reduce(0, +) / Float(v.count)
+      return (v.map { ($0 - m) * ($0 - m) }.reduce(0, +) / Float(v.count)).squareRoot()
+    }
+    let lumaKept = (0..<(side * side)).allSatisfy { abs(luma(after, $0) - luma(before, $0)) < 1.0 / 1000 }
+    try check(lumaKept && spread(after, 0) < spread(before, 0) / 3 && spread(after, 2) < spread(before, 2) / 3,
+      String(format: "colour noise smoothed away, the lightness (the grain) kept exactly: red speckle %.3f → %.3f, blue %.3f → %.3f",
+        spread(before, 0), spread(after, 0), spread(before, 2), spread(after, 2)))
   }
 }

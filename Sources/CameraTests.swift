@@ -339,6 +339,11 @@ enum CameraTests {
     try check(unmixing.preferences.removeCrosstalk && unmixing.frames[0].sensorRead == true && unmixing.frames[0].crosstalk == mix
       && unmixing.hasSensorPictures && unmixing.crosstalkRemoved && close(unmixedRead, mix.unmixed(asRead), 1e-3),
       "a picture read from the sensor comes into the roll with the copy light's crosstalk taken out of its linear readings: \(asRead.values) reads \(unmixedRead.values)")
+    var reset = unmixing.frames[0].adjustments
+    reset.saturation = 1.4
+    unmixing.resetAdjustments()
+    try check(unmixing.frames[0].adjustments.colourNoise == 1 && reset.colourNoise == 1 && unmixing.frames[0].adjustments.softEndsOn,
+      "a copy shot comes in with its colour noise smoothed and the ends run out softly, and keeps the smoothing through a reset")
     let picked = RGB(r: 0.4, g: 0.3, b: 0.2)
     unmixing.change("取片基") { $0.base = picked }
     unmixing.removeCrosstalk(false)
