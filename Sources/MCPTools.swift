@@ -59,6 +59,16 @@ enum MCPTools {
     Tool(name: "apply_to_roll", description: "把选中画面的调整同步到本卷所有画面（保留各张的方向和裁切）。", properties: [:]),
     Tool(name: "reset_adjustments", description: "把选中画面的调整恢复默认（保留输入 Gamma、方向和整卷估计）。", properties: [:]),
     Tool(name: "undo", description: "撤销 App 里的上一步编辑，和 ⌘Z 一样。", properties: [:]),
+    Tool(name: "calibration_add_points", description: "预设标定：在选中画面上把这些位置加为中性点（本来就是中性灰或白的东西）。返回每个点高于片基的密度、目前所有点的拟合（各通道斜率、残差）和每个点偏离拟合多少。", properties: [
+      "points": ["type": "array", "minItems": 1, "maxItems": 12, "description": "[[x, y], …]，坐标同 pick_neutral；每个点放在平坦一块的中间",
+        "items": ["type": "array", "items": ["type": "number"], "minItems": 2, "maxItems": 2]],
+    ], required: ["points"]),
+    Tool(name: "calibration_state", description: "预设标定：列出已取的中性点（画面、密度、偏离拟合多少），明暗跨度够不够，和现在的拟合。", properties: [:]),
+    Tool(name: "calibration_remove_point", description: "预设标定：去掉第几个中性点（从 1 数起），比如偏离拟合太多、可能不是中性的那个。", properties: [
+      "index": ["type": "integer", "minimum": 1, "description": "点的序号，见 calibration_state"],
+    ], required: ["index"]),
+    Tool(name: "calibration_clear", description: "预设标定：清除所有已取的中性点。", properties: [:]),
+    Tool(name: "calibration_make_preset", description: "预设标定：用已取的中性点生成预设并用到这一卷（翻拍的卷是「胶片 · 翻拍」，扫描的卷是「胶片 · V850」）。可用 ⌘Z 撤销选用。", properties: [:]),
   ]
   static var definitions: [[String: Any]] {
     tools.map { ["name": $0.name, "description": $0.description, "inputSchema": $0.schema] }
@@ -69,6 +79,13 @@ enum MCPTools {
     - 偏色先查片基（get_state 里的 film_base 和来源）；片基可疑时用 pick_film_base 点未曝光的片间，或 base_fine_ev 微调。再用 pick_neutral 或 warmth / tint。
     - 坐标是单张视图里画面的相对位置，0–1，左上为原点。
     - 每次调整都能在 App 里用 ⌘Z 撤销，也可以调用 undo。转换的工具不会扫描、删除或导出文件。
+    预设标定（calibration_*）定的是这种胶片在这台设备上各通道的反差（斜率），让灰从暗到亮都是灰；它不改白平衡，也不套色卡，胶片的风格保留。用户说「帮这卷做翻拍标定」时：
+    1. 先确认胶片预设对（get_state，必要时 choose_preset），并用 calibration_clear 清掉旧点。
+    2. 用 list_frames、select_frame、preview 看几张，按物体找本来就中性的东西：拍在胶片上的色卡或灰卡的灰块（最好）、白色或灰色的牌子、白墙、灰水泥、柏油路、阴天的云、雪。避开天空、植物、皮肤、木头、刷了颜色的墙、夕阳或灯光下的东西、已经溢出的白和最暗的黑。预览可能整体偏蓝或偏色，按「这是什么东西」判断，不要按颜色判断。
+    3. 明暗要拉开：至少一个亮的（白）、一个中间的、一个暗的（阴影里的灰），共 3–6 个，可以跨画面。每个点放在平坦一块的中间，不要压在边缘或纹理上。
+    4. 用 calibration_add_points 加点。看返回的偏离：某个点偏离 0.03 D 以上，多半不是中性的，用 calibration_remove_point 去掉。跨度不到 0.3 D 时再加更亮或更暗的点。
+    5. 用 calibration_make_preset 生成，然后告诉用户选了哪些地方（哪张、什么东西）、得到的斜率和残差。
+    看预览时图像会发给你所在的 AI 服务；只在用户请求时这样做。
     """ + "\n" + leakInstructions
 
   /// Runs `name` with `arguments` against the app. Called off the main thread by the server; state
@@ -106,6 +123,45 @@ enum MCPTools {
     return CGPoint(x: x, y: y)
   }
   /// The negative's linear reading around a point of the frame as shown, 5 × 5 pixels.
+  /// The neutral points so far, how far apart, the fit they give, and how far each lies off it; when
+  /// they do not fit together, which one left out lets the rest.
+  private static func calibrationReport(_ model: AppModel) -> String {
+    onMain {
+      let points = model.calibrationPoints, profile = model.profile
+      guard !points.isEmpty else { return "还没有中性点。" }
+      let measured = points.allSatisfy { p in model.frames.first { $0.id == p.frame }.map { ($0.adjustments.base ?? $0.adjustments.rollBase) != nil } ?? false }
+      let curve = measured ? profile.dataSheetToe : nil
+      func fit(_ p: [NeutralPoint]) -> FilmCalibration.Fit? { try? FilmCalibration.fit(p, greenSlope: profile.slopes.g, curve: curve) }
+      let found = fit(points)
+      var lines = [String]()
+      for (i, p) in points.enumerated() {
+        let d = p.density, name = model.frames.first { $0.id == p.frame }?.name ?? "?"
+        var line = String(format: "%d. 第 %@ 张 · 高于片基的密度 R %.3f G %.3f B %.3f", i + 1, name, d[0], d[1], d[2])
+        if let f = found {
+          let toe = f.toe ?? .zero
+          let xg = FilmToe.exposure(d[1] / f.slopes.g, width: toe.g)
+          let off = [0, 2].map { c in (FilmToe.exposure(d[c] / f.slopes.values[c], width: toe.values[c]) - xg - f.offsets.values[c]) * f.slopes.values[c] }
+          line += String(format: " · 偏离 R %+.3f B %+.3f D", off[0], off[1])
+        }
+        lines.append(line)
+      }
+      let greens = points.map { $0.density[1] }, span = greens.max()! - greens.min()!
+      lines.append(String(format: "绿色密度跨度 %.2f D（至少 %.1f）", span, FilmCalibration.minimumSpan))
+      if let f = found {
+        lines.append(String(format: "拟合：R %.3f · G %.3f · B %.3f，残差 %.3f D", f.slopes.r, f.slopes.g, f.slopes.b, f.residual)
+          + (f.toe.map { String(format: "，趾部 R %.2f · B %.2f", $0.r, $0.b) } ?? ""))
+        lines.append("可以 calibration_make_preset，会生成「\(profile.name.replacingOccurrences(of: " · 翻拍", with: "").replacingOccurrences(of: " · V850", with: "")) · \(model.copyStandRoll ? "翻拍" : "V850")」。")
+      } else if points.count >= 3, let i = points.indices.first(where: { j in fit(points.enumerated().filter { $0.offset != j }.map(\.element)) != nil }) {
+        lines.append("这些点拟合不到一起；去掉第 \(i + 1) 个以后就可以，它可能不是中性的。")
+      } else if points.count >= 2 {
+        lines.append("还拟合不出来：" + ((try? FilmCalibration.fit(points, greenSlope: profile.slopes.g, curve: curve)).map { _ in "" } ?? fitError(points, profile.slopes.g, curve)))
+      }
+      return lines.joined(separator: "\n")
+    }
+  }
+  private static func fitError(_ points: [NeutralPoint], _ green: Double, _ curve: RGB?) -> String {
+    do { _ = try FilmCalibration.fit(points, greenSlope: green, curve: curve); return "" } catch { return error.localizedDescription }
+  }
   private static func reading(_ raster: Raster, at p: CGPoint, settings: Adjustments) -> RGB {
     let raw = ImageGeometry.raw(p, settings: settings, aspect: Double(raster.width) / Double(max(1, raster.height)))
     let x = Int(raw.x * Double(raster.width - 1)), y = Int(raw.y * Double(raster.height - 1))
@@ -303,6 +359,54 @@ enum MCPTools {
       let reading = "负片线性 RGB \(String(format: "%.4f %.4f %.4f", v.r, v.g, v.b))"
       let said = ["pick_film_base": "已取片基：\(reading)；自动白平衡已关闭。", "pick_highlight": "已取高光（Dmax）：\(reading)；这一点在正片里是白色。"]
       return [["type": "text", "text": said[name] ?? "已按中性点自动白平衡：\(reading)。"]]
+    case "calibration_add_points":
+      guard let list = arguments["points"] as? [[Any]], !list.isEmpty else { throw DeskError.message("需要 points：[[x, y], …]。") }
+      let (frame, profile) = try selected(model)
+      let pts = try list.map { pair -> CGPoint in
+        guard pair.count == 2, let x = (pair[0] as? NSNumber)?.doubleValue, let y = (pair[1] as? NSNumber)?.doubleValue,
+          (0...1).contains(x), (0...1).contains(y)
+        else { throw DeskError.message("每个点要是 0 到 1 之间的 [x, y]。") }
+        return CGPoint(x: x, y: y)
+      }
+      // Float readings: an 8-bit one is too coarse where a linear negative is dense.
+      let source = try model.source(for: frame, maxDimension: 2000)
+      let s = pipe.samples(source, maxDimension: 2000)
+      let fine = frame.adjustments.baseFine ?? .zero
+      let analysed = pipe.analyze(try model.source(for: frame, maxDimension: 600), settings: frame.adjustments, profile: profile).base
+      let base = RGB((0..<3).map { analysed.values[$0] * pow(2, fine.values[$0]) })
+      let added = pts.map { p -> NeutralPoint in
+        let raw = ImageGeometry.raw(p, settings: frame.adjustments, aspect: Double(s.width) / Double(max(1, s.height)))
+        let x = Int(raw.x * Double(s.width - 1)), y = Int(raw.y * Double(s.height - 1))
+        var sum = [0.0, 0.0, 0.0]
+        for dy in -3...3 { for dx in -3...3 { let v = s.pixel(x + dx, y + dy).values; for c in 0..<3 { sum[c] += v[c] } } }
+        return NeutralPoint(frame: frame.id, value: RGB(sum.map { $0 / 49 }), base: base, gamma: frame.adjustments.inputGamma)
+      }
+      onMain { model.calibrationPoints += added }
+      return [["type": "text", "text": "已在第 \(frame.name) 张加了 \(added.count) 个中性点。\n" + calibrationReport(model)]]
+    case "calibration_state":
+      return [["type": "text", "text": calibrationReport(model)]]
+    case "calibration_remove_point":
+      guard let index = (arguments["index"] as? NSNumber)?.intValue else { throw DeskError.message("需要 index。") }
+      try onMain {
+        guard (1...max(1, model.calibrationPoints.count)).contains(index), index <= model.calibrationPoints.count else {
+          throw DeskError.message("没有第 \(index) 个点；现在有 \(model.calibrationPoints.count) 个。")
+        }
+        model.calibrationPoints.remove(at: index - 1)
+      }
+      return [["type": "text", "text": "已去掉第 \(index) 个点。\n" + calibrationReport(model)]]
+    case "calibration_clear":
+      onMain { model.clearCalibration() }
+      return [["type": "text", "text": "已清除所有中性点。"]]
+    case "calibration_make_preset":
+      let result: (error: String?, name: String, status: String) = onMain {
+        model.errorText = nil
+        model.makeScannerPreset()
+        let error = model.errorText
+        model.errorText = nil
+        return (error, model.profile.name, model.status)
+      }
+      if let error = result.error { throw DeskError.message(error) }
+      return [["type": "text", "text": result.status + "。这一卷现在用「\(result.name)」。"]]
     case "auto_film_base":
       _ = try selected(model)
       onMain { model.change("自动片基") { $0.base = nil; $0.basePicked = nil; $0.baseFine = nil } }

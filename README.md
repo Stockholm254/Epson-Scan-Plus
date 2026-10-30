@@ -207,6 +207,15 @@ Epson Scan plus 可以作为 [MCP](https://modelcontextprotocol.io) 服务器，
    - **Claude Code**：点「Claude Code 命令」复制，在终端运行。
 3. 在对话里让助手「看看这张为什么偏色」之类即可。App 没开或没开启 MCP 时，助手会收到提示。
 
+**让助手做翻拍标定**：说「帮这卷做翻拍标定」。
+- **它怎么做**：先看几张预览，按物体挑出本来就中性的东西，比如拍在胶片上的色卡灰块、白牌子、白墙、灰水泥、云。从亮到暗挑 3–6 个，用 `calibration_add_points` 交给 App。
+- **它怎么查**：看每个点偏离拟合多少，把不中性的点去掉。
+- **最后**：生成「胶片 · 翻拍」预设，并告诉你选了哪些地方。
+- **注意**：
+  - 判断靠认出是什么东西，不靠颜色，所以预览整体偏色也不影响。
+  - 取点用浮点读数，密的地方也不会因为 8 位量化而不准。
+  - 看预览时，画面会发给助手所在的 AI 服务处理。
+
 助手启动的是 App 自己（`EpsonScanPlus --mcp`），它通过只有你的账户能访问的本机连接与正在运行的 App 通信，不经过网络。工具列表：`get_state`、`list_frames`、`list_presets`、`select_frame`、`preview`、`sample`、`adjust`、`pick_film_base`、`auto_film_base`、`pick_neutral`、`choose_preset`、`apply_to_roll`、`reset_adjustments`、`undo`。
 
 去漏光页也在同一个 MCP 服务器里。FilmLightLab 原来本机 HTTP 接口能做的，这里都能做，对照表见 [去漏光](doc/light-leak.md#通过-mcp)：

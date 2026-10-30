@@ -88,6 +88,21 @@ enum MCPTests {
     try check(!call("auto_film_base").isError && model.settings.base == nil, "auto_film_base goes back to the measured base")
     try check(!call("choose_preset", ["name": "portra 400"]).isError && model.profile.name.contains("400"), "choose_preset finds a preset by part of its name")
     try check(call("select_frame", ["name": "99"]).isError && call("pick_neutral", ["x": 2, "y": 0]).isError, "a frame that is not there, or a point off the frame, says so")
+    // A preset calibrated by an assistant: points on the frame's steps of grey, light to dark.
+    func text(_ r: (content: [[String: Any]], isError: Bool)) -> String { r.content.first?["text"] as? String ?? "" }
+    _ = call("calibration_clear")
+    let added = call("calibration_add_points", ["points": [[0.143, 0.5], [0.429, 0.5], [0.857, 0.5]]])
+    let report = text(added)
+    try check(!added.isError && model.calibrationPoints.count == 3 && report.contains("偏离") && report.contains("拟合：")
+      && report.contains("calibration_make_preset"),
+      "an assistant adds neutral points over MCP and reads back their densities, the fit and how far each lies off it")
+    try check(!call("calibration_remove_point", ["index": 2]).isError && model.calibrationPoints.count == 2
+      && call("calibration_remove_point", ["index": 9]).isError && text(call("calibration_state")).contains("跨度"),
+      "and takes a point out again; one that is not there says so")
+    let made = call("calibration_make_preset")
+    try check(!made.isError && model.profile.offsets != nil && model.profile.name.hasSuffix("· V850") && model.calibrationPoints.isEmpty,
+      "and makes the preset from them, used on the roll: \(text(made))")
+    _ = call("undo")
     let preview = call("preview", ["max_size": 400])
     let jpeg = (preview.content.first?["data"] as? String).flatMap { Data(base64Encoded: $0) }
     let image = jpeg.flatMap { NSBitmapImageRep(data: $0) }
