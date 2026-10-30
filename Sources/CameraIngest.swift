@@ -50,6 +50,7 @@ extension AppModel {
     rollNotes = ""
     frames = []
     thumbnails = [:]
+    tablePrint = nil
     selectedID = nil
     clearEdits()
     overview = nil

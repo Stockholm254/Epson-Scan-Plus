@@ -67,11 +67,13 @@ extension AppModel {
       refresh()
     }
   }
-  /// The view switch: into the single view by opening the selected frame, back at once.
+  /// The view switch: into the single view by opening the selected frame; back to the light
+  /// table, the view drawing back from the frame.
   func showSingle(_ on: Bool) {
     if on, !singleView, let id = selectedID {
       open(id)
     } else if on != singleView {
+      if !on { viewWillChange?(.close) }
       singleView = on
       refresh()
     }

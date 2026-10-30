@@ -62,8 +62,13 @@ enum ContactPageTests {
     let window = NSWindow(contentRect: NSRect(x: -9000, y: -9000, width: 900, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
     window.contentView = canvas
     canvas.model = model
+    // As the App's canvas does when it is made.
     model.frameOpener = { [weak canvas] id in canvas?.open(id) }
-    defer { model.frameOpener = nil }
+    model.viewWillChange = { [weak canvas] change in canvas?.viewWillChange(change) }
+    defer {
+      model.frameOpener = nil
+      model.viewWillChange = nil
+    }
     canvas.display()
     model.preferences.showLoupe = true
     canvas.updateLoupe()
@@ -74,25 +79,80 @@ enum ContactPageTests {
     model.preferences.showLoupe = false
     canvas.updateLoupe()
     let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    try check(still || canvas.rippleCount == 36 && canvas.rippleShare(35) < 1 || canvas.rippleStart == nil && canvas.drawnFrameIDs.count == 40,
+      "a new roll's frames come in on the table one after another")
+    for _ in 0..<20 where canvas.rippleRunning { settle(0.1) }
     model.showSingle(true)
     let growing = canvas.opening, start = (growing?.picture.animation(forKey: "position") as? CABasicAnimation)?.fromValue as? NSValue
     let middle = CGPoint(x: canvas.openRect.midX, y: canvas.openRect.midY)
     try check(model.singleView && model.selectedID == model.frames[3].id && growing != nil
       && growing.map { abs($0.picture.frame.midX - middle.x) < 1 && abs($0.picture.frame.midY - middle.y) < 1 && $0.picture.frame.width > box.width * 3 } == true
       && (still || start.map { box.contains($0.pointValue) } == true)
-      && (still || growing.map { $0.cover.animation(forKey: "bounds.size") != nil && abs($0.cover.frame.width / canvas.bounds.width - $0.picture.frame.width / box.width) < 0.01 } == true),
+      && (still || growing.map { $0.cover.animation(forKey: "transform.scale") != nil && abs($0.cover.frame.width / canvas.bounds.width - $0.picture.frame.width / box.width) < 0.01 } == true),
       "the view switch closes in on the frame selected: the table grows about it as much as it grows, to the middle of the canvas")
     for _ in 0..<50 where model.rendering { settle(0.1) }
     settle(0.8)
     canvas.settleOpening()
     try check(canvas.opening == nil, "once the frame's own picture is here it takes the place of what grew")
+    // Turned in single view: the picture as it was turns into the new one.
+    let unturned = model.frames[3].adjustments.rotation
+    model.turn(clockwise: true)
+    let turning = canvas.change
+    for _ in 0..<50 where model.rendering { settle(0.1) }
+    canvas.settleOpening()
+    let spun = canvas.change?.cover.animation(forKey: "transform.rotation.z") != nil
+    settle(0.7)
+    canvas.settleOpening()
+    try check(turning?.hold == true && (still || spun) && canvas.change == nil && model.frames[3].adjustments.rotation == (unturned + 1) % 4,
+      "a frame turned in single view turns over into its new picture, the canvas drawing none under it meanwhile")
+    model.turn(clockwise: false)
+    for _ in 0..<50 where model.rendering { settle(0.1) }
+    settle(0.7)
+    canvas.settleOpening()
+    // Into the crop and out of it.
+    model.useTool(.crop)
+    let entering = canvas.change
+    for _ in 0..<50 where model.rendering { settle(0.1) }
+    canvas.settleOpening()
+    let settling = canvas.change?.started == true
+    settle(0.7)
+    canvas.settleOpening()
+    model.useTool(.select)
+    let leaving = canvas.change
+    for _ in 0..<50 where model.rendering { settle(0.1) }
+    canvas.settleOpening()
+    settle(0.7)
+    canvas.settleOpening()
+    var enteringKind = false, leavingKind = false
+    if case .edit(true, _)? = entering?.kind { enteringKind = true }
+    if case .edit(false, _)? = leaving?.kind { leavingKind = true }
+    try check(enteringKind && settling && leavingKind && canvas.change == nil && model.tool == .select,
+      "into a frame's crop it settles among its surroundings, and out of it the crop grows to fill the view")
     func press(_ key: UInt16) {
       canvas.keyDown(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
         windowNumber: window.windowNumber, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: key)!)
     }
+    canvas.display()
     press(124)
     let inSingle = model.selectedID == model.frames[4].id
-    model.singleView = false
+    let before = model.displayed
+    for _ in 0..<50 where model.rendering || model.displayed === before { settle(0.1) }
+    canvas.display()
+    // A layer keeps its transition under kCATransition, whatever key it was added with.
+    let slid = (canvas.layer?.animation(forKey: kCATransition) as? CATransition).map { still ? $0.type == .fade : $0.type == .push && $0.subtype == .fromRight } == true
+    try check(slid, "in single view the next frame slides in from the side it lies on")
+    // Back to the table: the view draws back from the frame.
+    model.showSingle(false)
+    let closing = canvas.change
+    for _ in 0..<50 where model.rendering { settle(0.1) }
+    canvas.settleOpening()
+    let drawingBack = canvas.change?.started == true && (still || canvas.change?.layers.first?.animation(forKey: "transform.scale") != nil)
+    settle(0.8)
+    canvas.settleOpening()
+    var closeKind = false
+    if case .close? = closing?.kind { closeKind = true }
+    try check(closeKind && drawingBack && canvas.change == nil && !model.singleView,
+      "back on the light table the view draws back from the frame to the whole page")
     model.select(model.frames[35].id)
     press(124)
     let across = model.selectedID == model.frames[36].id && model.contactPage == 1 && !model.singleView

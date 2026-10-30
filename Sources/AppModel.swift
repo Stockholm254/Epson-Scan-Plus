@@ -16,7 +16,21 @@ final class AppModel: ObservableObject {
   @Published var contactPage = 0
   /// The canvas, to open a frame from the light table: the view closing in on it.
   var frameOpener: ((UUID) -> Void)?
+  /// A change of what the canvas shows, which it animates.
+  enum ViewChange: Equatable {
+    /// From the single frame back to the light table.
+    case close
+    /// Into a frame's crop, its surroundings round it, or out of it.
+    case edit(entering: Bool)
+    /// The frame, or the table, turned a quarter (clockwise positive) or mirrored.
+    case orient(turns: Int, mirror: Bool)
+  }
+  /// The canvas, told before the model changes what it shows, so it can take its picture first.
+  var viewWillChange: ((ViewChange) -> Void)?
   @Published var overview: CGImage?
+  /// The light table's last picture, a page of it: shown at once on coming back to the table,
+  /// while a new one is made.
+  var tablePrint: (page: Int, positive: Bool, image: CGImage)?
   @Published var displayed: CGImage?
   /// The frames' positives, as the filmstrip shows them; the library keeps a small copy of each.
   @Published var thumbnails = [UUID: CGImage]() {
@@ -329,6 +343,8 @@ final class AppModel: ObservableObject {
     focusCanvas()
   }
   func useTool(_ value: CanvasTool) {
+    let editing = editingSingle, willEdit = singleView && (value == .crop || value == .base)
+    if editing != willEdit { viewWillChange?(.edit(entering: willEdit)) }
     if value != tool { editRegionLock = nil }
     if value != .crop { levelling = false }
     tool = value
@@ -526,6 +542,7 @@ final class AppModel: ObservableObject {
       sessionURL = nil
       frames = []
       thumbnails = [:]
+      tablePrint = nil
       selectedID = nil
       rollName = ""
       rollNotes = ""
@@ -928,19 +945,27 @@ final class AppModel: ObservableObject {
   }
   /// Each frame turns from its own orientation, so portrait frames stay portrait.
   func turn(clockwise: Bool) {
+    guard selectedIndex != nil else { return }
+    viewWillChange?(.orient(turns: clockwise ? 1 : -1, mirror: false))
     orient(clockwise ? "顺时针旋转 90°" : "逆时针旋转 90°") { $0.turn(clockwise: clockwise) }
   }
   /// The mirror corrects how the whole strip lay in the holder, so syncing sets one value.
   func toggleMirror() {
+    guard selectedIndex != nil else { return }
     let mirrored = settings.flipHorizontal != true
+    viewWillChange?(.orient(turns: 0, mirror: true))
     orient(mirrored ? "水平镜像" : "取消水平镜像") { $0.flipHorizontal = mirrored }
   }
   /// The contact view's keys: always the whole roll, whether or not single view syncs.
   func turnRoll(clockwise: Bool) {
+    guard !frames.isEmpty else { return }
+    viewWillChange?(.orient(turns: clockwise ? 1 : -1, mirror: false))
     orient(clockwise ? "顺时针旋转 90°" : "逆时针旋转 90°", roll: true) { $0.turn(clockwise: clockwise) }
   }
   func mirrorRoll() {
+    guard !frames.isEmpty else { return }
     let mirrored = !contactMirrored
+    viewWillChange?(.orient(turns: 0, mirror: true))
     orient(mirrored ? "水平镜像" : "取消水平镜像", roll: true) { $0.flipHorizontal = mirrored }
   }
   private func orient(_ action: String, roll: Bool = false, _ mutation: (inout Adjustments) -> Void) {
@@ -1403,6 +1428,13 @@ final class AppModel: ObservableObject {
       // positives from the film strip's, negatives read small from their files.
       if onSheetPage {
         let page = sheetPageFrames, positive = contactPositive, positives = thumbnails, pages = contactPages.count
+        let index = contactPage
+        // Back from the single frame, the page as it was until the new one is laid out.
+        if let kept = tablePrint, kept.page == index, kept.positive == positive,
+          displayed?.width != kept.image.width || displayed?.height != kept.image.height
+        {
+          displayed = kept.image
+        }
         rendering = true
         let work = DispatchWorkItem { [weak self] in
           guard let self else { return }
@@ -1413,7 +1445,10 @@ final class AppModel: ObservableObject {
           let sheet = Self.composeSheet(tiles, pages: pages)
           DispatchQueue.main.async {
             guard self.revision == token else { return }
-            if let sheet { self.displayed = sheet }
+            if let sheet {
+              self.displayed = sheet
+              self.tablePrint = (index, positive, sheet)
+            }
             self.rendering = false
           }
         }
@@ -1428,8 +1463,12 @@ final class AppModel: ObservableObject {
         rendering = false
         return
       }
-      // Keep a previous print while re-rendering, so dragging a frame box does not flicker.
-      if displayed?.width != overview.width || displayed?.height != overview.height { displayed = overview }
+      // Keep a previous print while re-rendering, so dragging a frame box does not flicker; back
+      // from the single frame, the last print made.
+      if displayed?.width != overview.width || displayed?.height != overview.height {
+        let index = contactPage
+        displayed = tablePrint.flatMap { $0.page == index && $0.positive && $0.image.width == overview.width && $0.image.height == overview.height ? $0.image : nil } ?? overview
+      }
       let p = profile
       rendering = true
       let work = DispatchWorkItem { [weak self] in
@@ -1438,6 +1477,7 @@ final class AppModel: ObservableObject {
         DispatchQueue.main.async {
           guard let self, self.revision == token else { return }
           self.displayed = print ?? overview
+          if let print { self.tablePrint = (self.contactPage, true, print) }
           self.rendering = false
         }
       }
@@ -1924,6 +1964,7 @@ final class AppModel: ObservableObject {
       clearEdits()
       frames = []
       thumbnails = [:]
+      tablePrint = nil
       for (idx, url) in urls.enumerated() {
         let dest = src.appendingPathComponent("\(idx+1)_" + url.lastPathComponent)
         try FileManager.default.copyItem(at: url, to: dest)

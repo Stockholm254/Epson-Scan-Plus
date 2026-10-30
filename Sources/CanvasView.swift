@@ -9,6 +9,7 @@ struct ScanCanvas: NSViewRepresentable {
     let v = FilmCanvasView()
     v.model = model
     model.frameOpener = { [weak v] id in v?.open(id) }
+    model.viewWillChange = { [weak v] change in v?.viewWillChange(change) }
     return v
   }
   func updateNSView(_ view: FilmCanvasView, context: Context) {
@@ -285,7 +286,12 @@ final class FilmCanvasView: NSView {
       drawnPicture = picture
       drawnPage = model.contactPage
     }
-    guard drawnPicture != nil, model.contactPage != drawnPage, !model.singleView, let layer else { return }
+    // A picture taken of the canvas for the loupe or a change of view records, but plays nothing.
+    guard drawnPicture != nil, model.contactPage != drawnPage, !model.singleView, !snapshotting, let layer else {
+      transitionPicture(picture, play: drawnPicture != nil && !snapshotting)
+      return
+    }
+    transitionPicture(picture, play: false)
     let slide = CATransition()
     if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
       slide.type = .fade
@@ -323,6 +329,8 @@ final class FilmCanvasView: NSView {
     // A frame opened from the table grows over the single view, which shows its own picture only
     // once it has grown and the picture is here: not under the table as it fades.
     if let opening, model.singleView, !opening.grown || model.displayed === opening.over { return }
+    // Turning, the old picture turns in the new one's place.
+    if change?.hold == true { return }
     let rect = imageRect
     let sheet = model.onSheetPage
     if !sheet {
@@ -417,13 +425,17 @@ final class FilmCanvasView: NSView {
       }
     }
     if !model.singleView && model.scanner.previewSoFar == nil {
-      for f in model.contactFrames {
-        let r = screen(model.contactRect(f).cg)
+      // A new roll's frames come in one after another, each box settling onto its frame.
+      noteFrames()
+      for (n, f) in model.contactFrames.enumerated() {
+        let appear = rippleShare(n)
+        let r = screen(model.contactRect(f).cg).insetBy(dx: -(1 - appear) * 10, dy: -(1 - appear) * 10)
         let selected = f.id == model.selectedID
-        let c =
+        let solid =
           selected
           ? NSColor(calibratedRed: 0.95, green: 0.71, blue: 0.38, alpha: 1)
           : NSColor.white.withAlphaComponent(f.enabled ? 0.85 : 0.3)
+        let c = solid.withAlphaComponent(solid.alphaComponent * appear)
         c.setStroke()
         let path = NSBezierPath(rect: r)
         path.lineWidth = selected ? 2 : f.enabled ? 1.5 : 1
@@ -451,7 +463,7 @@ final class FilmCanvasView: NSView {
           at: CGPoint(x: label.minX + 6, y: label.minY + 2),
           withAttributes: [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
-            .foregroundColor: NSColor.black,
+            .foregroundColor: NSColor.black.withAlphaComponent(appear),
           ])
       }
       if let draft {
@@ -796,11 +808,22 @@ final class FilmCanvasView: NSView {
   /// A frame opened from the light table on its way to the middle: the table's picture, the view
   /// closing in on the frame, its own picture over it, until the frame's own is drawn.
   private(set) var opening: (cover: CALayer, picture: CALayer, over: CGImage?, grown: Bool)?
-  /// Finishes an opening once the frame's own picture is here, or the table is back.
+  /// Finishes an opening once the frame's own picture is here, or the table is back; plays any
+  /// other change of view once its new picture is.
   func settleOpening() {
+    settleChange()
     guard let model, let opening else { return }
     if !model.singleView || (opening.grown && model.displayed !== opening.over) { finishOpening() }
   }
+  /// A change of view other than an opening, in flight.
+  var change: ViewChangeInFlight?
+  /// The single frame or the table's picture as last drawn: its frame, its look and its size.
+  var drawnSingle: (id: UUID?, look: [Int], size: CGSize)?
+  /// The frames on the table as last drawn, and a new roll's coming in.
+  var drawnFrameIDs: Set<UUID> = []
+  var rippleStart: Date?
+  var rippleCount = 0
+  var rippleTimer: Timer?
   /// Opens a frame for the model: from where it lies on the table, or at once if it lies on none.
   func open(_ id: UUID) {
     guard let model else { return }
@@ -817,6 +840,12 @@ final class FilmCanvasView: NSView {
     guard let model, !model.singleView else { return }
     model.select(f.id)
     guard !model.previewShowing else { return }
+    // A new roll's frames come in on the table first, then the view closes in.
+    if noteFrames() {
+      DispatchQueue.main.asyncAfter(deadline: .now() + rippleDuration + 0.1) { [weak self] in self?.open(f.id) }
+      return
+    }
+    finishChange()
     defer {
       model.singleView = true
       model.refresh()
@@ -833,19 +862,13 @@ final class FilmCanvasView: NSView {
       let k = CGFloat(table.width) / bounds.width
       image = table.cropping(to: CGRect(x: cell.minX * k, y: cell.minY * k, width: cell.width * k, height: cell.height * k).integral)
     }
-    let area = CGRect(x: reserved.left + Self.inset, y: reserved.top + Self.inset,
-      width: max(1, open.width - 2 * Self.inset), height: max(1, open.height - 2 * Self.inset))
-    let to = Self.fitted(from.size, in: area)
-    // The table as the view closes in: scaled about the frame as much as the frame grows.
-    let k = to.width / max(1, from.width)
-    let tableTo = CGRect(x: to.midX + (bounds.minX - from.midX) * k, y: to.midY + (bounds.minY - from.midY) * k,
-      width: bounds.width * k, height: bounds.height * k)
+    let to = Self.fitted(from.size, in: fitArea)
     finishOpening()
     let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     let cover = CALayer(), picture = CALayer()
-    cover.frame = still ? bounds : tableTo
+    cover.frame = bounds
     cover.contents = table
     // The frame's own picture, sharper than the table's as it grows.
     picture.contents = image
@@ -884,19 +907,10 @@ final class FilmCanvasView: NSView {
       picture.add(appear, forKey: "appear")
     } else {
       // As the system springs a window or a photo open: half a second, a slight bounce. The
-      // table and the frame on the same spring, so the frame stays where it lies on the table.
-      for (moving, start) in [(cover, bounds), (picture, from)] {
-        let move = CASpringAnimation(perceptualDuration: 0.5, bounce: 0.15)
-        move.keyPath = "position"
-        move.fromValue = NSValue(point: CGPoint(x: start.midX, y: start.midY))
-        let grow = CASpringAnimation(perceptualDuration: 0.5, bounce: 0.15)
-        grow.keyPath = "bounds.size"
-        grow.fromValue = NSValue(size: start.size)
-        for a in [move, grow] {
-          a.duration = a.settlingDuration
-          moving.add(a, forKey: a.keyPath)
-        }
-      }
+      // table, scaled about the frame as much as the frame grows, and the frame on the same
+      // spring, so the frame stays where it lies on the table.
+      Self.springZoom(cover, from: (1, CGPoint(x: bounds.midX, y: bounds.midY)), to: zoomed(showing: from, at: to))
+      Self.spring(picture, from: from)
     }
     CATransaction.commit()
     // Should the frame's picture never come, the single view shows what it has.
@@ -918,6 +932,11 @@ final class FilmCanvasView: NSView {
     done.picture.opacity = 0
     done.cover.opacity = 0
     CATransaction.commit()
+  }
+  /// Where the single view fits a picture: the canvas between its bars, less a margin.
+  var fitArea: CGRect {
+    let inset = Self.inset, room = open
+    return CGRect(x: reserved.left + inset, y: reserved.top + inset, width: max(1, room.width - 2 * inset), height: max(1, room.height - 2 * inset))
   }
   /// A picture of `size` as large as fits in `box`, in its middle.
   static func fitted(_ size: CGSize, in box: CGRect) -> CGRect {
@@ -975,7 +994,15 @@ final class FilmCanvasView: NSView {
       snapshotting = true
       loupe.drawingSuppressed = true
       scanHead.drawingSuppressed = true
+      // Not what a change of view lays over the canvas meanwhile: the canvas as it draws itself.
+      let over = [opening?.cover, opening?.picture, change?.cover].compactMap { $0 } + (change?.layers ?? [])
+      CATransaction.begin()
+      CATransaction.setDisableActions(true)
+      let shown = over.filter { !$0.isHidden }
+      for l in shown { l.isHidden = true }
       cacheDisplay(in: bounds, to: rep)
+      for l in shown { l.isHidden = false }
+      CATransaction.commit()
       loupe.drawingSuppressed = false
       scanHead.drawingSuppressed = false
       snapshotting = false
