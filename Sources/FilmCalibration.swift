@@ -153,16 +153,21 @@ enum FilmCalibration {
   static let maximumResidual = 0.08
 
   /// A preset for this scanner and film, named after the preset it started from.
-  static func profile(from fit: Fit, basedOn base: FilmProfile, points: Int, scanner: String) -> FilmProfile {
+  /// The preset made from a fit: for the V850, or with `copyStand` for the camera and its copy light,
+  /// `scanner` then naming the camera.
+  static func profile(from fit: Fit, basedOn base: FilmProfile, points: Int, scanner: String, copyStand: Bool = false) -> FilmProfile {
     let date = Date().formatted(.iso8601.year().month().day())
     let film = base.id == "generic" ? "本机标定胶片" : base.name
+    let applies = copyStand
+      ? "只适用于这台相机、这组翻拍灯和同一种胶片；灯的亮度配比怎么调都不影响。标定时去串色是开着的，用时也开着"
+      : "只适用于这台扫描仪和同一种胶片"
     return FilmProfile(
-      id: "\(base.id == "generic" ? "film" : base.id)-v850-\(UUID().uuidString.prefix(6).lowercased())",
-      name: "\(film) · V850", aliases: [], iso: base.iso, process: base.process, sourceURL: "",
-      publication: "本机标定 · \(scanner) · \(date) · \(points) 个中性点", slopes: fit.slopes,
+      id: "\(base.id == "generic" ? "film" : base.id)-\(copyStand ? "copy" : "v850")-\(UUID().uuidString.prefix(6).lowercased())",
+      name: "\(film) · \(copyStand ? "翻拍" : "V850")", aliases: [], iso: base.iso, process: base.process, sourceURL: "",
+      publication: "\(copyStand ? "翻拍标定" : "本机标定") · \(scanner) · \(date) · \(points) 个中性点", slopes: fit.slopes,
       notes: String(
-        format: "由 %d 个中性点反解红、蓝通道的斜率与中性偏移，绿色斜率沿用「%@」。拟合残差 %.3f D，绿色密度跨度 %.2f D。只适用于这台扫描仪和同一种胶片；自动白平衡关闭时按标定的中性偏移配平。",
-        points, base.name, fit.residual, fit.span)
+        format: "由 %d 个中性点反解红、蓝通道的斜率与中性偏移，绿色斜率沿用「%@」。拟合残差 %.3f D，绿色密度跨度 %.2f D。%@；自动白平衡关闭时按标定的中性偏移配平。",
+        points, base.name, fit.residual, fit.span, applies)
         + (fit.toe.map {
           String(format: "中性点深入暗部，同时拟合了趾部宽度：R %.2f · G %.2f（数据表）· B %.2f，转换时据此还原暗部。", $0.r, $0.g, $0.b)
         } ?? ""),

@@ -84,6 +84,22 @@ enum CalibrationTests {
     model.deleteCustomProfile(model.profile.id)
     try check(Preferences(defaults: defaults).customProfiles.isEmpty && !model.profiles.contains { $0.offsets != nil },
       "deleting a preset removes it from the list and from settings")
+    // On the copy stand the same points make a preset for the camera and its light, found as such
+    // for the film's copy rolls and not taken by a scanned roll.
+    let copySuite = "EpsonScanPlus.tests.\(UUID().uuidString)"
+    let copyDefaults = UserDefaults(suiteName: copySuite)!
+    defer { copyDefaults.removePersistentDomain(forName: copySuite) }
+    let copying = AppModel(libraryURL: folder.appendingPathComponent("calibration-copy"), preferences: Preferences(defaults: copyDefaults))
+    copying.rollSource = .camera
+    copying.chooseProfile(portra)
+    copying.calibrationPoints = [point(0.4), point(0.9), point(1.4)]
+    copying.makeScannerPreset()
+    let copyPreset = copying.profile
+    let scanned = AppModel(libraryURL: folder.appendingPathComponent("calibration-scanned"), preferences: Preferences(defaults: copyDefaults))
+    try check(copying.errorText == nil && copyPreset.name == "Kodak Portra 160 · 翻拍" && copyPreset.id.hasPrefix("portra160-copy-")
+      && copyPreset.publication.hasPrefix("翻拍标定 · A7R IV") && copyPreset.dataSheetToe != nil && copyPreset.offsets != nil
+      && copying.calibrated(for: portra) == copyPreset && scanned.calibrated(for: portra) == nil,
+      "on a copy roll the neutral points make a copy-stand preset, which the film's copy rolls take and a scanned roll does not")
     let old = try JSONDecoder().decode(FilmProfile.self, from: JSONEncoder().encode(portra))
     try check(old == portra && old.offsets == nil, "presets saved without offsets still load")
   }

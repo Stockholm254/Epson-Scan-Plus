@@ -1131,10 +1131,14 @@ final class AppModel: ObservableObject {
     updateThumbnails()
     saveProject()
   }
-  /// The newest preset calibrated on this scanner from `film`, if any.
+  /// The newest preset calibrated from `film` for what the roll was read with: this scanner, or the
+  /// camera on the copy stand.
   func calibrated(for film: FilmProfile) -> FilmProfile? {
-    film.offsets != nil ? nil : profiles.last { $0.offsets != nil && $0.name == film.name + " · V850" }
+    let made = film.name + (copyStandRoll ? " · 翻拍" : " · V850")
+    return film.offsets != nil ? nil : profiles.last { $0.offsets != nil && $0.name == made }
   }
+  /// The roll was copied on the camera stand, not scanned: its neutral points make a copy-stand preset.
+  var copyStandRoll: Bool { rollSource == .camera || frames.contains { $0.sensorRead == true } }
   func chooseProfile(_ p: FilmProfile) {
     recordEdit("胶片预设")
     filmName = p.name
@@ -1218,7 +1222,10 @@ final class AppModel: ObservableObject {
         frames.first { $0.id == point.frame }.map { ($0.adjustments.base ?? $0.adjustments.rollBase) != nil } ?? false
       }
       let fit = try FilmCalibration.fit(calibrationPoints, greenSlope: profile.slopes.g, curve: measured ? profile.dataSheetToe : nil)
-      let made = FilmCalibration.profile(from: fit, basedOn: profile, points: calibrationPoints.count, scanner: scanner.name)
+      let copy = copyStandRoll
+      let made = FilmCalibration.profile(
+        from: fit, basedOn: profile, points: calibrationPoints.count,
+        scanner: copy ? (camera.model.isEmpty ? "A7R IV" : camera.model) : scanner.name, copyStand: copy)
       try made.validate()
       keepProfile(made)
       calibrationPoints = []

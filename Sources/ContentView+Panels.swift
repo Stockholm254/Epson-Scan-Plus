@@ -254,11 +254,19 @@ extension ContentView {
     if m.profile.offsets != nil {
       let own = m.profile.slopes
       guard let s = m.settings.rollSlopes else { return "本机标定预设 · \(m.profile.publication)" }
+      // On the copy stand the roll's estimate follows what the pictures hold (much foliage puts its
+      // blue low), so it is no sign the roll differs.
+      if m.copyStandRoll {
+        return String(format: "本机标定预设 · %@。对照：本卷按明暗过渡估计为 R %.3f · B %.3f（预设 R %.3f · B %.3f）；翻拍卷的这个估计会随画面内容偏，比如树叶多时蓝偏低，以标定为准。",
+          m.profile.publication, s.r, s.b, own.r, own.b)
+      }
       return String(format: "本机标定预设 · %@。对照：本卷按明暗过渡估计为 R %.3f · B %.3f（预设 R %.3f · B %.3f），相差很大时，这卷可能与标定时的胶片或冲洗不同。",
         m.profile.publication, s.r, s.b, own.r, own.b)
     }
     if let s = m.settings.rollSlopes {
-      return String(format: "这种胶片还没有本机标定，按整卷画面里的明暗过渡自动估计通道斜率：R %.3f · G %.3f · B %.3f。画面越多越准；拍一张灰卡可以标定。", s.r, s.g, s.b)
+      return m.copyStandRoll
+        ? String(format: "这种胶片还没有翻拍标定，按整卷画面里的明暗过渡自动估计通道斜率：R %.3f · G %.3f · B %.3f。这个估计会随画面内容偏（树叶多时蓝偏低，亮的灰越亮越蓝）；在白牌子、灰水泥这类本来中性的东西上取几个中性点，生成翻拍预设就准了。", s.r, s.g, s.b)
+        : String(format: "这种胶片还没有本机标定，按整卷画面里的明暗过渡自动估计通道斜率：R %.3f · G %.3f · B %.3f。画面越多越准；拍一张灰卡可以标定。", s.r, s.g, s.b)
     }
     if m.profile.setsChannelContrast {
       return m.hasSinglePictures && !m.poolPictures
@@ -267,21 +275,24 @@ extension ContentView {
     }
     return "通用：每张按自己的画面拉伸各通道。"
   }
-  /// Calibrating a preset for this scanner from neutral points picked in single view.
+  /// Calibrating a preset for this scanner, or for the camera on the copy stand, from neutral points
+  /// picked in single view.
   var calibrationPanel: some View {
-    let picking = m.tool == .calibrate
+    let picking = m.tool == .calibrate, copy = m.copyStandRoll
     let greens = m.calibrationPoints.map { $0.density[1] }
     let span = (greens.max() ?? 0) - (greens.min() ?? 0)
     let ready = m.calibrationPoints.count >= 2 && span >= FilmCalibration.minimumSpan
     let step =
       ready ? "③ 可以生成预设；再取几个点能检查一致性。"
-      : m.calibrationPoints.isEmpty ? (picking ? "② 在单张画面上点选中性灰。" : "① 点「取中性点」开始。")
+      : m.calibrationPoints.isEmpty ? (picking ? (copy ? "② 在单张画面上点选本来是中性的东西，比如白牌子、灰水泥。" : "② 在单张画面上点选中性灰。") : "① 点「取中性点」开始。")
       : "② 继续点选更亮或更暗的中性灰，跨度需 0.3 D 以上。"
     return VStack(alignment: .leading, spacing: 8) {
       HStack {
-        Text("本机预设标定").font(.system(size: 11, weight: .medium))
+        Text(copy ? "翻拍预设标定" : "本机预设标定").font(.system(size: 11, weight: .medium))
         Spacer()
-        InfoButton(text: "先在「预设」中选好胶片，再点选同一种胶片上明暗不同的中性灰（灰卡、白墙、灰色水泥）：至少 2 个，建议 3 个以上；可以跨画面、跨卷取点。\n\n取 4 个以上、其中有很暗的（如灰卡欠曝 2–3 档，绿色密度低于 0.25 D）时，还会标定红、蓝通道的暗部趾部，转换时据此还原暗部的层次和颜色。")
+        InfoButton(text: copy
+          ? "先在「预设」中选好胶片，再在翻拍的画面上点选明暗不同、本来是中性的东西：白色的牌子或墙、灰色水泥、阴影里的灰：至少 2 个，跨度 0.3 D 以上，建议 3 个以上；可以跨画面、跨卷取点。\n\n标定的是每个通道的反差（斜率），修好「越亮越偏蓝」这类随亮度变的偏色。整体的冷暖照旧由自动白平衡或你自己定，胶片本身的色彩风格保留：不套相机色彩矩阵，也不用色卡。\n\n预设属于这台相机、这组翻拍灯和这种胶片，以后同一种胶片的翻拍卷自动用它。灯的亮度配比怎么调都不影响：片基会除掉，去串色以后配比也不起作用。标定和使用时都保持去串色打开。\n\n取 4 个以上、其中有很暗的时，还会标定红、蓝通道的暗部趾部。"
+          : "先在「预设」中选好胶片，再点选同一种胶片上明暗不同的中性灰（灰卡、白墙、灰色水泥）：至少 2 个，建议 3 个以上；可以跨画面、跨卷取点。\n\n取 4 个以上、其中有很暗的（如灰卡欠曝 2–3 档，绿色密度低于 0.25 D）时，还会标定红、蓝通道的暗部趾部，转换时据此还原暗部的层次和颜色。")
       }
       HStack(spacing: 8) {
         Button {
@@ -293,7 +304,7 @@ extension ContentView {
       }
       Text(step).font(.system(size: 11)).foregroundStyle(ready ? Hardware.amber : Color.secondary)
       HStack(spacing: 8) {
-        Button("生成 V850 预设") { m.makeScannerPreset() }.disabled(!ready)
+        Button(copy ? "生成翻拍预设" : "生成 V850 预设") { m.makeScannerPreset() }.disabled(!ready)
         Button("清除") { m.clearCalibration() }.disabled(m.calibrationPoints.isEmpty)
       }
     }

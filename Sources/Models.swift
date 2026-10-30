@@ -251,9 +251,10 @@ struct FilmProfile: Codable, Identifiable, Equatable {
     "portra160": RGB(r: 0.160, g: 0.110, b: 0.150), "portra400": RGB(r: 0.165, g: 0.115, b: 0.145),
     "ektar100": RGB(r: 0.130, g: 0.100, b: 0.075),
   ]
-  /// This film's data-sheet toe, also for a preset calibrated from it ("portra160-v850-…").
+  /// This film's data-sheet toe, also for a preset calibrated from it ("portra160-v850-…", or
+  /// "portra160-copy-…" on the copy stand).
   var dataSheetToe: RGB? {
-    Self.dataSheetToes[id] ?? Self.dataSheetToes.first { id.hasPrefix($0.key + "-v850-") }?.value
+    Self.dataSheetToes[id] ?? Self.dataSheetToes.first { id.hasPrefix($0.key + "-v850-") || id.hasPrefix($0.key + "-copy-") }?.value
   }
   static let approximation = "使用官方特性曲线中段的人工读图近似；不是扫描仪 ICC 标定。片基与色阶由当前扫描估计。"
   static let builtins: [FilmProfile] = [
