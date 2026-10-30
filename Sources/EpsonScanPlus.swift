@@ -71,9 +71,8 @@ struct EpsonScanPlusApp: App {
       }
       CommandMenu("画面") {
         Button("接触表 / 单张") {
-          model.singleView.toggle()
-          model.refresh()
-        }.keyboardShortcut("1")
+          model.showSingle(!model.singleView)
+        }.keyboardShortcut("1").disabled(model.previewShowing && !model.singleView)
         Toggle("看片镜", isOn: Binding(get: { model.preferences.showLoupe }, set: { model.toggleLoupe($0) }))
           .keyboardShortcut("l")
         Picker(

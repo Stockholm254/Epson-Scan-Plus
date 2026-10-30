@@ -14,8 +14,8 @@ final class AppModel: ObservableObject {
   }
   /// The light table's page shown: the holder's preview, or one laid out from frames of their own.
   @Published var contactPage = 0
-  /// A frame to open from the light table, for the canvas to grow it from where it lies there.
-  @Published var openRequest: (id: UUID, revision: Int)?
+  /// The canvas, to open a frame from the light table: the view closing in on it.
+  var frameOpener: ((UUID) -> Void)?
   @Published var overview: CGImage?
   @Published var displayed: CGImage?
   /// The frames' positives, as the filmstrip shows them; the library keeps a small copy of each.
@@ -34,9 +34,16 @@ final class AppModel: ObservableObject {
   /// Only the single frame zooms: back on the light table the whole roll shows again.
   @Published var singleView = false {
     didSet {
+      // A preview being read shows on the light table as it comes; the single view waits for it.
+      if singleView, previewShowing {
+        singleView = false
+        return
+      }
       if !singleView, zoom != 1 { fitView() }
     }
   }
+  /// The scanner's preview shows on the light table as it is read.
+  var previewShowing: Bool { scanner.previewSoFar != nil }
   @Published var showNegative = false
   @Published var tool = CanvasTool.select
   @Published var format = FilmFormat.auto
@@ -390,6 +397,12 @@ final class AppModel: ObservableObject {
       in: &cancellables)
     scanner.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(
       in: &cancellables)
+    // The preview coming in goes on the light table, out of the single view.
+    scanner.$previewSoFar.sink { [weak self] picture in
+      guard let self, picture != nil, self.singleView else { return }
+      self.singleView = false
+      DispatchQueue.main.async { self.refresh() }
+    }.store(in: &cancellables)
     scanner.onFailure = { [weak self] message in
       guard let self else { return }
       if self.scanBatch.isActive {
@@ -575,7 +588,7 @@ final class AppModel: ObservableObject {
         self.detectingFrames = false
         self.tool = .select
         self.editRegionLock = nil
-        if enterSingle { self.singleView = !found.isEmpty }
+        if enterSingle, let first = found.first { self.open(first.id) }
         self.fitView()
         self.focusCanvas()
         self.rendering = false

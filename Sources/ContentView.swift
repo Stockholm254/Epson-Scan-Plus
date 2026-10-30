@@ -121,26 +121,25 @@ struct ContentView: View {
       }.help(inspector ? "隐藏右边的检查器" : "显示右边的检查器")
     }
   }
-  /// The batch's progress, frames counted with the one being scanned.
+  /// The batch's progress, frames counted with the one being scanned: on one line, as tall as
+  /// the toolbar's other items; while cancelling, what the scanner does first in its place.
   var scanProgress: some View {
-    VStack(alignment: .leading, spacing: 4) {
-      Text(
-        m.scanBatch.isActive
-          ? m.scanProgressLabel
-          : "预览 · \(Int(ScanBatchProgress.normalized(m.scanner.progress) * 100))%"
-      )
-      .font(.system(size: 11)).monospacedDigit().lineLimit(1)
+    let label = m.scanBatch.isActive
+      ? m.scanProgressLabel : "预览 · \(Int(ScanBatchProgress.normalized(m.scanner.progress) * 100))%"
+    let hint = m.scanner.cancellationHint
+    return HStack(spacing: 8) {
+      Text(hint ?? label)
+        .font(.system(size: 11)).monospacedDigit().lineLimit(1).truncationMode(.tail)
+        .foregroundStyle(hint == nil ? Color.primary : Color.secondary)
+        .frame(maxWidth: 190, alignment: .leading)
       ProgressView(
         value: m.scanBatch.isActive
           ? m.scanProgressFraction : ScanBatchProgress.normalized(m.scanner.progress)
-      )
+      ).frame(width: 90)
       .accessibilityLabel(m.scanBatch.isActive ? "整批扫描进度" : "预览进度")
       .accessibilityValue(m.scanBatch.isActive ? m.scanProgressLabel : m.scanner.status)
-      if let hint = m.scanner.cancellationHint {
-        Text(hint).font(.system(size: 10)).foregroundStyle(.secondary)
-      }
-    }.frame(width: 180)
-      .help("整批进度按张数计算，包含当前这张的扫描进度；不是剩余时间估算")
+    }
+      .help((hint.map { $0 + "\n" } ?? "") + "整批进度按张数计算，包含当前这张的扫描进度；不是剩余时间估算")
   }
   /// The scanner's front-panel lamp with a short LCD status; the full status is in the tooltip.
   var scannerLamp: some View {
@@ -166,10 +165,14 @@ struct ContentView: View {
   }
   /// The view switch, the loupe and how the table lies.
   @ViewBuilder var viewControls: some View {
-      Picker("视图", selection: $m.singleView) {
+      Picker("视图", selection: Binding(get: { m.singleView }, set: { m.showSingle($0) })) {
         Text("接触表").tag(false)
         Text("单张").tag(true)
-      }.pickerStyle(.segmented).frame(width: 150).onChange(of: m.singleView) {
+      }.pickerStyle(.segmented).frame(width: 150)
+        // A preview being read shows on the light table as it comes.
+        .disabled(m.previewShowing)
+        .help(m.previewShowing ? "预览扫描中，画面在接触表上逐渐出现；扫完后才能看单张" : "接触表 / 单张（⌘1）")
+        .onChange(of: m.singleView) {
         m.fitView()
         m.focusCanvas()
         m.refresh()
@@ -328,7 +331,7 @@ struct ContentView: View {
         }.font(.system(size: 11))
           .padding(.horizontal, 11).padding(.vertical, 6)
           .floatingPlate(Capsule(), text: Color(white: 0.92), opacity: 0.72)
-          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom).padding(14)
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom).padding(Self.barInset + 4)
           .allowsHitTesting(false).accessibilityLabel("工具提示")
       }
   }
@@ -337,8 +340,11 @@ struct ContentView: View {
   @ViewBuilder var workspace: some View {
     if cameraStage { CameraStage(m: m, camera: m.camera) } else { sheetWorkspace }
   }
+  /// The bars floating over the canvas lie this far in from its edges: on the light table's
+  /// glass, clear of its frame.
+  static let barInset = LightTable.glassInset + 6
   var sheetWorkspace: some View {
-    let bar: CGFloat = 54
+    let inset = Self.barInset, bar = inset + 44
     return ZStack {
       ScanCanvas(model: m, reserved: NSEdgeInsets(top: bar, left: 0, bottom: bar, right: 0))
         .frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
@@ -346,7 +352,7 @@ struct ContentView: View {
         ViewThatFits(in: .horizontal) {
           glassToolRow
           glassToolRow.labelStyle(.iconOnly)
-        }.lineLimit(1).padding(.horizontal, 10).padding(.top, 10)
+        }.lineLimit(1).padding(.horizontal, inset).padding(.top, inset)
         ZStack(alignment: .topTrailing) {
           Color.clear
           canvasOverlays
@@ -356,7 +362,7 @@ struct ContentView: View {
           if !m.singleView && m.contactPages.count > 1 { pageControl.glassBar() }
           Spacer()
           HStack(spacing: 8) { viewingControls }.glassBar()
-        }.buttonStyle(.bordered).controlSize(.small).padding(.horizontal, 10).padding(.bottom, 10)
+        }.buttonStyle(.bordered).controlSize(.small).padding(.horizontal, inset).padding(.bottom, inset)
       }
     }
   }

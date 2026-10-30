@@ -8,6 +8,7 @@ struct ScanCanvas: NSViewRepresentable {
   func makeNSView(context: Context) -> FilmCanvasView {
     let v = FilmCanvasView()
     v.model = model
+    model.frameOpener = { [weak v] id in v?.open(id) }
     return v
   }
   func updateNSView(_ view: FilmCanvasView, context: Context) {
@@ -29,7 +30,7 @@ struct ScanCanvas: NSViewRepresentable {
     view.needsDisplay = true
     view.updateLoupe()
     view.updateScanHead()
-    view.applyOpenRequest()
+    view.settleOpening()
   }
 }
 
@@ -319,8 +320,9 @@ final class FilmCanvasView: NSView {
         ])
       return
     }
-    // A frame opened from the table grows over the single view until its own picture is here.
-    if let opening, model.singleView, model.displayed === opening.over { return }
+    // A frame opened from the table grows over the single view, which shows its own picture only
+    // once it has grown and the picture is here: not under the table as it fades.
+    if let opening, model.singleView, !opening.grown || model.displayed === opening.over { return }
     let rect = imageRect
     let sheet = model.onSheetPage
     if !sheet {
@@ -791,18 +793,21 @@ final class FilmCanvasView: NSView {
   }
   // MARK: Opening a frame
 
-  private var openedRevision = 0
   /// A frame opened from the light table on its way to the middle: the table's picture, the view
   /// closing in on the frame, its own picture over it, until the frame's own is drawn.
   private(set) var opening: (cover: CALayer, picture: CALayer, over: CGImage?, grown: Bool)?
-  /// Opens the frame the film strip asked for, and finishes an opening once its picture is here.
-  func applyOpenRequest() {
+  /// Finishes an opening once the frame's own picture is here, or the table is back.
+  func settleOpening() {
+    guard let model, let opening else { return }
+    if !model.singleView || (opening.grown && model.displayed !== opening.over) { finishOpening() }
+  }
+  /// Opens a frame for the model: from where it lies on the table, or at once if it lies on none.
+  func open(_ id: UUID) {
     guard let model else { return }
-    if let opening, !model.singleView || (opening.grown && model.displayed !== opening.over) { finishOpening() }
-    guard let ask = model.openRequest, ask.revision != openedRevision else { return }
-    openedRevision = ask.revision
-    guard !model.singleView, let f = model.contactFrames.first(where: { $0.id == ask.id }) else { return }
-    open(f)
+    if let f = model.contactFrames.first(where: { $0.id == id }) { return open(f) }
+    model.select(id)
+    model.singleView = true
+    model.refresh()
   }
   /// Shows a frame on the light table on its own: the view closes in on it, the whole table
   /// growing about it on a spring, a little past and back, until it lies where the single view
@@ -811,6 +816,7 @@ final class FilmCanvasView: NSView {
   func open(_ f: FilmFrame) {
     guard let model, !model.singleView else { return }
     model.select(f.id)
+    guard !model.previewShowing else { return }
     defer {
       model.singleView = true
       model.refresh()
@@ -855,7 +861,7 @@ final class FilmCanvasView: NSView {
     DispatchQueue.main.asyncAfter(deadline: .now() + (still ? 0.2 : 0.55)) { [weak self] in
       guard let self, self.opening?.picture === picture else { return }
       self.opening?.grown = true
-      self.applyOpenRequest()
+      self.settleOpening()
     }
     CATransaction.begin()
     // The table fades to the single view's surround once the frames round it are on their way
@@ -1271,7 +1277,7 @@ final class FilmCanvasView: NSView {
     // On the table a click picks a frame and a double click opens it; its crop is set on its own.
     if let f = model.contactFrames.reversed().first(where: { model.contactRect($0).cg.contains(normal(p)) }) {
       model.select(f.id)
-      if event.clickCount == 2 { open(f) }
+      if event.clickCount == 2 { model.open(f.id) }
     }
   }
   override func mouseDragged(with event: NSEvent) {

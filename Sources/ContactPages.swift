@@ -55,13 +55,26 @@ extension AppModel {
     let c = layout.cells[i]
     return NormalRect(x: c.minX / layout.size.width, y: c.minY / layout.size.height, width: c.width / layout.size.width, height: c.height / layout.size.height)
   }
-  /// From the film strip: the frame selected, and from the light table shown on its own, growing
-  /// from where it lies there to the middle of the canvas. The canvas takes the table's picture
-  /// first, then turns to the frame.
+  /// From the film strip, the view switch or a finished preview: the frame selected, and from
+  /// the light table shown on its own, the view closing in on it there. Without a canvas, at once.
   func open(_ id: UUID) {
     select(id)
-    guard !singleView else { return }
-    openRequest = (id, (openRequest?.revision ?? 0) + 1)
+    guard !singleView, !previewShowing else { return }
+    if let frameOpener {
+      frameOpener(id)
+    } else {
+      singleView = true
+      refresh()
+    }
+  }
+  /// The view switch: into the single view by opening the selected frame, back at once.
+  func showSingle(_ on: Bool) {
+    if on, !singleView, let id = selectedID {
+      open(id)
+    } else if on != singleView {
+      singleView = on
+      refresh()
+    }
   }
 
   /// A page's layout in pixels, top-left origin: frames 3:2 in strips of film with their rebates.

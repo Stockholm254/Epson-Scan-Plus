@@ -51,9 +51,9 @@ enum ContactPageTests {
     let clamped = model.contactPage == 1
     model.showContactPage(0)
     model.open(model.frames[3].id)
-    try check(clamped && model.contactPage == 0 && model.selectedID == model.frames[3].id
-      && model.openRequest?.id == model.frames[3].id && !model.singleView,
-      "the pages turn no further than there are; a pick in the film strip selects it and asks the canvas to open it")
+    try check(clamped && model.contactPage == 0 && model.selectedID == model.frames[3].id && model.singleView,
+      "the pages turn no further than there are; a pick in the film strip selects it and, with no canvas, shows it on its own at once")
+    model.singleView = false
 
     // On the table: the loupe magnifies a frame of the page, and the pick grows to the middle.
     func settle(_ seconds: Double) { RunLoop.current.run(until: Date().addingTimeInterval(seconds)) }
@@ -62,6 +62,8 @@ enum ContactPageTests {
     let window = NSWindow(contentRect: NSRect(x: -9000, y: -9000, width: 900, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
     window.contentView = canvas
     canvas.model = model
+    model.frameOpener = { [weak canvas] id in canvas?.open(id) }
+    defer { model.frameOpener = nil }
     canvas.display()
     model.preferences.showLoupe = true
     canvas.updateLoupe()
@@ -72,17 +74,17 @@ enum ContactPageTests {
     model.preferences.showLoupe = false
     canvas.updateLoupe()
     let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-    canvas.applyOpenRequest()
+    model.showSingle(true)
     let growing = canvas.opening, start = (growing?.picture.animation(forKey: "position") as? CABasicAnimation)?.fromValue as? NSValue
     let middle = CGPoint(x: canvas.openRect.midX, y: canvas.openRect.midY)
     try check(model.singleView && model.selectedID == model.frames[3].id && growing != nil
       && growing.map { abs($0.picture.frame.midX - middle.x) < 1 && abs($0.picture.frame.midY - middle.y) < 1 && $0.picture.frame.width > box.width * 3 } == true
       && (still || start.map { box.contains($0.pointValue) } == true)
       && (still || growing.map { $0.cover.animation(forKey: "bounds.size") != nil && abs($0.cover.frame.width / canvas.bounds.width - $0.picture.frame.width / box.width) < 0.01 } == true),
-      "the view closes in on the pick: the table grows about it as much as it grows, to the middle of the canvas")
+      "the view switch closes in on the frame selected: the table grows about it as much as it grows, to the middle of the canvas")
     for _ in 0..<50 where model.rendering { settle(0.1) }
     settle(0.8)
-    canvas.applyOpenRequest()
+    canvas.settleOpening()
     try check(canvas.opening == nil, "once the frame's own picture is here it takes the place of what grew")
     func press(_ key: UInt16) {
       canvas.keyDown(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
@@ -97,6 +99,23 @@ enum ContactPageTests {
     press(123)
     try check(inSingle && across && model.selectedID == model.frames[35].id && model.contactPage == 0,
       "← → go to the frame before or after in single view and on the table, where the page turns with it")
+
+    // A preview being read shows on the light table; the single view waits for it.
+    model.singleView = true
+    let partial = CGContext(data: nil, width: 8, height: 8, bitsPerComponent: 8, bytesPerRow: 0, space: ImagePipeline.shared.outputSpace,
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!.makeImage()!
+    model.scanner.previewSoFar = partial
+    let leftSingle = !model.singleView
+    model.showSingle(true)
+    model.open(model.frames[2].id)
+    model.singleView = true
+    try check(leftSingle && !model.singleView && canvas.opening == nil && model.previewShowing,
+      "while a preview comes in it shows on the light table: the single view can't be entered by its switch, a pick or a tool")
+    model.scanner.previewSoFar = nil
+    model.showSingle(true)
+    try check(model.singleView, "once the preview is read the single view opens again")
+    settle(0.8)
+    canvas.settleOpening()
     window.contentView = nil
     model.singleView = true
     try check(!model.onSheetPage && model.contactTurn == 0, "the single frame is not a page of the contact sheet")
