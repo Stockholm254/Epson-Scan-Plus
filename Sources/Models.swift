@@ -16,6 +16,45 @@ struct RGB: Codable, Equatable {
   init(_ v: [Double]) { self.init(r: v[0], g: v[1], b: v[2]) }
 }
 
+/// How a copy stand's light falls off across the frame, light by light: each of its red, green and
+/// blue lights alone on a blank frame, the crosstalk taken out, as a coarse grid over the picture
+/// normalised to its brightest cell. Dividing a picture read with the same crosstalk out by it
+/// lights every part of the frame as its brightest was.
+struct FlatField: Codable, Equatable {
+  var width: Int
+  var height: Int
+  /// Row by row from the top left, the red, green and blue light's share in each cell.
+  var values: [Float]
+  /// The share at `p` (normalised to the picture, from the top left), between the cells' centres.
+  func value(at p: CGPoint) -> RGB {
+    let x = min(max(p.x * Double(width) - 0.5, 0), Double(width - 1)), y = min(max(p.y * Double(height) - 0.5, 0), Double(height - 1))
+    let x0 = Int(x), y0 = Int(y), x1 = min(x0 + 1, width - 1), y1 = min(y0 + 1, height - 1)
+    let fx = x - Double(x0), fy = y - Double(y0)
+    func at(_ cx: Int, _ cy: Int, _ c: Int) -> Double { Double(values[(cy * width + cx) * 3 + c]) }
+    return RGB((0..<3).map { c in
+      (at(x0, y0, c) * (1 - fx) + at(x1, y0, c) * fx) * (1 - fy) + (at(x0, y1, c) * (1 - fx) + at(x1, y1, c) * fx) * fy
+    })
+  }
+  /// Each light's weakest cell against its brightest: how far it falls off across the frame.
+  var falloff: RGB {
+    RGB((0..<3).map { c in Double(stride(from: c, to: values.count, by: 3).map { values[$0] }.min() ?? 1) })
+  }
+  /// A reading at `p` lit as `from` lit it (nil: as read), put as `to` lights it instead.
+  static func moved(_ v: RGB, at p: CGPoint, from: FlatField?, to: FlatField?) -> RGB {
+    guard from != to else { return v }
+    let back = from.map { f in RGB((0..<3).map { v.values[$0] * f.value(at: p).values[$0] }) } ?? v
+    return to.map { f in RGB((0..<3).map { back.values[$0] / max(0.05, f.value(at: p).values[$0]) }) } ?? back
+  }
+}
+
+/// A copy stand's light, measured from its red, green and blue lights each alone on a blank frame:
+/// how the camera's channels mix them, and how each falls off across the frame.
+struct LightCalibration: Codable, Equatable {
+  var date: Date
+  var crosstalk: Crosstalk
+  var flat: FlatField
+}
+
 /// How a camera's channels mix the red, green and blue lights of a copy stand: `m` row by row, a
 /// row each camera channel and a column each light, each light read as 1 in its own channel.
 /// Light adds up, so the mix is undone exactly in the linear readings, before the film base
@@ -48,6 +87,13 @@ struct Crosstalk: Codable, Equatable {
   func mixed(_ v: RGB) -> RGB { Self.times(m, v) }
   private static func times(_ a: [Double], _ v: RGB) -> RGB {
     RGB((0..<3).map { max(1e-6, a[3 * $0] * v.r + a[3 * $0 + 1] * v.g + a[3 * $0 + 2] * v.b) })
+  }
+  /// The leak of each light into the other channels, as percentages, the largest first: for saying
+  /// what a calibration found.
+  var largestLeak: (light: Int, channel: Int, share: Double) {
+    var best = (light: 0, channel: 0, share: 0.0)
+    for c in 0..<3 { for j in 0..<3 where c != j && m[3 * c + j] > best.share { best = (j, c, m[3 * c + j]) } }
+    return best
   }
   /// A reading taken with `from` out of it (nil: as read) put as it reads with `to` out instead.
   static func moved(_ v: RGB, from: Crosstalk?, to: Crosstalk?) -> RGB {
@@ -343,6 +389,9 @@ struct FilmFrame: Identifiable, Codable {
   var crosstalk: Crosstalk? = nil
   /// The unexposed film at the picture's edges, for a picture a file each; nil until looked for.
   var edgeBase: EdgeBase? = nil
+  /// The copy light's flat field divided out of the picture after its crosstalk, so every part of
+  /// the frame reads as if lit as its brightest; nil leaves it as lit.
+  var flatField: FlatField? = nil
   var captureRect: NormalRect { scanRect ?? rect }
   var hasFullResolution: Bool {
     sourcePath != nil || (scanPath != nil && captureRect.contains(rect))

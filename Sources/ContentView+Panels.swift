@@ -206,10 +206,11 @@ extension ContentView {
       }
       if m.hasSensorPictures {
         HStack {
-          Toggle("去串色 · RGB 光源", isOn: Binding(get: { m.crosstalkRemoved }, set: { m.removeCrosstalk($0) }))
+          Toggle(m.preferences.lightCalibration == nil ? "去串色 · RGB 光源" : "去串色和平场 · RGB 光源",
+            isOn: Binding(get: { m.crosstalkRemoved }, set: { m.removeCrosstalk($0) }))
             .toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11)).disabled(m.isWorking)
           Spacer()
-          InfoButton(text: "翻拍时相机的红、绿、蓝滤色片和光源的三种灯光谱有重叠：蓝灯有 34% 读进绿通道，绿灯约 12% 和 11% 读进红、蓝。每个通道掺了别的灯的光，转出来颜色发灰，要把饱和度拉到 1.8 左右才像 Capture One。\n\n打开后，从传感器读出的 RAW（无压缩 ARW）在算片基和密度之前，先在线性读数上把串色去掉。矩阵是 2026-10-29 用 IT8 色卡分别只开一种灯翻拍测出来的，属于这台 A7R IV 和这组 RGB 灯；换了相机或灯就不准。白光翻拍时关掉。\n\n整卷一起开关，可以 ⌘Z 撤销；取过的片基、中性灰和高光跟着换算。下一卷沿用这里的选择。")
+          InfoButton(text: "翻拍时相机的红、绿、蓝滤色片和光源的三种灯光谱有重叠：蓝灯有 34% 读进绿通道，绿灯约 12% 和 11% 读进红、蓝。每个通道掺了别的灯的光，转出来颜色发灰，要把饱和度拉到 1.8 左右才像 Capture One。\n\n打开后，从传感器读出的 RAW（无压缩 ARW）在算片基和密度之前，先在线性读数上把串色去掉；在翻拍页做过「光源标定」的话，再除以平场，把灯照在四周偏暗的地方补平。没有标定时，矩阵用 2026-10-29 用 IT8 色卡测的，没有平场。矩阵属于这台 A7R IV 和这组 RGB 灯；换了相机或灯就要重新标定。白光翻拍时关掉。\n\n整卷一起开关，可以 ⌘Z 撤销；取过的片基、中性灰和高光跟着换算。下一卷沿用这里的选择。")
         }
       }
       if m.hasSinglePictures {

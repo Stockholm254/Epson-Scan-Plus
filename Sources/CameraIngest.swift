@@ -102,7 +102,14 @@ extension AppModel {
     f.sensorRead = sensor
     if sensor {
       f.adjustments.colourNoise = 1
-      f.crosstalk = frames.first { $0.sensorRead == true }.map(\.crosstalk) ?? (preferences.removeCrosstalk ? .measured : nil)
+      // As the roll's other pictures from the sensor are read, or, the roll's first, as the light
+      // was last calibrated.
+      let light = preferences.lightCalibration
+      if let other = frames.first(where: { $0.sensorRead == true }) {
+        (f.crosstalk, f.flatField) = (other.crosstalk, other.flatField)
+      } else if preferences.removeCrosstalk {
+        (f.crosstalk, f.flatField) = (light?.crosstalk ?? .measured, light?.flat)
+      }
     }
     if overview == nil || overviewURL == nil {
       overviewURL = picture

@@ -494,6 +494,16 @@ struct CameraPanel: View {
       Text("像素位移").font(.system(size: 12, weight: .medium))
       Text("像素位移只能在相机上设：拍摄菜单里选「像素位移多重拍摄」，张数选 4 或 16，间隔选最短。下方取景区右侧选同样的张数，App 会按快门、把这一组文件放进同一个文件夹。合成还没做，先用每组第一张转换。")
         .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      Divider()
+      Text("光源标定").font(.system(size: 12, weight: .medium))
+      Text("拿走底片，灯箱上什么都不放：只开红灯拍一张、只开绿灯拍一张、只开蓝灯拍一张，每张曝光到最亮处约 70%（看上面的直方图）。拍完点下面的按钮。\n\nApp 从这三张算出这组灯的串色矩阵，和每种灯在画面上的明暗分布（平场）。之后翻拍时，读出 RAW 先去串色，再把四周偏暗的地方补平。换了灯的位置或灯箱，就再标一次；灯的亮度配比怎么调都不用重标。标定完，这三张空白帧可以在胶片条上删掉。")
+        .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      Button {
+        m.calibrateLight()
+      } label: {
+        Label("用最近三张标定光源", systemImage: "light.panel")
+      }.disabled(m.frames.filter { $0.sensorRead == true }.count < 3 || m.isWorking)
+      Text(m.lightDescription).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       DisclosureGroup("诊断") {
         ScrollView {
           Text(camera.log.suffix(60).joined(separator: "\n")).font(.system(size: 9, design: .monospaced))

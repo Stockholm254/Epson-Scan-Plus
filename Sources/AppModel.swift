@@ -844,7 +844,10 @@ final class AppModel: ObservableObject {
       let rollSlopes = f.adjustments.rollSlopes ?? old.adjustments.rollSlopes
       (f.name, f.rect, f.initialRect, f.enabled, f.format) = (old.name, old.rect, old.initialRect, old.enabled, old.format)
       if let read = f.edgeBase?.base { f.edgeBase?.base = Crosstalk.moved(read, from: f.crosstalk, to: old.crosstalk) }
+      // Read through another flat field, the edges are looked at again.
+      if f.flatField != old.flatField { f.edgeBase = nil }
       f.crosstalk = old.crosstalk
+      f.flatField = old.flatField
       f.adjustments = old.adjustments
       (f.adjustments.rollBase, f.adjustments.rollSlopes) = (rollBase, rollSlopes)
       return f
@@ -858,6 +861,7 @@ final class AppModel: ObservableObject {
     refresh()
     updateThumbnails()
     saveProject()
+    measureEdgeBases()
   }
   /// A new preview, frame list or scan: earlier edits no longer apply to what is there.
   func clearEdits() {
@@ -940,7 +944,7 @@ final class AppModel: ObservableObject {
   private func edgeSource(for frame: FilmFrame) throws -> CGImage? {
     guard let path = frame.sourcePath else { return nil }
     let image = try ImagePipeline.shared.load(URL(fileURLWithPath: path), maxDimension: 800)
-    return frame.crosstalk.map { ImagePipeline.shared.unmixed(image, by: $0) } ?? image
+    return ImagePipeline.shared.corrected(image, crosstalk: frame.crosstalk, flat: frame.flatField)
   }
   /// Looks for the unexposed film at the edges of the roll's pictures not yet looked at, apart from
   /// the main thread, then converts with what it found. `wait` looks before returning.
@@ -997,28 +1001,80 @@ final class AppModel: ObservableObject {
   /// the pictures (a base picked, the grey and the white picked, the roll's base) is read again
   /// as the pictures now are: the same light mixed it, so it comes out of a reading as out of a
   /// pixel.
+  ///
+  /// The light as last calibrated on the stand gives the crosstalk and the flat field; before it has
+  /// been, the crosstalk measured from the IT8 target, with no flat field. A reading is put back as
+  /// it was lit (the old flat field), mixed again, and taken through the new: a base picked where it
+  /// was picked, the others (a grey, a white, the roll's base) taken at the frame's middle. The bases
+  /// at the edges are looked for again.
   func removeCrosstalk(_ on: Bool) {
-    let to: Crosstalk? = on ? .measured : nil
-    let affected = frames.indices.filter { frames[$0].sensorRead == true && frames[$0].crosstalk != to }
+    let light = preferences.lightCalibration
+    let to: Crosstalk? = on ? light?.crosstalk ?? .measured : nil, flatTo: FlatField? = on ? light?.flat : nil
+    let affected = frames.indices.filter { frames[$0].sensorRead == true && (frames[$0].crosstalk != to || frames[$0].flatField != flatTo) }
     preferences.removeCrosstalk = on
     guard !affected.isEmpty, !isWorking else { return }
     recordEdit(on ? "去串色" : "保留串色")
     for i in affected {
-      let from = frames[i].crosstalk
-      func moved(_ v: RGB?) -> RGB? { v.map { Crosstalk.moved($0, from: from, to: to) } }
-      frames[i].adjustments.base = moved(frames[i].adjustments.base)
+      let from = frames[i].crosstalk, flatFrom = frames[i].flatField, crop = frames[i].rect
+      func inFile(_ p: CGPoint) -> CGPoint { CGPoint(x: crop.x + p.x * crop.width, y: crop.y + p.y * crop.height) }
+      func moved(_ v: RGB?, at p: CGPoint = CGPoint(x: 0.5, y: 0.5)) -> RGB? {
+        v.map { reading in
+          let lit = FlatField.moved(reading, at: inFile(p), from: flatFrom, to: nil)
+          return FlatField.moved(Crosstalk.moved(lit, from: from, to: to), at: inFile(p), from: nil, to: flatTo)
+        }
+      }
+      let picked = frames[i].adjustments.basePicked.map { CGPoint(x: $0.x + $0.width / 2, y: $0.y + $0.height / 2) } ?? CGPoint(x: 0.5, y: 0.5)
+      frames[i].adjustments.base = moved(frames[i].adjustments.base, at: picked)
       frames[i].adjustments.rollBase = moved(frames[i].adjustments.rollBase)
       frames[i].adjustments.neutralSample = moved(frames[i].adjustments.neutralSample)
       frames[i].adjustments.highlightSample = moved(frames[i].adjustments.highlightSample)
-      frames[i].edgeBase?.base = moved(frames[i].edgeBase?.base)
       frames[i].crosstalk = to
+      frames[i].flatField = flatTo
+      frames[i].edgeBase = nil
     }
-    status = on ? "已去掉翻拍光源的串色 · \(affected.count) 张" : "已保留串色 · \(affected.count) 张"
+    status = on ? (flatTo == nil ? "已去掉翻拍光源的串色 · \(affected.count) 张" : "已去掉翻拍光源的串色和明暗不匀 · \(affected.count) 张")
+      : "已保留串色 · \(affected.count) 张"
     updateRollBase()
     updateRollSlopes()
     refresh()
     updateThumbnails()
     saveProject()
+    measureEdgeBases()
+  }
+  /// The copy light measured from the roll's last three pictures read from the sensor: blank frames,
+  /// the red, green and blue light each alone. Kept for the copies to come, and this roll's pictures
+  /// converted with it if the crosstalk is taken out of them.
+  func calibrateLight() {
+    let blanks = frames.filter { $0.sensorRead == true }.suffix(3)
+    guard blanks.count == 3, !isWorking else { return }
+    let paths = blanks.compactMap(\.sourcePath)
+    status = "正在标定光源…"
+    renderQueue.async {
+      let images = paths.compactMap { try? ImagePipeline.shared.load(URL(fileURLWithPath: $0), maxDimension: 600) }
+      let found = images.count == 3 ? ImagePipeline.shared.lightCalibration(images) : nil
+      DispatchQueue.main.async {
+        guard let (light, exposure) = found else {
+          self.errorText = "标定不了：最近三张要是不放底片、只开红灯、只开绿灯、只开蓝灯各一张，每张曝光够（最亮处到满量程的一半以上）、不过曝。"
+          return
+        }
+        self.preferences.lightCalibration = light
+        let leak = light.crosstalk.largestLeak, names = ["红", "绿", "蓝"]
+        let weak = (0..<3).filter { exposure.values[$0] < 0.15 }.map { names[$0] }
+        self.status = String(format: "已标定光源：%@灯漏进%@通道 %.0f%%，四角最暗处是最亮处的 %.0f%% · %.0f%% · %.0f%%",
+          names[leak.light], names[leak.channel], leak.share * 100,
+          light.flat.falloff.r * 100, light.flat.falloff.g * 100, light.flat.falloff.b * 100)
+          + (weak.isEmpty ? "" : "；\(weak.joined(separator: "、"))灯曝光偏暗，最好重拍到最亮处约 70%")
+        if self.crosstalkRemoved || self.preferences.removeCrosstalk { self.removeCrosstalk(true) }
+      }
+    }
+  }
+  /// What the copy light's correction is now, for the panels.
+  var lightDescription: String {
+    guard let light = preferences.lightCalibration else { return "现在用的是 2026-10-29 用 IT8 色卡测的串色矩阵，没有平场。" }
+    let leak = light.crosstalk.largestLeak, names = ["红", "绿", "蓝"]
+    return String(format: "现在用的是 %@ 标定的光源：%@灯漏进%@通道 %.0f%%；平场：四角最暗处是最亮处的 %.0f%% · %.0f%% · %.0f%%（红 · 绿 · 蓝）。",
+      light.date.formatted(date: .abbreviated, time: .shortened), names[leak.light], names[leak.channel], leak.share * 100,
+      light.flat.falloff.r * 100, light.flat.falloff.g * 100, light.flat.falloff.b * 100)
   }
   /// Measures the roll's pictures that are a file each together, or each apart again.
   func setPoolPictures(_ pool: Bool) {
@@ -1374,13 +1430,14 @@ final class AppModel: ObservableObject {
   private let readLock = NSLock()
   private var read = [(key: String, image: CGImage)]()
   ///
-  /// With `crosstalk`, it is taken out as the file is read, so whatever is measured on the picture
-  /// measures it without.
-  private func load(_ url: URL, maxDimension: Int?, crosstalk: Crosstalk? = nil) throws -> CGImage {
+  /// With `crosstalk` and `flat`, the copy light's crosstalk and then its fall-off are taken out as
+  /// the file is read, so whatever is measured on the picture measures it without.
+  private func load(_ url: URL, maxDimension: Int?, crosstalk: Crosstalk? = nil, flat: FlatField? = nil) throws -> CGImage {
     let pipe = ImagePipeline.shared
-    func unmixed(_ image: CGImage) -> CGImage { crosstalk.map { pipe.unmixed(image, by: $0) } ?? image }
+    func unmixed(_ image: CGImage) -> CGImage { pipe.corrected(image, crosstalk: crosstalk, flat: flat) }
     guard let maxDimension else { return unmixed(try pipe.loadDecoded(url)) }
     let key = "\(url.path)@\(maxDimension)" + (crosstalk.map { "-\($0.m)" } ?? "")
+      + (flat.map { "-flat\($0.width)x\($0.height)-\($0.values.reduce(0, +))" } ?? "")
     readLock.lock()
     let kept = read.first { $0.key == key }?.image
     readLock.unlock()
@@ -1400,7 +1457,7 @@ final class AppModel: ObservableObject {
       return try ImagePipeline.shared.crop(raw, rect: frame.rect.relative(to: frame.captureRect))
     }
     if let path = frame.sourcePath {
-      let image = try load(URL(fileURLWithPath: path), maxDimension: full ? nil : maxDimension ?? 3000, crosstalk: frame.crosstalk)
+      let image = try load(URL(fileURLWithPath: path), maxDimension: full ? nil : maxDimension ?? 3000, crosstalk: frame.crosstalk, flat: frame.flatField)
       return try ImagePipeline.shared.crop(image, rect: frame.rect)
     }
     guard let url = overviewURL else { throw DeskError.message("尚无图像。") }
@@ -1412,7 +1469,7 @@ final class AppModel: ObservableObject {
   func contextSource(for frame: FilmFrame) throws -> (image: CGImage, region: NormalRect) {
     let pipe = ImagePipeline.shared
     if let path = frame.sourcePath {
-      return (try load(URL(fileURLWithPath: path), maxDimension: 3000, crosstalk: frame.crosstalk), .full)
+      return (try load(URL(fileURLWithPath: path), maxDimension: 3000, crosstalk: frame.crosstalk, flat: frame.flatField), .full)
     }
     if let path = frame.scanPath, frame.hasFullResolution {
       let scan = try load(URL(fileURLWithPath: path), maxDimension: 3000)
