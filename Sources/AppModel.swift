@@ -156,6 +156,14 @@ final class AppModel: ObservableObject {
       case .files: return "square.and.arrow.down"
       }
     }
+    /// The name on its tab where the whole one does not fit.
+    var short: String {
+      switch self {
+      case .scanner: return "V850"
+      case .camera: return "A7R IV"
+      case .files: return "导入"
+      }
+    }
   }
   @Published var captureSource = CaptureSource.scanner
   /// The library, the window's cabinet of rolls, is open.

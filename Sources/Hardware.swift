@@ -36,7 +36,7 @@ struct HardwareKeyStyle: ButtonStyle {
       GlassKey(label: configuration.label, pressed: configuration.isPressed, latched: latched, prominent: prominent)
     } else {
       HardwareKey(
-        label: configuration.label, pressed: configuration.isPressed || latched, prominent: prominent)
+        label: configuration.label, pressed: configuration.isPressed || latched, sunk: configuration.isPressed, prominent: prominent)
     }
   }
 }
@@ -44,7 +44,8 @@ struct HardwareKeyStyle: ButtonStyle {
 /// A key in the glass look: a clear capsule lit from within when pressed, amber while latched, and
 /// amber all over for the one action a panel leads to. On a pane of glass it is not glass itself;
 /// with SwiftUI's glass the leading action is a drop of amber glass, and the toolbar's keys, which
-/// lie on the window, glass of their own, both giving under the finger.
+/// lie on the window, glass of their own, both giving under the finger. On the copy stand's light
+/// glass every key is a drop of glass.
 private struct GlassKey<Label: View>: View {
   let label: Label
   let pressed: Bool
@@ -61,7 +62,7 @@ private struct GlassKey<Label: View>: View {
       .foregroundStyle(prominent ? Color(red: 0.2, green: 0.12, blue: 0.03) : latched ? Hardware.amberText : Hardware.ink)
       .padding(.horizontal, compact ? 9 : 13).padding(.vertical, compact ? 3 : 5.5)
     Group {
-      if prominent || own {
+      if prominent || own || scheme == .light {
         face.liquid(shape, LiquidStyle(tint: prominent ? Hardware.amber.opacity(0.9) : latched ? Hardware.amber.opacity(0.3) : nil, interactive: true)) {
           plate($0, shape)
         }
@@ -87,7 +88,10 @@ private struct GlassKey<Label: View>: View {
 
 private struct HardwareKey<Label: View>: View {
   let label: Label
+  /// Shaded as pushed in: held down, or latched.
   let pressed: Bool
+  /// Moved down a point, only while held: a latched tab stands level with the others.
+  let sunk: Bool
   let prominent: Bool
   @Environment(\.isEnabled) private var enabled
   @Environment(\.controlSize) private var size
@@ -121,7 +125,7 @@ private struct HardwareKey<Label: View>: View {
           color: .black.opacity(pressed ? 0.25 : light ? 0.22 : 0.6), radius: pressed ? 0.5 : 1.5,
           y: pressed ? 0.5 : 2)
       )
-      .offset(y: pressed ? 1 : 0)
+      .offset(y: sunk ? 1 : 0)
       .opacity(enabled ? 1 : 0.4)
       .contentShape(shape)
   }

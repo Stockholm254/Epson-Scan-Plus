@@ -13,7 +13,12 @@ extension ContentView {
             Button {
               m.captureSource = source
             } label: {
-              Text(source.rawValue).lineLimit(1).minimumScaleFactor(0.8).frame(maxWidth: .infinity)
+              // One size of type on every tab, so they stand the same height: a name that does not
+              // fit gives way to its short form rather than shrinking.
+              ViewThatFits(in: .horizontal) {
+                Text(source.rawValue)
+                Text(source.short)
+              }.lineLimit(1).frame(maxWidth: .infinity)
                 .foregroundStyle(m.captureSource == source ? Hardware.amberText : Hardware.adaptive(NSColor(white: 0.8, alpha: 1), NSColor(white: 0.2, alpha: 1)))
             }.buttonStyle(HardwareKeyStyle(latched: m.captureSource == source))
           }
@@ -27,7 +32,7 @@ extension ContentView {
             }.buttonStyle(HardwareKeyStyle(latched: m.panelTab == tab))
           }
         }
-      }.controlSize(.small).font(.system(size: 12, weight: .medium)).padding(.horizontal, 14).padding(.vertical, 10)
+      }.controlSize(.small).font(.system(size: 11, weight: .medium)).padding(.horizontal, 14).padding(.vertical, 10)
       Divider()
       ScrollView {
         VStack(alignment: .leading, spacing: 18) {
