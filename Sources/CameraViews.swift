@@ -12,6 +12,9 @@ struct CameraStage: View {
   @State private var ring: CGFloat = 0
   @State private var magnifier = true
   @State private var histogram = true
+  /// How tall the bars over the stage are, so the live picture lies between them.
+  @State private var topBar: CGFloat = 0
+  @State private var bottomBar: CGFloat = 0
   @Environment(\.colorScheme) private var scheme
   var body: some View {
     HStack(spacing: 0) {
@@ -19,31 +22,34 @@ struct CameraStage: View {
         // The window's ground shows: the live view itself frosted past recognition and mostly
         // grey, so a negative's orange mask does not colour the window.
         Color.clear
-        GeometryReader { geo in liveView(in: geo.size) }
+        // The live picture between the bars, which cover none of it: the film's edges show whole,
+        // as the frame is set on the copy stand.
+        GeometryReader { geo in
+          liveView(in: CGSize(width: geo.size.width, height: max(80, geo.size.height - topBar - bottomBar)))
+            .offset(y: topBar)
+        }
         VStack(spacing: 0) {
-          if Liquid.available {
-            LiquidGroup(spacing: 12) { topRow }.padding(.horizontal, 12).padding(.top, 10)
-          } else {
-            // Concentric with the stage's corners, 12 points in from them.
-            topRow.padding(.horizontal, 10).padding(.vertical, 6).glassPane(radius: CameraStage.corner - 12)
-              .padding(.horizontal, 12).padding(.top, 10)
-          }
-          if histogram, let h = camera.liveHistogram {
-            HStack {
-              Spacer()
-              LiveHistogram(histogram: h)
-            }.padding(.horizontal, 12).padding(.top, 8)
-          }
+          Group {
+            if Liquid.available {
+              LiquidGroup(spacing: 12) { fittedTopRow }.padding(.horizontal, 12).padding(.top, 10)
+            } else {
+              // Concentric with the stage's corners, 12 points in from them.
+              fittedTopRow.padding(.horizontal, 10).padding(.vertical, 6).glassPane(radius: CameraStage.corner - 12)
+                .padding(.horizontal, 12).padding(.top, 10)
+            }
+          }.onHeightChange { topBar = $0 }
           Spacer()
           if !Liquid.available, let toast = m.captureToast {
             GlassToast(text: toast).transition(.move(edge: .bottom).combined(with: .opacity)).padding(.bottom, 8)
           }
-          if Liquid.available {
-            LiquidGroup(spacing: 14) { controls }.padding(.horizontal, 12).padding(.bottom, 12)
-          } else {
-            controls.padding(.horizontal, 12).padding(.vertical, 10).glassPane(radius: CameraStage.corner - 12)
-              .padding(.horizontal, 12).padding(.bottom, 12)
-          }
+          Group {
+            if Liquid.available {
+              LiquidGroup(spacing: 14) { controls }.padding(.horizontal, 12).padding(.bottom, 12)
+            } else {
+              controls.padding(.horizontal, 12).padding(.vertical, 10).glassPane(radius: CameraStage.corner - 12)
+                .padding(.horizontal, 12).padding(.bottom, 12)
+            }
+          }.onHeightChange { bottomBar = $0 }
         }.animation(.spring(response: 0.35, dampingFraction: 0.8), value: m.captureToast)
       }
     }
@@ -56,8 +62,16 @@ struct CameraStage: View {
     group.padding(.horizontal, 10).padding(.vertical, 5)
       .liquid(Capsule(), LiquidStyle(tint: scheme == .light ? .white.opacity(0.25) : .black.opacity(0.22))) { $0 }
   }
+  /// The top row as wide as the stage allows: with the live histogram's strip, or without it on a
+  /// narrow stage, where it would push the window's columns past its edges.
+  var fittedTopRow: some View {
+    ViewThatFits(in: .horizontal) {
+      topRow(strip: true)
+      topRow(strip: false)
+    }
+  }
   /// The zoom and the magnifier, and the sharpness.
-  @ViewBuilder var topRow: some View {
+  @ViewBuilder func topRow(strip: Bool) -> some View {
     HStack(spacing: 10) {
       let viewing = HStack(spacing: 10) {
         if camera.magnifications.isEmpty {
@@ -90,8 +104,12 @@ struct CameraStage: View {
         Image(systemName: "chart.bar.xaxis").frame(width: 16)
       }.glassAction(on: histogram).controlSize(.small)
         .accessibilityLabel("直方图").accessibilityValue(histogram ? "开" : "关")
-        .help(histogram ? "收起实时取景的直方图" : "在取景画面右上角显示直方图")
+        .help(histogram ? "收起实时取景的直方图" : "在上面这条显示实时取景的直方图")
       Spacer(minLength: 8)
+      // The live histogram in the bar, over none of the picture.
+      if strip, histogram, let h = camera.liveHistogram {
+        if Liquid.available { drop(LiveHistogramStrip(histogram: h)) } else { LiveHistogramStrip(histogram: h) }
+      }
       if let s = camera.sharpness {
         let sharp = Text(String(format: "清晰度 R %.1f  G %.1f  B %.1f", s.r * 1e4, s.g * 1e4, s.b * 1e4)).readout(10)
           .help("对焦框里的清晰度（拉普拉斯能量 × 10⁴）：越大越清楚，只在同一画面里前后比较")
@@ -516,5 +534,17 @@ enum LiveLoupe {
     let scene = LoupeRenderer.Scene(table: live, canvas: size, film: live, filmRect: CGRect(origin: .zero, size: size))
     // One ray a pixel: it is drawn again for every frame the camera sends.
     return LoupeRenderer.shared.render(frame: frame, scale: backing, pose: pose, scene: scene, samples: 1).map { ($0, frame) }
+  }
+}
+
+/// A view's height as laid out, told each time it changes.
+private struct LaidOutHeight: PreferenceKey {
+  static let defaultValue: CGFloat = 0
+  static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+extension View {
+  func onHeightChange(_ action: @escaping (CGFloat) -> Void) -> some View {
+    background(GeometryReader { g in Color.clear.preference(key: LaidOutHeight.self, value: g.size.height) })
+      .onPreferenceChange(LaidOutHeight.self, perform: action)
   }
 }

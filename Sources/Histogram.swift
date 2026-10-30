@@ -111,6 +111,30 @@ struct HistogramView: View {
   }
 }
 
+/// The live view's histogram as a strip in the bar over the stage, the letters of the channels the
+/// camera's picture clips lit beside it.
+struct LiveHistogramStrip: View {
+  let histogram: Histogram
+  var body: some View {
+    HStack(spacing: 6) {
+      HistogramView(histogram: histogram).frame(width: 110, height: 22)
+      VStack(alignment: .leading, spacing: 0) {
+        HStack(spacing: 3) {
+          ForEach(0..<3, id: \.self) { c in
+            let clipped = histogram.clipped.values[c] > 0.001
+            Text(["R", "G", "B"][c]).font(.system(size: 9, weight: clipped ? .bold : .regular, design: .monospaced))
+              .foregroundStyle(clipped ? HistogramView.colours[c] : Color.secondary.opacity(0.6))
+          }
+        }
+        Text(histogram.clipped.values.contains(where: { $0 > 0.001 }) ? "过曝" : "取景")
+          .font(.system(size: 9, weight: .medium))
+          .foregroundStyle(histogram.clipped.values.contains(where: { $0 > 0.001 }) ? Color(red: 1, green: 0.45, blue: 0.35) : .secondary)
+      }
+    }
+    .help("相机实时取景的直方图。它来自相机按自己的白平衡和曲线做出的 JPEG，只作参考；RAW 有没有过曝、离满量程还差多少，看右边「上一张 RAW」。通道字母变粗变亮表示这个通道有像素到了顶。")
+  }
+}
+
 /// The live view's histogram on glass, over the picture's top right, with the letters of the
 /// channels the camera's picture clips lit.
 struct LiveHistogram: View {
