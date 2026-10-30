@@ -130,6 +130,8 @@ final class FilmCanvasView: NSView {
   }
   var pan = CGPoint.zero
   var panStart: CGPoint?
+  /// A frame clicked on the light table, and where: it opens if the mouse comes up there.
+  var clickedFrame: (id: UUID, at: CGPoint)?
   /// A line being drawn to straighten the frame by, on the canvas.
   var levelLine: (from: CGPoint, to: CGPoint)?
   /// Room at the edges taken by panels and bars floating over the canvas: the light table runs
@@ -1301,10 +1303,11 @@ final class FilmCanvasView: NSView {
       draft = CGRect(origin: dragStart!, size: .zero)
       return
     }
-    // On the table a click picks a frame and a double click opens it; its crop is set on its own.
+    // On the table a click on a frame opens it, once the mouse comes up where it went down; its
+    // crop is set on its own.
     if let f = model.contactFrames.reversed().first(where: { model.contactRect($0).cg.contains(normal(p)) }) {
       model.select(f.id)
-      if event.clickCount == 2 { model.open(f.id) }
+      clickedFrame = (f.id, p)
     }
   }
   override func mouseDragged(with event: NSEvent) {
@@ -1358,6 +1361,12 @@ final class FilmCanvasView: NSView {
       panStart = nil
       levelLine = nil
       needsDisplay = true
+    }
+    if let clicked = clickedFrame {
+      clickedFrame = nil
+      let p = convert(event.locationInWindow, from: nil)
+      if hypot(p.x - clicked.at.x, p.y - clicked.at.y) < 4 { model?.open(clicked.id) }
+      return
     }
     if let line = levelLine {
       // A click, or a line too short to tell a direction by, leaves the frame as it is.

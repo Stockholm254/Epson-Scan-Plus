@@ -318,9 +318,10 @@ enum RegressionTests {
       RunLoop.current.run(until: Date().addingTimeInterval(0.01))
     }
     try check(
-      previewModel.singleView && previewModel.selectedID == previewModel.frames.first?.id
+      !previewModel.singleView && previewModel.selectedID == previewModel.frames.first?.id
         && previewModel.frames.count >= 2 && previewModel.errorText == nil,
-      "preview completion enters first frame in single mode")
+      "preview completion stays on the light table, the first frame selected")
+    previewModel.singleView = true
     let navigationView = FilmCanvasView(frame: CGRect(x: 0, y: 0, width: 600, height: 500))
     navigationView.model = previewModel
     func pressArrow(_ key: UInt16) {

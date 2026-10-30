@@ -247,10 +247,11 @@ enum LoupeTests {
     let large = loupe.magnification ?? 0
     try check(reach() > frame135 && large > 1.3,
       String(format: "on the light table the 5.5× shows a whole 24 × 36 mm frame, as a real one does: %.0f pt from the axis to the rim, the frame's corner %.0f pt off, magnified %.1f× past the table", reach(), frame135, large))
+    let largeReach = reach()
     model.preferences.loupeField = .medium
     canvas.updateLoupe()
-    try check(reach() > frame135 && (loupe.magnification ?? 0) < large && (loupe.magnification ?? 0) >= 1,
-      String(format: "a smaller field shows the same frame, magnified less: %.1f×", loupe.magnification ?? 0))
+    try check(reach() < largeReach - 1 && abs((loupe.magnification ?? 0) - large) < 1e-9,
+      String(format: "a smaller field magnifies as much, %.1f×, showing less of the frame: %.0f pt to the rim against %.0f", loupe.magnification ?? 0, reach(), largeReach))
     model.preferences.loupeField = .actual
     canvas.updateLoupe()
     try check(loupe.eyepiece == nil && abs(loupe.frame.width - (loupe.radius * 4.2).rounded()) <= 2,

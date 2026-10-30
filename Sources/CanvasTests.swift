@@ -116,11 +116,12 @@ enum CanvasTests {
         windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: clicks, pressure: 1)!
     }
     let third = CGPoint(x: strip[2].midX, y: strip[2].midY)
+    let back = canvas.normal(third)
     canvas.mouseDown(with: event(.leftMouseDown, third))
     canvas.mouseUp(with: event(.leftMouseUp, third))
-    let back = canvas.normal(third)
-    try check(model.selectedID == frames[2].id && frames[2].rect.cg.contains(back),
-      "a click on the turned table picks the frame under it")
+    try check(model.selectedID == frames[2].id && frames[2].rect.cg.contains(back) && model.singleView,
+      "a click on the turned table opens the frame under it")
+    model.singleView = false
     for _ in 0..<40 where model.rendering { settle(0.1) }
     // Dragging the frame's (max x, max y) corner, wherever the turn puts it on screen, or the frame.
     let corner = canvas.corners(frames[2].rect.cg)[3], drop = CGPoint(x: corner.x + 10, y: corner.y - 12)
@@ -132,8 +133,8 @@ enum CanvasTests {
     canvas.mouseDown(with: event(.leftMouseDown, grip))
     canvas.mouseDragged(with: event(.leftMouseDragged, moved))
     canvas.mouseUp(with: event(.leftMouseUp, moved))
-    try check(model.frames[2].rect == frames[2].rect && model.selectedID == frames[2].id,
-      "on the light table a frame's box neither resizes by its corner nor moves: its crop is set on its own")
+    try check(model.frames[2].rect == frames[2].rect && model.selectedID == frames[2].id && !model.singleView,
+      "on the light table a frame's box neither resizes by its corner nor moves, and a drag opens nothing: its crop is set on its own")
     let perMM = canvas.imageRect.height / 135.5
     try check(abs(canvas.loupeRadius(for: .pentax) - min(110, max(44, CGFloat(LoupeStyle.pentax.baseMM / 2) * perMM))) < 0.5,
       "the loupe keeps the film's scale on the turned table")
@@ -263,8 +264,9 @@ enum CanvasTests {
     let second = CGPoint(x: mirroredStrip[1].midX, y: mirroredStrip[1].midY)
     canvas.mouseDown(with: event(.leftMouseDown, second))
     canvas.mouseUp(with: event(.leftMouseUp, second))
-    try check(model.selectedID == model.frames[1].id && zip(mirroredStrip, mirroredStrip.dropFirst()).allSatisfy { $1.minX > $0.maxX - 1 },
-      "a mirrored table still picks the frame under the mouse, the strip now reading from the left")
+    try check(model.selectedID == model.frames[1].id && model.singleView && zip(mirroredStrip, mirroredStrip.dropFirst()).allSatisfy { $1.minX > $0.maxX - 1 },
+      "a mirrored table still opens the frame under the mouse, the strip now reading from the left")
+    model.singleView = false
     model.mirrorRoll()
     try check(!model.contactMirrored && model.frames.allSatisfy { $0.adjustments.flipHorizontal == false }, "mirroring again undoes it")
 

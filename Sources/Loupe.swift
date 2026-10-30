@@ -582,31 +582,36 @@ final class LoupeView: NSView {
   /// the lens. Where the eye is, how far the view
   /// reaches on screen, the lens's radius there, and the loupe's base radius it is drawn at.
   var eyepiece: (eye: SIMD3<Float>, extent: CGFloat, lens: CGFloat, radius: CGFloat)? {
-    guard let canvas, let center, let share = field.share else { return nil }
+    guard let center, let reach = lensReach(field) else { return nil }
     let lens = style.lens, s = Self.eyeNearness
-    let side = min(canvas.bounds.width, canvas.bounds.height)
-    var target = Double(share * side)
-    if field == .large, canvas.model?.singleView == true {
-      // Over the single frame the large field is just as wide as the picture shown.
-      target = Double(min(canvas.imageRect.width / 2, side * 0.5))
-    } else if field == .large, let perMM = canvas.loupePointsPerMM {
-      let whole = CGFloat(style.fieldMM / 2) * perMM * Self.tableMagnification / style.rimReach
-      target = Double(min(max(CGFloat(target), whole), side * 0.46))
-    }
+    let target = Double(reach)
     let R = target / (lens.radius * s), raised = Double(lift / max(1, radius)) * R
     let lz = lens.z * R + raised, z = lz * s / (s - 1)
     let onScreen = CGFloat(target)
     return (SIMD3(Float(center.x), Float(center.y), Float(z)), onScreen * Self.rim + 2, onScreen, CGFloat(R))
   }
-  /// Looked into on the light table, the lens shows the loupe's whole field, a whole 135 frame
-  /// for a 135 loupe, magnified as much as the lens's size on screen then allows, but never less
-  /// than the table shows it. Over the single frame, as much as its pixels allow; seen from afar on
-  /// the table, the loupe's own.
+  /// How far the lens reaches on screen, looked into with `field`: its share of the canvas; over
+  /// the single frame the large field as wide as the picture shown, on the light table as large as
+  /// shows the loupe's whole field larger than the table does. Nil at the film's scale.
+  func lensReach(_ field: LoupeField) -> CGFloat? {
+    guard let canvas, let share = field.share else { return nil }
+    let side = min(canvas.bounds.width, canvas.bounds.height)
+    if field == .large, canvas.model?.singleView == true { return min(canvas.imageRect.width / 2, side * 0.5) }
+    if field == .large, let perMM = canvas.loupePointsPerMM {
+      let whole = CGFloat(style.fieldMM / 2) * perMM * Self.tableMagnification / style.rimReach
+      return min(max(share * side, whole), side * 0.46)
+    }
+    return share * side
+  }
+  /// Looked into on the light table, as much as the large field shows the loupe's whole field
+  /// with, a whole 135 frame for a 135 loupe, never less than the table shows it: the same in
+  /// every field, a smaller one showing less of the frame as large. Over the single frame, as much
+  /// as its pixels allow; seen from afar on the table, the loupe's own.
   var magnification: Double? {
     guard let canvas else { return nil }
     if let single = canvas.loupeMagnification(for: style) { return single }
-    guard let view = eyepiece, let perMM = canvas.loupePointsPerMM else { return nil }
-    return Double(max(1, style.rimReach * view.lens / (CGFloat(style.fieldMM / 2) * perMM)))
+    guard eyepiece != nil, let perMM = canvas.loupePointsPerMM, let large = lensReach(.large) else { return nil }
+    return Double(max(1, style.rimReach * large / (CGFloat(style.fieldMM / 2) * perMM)))
   }
   /// The viewer looks into the eyecup; at the film's scale it sits in front of the table, looking
   /// down, and the loupe shows its front, more so the further back it lies.

@@ -565,7 +565,8 @@ final class AppModel: ObservableObject {
       singleView = false
       showNegative = false
       sourceSummary = "透扫预览 · \(Int(dpi)) dpi"
-      detectFrames(enterSingle: true)
+      // The frames found come in on the light table, which stays.
+      detectFrames()
     } catch { errorText = error.localizedDescription }
   }
   func detectFrames(enterSingle: Bool = false) {
