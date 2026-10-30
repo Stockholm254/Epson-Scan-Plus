@@ -24,7 +24,7 @@ struct CurveEditor: View {
           .simultaneousGesture(removal(g.size))
       }
       .aspectRatio(1, contentMode: .fit)
-      .padding(4).background(LCDGlass())
+      .padding(4).background(PlotScreen())
       .accessibilityElement().accessibilityLabel("色调曲线 · \(Self.names[channel])")
       Text("拖动控制点调整；点空白处添加，双击控制点删除。各通道曲线在 RGB 曲线之后生效。背后是正片的红、绿、蓝直方图。")
         .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -34,7 +34,7 @@ struct CurveEditor: View {
     HStack(spacing: 6) {
       ForEach(0..<4, id: \.self) { i in
         Button(Self.names[i]) { channel = i }
-          .buttonStyle(HardwareKeyStyle(latched: channel == i))
+          .buttonStyle(KeyStyle(latched: channel == i))
           .foregroundStyle(curves[i].isIdentity ? Color(white: 0.85) : Self.colors[i])
       }
       Spacer()

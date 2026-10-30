@@ -57,7 +57,7 @@ struct LeakViewer: View {
         } label: {
           Image(systemName: "rotate.right")
         }.help("右转 90°")
-      }.buttonStyle(HardwareKeyStyle()).controlSize(.small).disabled(!lab.hasBase || lab.busy != nil)
+      }.buttonStyle(KeyStyle()).controlSize(.small).disabled(!lab.hasBase || lab.busy != nil)
         .padding(.horizontal, 16).padding(.vertical, 10)
       ZStack {
         if let before = lab.before {
@@ -68,7 +68,7 @@ struct LeakViewer: View {
             Text("选择需要去漏光的照片").font(.system(size: 15, weight: .medium))
             Text("在下方胶片条点一张本卷的照片，按它当前的调色处理；\n或导入其他软件已去色罩、反相的正片（推荐带 ICC 的 16 位 TIFF）。")
               .font(.system(size: 12)).foregroundStyle(.secondary).multilineTextAlignment(.center)
-            Button("导入正片…", action: choose).buttonStyle(HardwareKeyStyle(prominent: true)).disabled(lab.busy != nil)
+            Button("导入正片…", action: choose).buttonStyle(KeyStyle(prominent: true)).disabled(lab.busy != nil)
           }
         }
         if let busy = lab.busy {
@@ -227,7 +227,7 @@ struct LeakPanel: View {
         adjustments
         Divider()
         export
-      }.padding(18).buttonStyle(HardwareKeyStyle()).controlSize(.small)
+      }.padding(18).buttonStyle(KeyStyle()).controlSize(.small)
     }
   }
   func header(_ text: String, symbol: String, info: String) -> some View {
@@ -295,24 +295,24 @@ struct LeakPanel: View {
       }
       note(sceneHint)
       HStack {
-        Text(!lab.hasBase ? "等待照片" : lab.repaired ? "已应用去漏光" : "尚未去漏光").lcd(11)
+        Text(!lab.hasBase ? "等待照片" : lab.repaired ? "已应用去漏光" : "尚未去漏光").readout(11)
         Spacer()
       }
       Button {
         lab.start()
       } label: {
         Label("开始去漏光", systemImage: "wand.and.stars").frame(maxWidth: .infinity)
-      }.buttonStyle(HardwareKeyStyle(prominent: true)).disabled(!lab.hasBase || lab.busy != nil)
+      }.buttonStyle(KeyStyle(prominent: true)).disabled(!lab.hasBase || lab.busy != nil)
       note(lab.hasReference ? "已有参考图，点击即在本地去漏光，不产生 API 费用。" : "首次点击会通过 API 生成参考图；确认上传与费用后自动去漏光。")
       Toggle(
         "保留灯光红晕和真实红色物体",
         isOn: Binding(get: { lab.params.protectHighlights }, set: { v in lab.change("保留灯光红晕") { $0.protectHighlights = v } })
-      ).toggleStyle(LEDToggleStyle()).font(.system(size: 11)).disabled(!lab.hasBase || lab.busy != nil)
+      ).toggleStyle(.switch).font(.system(size: 11)).disabled(!lab.hasBase || lab.busy != nil)
       VStack(spacing: 3) {
         HStack {
           Text("去偏色强度").font(.system(size: 11)).foregroundStyle(.secondary)
           Spacer()
-          Text(lab.model.map { "\(Int(($0.strength * 100).rounded()))%" } ?? "未应用").lcd()
+          Text(lab.model.map { "\(Int(($0.strength * 100).rounded()))%" } ?? "未应用").readout()
         }
         Fader(
           title: "去偏色强度", value: Binding(get: { lab.model?.strength ?? 0 }, set: { lab.setStrength($0) }), range: 0...1, detent: 1
@@ -371,7 +371,7 @@ struct LeakPanel: View {
       HStack {
         Text(title).font(.system(size: 11)).foregroundStyle(.secondary)
         Spacer()
-        Text(String(format: format, lab.params[keyPath: key])).lcd()
+        Text(String(format: format, lab.params[keyPath: key])).readout()
       }
       Fader(title: title, value: Binding(get: { lab.params[keyPath: key] }, set: { v in
         let step = range.upperBound - range.lowerBound > 10 ? 1.0 : 0.05
@@ -447,8 +447,8 @@ struct LeakStatus: View {
   var body: some View {
     HStack(spacing: 12) {
       if lab.busy != nil { ProgressView().controlSize(.small) }
-      Text(lab.busy ?? (lab.hasBase ? "就绪 · 原片未改动" : "去漏光 · 选择一张照片")).lineLimit(1)
-        .frame(maxWidth: .infinity, alignment: .leading).lcd(11)
+      Text(lab.busy ?? (lab.hasBase ? "就绪 · 原片未改动" : "去漏光 · 选择一张照片")).font(.system(size: 11)).foregroundStyle(.secondary)
+        .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
     }.padding(.horizontal, 18).padding(.vertical, 7)
   }
 }
@@ -556,20 +556,15 @@ struct LeakGenerateSheet: View {
   }
 }
 
-/// A panel section's title, engraved into the metal.
+/// A panel section's title, as the system sets one, its symbol in the accent.
 struct SectionTitle: View {
   let text: String
   let symbol: String
-  @Environment(\.colorScheme) private var scheme
   var body: some View {
-    let light = scheme == .light
-    HStack(spacing: 7) {
+    Label {
+      Text(text).font(.system(size: 13, weight: .semibold))
+    } icon: {
       Image(systemName: symbol).foregroundStyle(Hardware.amberText)
-      Text(text).font(.system(size: 12, weight: .semibold)).tracking(1.5)
-        .foregroundStyle(light ? Color(white: 0.22) : Color(white: 0.8))
     }
-    // Engraved: the cut's upper edge in shadow and its lower lit, on light glass a fainter cut.
-    .shadow(color: .black.opacity(light ? 0.12 : 0.9), radius: 0, y: -0.5)
-    .shadow(color: .white.opacity(light ? 0.7 : 0.08), radius: 0, y: 0.75)
   }
 }

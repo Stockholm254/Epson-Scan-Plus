@@ -75,26 +75,28 @@ struct CameraStage: View {
           }.pickerStyle(.segmented).labelsHidden().frame(width: 150)
             .help("相机的对焦放大：实时取景传回对焦点附近的真实像素，用来看清楚对没对上焦；点画面移对焦点前先回 1×")
         }
-        Button {
-          magnifier.toggle()
-        } label: {
-          Image(systemName: "magnifyingglass.circle").frame(width: 16)
-        }.buttonStyle(HardwareKeyStyle(latched: magnifier)).controlSize(.small)
-          .accessibilityLabel("放大镜").accessibilityValue(magnifier ? "开" : "关")
-          .help(magnifier ? "收起对焦框上的玻璃放大镜" : "在对焦框上放一个放大 4 倍的玻璃放大镜")
-        Button {
-          histogram.toggle()
-        } label: {
-          Image(systemName: "chart.bar.xaxis").frame(width: 16)
-        }.buttonStyle(HardwareKeyStyle(latched: histogram)).controlSize(.small)
-          .accessibilityLabel("直方图").accessibilityValue(histogram ? "开" : "关")
-          .help(histogram ? "收起实时取景的直方图" : "在取景画面右上角显示直方图")
       }
+      // The pickers and the readout on drops of glass; the keys are glass themselves.
       if Liquid.available { drop(viewing) } else { viewing }
+      Button {
+        magnifier.toggle()
+      } label: {
+        Image(systemName: "magnifyingglass.circle").frame(width: 16)
+      }.glassAction(on: magnifier).controlSize(.small)
+        .accessibilityLabel("放大镜").accessibilityValue(magnifier ? "开" : "关")
+        .help(magnifier ? "收起对焦框上的玻璃放大镜" : "在对焦框上放一个放大 4 倍的玻璃放大镜")
+      Button {
+        histogram.toggle()
+      } label: {
+        Image(systemName: "chart.bar.xaxis").frame(width: 16)
+      }.glassAction(on: histogram).controlSize(.small)
+        .accessibilityLabel("直方图").accessibilityValue(histogram ? "开" : "关")
+        .help(histogram ? "收起实时取景的直方图" : "在取景画面右上角显示直方图")
       Spacer(minLength: 8)
       if let s = camera.sharpness {
-        Text(String(format: "清晰度 R %.1f  G %.1f  B %.1f", s.r * 1e4, s.g * 1e4, s.b * 1e4)).lcd(10)
+        let sharp = Text(String(format: "清晰度 R %.1f  G %.1f  B %.1f", s.r * 1e4, s.g * 1e4, s.b * 1e4)).readout(10)
           .help("对焦框里的清晰度（拉普拉斯能量 × 10⁴）：越大越清楚，只在同一画面里前后比较")
+        if Liquid.available { drop(sharp) } else { sharp }
       }
     }
   }
@@ -167,19 +169,19 @@ struct CameraStage: View {
             camera.autofocus()
           } label: {
             Label("AF", systemImage: "scope").lineLimit(1).fixedSize()
-          }.help("在对焦框处自动对焦一次，对完切回手动对焦锁住焦点；快门本身不对焦").environment(\.glassKeys, liquid)
+          }.glassAction().help("在对焦框处自动对焦一次，对完切回手动对焦锁住焦点；快门本身不对焦")
           let stepping = HStack(spacing: 3) {
             ForEach([-7, -3, -1], id: \.self) { s in
-              Button { camera.step(s) } label: { Text(s == -7 ? "«" : s == -3 ? "‹‹" : "‹").frame(width: 16) }
+              Button { camera.step(s) } label: { Text(s == -7 ? "«" : s == -3 ? "‹‹" : "‹").frame(width: 16) }.glassAction()
                 .help("对焦往近处走（Near \(-s) 档，要手动对焦模式）")
             }
             FocusRing(offset: $ring) { camera.step($0) }.frame(minWidth: 56, idealWidth: 120, maxWidth: 120).frame(height: 24)
             ForEach([1, 3, 7], id: \.self) { s in
-              Button { camera.step(s) } label: { Text(s == 7 ? "»" : s == 3 ? "››" : "›").frame(width: 16) }
+              Button { camera.step(s) } label: { Text(s == 7 ? "»" : s == 3 ? "››" : "›").frame(width: 16) }.glassAction()
                 .help("对焦往远处走（Far \(s) 档，要手动对焦模式）")
             }
           }
-          if liquid { drop(stepping) } else { stepping }
+          stepping
           Spacer(minLength: 0)
         }
         HStack(spacing: 10) {
@@ -187,7 +189,7 @@ struct CameraStage: View {
             camera.refining ? camera.cancelRefine() : camera.refineFocus()
           } label: {
             Label(camera.refining ? "停止" : "精确对焦", systemImage: "camera.metering.center.weighted").lineLimit(1).fixedSize()
-          }.help("切到手动对焦，按对焦框里的颗粒清晰度一步步找最清楚的位置（7、3、1 档逐级）").environment(\.glassKeys, liquid)
+          }.glassAction().help("切到手动对焦，按对焦框里的颗粒清晰度一步步找最清楚的位置（7、3、1 档逐级）")
           let shifting = HStack(spacing: 10) {
             Picker("像素位移", selection: $m.pixelShiftCount) {
               Text("单张").tag(1)
@@ -208,7 +210,7 @@ struct CameraStage: View {
             DropToast(text: toast).id(toast).transition(.scale(scale: 0.3, anchor: .bottomTrailing).combined(with: .opacity))
           }
         }
-    }.buttonStyle(HardwareKeyStyle()).controlSize(.small).disabled(!camera.connected && camera.phase != .missing)
+    }.buttonStyle(KeyStyle()).controlSize(.small).disabled(!camera.connected && camera.phase != .missing)
   }
 }
 
@@ -326,7 +328,7 @@ struct FocusCheck: View {
         .help("取的是相机文件本身的全分辨率像素（RAW 按系统默认显示），以对焦框的位置为中心。")
       if let crop {
         let s = FocusSearch.sharpness(crop, in: CGRect(x: 0, y: 0, width: 1, height: 1))
-        Text(String(format: "清晰度×10⁴ R %.1f G %.1f B %.1f", s.r * 1e4, s.g * 1e4, s.b * 1e4)).fixedSize().lcd(10)
+        Text(String(format: "清晰度×10⁴ R %.1f G %.1f B %.1f", s.r * 1e4, s.g * 1e4, s.b * 1e4)).fixedSize().readout(10)
           .help("这块原图的清晰度：三个通道差得多时，说明有色差，红和蓝的焦点不在同一处")
       }
       if let histogram { LastHistogram(histogram: histogram) }
@@ -366,7 +368,7 @@ struct LastHistogram: View {
       Text(String(format: "亮端  R %3.0f%%  G %3.0f%%  B %3.0f%%", h.top.r * 100, h.top.g * 100, h.top.b * 100)
         + (h.linear ? "\n距满  R \(ev(h.top.r)) G \(ev(h.top.g)) B \(ev(h.top.b)) EV" : "")
         + String(format: "\n过曝  R %.2f%% G %.2f%% B %.2f%%", h.clipped.r * 100, h.clipped.g * 100, h.clipped.b * 100))
-        .fixedSize().lcd(10)
+        .fixedSize().readout(10)
     }
     .help(h.linear
       ? "横轴是传感器读数，按比例从黑到满量程，左右等距就是光量等比例；竖线是 1/4、1/2、3/4。亮端是每个通道最亮的 0.5% 从哪里开始；距满是它离满量程还差几档。过曝是到顶的感光点的比例，应为 0。"
@@ -384,7 +386,7 @@ struct CameraPanel: View {
     VStack(alignment: .leading, spacing: 14) {
       HStack(spacing: 8) {
         StatusLED(lamp: camera.connected ? .ready : camera.phase == .connecting ? .busy : .fault, size: 7)
-        Text(camera.connected ? camera.model : camera.phase == .missing ? "没有 SDK" : camera.phase == .connecting ? "连接中" : "未连接").lcd(10)
+        Text(camera.connected ? camera.model : camera.phase == .missing ? "没有 SDK" : camera.phase == .connecting ? "连接中" : "未连接").readout(10)
         Spacer()
         if let battery = camera.properties["BatteryRemain"] { Text("电量 \(battery.text)").font(.system(size: 10)).foregroundStyle(.secondary) }
       }
@@ -400,10 +402,10 @@ struct CameraPanel: View {
             camera.connect(keepOnCard: keepOnCard)
           } label: {
             Label("连接相机", systemImage: "cable.connector")
-          }.buttonStyle(HardwareKeyStyle(prominent: true)).disabled(camera.phase == .missing || camera.phase == .connecting)
+          }.buttonStyle(KeyStyle(prominent: true)).disabled(camera.phase == .missing || camera.phase == .connecting)
         }
       }
-      Toggle("存储卡上也留一份", isOn: $keepOnCard).toggleStyle(LEDToggleStyle()).font(.system(size: 11))
+      Toggle("存储卡上也留一份", isOn: $keepOnCard).toggleStyle(.switch).font(.system(size: 11))
         .disabled(camera.connected).help("连接时设定：只存到电脑，或电脑和存储卡各一份（要插卡）")
       if camera.connected {
         Divider()
@@ -441,7 +443,7 @@ struct CameraPanel: View {
           Button("AF-S") { camera.set("FocusMode", 2) }
           Button("MF") { camera.set("FocusMode", 1) }
           Spacer()
-          Text(camera.properties["FocusMode"]?.text ?? "--").lcd(10)
+          Text(camera.properties["FocusMode"]?.text ?? "--").readout(10)
         }
         setting("区域", "FocusArea")
         if let f = camera.properties["FocusIndication"] { labeled("状态", f.text) }
@@ -474,7 +476,7 @@ struct CameraPanel: View {
     HStack {
       Text(name).font(.system(size: 11)).foregroundStyle(.secondary)
       Spacer()
-      Text(value).lcd(10)
+      Text(value).readout(10)
     }
   }
   /// A setting with the values the camera offers for it.
@@ -490,7 +492,7 @@ struct CameraPanel: View {
           }
         }.menuStyle(.borderlessButton).fixedSize().font(.system(size: 11))
       } else {
-        Text(p?.text ?? "--").lcd(10)
+        Text(p?.text ?? "--").readout(10)
       }
     }
   }

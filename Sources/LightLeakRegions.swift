@@ -100,15 +100,15 @@ struct LeakRegionsSection: View {
         HStack {
           Text("画笔").font(.system(size: 11)).foregroundStyle(.secondary)
           Fader(title: "画笔大小", value: $lab.brush, range: 0.005...0.08)
-          Text("\(Int((lab.brush * 1000).rounded()))‰").lcd()
+          Text("\(Int((lab.brush * 1000).rounded()))‰").readout()
         }
       }
-      Toggle("在照片上显示区域", isOn: $lab.showMasks).toggleStyle(LEDToggleStyle()).font(.system(size: 11))
+      Toggle("在照片上显示区域", isOn: $lab.showMasks).toggleStyle(.switch).font(.system(size: 11))
       HStack {
         Button("自动检测") { lab.detect() }
         Text("灵敏度").font(.system(size: 11)).foregroundStyle(.secondary)
         Fader(title: "检测灵敏度", value: $lab.sensitivity, range: 0.1...1, detent: 0.5)
-        Text("\(Int((lab.sensitivity * 100).rounded()))%").lcd()
+        Text("\(Int((lab.sensitivity * 100).rounded()))%").readout()
       }
       Text("漏光区域 \(lab.params.regions.count)").font(.system(size: 11, weight: .medium))
       if lab.params.regions.isEmpty {
@@ -184,7 +184,7 @@ struct LeakRegionsSection: View {
     HStack {
       Text(title).font(.system(size: 11)).foregroundStyle(.secondary)
       Fader(title: title, value: Binding(get: { value }, set: { set(($0 * 100).rounded() / 100) }), range: 0...1)
-      Text("\(Int((value * 100).rounded()))%").lcd()
+      Text("\(Int((value * 100).rounded()))%").readout()
     }
   }
 }
@@ -229,7 +229,7 @@ struct LeakAlignSheet: View {
           lab.showAlign = false
         }
       }
-    }.padding(20).frame(width: 780).buttonStyle(HardwareKeyStyle()).controlSize(.small)
+    }.padding(20).frame(width: 780).buttonStyle(KeyStyle()).controlSize(.small)
       .onAppear { pairs = lab.pairs }
   }
   var info: String {
@@ -297,7 +297,7 @@ struct LeakCropSheet: View {
           let mark = turning
           DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { if turning == mark { turning = 0 } }
         }), range: -15...15, detent: 0)
-        Text(String(format: "%+.2f°", crop.angle ?? 0)).lcd()
+        Text(String(format: "%+.2f°", crop.angle ?? 0)).readout()
       }
       HStack {
         Button("不裁切") { crop = LeakCrop() }
@@ -308,7 +308,7 @@ struct LeakCropSheet: View {
           lab.showCrop = false
         }
       }
-    }.padding(20).frame(width: 420).buttonStyle(HardwareKeyStyle()).controlSize(.small)
+    }.padding(20).frame(width: 420).buttonStyle(KeyStyle()).controlSize(.small)
       .onAppear {
         crop = lab.params.crop
         lab.uncutPreview { picture = $0 }
@@ -318,7 +318,7 @@ struct LeakCropSheet: View {
     HStack {
       Text(title).font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 24, alignment: .leading)
       Fader(title: "裁切" + title, value: Binding(get: { crop[keyPath: key] }, set: { crop[keyPath: key] = ($0 * 1000).rounded() / 1000 }), range: range)
-      Text(String(format: "%.3f", crop[keyPath: key])).lcd()
+      Text(String(format: "%.3f", crop[keyPath: key])).readout()
     }
   }
 }

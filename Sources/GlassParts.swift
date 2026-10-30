@@ -38,9 +38,10 @@ private struct GlassPane: ViewModifier {
   }
 }
 
-/// The shutter release: a round key of red frosted glass, sinking under the finger, the whole key
-/// in a drop of glass that gives as it is pressed. It glows while the camera is ready and pulses
-/// while a picture is written and sent; a ring goes off round it each time the shutter goes.
+/// The shutter release, as the system draws its leading action: a large round key of prominent
+/// Liquid Glass in red (on earlier systems a prominent bordered one). While a picture is written and
+/// sent it takes no press and shows the system's spinner; a ring goes off round it each time the
+/// shutter goes.
 struct ShutterKey: View {
   let enabled: Bool
   /// A picture still on its way: the key takes no press until it is in.
@@ -49,93 +50,30 @@ struct ShutterKey: View {
   let shots: Int
   let action: () -> Void
   @State private var flash = 0.0
-  @State private var blink = false
   @Environment(\.accessibilityReduceMotion) private var still
   var body: some View {
-    Button(action: action) { EmptyView() }
-      .buttonStyle(ShutterPress(enabled: enabled, busy: busy, flash: flash, blink: blink))
-      .disabled(!enabled)
-      .keyboardShortcut(.space, modifiers: [])
-      .help("拍摄（空格）")
-      .accessibilityLabel("拍摄")
-      .accessibilityValue(busy ? "照片传输中" : enabled ? "就绪" : "未连接")
-      .onChange(of: shots) {
-        flash = 1
-        withAnimation(.easeOut(duration: 0.5)) { flash = 0 }
+    Button(action: action) {
+      ZStack {
+        Color.clear.frame(width: 40, height: 40)
+        if busy { ProgressView().controlSize(.small) }
       }
-      .onChange(of: busy, initial: true) { _, now in
-        // With Reduce Motion a picture on its way dims the key instead of pulsing it.
-        if now && !still {
-          withAnimation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true)) { blink = true }
-        } else {
-          withAnimation(.easeOut(duration: 0.15)) { blink = false }
-        }
-      }
-  }
-}
-
-/// The release drawn, the button sunk while pressed.
-struct ShutterPress: ButtonStyle {
-  let enabled: Bool, busy: Bool, flash: Double, blink: Bool
-  static let size: CGFloat = 66
-  func makeBody(configuration: Configuration) -> some View {
-    ShutterFace(pressed: configuration.isPressed && enabled, enabled: enabled, busy: busy, flash: flash, blink: blink)
-      .padding(6)
-      .modifier(ShutterGlass(radius: Self.size / 2 + 6))
-      .contentShape(Circle())
-  }
-}
-
-/// The release as a round key of red frosted glass, one colour throughout: lighter at the top as
-/// a dome catches the light, grained, a soft highlight there and its rim lit from above, brighter
-/// while pressed. It glows softly red while the camera is ready, pulses while a picture is written
-/// and sent, and is grey with no camera.
-private struct ShutterFace: View {
-  let pressed: Bool, enabled: Bool, busy: Bool, flash: Double, blink: Bool
-  @Environment(\.colorScheme) private var scheme
-  @Environment(\.accessibilityReduceMotion) private var still
-  var body: some View {
-    let d = ShutterPress.size
-    let glow = enabled ? (busy ? (blink ? 0.9 : 0.2) : 0.55) : 0
-    let red = Color(red: 0.88, green: 0.16, blue: 0.13)
-    ZStack {
-      Circle().fill(RadialGradient(
-        colors: enabled
-          ? [Color(red: 1, green: 0.5, blue: 0.42), red, Color(red: 0.6, green: 0.07, blue: 0.06)]
-          : [Color(white: 0.78), Color(white: 0.62), Color(white: 0.5)],
-        center: UnitPoint(x: 0.5, y: 0.32), startRadius: 0, endRadius: d * 0.62))
-      // The frost: a veil, lighter at the top, and its grain.
-      Circle().fill(LinearGradient(colors: [.white.opacity(0.3), .white.opacity(0.04)], startPoint: .top, endPoint: .bottom))
-      if let grain = Frost.grain {
-        Image(decorative: grain, scale: 2).resizable(resizingMode: .tile).opacity(0.09).blendMode(.multiply)
-          .clipShape(Circle())
-      }
-      Ellipse().fill(LinearGradient(colors: [.white.opacity(pressed ? 0.25 : 0.5), .clear], startPoint: .top, endPoint: .bottom))
-        .frame(width: d * 0.58, height: d * 0.26).offset(y: -d * 0.24)
-      Circle().strokeBorder(LinearGradient(
-        colors: [.white.opacity(0.75), .white.opacity(0.15), .black.opacity(0.18)], startPoint: .top, endPoint: .bottom), lineWidth: 1.2)
-      Circle().stroke(Color.white.opacity(0.9 * flash), lineWidth: 3)
-        .frame(width: d + 8, height: d + 8).scaleEffect(still ? 1 : 1 + 0.3 * (1 - flash))
     }
-    .frame(width: d, height: d)
-    .brightness(pressed ? 0.1 : busy ? (blink ? 0.08 : -0.06) : 0)
-    .clipShape(Circle().inset(by: -10))
-    .shadow(color: red.opacity(glow), radius: 9)
-    .shadow(color: .black.opacity(pressed ? 0.12 : 0.22), radius: pressed ? 2 : 5, y: pressed ? 1 : 3)
-    .scaleEffect(pressed ? 0.95 : 1)
-    .animation(.spring(response: 0.16, dampingFraction: 0.6), value: pressed)
-  }
-}
-
-/// The drop of glass the release sits in: with SwiftUI's glass one that gives under the finger,
-/// and the notes of pictures filed rise out of it; frost before.
-private struct ShutterGlass: ViewModifier {
-  let radius: CGFloat
-  @Environment(\.colorScheme) private var scheme
-  func body(content: Content) -> some View {
-    let light = scheme == .light
-    content.liquid(Circle(), LiquidStyle(tint: light ? .white.opacity(0.2) : .black.opacity(0.18), interactive: true)) { key in
-      key.frost(Circle(), veil: light ? 0.3 : 0.06, glassRadius: radius, capsule: true)
+    .leadingAction()
+    .buttonBorderShape(.circle)
+    .controlSize(.large)
+    .tint(Color(red: 0.86, green: 0.16, blue: 0.13))
+    .overlay {
+      Circle().stroke(Color.white.opacity(0.9 * flash), lineWidth: 3)
+        .scaleEffect(still ? 1.05 : 1.05 + 0.3 * (1 - flash)).allowsHitTesting(false)
+    }
+    .disabled(!enabled)
+    .keyboardShortcut(.space, modifiers: [])
+    .help("拍摄（空格）")
+    .accessibilityLabel("拍摄")
+    .accessibilityValue(busy ? "照片传输中" : enabled ? "就绪" : "未连接")
+    .onChange(of: shots) {
+      flash = 1
+      withAnimation(.easeOut(duration: 0.5)) { flash = 0 }
     }
   }
 }
@@ -289,25 +227,5 @@ private struct FrostPane<S: InsettableShape>: ViewModifier {
             : AnyShapeStyle(LinearGradient(colors: [.white.opacity(0.95), .white.opacity(0.3), .black.opacity(0.07)], startPoint: .top, endPoint: .bottom)),
           lineWidth: 1))
     }
-  }
-}
-
-/// A bar across the window on the copy stand's light glass, the toolbar or the film strip's: Liquid
-/// Glass where the system has it, frost before, opaque with Reduce Transparency.
-struct LightBarSurface: View {
-  @Environment(\.accessibilityReduceTransparency) private var opaque
-  var body: some View {
-    ZStack {
-      if opaque {
-        Color(white: 0.95)
-      } else if Hardware.glass {
-        SystemGlassBackground(capsule: false, radius: 0, tint: NSColor(white: 1, alpha: 0.25))
-      } else {
-        Color.white.opacity(0.6)
-        if let grain = Frost.grain {
-          Image(decorative: grain, scale: 2).resizable(resizingMode: .tile).opacity(0.05).blendMode(.multiply)
-        }
-      }
-    }.allowsHitTesting(false)
   }
 }

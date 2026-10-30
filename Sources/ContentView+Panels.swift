@@ -7,32 +7,17 @@ import SwiftUI
 extension ContentView {
   var leftPanel: some View {
     VStack(spacing: 0) {
-      HStack(spacing: 6) {
+      Group {
         if m.page == .capture {
-          ForEach(AppModel.CaptureSource.allCases, id: \.self) { source in
-            Button {
-              m.captureSource = source
-            } label: {
-              // One size of type on every tab, so they stand the same height: a name that does not
-              // fit gives way to its short form rather than shrinking.
-              ViewThatFits(in: .horizontal) {
-                Text(source.rawValue)
-                Text(source.short)
-              }.lineLimit(1).frame(maxWidth: .infinity)
-                .foregroundStyle(m.captureSource == source ? Hardware.amberText : Hardware.adaptive(NSColor(white: 0.8, alpha: 1), NSColor(white: 0.2, alpha: 1)))
-            }.buttonStyle(HardwareKeyStyle(latched: m.captureSource == source))
+          Picker("来源", selection: $m.captureSource) {
+            ForEach(AppModel.CaptureSource.allCases, id: \.self) { Text($0.short).tag($0).help($0.rawValue) }
           }
         } else {
-          ForEach([AppModel.PanelTab.film, .output], id: \.self) { tab in
-            Button {
-              m.panelTab = tab
-            } label: {
-              Text(tab.rawValue).frame(maxWidth: .infinity)
-                .foregroundStyle(m.panelTab == tab ? Hardware.amber : Color(white: 0.8))
-            }.buttonStyle(HardwareKeyStyle(latched: m.panelTab == tab))
+          Picker("面板", selection: $m.panelTab) {
+            ForEach([AppModel.PanelTab.film, .output], id: \.self) { Text($0.rawValue).tag($0) }
           }
         }
-      }.controlSize(.small).font(.system(size: 11, weight: .medium)).padding(.horizontal, 14).padding(.vertical, 10)
+      }.pickerStyle(.segmented).labelsHidden().padding(.horizontal, 14).padding(.vertical, 10)
       Divider()
       ScrollView {
         VStack(alignment: .leading, spacing: 18) {
@@ -49,7 +34,7 @@ extension ContentView {
             }
           }
           Spacer(minLength: 16)
-        }.padding(16).buttonStyle(HardwareKeyStyle()).controlSize(.small)
+        }.padding(16).buttonStyle(KeyStyle()).controlSize(.small)
       }
     }
   }
@@ -84,7 +69,7 @@ extension ContentView {
         labeled("原始文件") { Text("TIFF · 16-bit 线性").font(.system(size: 12)).foregroundStyle(.secondary) }
         HStack {
           Toggle("按行合并扫描", isOn: Binding(get: { m.preferences.rowScanning }, set: { m.preferences.rowScanning = $0 }))
-            .toggleStyle(LEDToggleStyle()).font(.system(size: 11)).disabled(m.isWorking)
+            .toggleStyle(.switch).font(.system(size: 11)).disabled(m.isWorking)
           Spacer()
           InfoButton(text: "并排的几张一次扫完，再分成每张的原始文件，和单独扫描的一样保存。按 V850 实测，一个装满的 135 片夹（18 张）从约 13 分钟缩短到约 9 分钟。\n\n只在合起来更快时才合并：片夹里只有一条胶片、或一排只勾了一张时照常逐张扫；隔着一条的两张也分开扫。\n\n比一张宽的扫描窗口，扫描仪每次校准的蓝色增益不同（实测 −0.4% 到 +3.8%），黑电平也会漂；每张扫描到达时都和预览对齐，修正后和单独扫描相差不到 0.15%。只用于 48-bit 接口。")
         }
@@ -151,12 +136,12 @@ extension ContentView {
         "用 IT8.7/1 透射色卡测量扫描仪的杂散光：它会抬高底片密实处的读数，使高光发灰。测量后，本程序的线性扫描在转换前扣除它。\n\n色卡放进 4×5 片夹，预览后用「画框」框出整张色卡，以 600 dpi 正式扫描，再在单张视图中按提示点 6 个点；点到第 4 个后会标出全部色块的位置，便于检查。参考文件须与色卡批号一致（MONT45 的 2022:07 批对应 MONT45.2022.07.txt）。\n\n色块按 3×3 矩阵拟合的 ΔE 是对色卡反转片染料的评估，负片转换不用这个矩阵。")
       if let c = m.preferences.scannerCalibration {
         Text(c.reference).font(.system(size: 11)).lineLimit(2).truncationMode(.middle)
-        Text(String(format: "杂散光 R %.2f%% · G %.2f%% · B %.2f%%", c.flare.r * 100, c.flare.g * 100, c.flare.b * 100)).lcd()
+        Text(String(format: "杂散光 R %.2f%% · G %.2f%% · B %.2f%%", c.flare.r * 100, c.flare.g * 100, c.flare.b * 100)).readout()
         note(String(
           format: "灰阶最大误差 %.3f D，扣除后 %.3f D · 色块 ΔE %.1f（最大 %.1f）",
           c.grayErrorBefore, c.grayError, c.meanDeltaE, c.maxDeltaE))
         Toggle("转换前扣除杂散光", isOn: Binding(get: { m.preferences.removeFlare }, set: { m.preferences.removeFlare = $0; m.reapplyScannerCalibration() }))
-          .toggleStyle(LEDToggleStyle()).font(.system(size: 11))
+          .toggleStyle(.switch).font(.system(size: 11))
       } else {
         note("尚未标定。")
       }
@@ -167,7 +152,7 @@ extension ContentView {
       if m.it8Reference != nil {
         HStack {
           Button("② 在色卡上取点") { m.startIT8Marking() }.disabled(m.selected == nil || m.isWorking)
-          Text("\(m.it8Marks.count) / 6").lcd()
+          Text("\(m.it8Marks.count) / 6").readout()
           if !m.it8Marks.isEmpty { Button("退一步") { m.undoIT8Mark() } }
         }.font(.system(size: 11))
         if m.tool == .it8 && m.it8Marks.count < IT8Layout.marks.count {
@@ -185,7 +170,7 @@ extension ContentView {
       if let p = m.preferences.sharpening {
         let ppi = p.effectivePPI
         Text("\(p.source) · \(Int(p.targetDPI)) dpi").font(.system(size: 11)).lineLimit(1).truncationMode(.middle)
-        Text("横向约 \(Int(ppi.horizontal.rounded())) ppi · 竖向约 \(Int(ppi.vertical.rounded())) ppi").lcd()
+        Text("横向约 \(Int(ppi.horizontal.rounded())) ppi · 竖向约 \(Int(ppi.vertical.rounded())) ppi").readout()
         MTFChart(profile: p).frame(height: 110)
       } else {
         note("尚未建立配置。")
@@ -221,7 +206,7 @@ extension ContentView {
       }
       if m.hasSinglePictures {
         Toggle("导入的单张一起做整卷估计", isOn: Binding(get: { m.poolPictures }, set: { m.setPoolPictures($0) }))
-          .toggleStyle(LEDToggleStyle()).font(.system(size: 11))
+          .toggleStyle(.switch).font(.system(size: 11))
         note("一张一个文件的画面（翻拍，或一张张导入的扫描），只在它们是同一卷、用同样的设备和设置拍或扫时打开。读法不同（Gamma、位深）的文件不会混在一起。")
       }
       Divider()
@@ -239,7 +224,7 @@ extension ContentView {
         InfoButton(text: "让 Claude 等支持 MCP 的 AI 助手读取这张的转换状态（片基、通道斜率、白平衡、色阶、密度和直方图），看预览、取点，并调整去色罩和颜色，帮你判断偏色从哪里来。\n\n每次调整都能用 ⌘Z 撤销；助手不能扫描、删除或导出文件。只在本机通过只有你的账户能访问的连接工作，不经过网络。\n\nClaude Desktop：在设置 → 开发者 → 编辑配置里加入复制的配置后重启。Claude Code：在终端运行复制的命令。")
       }
       Toggle("允许 AI 助手读取和调整转换", isOn: Binding(get: { m.preferences.mcpEnabled }, set: { m.preferences.mcpEnabled = $0; m.updateMCP() }))
-        .toggleStyle(LEDToggleStyle()).font(.system(size: 11))
+        .toggleStyle(.switch).font(.system(size: 11))
       Text(m.mcpStatus).font(.system(size: 10)).foregroundStyle(m.preferences.mcpEnabled ? Hardware.amber : Color.secondary)
         .fixedSize(horizontal: false, vertical: true)
       HStack {
@@ -295,8 +280,8 @@ extension ContentView {
           m.useTool(picking ? .select : .calibrate)
         } label: {
           Label(picking ? "完成取点" : "取中性点", systemImage: CanvasTool.calibrate.symbol).lineLimit(1).fixedSize()
-        }.buttonStyle(HardwareKeyStyle(latched: picking)).disabled(m.selected == nil)
-        Text(String(format: "%d 点 · %.2f D", m.calibrationPoints.count, span)).lcd()
+        }.buttonStyle(KeyStyle(latched: picking)).disabled(m.selected == nil)
+        Text(String(format: "%d 点 · %.2f D", m.calibrationPoints.count, span)).readout()
       }
       Text(step).font(.system(size: 11)).foregroundStyle(ready ? Hardware.amber : Color.secondary)
       HStack(spacing: 8) {
@@ -318,7 +303,7 @@ extension ContentView {
       ForEach(m.preferences.customProfiles) { p in
         VStack(alignment: .leading, spacing: 4) {
           Text(p.name).font(.system(size: 11))
-          Text(String(format: "R %.3f · G %.3f · B %.3f", p.slopes.r, p.slopes.g, p.slopes.b)).lcd(9)
+          Text(String(format: "R %.3f · G %.3f · B %.3f", p.slopes.r, p.slopes.g, p.slopes.b)).readout(9)
           HStack {
             Button("使用") { m.chooseProfile(p) }.disabled(m.profile == p)
             Button("导出…") { m.exportProfile(p) }
@@ -348,7 +333,7 @@ extension ContentView {
           HStack {
             Text("JPEG 质量").font(.system(size: 11)).foregroundStyle(.secondary)
             Spacer()
-            Text("\(Int((m.preferences.jpegQuality * 100).rounded()))").lcd()
+            Text("\(Int((m.preferences.jpegQuality * 100).rounded()))").readout()
           }
           Fader(title: "JPEG 质量", value: Binding(get: { m.preferences.jpegQuality }, set: { m.preferences.jpegQuality = $0 }),
             range: 0.6...1, detent: 0.97)
@@ -372,7 +357,7 @@ extension ContentView {
         Button("导出勾选…") { m.exportImages(all: true) }.disabled(m.enabledCount == 0 || m.isWorking)
       }.font(.system(size: 11))
       Toggle("扫描后自动导出正片", isOn: Binding(get: { m.preferences.autoExport }, set: { m.preferences.autoExport = $0 }))
-        .toggleStyle(LEDToggleStyle()).font(.system(size: 11))
+        .toggleStyle(.switch).font(.system(size: 11))
       Divider()
       titled("接触表", symbol: "square.grid.3x2", info:
         "把勾选的画面排成一张图片，格式同上。\n\n「预览 · 立即导出」按整幅预览的分辨率（600 dpi 预览时每张 35 mm 约 850 像素）直接生成，不扫描；已正式扫描的画面按同样的分辨率读取。\n\n「1200 dpi · 先扫描」时，尚未扫描或低于 1200 dpi 的画面先以 1200 dpi 扫描，结果保存为这些画面的原始文件，再生成 1200 dpi 的接触表。")
@@ -405,14 +390,14 @@ extension ContentView {
         }.labelsHidden()
       }
       HStack {
-        Toggle("片号", isOn: sheet.numbers).toggleStyle(LEDToggleStyle())
-        Toggle("标题", isOn: sheet.title).toggleStyle(LEDToggleStyle())
+        Toggle("片号", isOn: sheet.numbers).toggleStyle(.switch)
+        Toggle("标题", isOn: sheet.title).toggleStyle(.switch)
       }.font(.system(size: 11))
       Button {
         m.exportContactSheet()
       } label: {
         Label("导出接触表…", systemImage: "square.grid.3x2")
-      }.buttonStyle(HardwareKeyStyle(prominent: true)).disabled(m.enabledCount == 0 || m.isWorking)
+      }.buttonStyle(KeyStyle(prominent: true)).disabled(m.enabledCount == 0 || m.isWorking)
     }
   }
 
@@ -436,7 +421,7 @@ extension ContentView {
         m.importImages()
       } label: {
         Label("选择文件…", systemImage: "folder").frame(maxWidth: .infinity)
-      }.buttonStyle(HardwareKeyStyle(prominent: true)).disabled(m.isWorking)
+      }.buttonStyle(KeyStyle(prominent: true)).disabled(m.isWorking)
       note("每次导入放进新的一卷，之后在 ② 去色罩里处理。")
     }
   }
@@ -460,7 +445,7 @@ extension ContentView {
               .textFieldStyle(.roundedBorder)
           }
           labeled("胶片") { Text(m.filmName).font(.system(size: 12)).lineLimit(1) }
-          labeled("画面") { Text("\(m.frames.count) 张 · 全分辨率 \(full)").lcd(10) }
+          labeled("画面") { Text("\(m.frames.count) 张 · 全分辨率 \(full)").readout(10) }
           VStack(alignment: .leading, spacing: 4) {
             Text("备注").font(.system(size: 11)).foregroundStyle(.secondary)
             TextField("相机、镜头、冲洗、地点……", text: $m.rollNotes, axis: .vertical).lineLimit(3...6)
@@ -483,9 +468,9 @@ extension ContentView {
           m.page = .convert
         } label: {
           Label("下一步：② 去色罩", systemImage: "arrow.right").frame(maxWidth: .infinity)
-        }.buttonStyle(HardwareKeyStyle(prominent: true)).disabled(m.frames.isEmpty)
+        }.buttonStyle(KeyStyle(prominent: true)).disabled(m.frames.isEmpty)
         note("胶片名和预设在 ② 去色罩里选。")
-      }.padding(18).buttonStyle(HardwareKeyStyle()).controlSize(.small)
+      }.padding(18).buttonStyle(KeyStyle()).controlSize(.small)
     }
       .onChange(of: m.rollName) { m.saveProject() }
       .onChange(of: m.rollNotes) { m.saveProject() }
@@ -553,7 +538,7 @@ struct MTFChart: View {
           Text("50%").font(.system(size: 9)).foregroundStyle(.secondary).offset(x: 2, y: 0.5 * h - 12)
           Text("10%").font(.system(size: 9)).foregroundStyle(.secondary).offset(x: 2, y: 0.9 * h - 12)
         }
-      }.padding(4).background(LCDGlass())
+      }.padding(4).background(PlotScreen())
       HStack(spacing: 10) {
         Label("横向", systemImage: "minus").foregroundStyle(Hardware.amber)
         Label("竖向", systemImage: "minus").foregroundStyle(vertical)

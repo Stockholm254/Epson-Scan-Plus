@@ -58,19 +58,6 @@ extension View {
       fallback(self)
     #endif
   }
-  /// Names glass made inside this view (a glass button's, say) within `namespace`, so that in a
-  /// `LiquidGroup` it flows to where the same id appears next. Nothing without SwiftUI's glass.
-  @ViewBuilder func liquidID(_ id: String, in namespace: Namespace.ID?) -> some View {
-    #if compiler(>=6.2)
-      if Hardware.glass, let namespace {
-        if #available(macOS 26.0, *) { glassEffectID(id, in: namespace) } else { self }
-      } else {
-        self
-      }
-    #else
-      self
-    #endif
-  }
 }
 
 #if compiler(>=6.2)
@@ -110,31 +97,6 @@ struct LiquidGroup<Content: View>: View {
   }
 }
 
-/// Where the toolbar's glass keys are named, so they flow into each other between modules.
-private struct GlassNamespaceKey: EnvironmentKey { static let defaultValue: Namespace.ID? = nil }
-/// Keys drawn as glass of their own, not on a pane of it: the toolbar's.
-private struct GlassKeysKey: EnvironmentKey { static let defaultValue = false }
-extension EnvironmentValues {
-  var glassNamespace: Namespace.ID? {
-    get { self[GlassNamespaceKey.self] }
-    set { self[GlassNamespaceKey.self] = newValue }
-  }
-  var glassKeys: Bool {
-    get { self[GlassKeysKey.self] }
-    set { self[GlassKeysKey.self] = newValue }
-  }
-}
-
-/// Names a key in the toolbar's glass, from the namespace the toolbar puts in the environment.
-struct ToolbarGlass: ViewModifier {
-  let id: String
-  @Environment(\.glassNamespace) private var namespace
-  func body(content: Content) -> some View { content.liquidID(id, in: namespace) }
-}
-extension View {
-  func toolbarGlass(_ id: String) -> some View { modifier(ToolbarGlass(id: id)) }
-}
-
 /// The picture continued past its edges, blurred and darkened, under the glass around it, as the
 /// system extends a picture under a sidebar.
 struct PictureExtension: View {
@@ -161,12 +123,16 @@ extension View {
     #endif
   }
   /// A key floating over the picture, as the system draws one: Liquid Glass on macOS 26, a bordered
-  /// button before.
-  @ViewBuilder func glassAction() -> some View {
-    #if compiler(>=6.2)
-      if #available(macOS 26.0, *) { buttonStyle(.glass) } else { buttonStyle(.bordered) }
-    #else
-      buttonStyle(.bordered)
-    #endif
+  /// button before; one that is `on` filled with the accent.
+  @ViewBuilder func glassAction(on: Bool = false) -> some View {
+    if on {
+      leadingAction()
+    } else {
+      #if compiler(>=6.2)
+        if #available(macOS 26.0, *) { buttonStyle(.glass) } else { buttonStyle(.bordered) }
+      #else
+        buttonStyle(.bordered)
+      #endif
+    }
   }
 }

@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// Parts for the scanner-console look: metal keys, lamps, LCD readouts, faders and film.
-/// Every custom control keeps a native accessibility representation.
+/// The app's colours and the parts it shares: keys, lamps, readouts, sliders and film, most of
+/// them the system's own.
 enum Hardware {
   static let amber = Color(red: 0.91, green: 0.68, blue: 0.37)
   static let lcdText = Color(red: 1.0, green: 0.75, blue: 0.4)
@@ -28,137 +28,23 @@ enum Hardware {
   static let ink = adaptive(NSColor(white: 0.92, alpha: 1), NSColor(white: 0.13, alpha: 1))
   /// Amber that reads on either: the console's, or a deeper one on light glass.
   static let amberText = adaptive(NSColor(red: 0.91, green: 0.68, blue: 0.37, alpha: 1), NSColor(red: 0.66, green: 0.4, blue: 0.08, alpha: 1))
-  static let metal = LinearGradient(
-    colors: [Color(white: 0.175), Color(white: 0.135)], startPoint: .top, endPoint: .bottom)
   /// The system draws Liquid Glass (macOS 26): the panels float as glass over the light table and
   /// the keys, lamps and readouts take its look. Before, the scanner console; also with
   /// EPSON_SCAN_PLUS_NO_GLASS set, for screenshots, which cannot catch the system's glass.
   static let glass = SystemGlass.viewClass != nil && ProcessInfo.processInfo.environment["EPSON_SCAN_PLUS_NO_GLASS"] == nil
 }
 
-/// A raised console key. `latched` holds it pressed in, for lamp toggles that are on.
-struct HardwareKeyStyle: ButtonStyle {
+/// A key, as the system draws one: bordered, and filled with the accent when it leads its panel
+/// or stands latched on.
+struct KeyStyle: PrimitiveButtonStyle {
   var prominent = false
   var latched = false
   @ViewBuilder func makeBody(configuration: Configuration) -> some View {
-    if Hardware.glass {
-      GlassKey(label: configuration.label, pressed: configuration.isPressed, latched: latched, prominent: prominent)
+    if prominent || latched {
+      Button(configuration).buttonStyle(.borderedProminent)
     } else {
-      HardwareKey(
-        label: configuration.label, pressed: configuration.isPressed || latched, sunk: configuration.isPressed, prominent: prominent)
+      Button(configuration).buttonStyle(.bordered)
     }
-  }
-}
-
-/// A key in the glass look: a clear capsule lit from within when pressed, amber while latched, and
-/// amber all over for the one action a panel leads to. On a pane of glass it is not glass itself;
-/// with SwiftUI's glass the leading action is a drop of amber glass, and the toolbar's keys, which
-/// lie on the window, glass of their own, both giving under the finger. Keys on a pane are not
-/// glass on glass.
-private struct GlassKey<Label: View>: View {
-  let label: Label
-  let pressed: Bool
-  let latched: Bool
-  let prominent: Bool
-  @Environment(\.isEnabled) private var enabled
-  @Environment(\.controlSize) private var size
-  @Environment(\.glassKeys) private var own
-  @Environment(\.colorScheme) private var scheme
-  @Environment(\.colorSchemeContrast) private var contrast
-  var body: some View {
-    let compact = size == .mini || size == .small
-    let shape = Capsule()
-    let face = label
-      .foregroundStyle(prominent ? Color(red: 0.2, green: 0.12, blue: 0.03) : latched ? Hardware.amberText : Hardware.ink)
-      .padding(.horizontal, compact ? 9 : 13).padding(.vertical, compact ? 3 : 5.5)
-    Group {
-      if prominent || own {
-        face.liquid(shape, LiquidStyle(tint: prominent ? Hardware.amber.opacity(0.9) : latched ? Hardware.amber.opacity(0.3) : nil, interactive: true)) {
-          plate($0, shape)
-        }
-      } else {
-        plate(face, shape)
-      }
-    }
-    .scaleEffect(pressed ? 0.97 : 1)
-    .opacity(enabled ? 1 : 0.4)
-    .contentShape(shape)
-  }
-  func plate(_ face: some View, _ shape: Capsule) -> some View {
-    // On light glass a key is a little darker than the pane, on the console a little lighter.
-    let light = scheme == .light
-    let well = light ? Color.black.opacity(pressed ? 0.14 : latched ? 0.09 : 0.05) : Color.white.opacity(pressed ? 0.2 : latched ? 0.13 : 0.07)
-    let strong = contrast == .increased
-    let rim = light ? Color.black.opacity(strong ? 0.45 : 0.14) : Color.white.opacity(strong ? 0.5 : 0.16)
-    return face
-      .background(shape.fill(prominent ? Hardware.amber.opacity(pressed ? 0.75 : 0.92) : well))
-      .overlay(shape.stroke(latched ? Hardware.amber.opacity(0.55) : prominent ? .clear : rim, lineWidth: 0.6))
-      .shadow(color: latched ? Hardware.amber.opacity(0.35) : .clear, radius: 4)
-  }
-}
-
-private struct HardwareKey<Label: View>: View {
-  let label: Label
-  /// Shaded as pushed in: held down, or latched.
-  let pressed: Bool
-  /// Moved down a point, only while held: a latched tab stands level with the others.
-  let sunk: Bool
-  let prominent: Bool
-  @Environment(\.isEnabled) private var enabled
-  @Environment(\.controlSize) private var size
-  @Environment(\.colorScheme) private var scheme
-  var body: some View {
-    let compact = size == .mini || size == .small
-    let light = scheme == .light
-    // On light glass, keys of light anodised metal.
-    let face =
-      prominent
-      ? [Color(red: 0.96, green: 0.77, blue: 0.48), Color(red: 0.8, green: 0.55, blue: 0.24)]
-      : light ? [Color(white: 0.99), Color(white: 0.87)] : [Color(white: 0.33), Color(white: 0.21)]
-    let shape = RoundedRectangle(cornerRadius: compact ? 4 : 5)
-    label
-      .foregroundStyle(prominent ? Color(red: 0.22, green: 0.13, blue: 0.03) : light ? Color(white: 0.15) : Color(white: 0.9))
-      .padding(.horizontal, compact ? 7 : 11).padding(.vertical, compact ? 2.5 : 5)
-      .background(
-        shape.fill(
-          LinearGradient(
-            colors: pressed ? face.reversed() : face, startPoint: .top, endPoint: .bottom)
-        )
-        .brightness(pressed ? -0.06 : 0)
-        .overlay(
-          shape.strokeBorder(
-            LinearGradient(
-              colors: [.white.opacity(pressed ? 0.04 : light ? 0.9 : 0.2), .clear], startPoint: .top,
-              endPoint: .center), lineWidth: 1)
-        )
-        .overlay(shape.stroke(.black.opacity(light ? 0.3 : 0.8), lineWidth: 1))
-        .shadow(
-          color: .black.opacity(pressed ? 0.25 : light ? 0.22 : 0.6), radius: pressed ? 0.5 : 1.5,
-          y: pressed ? 0.5 : 2)
-      )
-      .offset(y: sunk ? 1 : 0)
-      .opacity(enabled ? 1 : 0.4)
-      .contentShape(shape)
-  }
-}
-
-/// A latching key with a lamp, for on/off settings.
-struct LEDToggleStyle: ToggleStyle {
-  func makeBody(configuration: Configuration) -> some View {
-    Button {
-      configuration.isOn.toggle()
-    } label: {
-      HStack(spacing: 5) {
-        Circle().fill(configuration.isOn ? Hardware.amber : Hardware.adaptive(NSColor(white: 0.12, alpha: 1), NSColor(white: 0.78, alpha: 1)))
-          .overlay(Circle().stroke(.black.opacity(0.6), lineWidth: 0.5))
-          .frame(width: 6, height: 6)
-          .shadow(color: configuration.isOn ? Hardware.amber.opacity(0.9) : .clear, radius: 3)
-        configuration.label
-      }
-    }
-    .buttonStyle(HardwareKeyStyle(latched: configuration.isOn))
-    .accessibilityValue(configuration.isOn ? "开" : "关")
-    .accessibilityAddTraits(configuration.isOn ? .isSelected : [])
   }
 }
 
@@ -195,28 +81,10 @@ struct StatusLED: View {
   }
 }
 
-/// Dark glass behind an LCD readout.
-struct LCDGlass: View {
+/// The dark screen a plot is drawn on, curves or histograms, in either look.
+struct PlotScreen: View {
   var body: some View {
-    if Hardware.glass {
-      // A smoked pane let into the glass.
-      RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.3))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.1), lineWidth: 0.5))
-    } else {
-      lcd
-    }
-  }
-  private var lcd: some View {
-    let shape = RoundedRectangle(cornerRadius: 3)
-    return shape.fill(Hardware.lcdGlass)
-      .overlay(
-        shape.fill(
-          LinearGradient(
-            colors: [.black.opacity(0.55), .clear], startPoint: .top,
-            endPoint: UnitPoint(x: 0.5, y: 0.35)))
-      )
-      .overlay(shape.stroke(.black, lineWidth: 1))
-      .overlay(shape.inset(by: -1).stroke(.white.opacity(0.07), lineWidth: 1))
+    RoundedRectangle(cornerRadius: 6).fill(Color.black.opacity(0.78))
   }
 }
 
@@ -281,67 +149,17 @@ extension View {
       }
     }
   }
-  /// A readout: amber segment-display text on dark glass, or in the glass look amber figures on a
-  /// smoked capsule; on light glass dark figures on a frosted one.
-  func lcd(_ fontSize: CGFloat = 10) -> some View { modifier(Readout(fontSize: fontSize)) }
-  /// A side panel: in the glass look a pane of Liquid Glass floating over the light table, which
-  /// shows through it; before, brushed metal. It takes every click that lands on it.
-  func consolePanel() -> some View { modifier(ConsolePanel()) }
+  /// A readout: figures in the system's monospaced type, secondary to the labels beside them.
+  func readout(_ fontSize: CGFloat = 10) -> some View { modifier(Readout(fontSize: fontSize)) }
   /// A group of controls floating over the picture: a capsule of Liquid Glass, or a dark one.
   func glassBar() -> some View { modifier(GlassBar()) }
 }
 
 private struct Readout: ViewModifier {
   let fontSize: CGFloat
-  @Environment(\.colorScheme) private var scheme
   func body(content: Content) -> some View {
-    let figures = content.font(.system(size: fontSize, weight: .medium, design: .monospaced))
-    if scheme == .light {
-      figures.foregroundStyle(Color(white: 0.13))
-        .padding(.horizontal, 7).padding(.vertical, 2)
-        .background(Capsule().fill(Color.white.opacity(0.62)))
-        .overlay(Capsule().stroke(Color.black.opacity(0.1), lineWidth: 0.5))
-    } else if Hardware.glass {
-      figures.foregroundStyle(Hardware.lcdText)
-        .padding(.horizontal, 7).padding(.vertical, 2)
-        .background(Capsule().fill(Color.black.opacity(0.32)))
-        .overlay(Capsule().stroke(Color.white.opacity(0.1), lineWidth: 0.5))
-    } else {
-      figures.foregroundStyle(Hardware.lcdText)
-        .shadow(color: Hardware.lcdText.opacity(0.55), radius: 2)
-        .padding(.horizontal, 5).padding(.vertical, 2)
-        .background(LCDGlass())
-    }
-  }
-}
-
-private struct ConsolePanel: ViewModifier {
-  @Environment(\.colorScheme) private var scheme
-  @Environment(\.accessibilityReduceTransparency) private var opaque
-  func body(content: Content) -> some View {
-    let light = scheme == .light
-    if opaque && !light {
-      content.background(Color(white: 0.12)).clipShape(RoundedRectangle(cornerRadius: Hardware.glass ? 16 : 0))
-    } else if light {
-      // On the copy stand a pane of frost over the blurred live view, dark text on it: Liquid
-      // Glass under a veil where the system has it, the veil alone before.
-      content.clipShape(RoundedRectangle(cornerRadius: 16))
-        .frost(RoundedRectangle(cornerRadius: 16), veil: Hardware.glass ? 0.32 : 0.55, glassRadius: 16)
-        .contentShape(RoundedRectangle(cornerRadius: 16))
-    } else if Hardware.glass {
-      // Smoked, so light text reads over the bright table as over the dark surround.
-      content.background {
-        ZStack {
-          SystemGlassBackground(capsule: false, radius: 16, tint: NSColor(white: 0.04, alpha: 0.5))
-          Color(white: 0.07).opacity(0.62)
-        }
-      }
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.1), lineWidth: 0.5))
-        .contentShape(RoundedRectangle(cornerRadius: 16))
-    } else {
-      content.background(Hardware.metal)
-    }
+    content.font(.system(size: fontSize + 1, weight: .medium, design: .monospaced)).monospacedDigit()
+      .foregroundStyle(.secondary)
   }
 }
 
@@ -370,134 +188,16 @@ private struct GlassBar: ViewModifier {
   }
 }
 
-/// A console fader. Drag the cap (hold Option for fine control), click the slot to jump,
-/// double-click to return to `detent`, or use the arrow keys (Shift for larger steps). On macOS
-/// 26 the cap is a capsule of the system's Liquid Glass, lensing the slot under it and swelling
-/// while held, and the slot fills in amber from the detent to the value; before, a metal cap.
+/// A slider, the system's, a double click taking it back to `detent`.
 struct Fader: View {
   let title: String
   @Binding var value: Double
   let range: ClosedRange<Double>
   var detent: Double? = nil
-  @Environment(\.isEnabled) private var enabled
-  @FocusState private var focused: Bool
-  @State private var grab: (value: Double, x: CGFloat, fine: Bool)?
-  private let glass = SystemGlass.viewClass != nil
-  private var cap: CGSize { glass ? CGSize(width: 22, height: 14) : CGSize(width: 12, height: 18) }
-  private var span: Double { range.upperBound - range.lowerBound }
-  private func clamped(_ v: Double) -> Double { min(max(v, range.lowerBound), range.upperBound) }
   var body: some View {
-    GeometryReader { g in
-      let travel = max(1, g.size.width - cap.width)
-      let offset = { (v: Double) in CGFloat((clamped(v) - range.lowerBound) / span) * travel }
-      ZStack(alignment: .topLeading) {
-        Canvas { ctx, size in
-          for i in 0...10 {
-            let x = cap.width / 2 + travel * CGFloat(i) / 10
-            ctx.fill(
-              Path(CGRect(x: x - 0.5, y: 1, width: 1, height: i % 5 == 0 ? 4 : 2.5)),
-              with: .color(.white.opacity(0.22)))
-          }
-          if let detent {
-            let x = cap.width / 2 + offset(detent)
-            ctx.fill(
-              Path(CGRect(x: x - 0.75, y: 0, width: 1.5, height: size.height)),
-              with: .color(Hardware.amber.opacity(0.35)))
-          }
-        }
-        RoundedRectangle(cornerRadius: 2)
-          .fill(LinearGradient(colors: [.black, Color(white: 0.2)], startPoint: .top, endPoint: .bottom))
-          .overlay(RoundedRectangle(cornerRadius: 2).stroke(.black.opacity(0.8), lineWidth: 0.5))
-          .frame(width: travel + 4, height: 4)
-          .offset(x: cap.width / 2 - 2, y: 9)
-        if glass {
-          // The slot lit from the detent, or the bottom of the range, to the value.
-          let from = offset(detent ?? range.lowerBound), to = offset(value)
-          Capsule().fill(Hardware.amber.opacity(enabled ? 0.8 : 0.3))
-            .frame(width: abs(to - from) + 2, height: 3)
-            .offset(x: cap.width / 2 + min(from, to) - 1, y: 9.5)
-          // Held, it swells about its centre, as the system's glass controls do.
-          let k: CGFloat = grab == nil ? 1 : 1.3
-          GlassCap(enabled: enabled, focused: focused)
-            .frame(width: cap.width * k, height: cap.height * k)
-            .offset(x: offset(value) - cap.width * (k - 1) / 2, y: 11 - cap.height * k / 2)
-            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: grab == nil)
-        } else {
-          FaderCap(enabled: enabled, focused: focused)
-            .frame(width: cap.width, height: cap.height)
-            .offset(x: offset(value), y: 2)
-        }
-      }
-      .contentShape(Rectangle())
-      .gesture(
-        DragGesture(minimumDistance: 0)
-          .onChanged { drag in
-            let fine = NSEvent.modifierFlags.contains(.option)
-            if grab == nil {
-              // Pressing the cap moves it relative to the pointer; pressing the slot jumps there.
-              if abs(drag.startLocation.x - (offset(value) + cap.width / 2)) > cap.width {
-                value = clamped(range.lowerBound + Double((drag.startLocation.x - cap.width / 2) / travel) * span)
-              }
-              grab = (value, drag.location.x, fine)
-            } else if grab?.fine != fine {
-              grab = (value, drag.location.x, fine)
-            }
-            guard let grab else { return }
-            value = clamped(grab.value + Double((drag.location.x - grab.x) / travel) * span * (fine ? 0.1 : 1))
-          }
-          .onEnded { _ in grab = nil }
-      )
+    Slider(value: $value, in: range) { Text(title) }.labelsHidden()
       .simultaneousGesture(TapGesture(count: 2).onEnded { if let detent { value = detent } })
-    }
-    .frame(height: 22)
-    .focusable(enabled)
-    .focused($focused)
-    .focusEffectDisabled()
-    .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow]) { press in
-      let step = span / (press.modifiers.contains(.shift) ? 10 : 100)
-      let up = press.key == .rightArrow || press.key == .upArrow
-      value = clamped(value + (up ? step : -step))
-      return .handled
-    }
-    .accessibilityRepresentation {
-      Slider(value: $value, in: range) { Text(title) }
-    }
-  }
-}
-
-/// A fader's cap of the system's Liquid Glass: the slot shows through it, lensed at its rim.
-private struct GlassCap: View {
-  let enabled: Bool
-  let focused: Bool
-  var body: some View {
-    Capsule().fill(Color.white.opacity(enabled ? 0.07 : 0.02))
-      .background(SystemGlassBackground(capsule: true, radius: 7, tint: NSColor(white: 1, alpha: enabled ? 0.10 : 0.02)))
-      .overlay(Capsule().stroke(.white.opacity(enabled ? 0.35 : 0.15), lineWidth: 0.5))
-      .overlay(Capsule().stroke(Hardware.amber, lineWidth: focused ? 1.5 : 0))
-      .shadow(color: .black.opacity(0.45), radius: 2, y: 1)
-  }
-}
-
-private struct FaderCap: View {
-  let enabled: Bool
-  let focused: Bool
-  var body: some View {
-    let shape = RoundedRectangle(cornerRadius: 2.5)
-    shape.fill(
-      LinearGradient(
-        colors: enabled ? [Color(white: 0.9), Color(white: 0.6)] : [Color(white: 0.5), Color(white: 0.38)],
-        startPoint: .top, endPoint: .bottom)
-    )
-    .overlay(
-      HStack(spacing: 2) {
-        Rectangle().fill(.black.opacity(0.28)).frame(width: 1)
-        Rectangle().fill(Color(red: 0.55, green: 0.3, blue: 0.08)).frame(width: 1.5)
-        Rectangle().fill(.black.opacity(0.28)).frame(width: 1)
-      }.padding(.vertical, 3)
-    )
-    .overlay(shape.stroke(.black.opacity(0.75), lineWidth: 0.75))
-    .overlay(shape.stroke(Hardware.amber, lineWidth: focused ? 1.5 : 0))
-    .shadow(color: .black.opacity(0.6), radius: 1.5, y: 1.5)
+      .accessibilityLabel(title)
   }
 }
 

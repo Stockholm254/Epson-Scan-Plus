@@ -30,12 +30,8 @@ struct ContentView: View {
     } detail: {
       VStack(spacing: 0) {
         if m.page == .leak { LeakPage(m: m, lab: m.leak) } else { workspace }
-        VStack(spacing: 0) {
-          Divider()
-          filmstrip
-          Divider()
-          if m.page == .leak { LeakStatus(lab: m.leak) } else { footer }
-        }.background { if cameraStage { LightBarSurface() } }
+        filmstrip
+        if m.page == .leak { LeakStatus(lab: m.leak) } else { footer }
       }
       .inspector(isPresented: $inspector) {
         Group { if m.page == .leak { LeakPanel(m: m, lab: m.leak) } else { rightPanel } }
@@ -69,7 +65,7 @@ struct ContentView: View {
       if page == .leak { m.leak.undoManager = undoManager } else { m.leak.save() }
     }
   }
-  /// The window's toolbar, the system's: the scanner's lamp by the title, the module dial in the
+  /// The window's toolbar, the system's: the scanner's lamp by the title, the modules in the
   /// middle, the module's keys after the title, and the assistant, the batch's progress, the
   /// module's leading action and the inspector's key at the trailing end. The system groups them
   /// on its glass and folds what does not fit into its overflow menu.
@@ -93,7 +89,11 @@ struct ContentView: View {
         }
       }
     }
-    ToolbarItem(placement: .principal) { ModuleDial(page: $m.page) }
+    ToolbarItem(placement: .principal) {
+      Picker("模块", selection: $m.page) {
+        ForEach(AppModel.Page.allCases, id: \.self) { p in Text("\(p.number) \(p.rawValue)").tag(p) }
+      }.pickerStyle(.segmented).labelsHidden().help("模块（⌥⌘1–3）")
+    }
     ToolbarItem(placement: .primaryAction) { AssistantKey(m: m, panel: assistantPanel) }
     ToolbarItemGroup(placement: .primaryAction) {
       if m.scanBatch.isActive || m.scanner.busy {
@@ -150,7 +150,7 @@ struct ContentView: View {
     return HStack(spacing: 5) {
       StatusLED(lamp: state.lamp, size: 8)
       Text(state.text).lineLimit(1)
-    }.lcd(10).help(m.scanner.status)
+    }.readout(10).help(m.scanner.status)
       .accessibilityElement(children: .combine).accessibilityLabel("扫描仪状态")
       .accessibilityValue(state.text)
   }
@@ -158,14 +158,7 @@ struct ContentView: View {
     if m.scanner.busy { return (.busy, m.scanner.cancellationHint == nil ? "工作中" : "取消中") }
     return m.scanner.ready ? (.ready, "就绪") : (.fault, "未就绪")
   }
-  /// The view and tool keys over the light table, on the window or on glass.
-  var toolRow: some View {
-    HStack(spacing: 12) {
-      viewControls
-      Spacer(minLength: 8)
-      toolControls
-    }
-  }
+  /// The view and tool keys over the light table, on glass.
   var glassToolRow: some View {
     HStack(spacing: 10) {
       HStack(spacing: 10) { viewControls }.glassBar()
@@ -188,7 +181,7 @@ struct ContentView: View {
       } label: {
         Label("看片镜", systemImage: "circle.circle").font(.system(size: 11)).foregroundStyle(
           m.preferences.showLoupe ? accent : Color(white: 0.85))
-      }.buttonStyle(HardwareKeyStyle(latched: m.preferences.showLoupe)).controlSize(.small)
+      }.buttonStyle(KeyStyle(latched: m.preferences.showLoupe)).controlSize(.small)
         .help("看片镜：点一下放到所选画面上，拖动放大细看，再点一下收起 · Z。接触表和单张都能用；右键选择型号")
       if !m.singleView {
         Button {
@@ -197,7 +190,7 @@ struct ContentView: View {
         } label: {
           Label("横排", systemImage: "rectangle.landscape.rotate").font(.system(size: 11)).foregroundStyle(
             m.preferences.contactLandscape ? accent : Color(white: 0.85))
-        }.buttonStyle(HardwareKeyStyle(latched: m.preferences.contactLandscape)).controlSize(.small)
+        }.buttonStyle(KeyStyle(latched: m.preferences.contactLandscape)).controlSize(.small)
           .help("把竖放的片夹横过来摆在灯箱上，胶片条横向排开，更好地利用宽屏。方向跟随多数画面的旋转，都没有旋转时顺时针转")
       }
   }
@@ -212,7 +205,7 @@ struct ContentView: View {
             Image(systemName: t.symbol).frame(width: 16, height: 14)
             if let label = t.label { Text(label).font(.system(size: 11)) }
           }.foregroundStyle(m.tool == t ? accent : Color(white: 0.85))
-        }.buttonStyle(HardwareKeyStyle(latched: m.tool == t)).controlSize(.small).help(t.help)
+        }.buttonStyle(KeyStyle(latched: m.tool == t)).controlSize(.small).help(t.help)
           .accessibilityLabel(t.rawValue)
       }
       // Only the single frame zooms; the light table always shows the whole roll.
@@ -222,7 +215,7 @@ struct ContentView: View {
           m.fitView()
         } label: {
           Text("适合").font(.system(size: 11))
-        }.buttonStyle(HardwareKeyStyle()).controlSize(.small).help("缩放回适合窗口")
+        }.buttonStyle(KeyStyle()).controlSize(.small).help("缩放回适合窗口")
       }
   }
   /// Which frame is shown, or how many there are.
@@ -252,7 +245,7 @@ struct ContentView: View {
         } label: {
           Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
             .foregroundStyle(m.contactMirrored ? accent : Color(white: 0.85))
-        }.buttonStyle(HardwareKeyStyle(latched: m.contactMirrored)).help("全卷水平镜像：修正胶片正反面放反").disabled(m.frames.isEmpty)
+        }.buttonStyle(KeyStyle(latched: m.contactMirrored)).help("全卷水平镜像：修正胶片正反面放反").disabled(m.frames.isEmpty)
         Picker("显示", selection: $m.contactPositive) {
           Text("原片").tag(false)
           Text("反相").tag(true)
@@ -271,7 +264,7 @@ struct ContentView: View {
         } label: {
           Image(systemName: "chevron.right")
         }.disabled(!m.canNavigate(1)).help("下一张 · →")
-        Toggle("负片", isOn: $m.showNegative).toggleStyle(LEDToggleStyle()).font(.system(size: 11))
+        Toggle("负片", isOn: $m.showNegative).toggleStyle(.switch).font(.system(size: 11))
           .onChange(of: m.showNegative) { m.refresh() }
         Button {
           m.turn(clockwise: false)
@@ -288,7 +281,7 @@ struct ContentView: View {
         } label: {
           Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
             .foregroundStyle(m.settings.flipHorizontal == true ? accent : Color(white: 0.85))
-        }.buttonStyle(HardwareKeyStyle(latched: m.settings.flipHorizontal == true)).help(
+        }.buttonStyle(KeyStyle(latched: m.settings.flipHorizontal == true)).help(
           m.syncOrientation ? "全部水平镜像：修正整卷胶片正反面方向" : "水平镜像：修正胶片正反面方向")
         Button {
           m.syncOrientation.toggle()
@@ -298,7 +291,7 @@ struct ContentView: View {
             Text("同步全部")
           }.font(.system(size: 11))
             .foregroundStyle(m.syncOrientation ? accent : Color(white: 0.85))
-        }.buttonStyle(HardwareKeyStyle(latched: m.syncOrientation))
+        }.buttonStyle(KeyStyle(latched: m.syncOrientation))
           .help("开启后，旋转和水平镜像同步应用到本卷全部照片")
       }
       Text(m.sourceSummary).font(.system(size: 10, design: .monospaced)).foregroundStyle(
@@ -336,21 +329,26 @@ struct ContentView: View {
     if cameraStage { CameraStage(m: m, camera: m.camera) } else { sheetWorkspace }
   }
   var sheetWorkspace: some View {
-    VStack(spacing: 0) {
-      ViewThatFits(in: .horizontal) {
-        toolRow
-        toolRow.labelStyle(.iconOnly)
-      }.lineLimit(1).padding(.horizontal, 16).padding(.vertical, 10)
-      ZStack(alignment: .topTrailing) {
-        ScanCanvas(model: m).frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
-        canvasOverlays
-      }.frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
-      HStack {
-        placeLabel
-        Spacer()
-        viewingControls
-      }.buttonStyle(HardwareKeyStyle()).controlSize(.small).padding(.horizontal, 16).padding(.vertical, 9)
-    }.background(Color(red: 0.105, green: 0.11, blue: 0.115))
+    let bar: CGFloat = 54
+    return ZStack {
+      ScanCanvas(model: m, reserved: NSEdgeInsets(top: bar, left: 0, bottom: bar, right: 0))
+        .frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
+      VStack(spacing: 0) {
+        ViewThatFits(in: .horizontal) {
+          glassToolRow
+          glassToolRow.labelStyle(.iconOnly)
+        }.lineLimit(1).padding(.horizontal, 10).padding(.top, 10)
+        ZStack(alignment: .topTrailing) {
+          Color.clear
+          canvasOverlays
+        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        HStack(spacing: 10) {
+          placeLabel.glassBar()
+          Spacer()
+          HStack(spacing: 8) { viewingControls }.glassBar()
+        }.buttonStyle(KeyStyle()).controlSize(.small).padding(.horizontal, 10).padding(.bottom, 10)
+      }
+    }
   }
   /// Module ① keeps the roll's name and notes on the right; module ② the adjustments.
   @ViewBuilder var rightPanel: some View {
@@ -370,7 +368,7 @@ struct ContentView: View {
             get: { m.settings.curves ?? ToneCurves() },
             set: { value in m.change("曲线") { $0.curves = value.isIdentity ? nil : value } }),
           histogram: m.histogram, channels: m.channelHistograms)
-        Toggle("负片去色罩 / 反相", isOn: bool(\.inputIsNegative)).toggleStyle(LEDToggleStyle())
+        Toggle("负片去色罩 / 反相", isOn: bool(\.inputIsNegative)).toggleStyle(.switch)
           .font(.system(size: 11))
         HStack {
           Button {
@@ -426,7 +424,7 @@ struct ContentView: View {
             HStack {
               Text("拉直").font(.system(size: 11)).foregroundStyle(.secondary)
               Spacer()
-              Text(String(format: "%+.2f°", m.screenAngle)).lcd()
+              Text(String(format: "%+.2f°", m.screenAngle)).readout()
               Button("画线") {
                 m.useTool(.crop)
                 m.levelling = true
@@ -456,7 +454,7 @@ struct ContentView: View {
                   $0.neutralSample = nil
                 }
               })
-          ).toggleStyle(LEDToggleStyle()).font(.system(size: 11))
+          ).toggleStyle(.switch).font(.system(size: 11))
           InfoButton(text: "自动白平衡按画面估计，忽略外缘 5%（不改变导出范围）。「取中性灰」用滴管点画面中应为灰色的地方，按这一点自动白平衡（「自动」保持开着）。「取高光」（Dmax）点负片上最密、正片里应为纯白的地方，比如阳光下的白墙或高光反射：各通道从暗部（或取过的中性灰）拉到这一点，它在正片里是白色。「重算白平衡」放弃取样点，按画面重新估计。")
         }
         slider("冷暖", key: \.warmth, range: -1...1)
@@ -485,7 +483,7 @@ struct ContentView: View {
         HStack {
           Text("色阶").font(.system(size: 12, weight: .medium))
           Spacer()
-          Toggle("自动", isOn: bool(\.autoLevels)).toggleStyle(LEDToggleStyle()).font(.system(size: 11))
+          Toggle("自动", isOn: bool(\.autoLevels)).toggleStyle(.switch).font(.system(size: 11))
           InfoButton(text: "自动：按画面的密度范围设定黑白两端。关闭后用黑点、白点和中间调手动设定。")
         }
         slider("黑点", key: \.black, range: 0...0.4)
@@ -519,7 +517,7 @@ struct ContentView: View {
           Label("同步到本卷", systemImage: "square.on.square")
         }.frame(maxWidth: .infinity)
       }.padding(18).disabled(m.selected == nil || m.exporting)
-        .buttonStyle(HardwareKeyStyle()).controlSize(.small)
+        .buttonStyle(KeyStyle()).controlSize(.small)
     }
   }
   /// Per-frame deconvolution strength, once the scanner has a measured profile.
@@ -542,7 +540,7 @@ struct ContentView: View {
           HStack {
             Text("强度").font(.system(size: 11)).foregroundStyle(.secondary)
             Spacer()
-            Text(strength == 0 ? "关" : "\(Int((strength * 100).rounded()))%").lcd()
+            Text(strength == 0 ? "关" : "\(Int((strength * 100).rounded()))%").readout()
           }
           Fader(
             title: "锐化强度",
@@ -558,7 +556,7 @@ struct ContentView: View {
       HStack {
         Text(names[channel]).font(.system(size: 10)).foregroundStyle(.secondary)
         Spacer()
-        Text(String(format: "%+.3f", (m.settings.baseFine ?? .zero).values[channel])).lcd()
+        Text(String(format: "%+.3f", (m.settings.baseFine ?? .zero).values[channel])).readout()
       }
       Fader(
         title: "片基微调 " + names[channel],
@@ -598,7 +596,7 @@ struct ContentView: View {
               if let id = m.selectedID { m.setEnabled(id, enabled: value) }
             })
         )
-        .toggleStyle(LEDToggleStyle()).disabled(m.selected == nil || m.isWorking)
+        .toggleStyle(.switch).disabled(m.selected == nil || m.isWorking)
         Divider().frame(height: 14)
         Button("全选") { m.setAllEnabled(true) }
           .disabled(m.frames.isEmpty || m.enabledCount == m.frames.count || m.isWorking)
@@ -606,9 +604,9 @@ struct ContentView: View {
         Button("全不选") { m.setAllEnabled(false) }
           .disabled(m.enabledCount == 0 || m.isWorking)
           .help("取消全部扫描和导出勾选；不删除照片、不切换当前画面")
-        Text("已选 \(m.enabledCount) / \(m.frames.count)").lcd()
+        Text("已选 \(m.enabledCount) / \(m.frames.count)").readout()
         Spacer()
-      }.font(.system(size: 11)).controlSize(.mini).buttonStyle(HardwareKeyStyle())
+      }.font(.system(size: 11)).controlSize(.mini).buttonStyle(KeyStyle())
         .padding(.horizontal, 18).padding(.top, 7).padding(.bottom, 2)
       ScrollViewReader { proxy in
         ScrollView(.horizontal) {
@@ -677,7 +675,7 @@ struct ContentView: View {
   var footer: some View {
     HStack(spacing: 12) {
       if m.exporting { ProgressView().controlSize(.small) }
-      Text(m.activityStatus).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading).lcd(11)
+      Text(m.activityStatus).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
     }.padding(.horizontal, 18).padding(.vertical, 7)
   }
   var profileInfo: some View {
@@ -720,7 +718,7 @@ struct ContentView: View {
       HStack {
         Text(title).font(.system(size: 11)).foregroundStyle(.secondary)
         Spacer()
-        Text(String(format: format, m.settings[keyPath: key])).lcd()
+        Text(String(format: format, m.settings[keyPath: key])).readout()
       }
       Fader(
         title: title,

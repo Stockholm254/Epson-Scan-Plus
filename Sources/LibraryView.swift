@@ -26,7 +26,7 @@ struct LibrarySheet: View {
           header.padding(.horizontal, 16).padding(.vertical, 9).glassPane(radius: 22).padding(.horizontal, 14).padding(.top, 10)
         }
       } else {
-        header.padding(.horizontal, 18).padding(.vertical, 12).background(Hardware.metal)
+        header.padding(.horizontal, 18).padding(.vertical, 12).background(.bar)
         Divider()
         drawer
       }
@@ -45,7 +45,7 @@ struct LibrarySheet: View {
       HStack(spacing: 12) {
         Image(systemName: "archivebox").foregroundStyle(Hardware.amber)
         Text("库").font(.system(size: 16, weight: .semibold))
-        Text(loaded ? "\(entries.count) 卷" : "读取中").lcd(11)
+        Text(loaded ? "\(entries.count) 卷" : "读取中").readout(11)
         Spacer()
         TextField("搜索卷名、胶片或备注", text: $query).textFieldStyle(.roundedBorder).frame(width: 200)
         Picker("来源", selection: $source) {
@@ -66,7 +66,7 @@ struct LibrarySheet: View {
           Image(systemName: "ellipsis.circle")
         }.menuStyle(.borderlessButton).fixedSize()
         Button("完成") { m.showLibrary = false }.keyboardShortcut(.cancelAction)
-      }.buttonStyle(HardwareKeyStyle()).controlSize(.regular)
+      }.buttonStyle(KeyStyle()).controlSize(.regular)
   }
   /// The drawer of sleeves.
   var drawer: some View {
