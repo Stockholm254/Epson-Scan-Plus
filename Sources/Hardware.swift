@@ -12,8 +12,17 @@ enum Hardware {
   static let filmBase = Color(red: 0.25, green: 0.13, blue: 0.06)
   /// A colour for each look, as the view's colour scheme is: `dark` in the dark console, `light`
   /// on the copy stand's light glass.
+  /// With Increase Contrast each is taken a third of the way further from the ground it lies on:
+  /// lighter on the dark console, darker on light glass.
   static func adaptive(_ dark: NSColor, _ light: NSColor) -> Color {
-    Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .aqua ? light : dark })
+    Color(nsColor: NSColor(name: nil) { a in
+      switch a.bestMatch(from: [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]) {
+      case .aqua?: return light
+      case .accessibilityHighContrastAqua?: return light.blended(withFraction: 0.35, of: .black) ?? light
+      case .accessibilityHighContrastDarkAqua?: return dark.blended(withFraction: 0.35, of: .white) ?? dark
+      default: return dark
+      }
+    })
   }
   /// Text on a key or a pane: light on the console, dark ink on light glass.
   static let ink = adaptive(NSColor(white: 0.92, alpha: 1), NSColor(white: 0.13, alpha: 1))
@@ -44,8 +53,8 @@ struct HardwareKeyStyle: ButtonStyle {
 /// A key in the glass look: a clear capsule lit from within when pressed, amber while latched, and
 /// amber all over for the one action a panel leads to. On a pane of glass it is not glass itself;
 /// with SwiftUI's glass the leading action is a drop of amber glass, and the toolbar's keys, which
-/// lie on the window, glass of their own, both giving under the finger. On the copy stand's light
-/// glass every key is a drop of glass.
+/// lie on the window, glass of their own, both giving under the finger. Keys on a pane are not
+/// glass on glass.
 private struct GlassKey<Label: View>: View {
   let label: Label
   let pressed: Bool
@@ -55,6 +64,7 @@ private struct GlassKey<Label: View>: View {
   @Environment(\.controlSize) private var size
   @Environment(\.glassKeys) private var own
   @Environment(\.colorScheme) private var scheme
+  @Environment(\.colorSchemeContrast) private var contrast
   var body: some View {
     let compact = size == .mini || size == .small
     let shape = Capsule()
@@ -62,7 +72,7 @@ private struct GlassKey<Label: View>: View {
       .foregroundStyle(prominent ? Color(red: 0.2, green: 0.12, blue: 0.03) : latched ? Hardware.amberText : Hardware.ink)
       .padding(.horizontal, compact ? 9 : 13).padding(.vertical, compact ? 3 : 5.5)
     Group {
-      if prominent || own || scheme == .light {
+      if prominent || own {
         face.liquid(shape, LiquidStyle(tint: prominent ? Hardware.amber.opacity(0.9) : latched ? Hardware.amber.opacity(0.3) : nil, interactive: true)) {
           plate($0, shape)
         }
@@ -78,7 +88,8 @@ private struct GlassKey<Label: View>: View {
     // On light glass a key is a little darker than the pane, on the console a little lighter.
     let light = scheme == .light
     let well = light ? Color.black.opacity(pressed ? 0.14 : latched ? 0.09 : 0.05) : Color.white.opacity(pressed ? 0.2 : latched ? 0.13 : 0.07)
-    let rim = light ? Color.black.opacity(0.14) : Color.white.opacity(0.16)
+    let strong = contrast == .increased
+    let rim = light ? Color.black.opacity(strong ? 0.45 : 0.14) : Color.white.opacity(strong ? 0.5 : 0.16)
     return face
       .background(shape.fill(prominent ? Hardware.amber.opacity(pressed ? 0.75 : 0.92) : well))
       .overlay(shape.stroke(latched ? Hardware.amber.opacity(0.55) : prominent ? .clear : rim, lineWidth: 0.6))
@@ -306,9 +317,12 @@ private struct Readout: ViewModifier {
 
 private struct ConsolePanel: ViewModifier {
   @Environment(\.colorScheme) private var scheme
+  @Environment(\.accessibilityReduceTransparency) private var opaque
   func body(content: Content) -> some View {
     let light = scheme == .light
-    if light {
+    if opaque && !light {
+      content.background(Color(white: 0.12)).clipShape(RoundedRectangle(cornerRadius: Hardware.glass ? 16 : 0))
+    } else if light {
       // On the copy stand a pane of frost over the blurred live view, dark text on it: Liquid
       // Glass under a veil where the system has it, the veil alone before.
       content.clipShape(RoundedRectangle(cornerRadius: 16))
@@ -333,9 +347,14 @@ private struct ConsolePanel: ViewModifier {
 
 private struct GlassBar: ViewModifier {
   @Environment(\.colorScheme) private var scheme
+  @Environment(\.accessibilityReduceTransparency) private var opaque
   func body(content: Content) -> some View {
     let light = scheme == .light
-    if light {
+    if opaque && !light {
+      content.padding(.horizontal, 8).padding(.vertical, 5)
+        .background(Capsule().fill(Color(white: 0.12)))
+        .contentShape(Capsule())
+    } else if light {
       content.padding(.horizontal, 8).padding(.vertical, 5)
         .frost(Capsule(), veil: Hardware.glass ? 0.18 : 0.62, glassRadius: 18, capsule: true)
         .contentShape(Capsule())

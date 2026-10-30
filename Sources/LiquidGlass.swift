@@ -14,7 +14,10 @@ enum Liquid {
     return false
   }
   /// How a piece of glass moves when it flows, runs together or comes apart.
-  static let flow = Animation.spring(response: 0.42, dampingFraction: 0.72)
+  /// The glass flowing from one place to the next; with Reduce Motion a short fade instead.
+  static var flow: Animation {
+    NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? .easeInOut(duration: 0.15) : .spring(response: 0.42, dampingFraction: 0.72)
+  }
 }
 
 /// What a piece of Liquid Glass is: clear (the picture seen almost unchanged through it) or

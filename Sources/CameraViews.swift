@@ -4,8 +4,7 @@ import SwiftUI
 /// Module ①'s workspace with the camera: the live view filling the copy stand's dark base, and
 /// floating over it on glass the zoom and sharpness above and the focus controls and the
 /// shutter below. On the picture the focus box (click to move it) and a glass bubble magnifying
-/// what is under it. Beside it, on a glass pane, the last picture at full resolution about the
-/// focus point, pixel for pixel, to check focus.
+/// what is under it. The last picture's focus check is in the right panel.
 struct CameraStage: View {
   @ObservedObject var m: AppModel
   @ObservedObject var camera: CameraController
@@ -26,7 +25,8 @@ struct CameraStage: View {
           if Liquid.available {
             LiquidGroup(spacing: 12) { topRow }.padding(.horizontal, 12).padding(.top, 10)
           } else {
-            topRow.padding(.horizontal, 10).padding(.vertical, 6).glassPane(radius: 20)
+            // Concentric with the stage's corners, 12 points in from them.
+            topRow.padding(.horizontal, 10).padding(.vertical, 6).glassPane(radius: CameraStage.corner - 12)
               .padding(.horizontal, 12).padding(.top, 10)
           }
           if histogram, let h = camera.liveHistogram {
@@ -42,14 +42,16 @@ struct CameraStage: View {
           if Liquid.available {
             LiquidGroup(spacing: 14) { controls }.padding(.horizontal, 12).padding(.bottom, 12)
           } else {
-            controls.padding(.horizontal, 12).padding(.vertical, 10).glassPane(radius: 18)
+            controls.padding(.horizontal, 12).padding(.vertical, 10).glassPane(radius: CameraStage.corner - 12)
               .padding(.horizontal, 12).padding(.bottom, 12)
           }
         }.animation(.spring(response: 0.35, dampingFraction: 0.8), value: m.captureToast)
       }
-      FocusCheck(m: m, camera: camera).frame(width: 276).consolePanel().padding(8)
     }.background { if scheme != .light { Color(red: 0.105, green: 0.11, blue: 0.115) } }
   }
+  /// The stage's corner radius where it floats between the panels; what lies in its corners is
+  /// concentric with it.
+  static let corner: CGFloat = 24
   /// A group of controls as a drop of glass of its own, over the picture.
   func drop(_ group: some View) -> some View {
     group.padding(.horizontal, 10).padding(.vertical, 5)
@@ -78,12 +80,14 @@ struct CameraStage: View {
         } label: {
           Image(systemName: "magnifyingglass.circle").frame(width: 16)
         }.buttonStyle(HardwareKeyStyle(latched: magnifier)).controlSize(.small)
+          .accessibilityLabel("放大镜").accessibilityValue(magnifier ? "开" : "关")
           .help(magnifier ? "收起对焦框上的玻璃放大镜" : "在对焦框上放一个放大 4 倍的玻璃放大镜")
         Button {
           histogram.toggle()
         } label: {
           Image(systemName: "chart.bar.xaxis").frame(width: 16)
         }.buttonStyle(HardwareKeyStyle(latched: histogram)).controlSize(.small)
+          .accessibilityLabel("直方图").accessibilityValue(histogram ? "开" : "关")
           .help(histogram ? "收起实时取景的直方图" : "在取景画面右上角显示直方图")
       }
       if Liquid.available { drop(viewing) } else { viewing }
@@ -169,7 +173,7 @@ struct CameraStage: View {
               Button { camera.step(s) } label: { Text(s == -7 ? "«" : s == -3 ? "‹‹" : "‹").frame(width: 16) }
                 .help("对焦往近处走（Near \(-s) 档，要手动对焦模式）")
             }
-            FocusRing(offset: $ring) { camera.step($0) }.frame(width: 120, height: 24)
+            FocusRing(offset: $ring) { camera.step($0) }.frame(minWidth: 56, idealWidth: 120, maxWidth: 120).frame(height: 24)
             ForEach([1, 3, 7], id: \.self) { s in
               Button { camera.step(s) } label: { Text(s == 7 ? "»" : s == 3 ? "››" : "›").frame(width: 16) }
                 .help("对焦往远处走（Far \(s) 档，要手动对焦模式）")
@@ -242,13 +246,16 @@ struct ShiftBeads: View {
 struct DropToast: View {
   let text: String
   @State private var risen = false
+  @Environment(\.accessibilityReduceMotion) private var still
   var body: some View {
     Text(text).font(.system(size: 12, weight: .medium)).foregroundStyle(Hardware.ink).fixedSize()
       .padding(.horizontal, 14).padding(.vertical, 7)
       .liquid(Capsule(), LiquidStyle(tint: Hardware.adaptive(NSColor(white: 0, alpha: 0.3), NSColor(white: 1, alpha: 0.3)))) { $0.glassPane(radius: 16, darken: 0.35) }
       .offset(y: risen ? -58 : -18)
       .allowsHitTesting(false)
-      .onAppear { withAnimation(.spring(response: 0.7, dampingFraction: 0.6).delay(0.08)) { risen = true } }
+      .onAppear {
+        if still { risen = true } else { withAnimation(.spring(response: 0.7, dampingFraction: 0.6).delay(0.08)) { risen = true } }
+      }
   }
 }
 
@@ -303,20 +310,19 @@ struct FocusCheck: View {
         Text("200%").tag(2)
         Text("400%").tag(4)
       }.pickerStyle(.segmented).labelsHidden()
-      ZStack {
-        Rectangle().fill(Color.black.opacity(0.4))
+      // A square as wide as the panel, the file's pixels shown about its middle.
+      Color.black.opacity(0.4).aspectRatio(1, contentMode: .fit).overlay {
         if let crop {
           let shown = m.channelView.apply(crop)
           let pixels = 248 / CGFloat(scale)
           Image(decorative: shown, scale: NSScreen.main?.backingScaleFactor ?? 2).resizable().interpolation(.none)
             .frame(width: CGFloat(shown.width) * CGFloat(scale) / (NSScreen.main?.backingScaleFactor ?? 2),
               height: CGFloat(shown.height) * CGFloat(scale) / (NSScreen.main?.backingScaleFactor ?? 2))
-            .frame(width: 248, height: 248).clipped()
             .help(String(format: "每个文件像素放大到 %d 个屏幕像素；窗口里约 %.0f × %.0f 个文件像素", scale, pixels, pixels))
         } else {
           Text(loading ? "读取中…" : "拍一张后在这里看对焦").font(.system(size: 11)).foregroundStyle(.secondary)
         }
-      }.frame(width: 248, height: 248)
+      }.clipped()
         .help("取的是相机文件本身的全分辨率像素（RAW 按系统默认显示），以对焦框的位置为中心。")
       if let crop {
         let s = FocusSearch.sharpness(crop, in: CGRect(x: 0, y: 0, width: 1, height: 1))
@@ -328,9 +334,7 @@ struct FocusCheck: View {
         Text(url.lastPathComponent).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
         Button("按对焦点重新取") { load(url) }.font(.system(size: 11))
       }
-      Spacer(minLength: 0)
-    }.padding(16).buttonStyle(HardwareKeyStyle()).controlSize(.small)
-      .onChange(of: m.lastCapture) { _, url in if let url { load(url) } }
+    }.onChange(of: m.lastCapture) { _, url in if let url { load(url) } }
       .onAppear { if crop == nil, let url = m.lastCapture { load(url) } }
   }
   func load(_ url: URL) {
@@ -358,7 +362,7 @@ struct LastHistogram: View {
     let h = histogram
     return VStack(alignment: .leading, spacing: 6) {
       Text(h.linear ? "上一张 RAW · 传感器原始值" : "上一张 · 相机渲染的画面").font(.system(size: 11, weight: .medium))
-      HistogramView(histogram: h).frame(width: 248, height: 64)
+      HistogramView(histogram: h).frame(maxWidth: .infinity).frame(height: 64)
       Text(String(format: "亮端  R %3.0f%%  G %3.0f%%  B %3.0f%%", h.top.r * 100, h.top.g * 100, h.top.b * 100)
         + (h.linear ? "\n距满  R \(ev(h.top.r)) G \(ev(h.top.g)) B \(ev(h.top.b)) EV" : "")
         + String(format: "\n过曝  R %.2f%% G %.2f%% B %.2f%%", h.clipped.r * 100, h.clipped.g * 100, h.clipped.b * 100))

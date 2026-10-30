@@ -21,9 +21,12 @@ extension View {
 private struct GlassPane: ViewModifier {
   let radius: CGFloat, darken: CGFloat
   @Environment(\.colorScheme) private var scheme
+  @Environment(\.accessibilityReduceTransparency) private var opaque
   func body(content: Content) -> some View {
     let light = scheme == .light
-    if light {
+    if opaque && !light {
+      content.background(RoundedRectangle(cornerRadius: radius).fill(Color(white: 0.12)))
+    } else if light {
       // Liquid Glass where the system has it, under a thin frost; frost alone before.
       content.frost(RoundedRectangle(cornerRadius: radius), veil: Hardware.glass ? 0.18 : 0.62, glassRadius: radius)
     } else if Hardware.glass {
@@ -47,6 +50,7 @@ struct ShutterKey: View {
   let action: () -> Void
   @State private var flash = 0.0
   @State private var blink = false
+  @Environment(\.accessibilityReduceMotion) private var still
   var body: some View {
     Button(action: action) { EmptyView() }
       .buttonStyle(ShutterPress(enabled: enabled, busy: busy, flash: flash, blink: blink))
@@ -60,7 +64,8 @@ struct ShutterKey: View {
         withAnimation(.easeOut(duration: 0.5)) { flash = 0 }
       }
       .onChange(of: busy, initial: true) { _, now in
-        if now {
+        // With Reduce Motion a picture on its way dims the key instead of pulsing it.
+        if now && !still {
           withAnimation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true)) { blink = true }
         } else {
           withAnimation(.easeOut(duration: 0.15)) { blink = false }
@@ -88,6 +93,7 @@ struct ShutterPress: ButtonStyle {
 private struct ShutterFace: View {
   let pressed: Bool, enabled: Bool, busy: Bool, flash: Double, blink: Bool
   @Environment(\.colorScheme) private var scheme
+  @Environment(\.accessibilityReduceMotion) private var still
   var body: some View {
     let d = ShutterPress.size
     let glow = enabled ? (busy ? (blink ? 0.9 : 0.2) : 0.55) : 0
@@ -109,7 +115,7 @@ private struct ShutterFace: View {
       Circle().strokeBorder(LinearGradient(
         colors: [.white.opacity(0.75), .white.opacity(0.15), .black.opacity(0.18)], startPoint: .top, endPoint: .bottom), lineWidth: 1.2)
       Circle().stroke(Color.white.opacity(0.9 * flash), lineWidth: 3)
-        .frame(width: d + 8, height: d + 8).scaleEffect(1 + 0.3 * (1 - flash))
+        .frame(width: d + 8, height: d + 8).scaleEffect(still ? 1 : 1 + 0.3 * (1 - flash))
     }
     .frame(width: d, height: d)
     .brightness(pressed ? 0.1 : busy ? (blink ? 0.08 : -0.06) : 0)
@@ -232,10 +238,11 @@ enum Frost {
 /// until there is one.
 struct CopyStandBackdrop: View {
   @ObservedObject var camera: CameraController
+  @Environment(\.accessibilityReduceTransparency) private var opaque
   var body: some View {
     // Laid over a colour that takes the space offered, so filling it never makes the view larger.
     Color(white: 0.88).overlay {
-      if let b = camera.liveBackdrop {
+      if !opaque, let b = camera.liveBackdrop {
         Image(decorative: b, scale: 1).resizable().interpolation(.high).aspectRatio(contentMode: .fill)
       }
     }.clipped().allowsHitTesting(false)
@@ -243,37 +250,63 @@ struct CopyStandBackdrop: View {
 }
 
 extension View {
-  /// A pane of frost on light glass: Liquid Glass where the system has it (`glassRadius`), a veil of
-  /// white over it, a fine grain over all, its rim lit from above, and a soft shadow round it as of
-  /// a pane standing a little off what lies under it.
+  /// A pane on light glass: where the system has Liquid Glass, that glass alone, as the system draws
+  /// it; before, frost: a veil of white with a fine grain, its rim lit from above, and a soft shadow
+  /// as of a pane standing off what lies under it. With Reduce Transparency an opaque pane instead.
   func frost<S: InsettableShape>(_ shape: S, veil: Double, glassRadius: CGFloat, capsule: Bool = false) -> some View {
-    background {
-      ZStack {
-        shape.stroke(Color.black.opacity(0.12), lineWidth: 5).blur(radius: 7).offset(y: 4)
-        if Hardware.glass { SystemGlassBackground(capsule: capsule, radius: glassRadius, tint: NSColor(white: 1, alpha: 0.25)) }
-        shape.fill(Color.white.opacity(veil))
-      }
-    }
-    .overlay {
-      if let grain = Frost.grain {
-        Image(decorative: grain, scale: 2).resizable(resizingMode: .tile).opacity(0.05).blendMode(.multiply)
-          .clipShape(shape).allowsHitTesting(false)
-      }
-    }
-    .overlay(shape.strokeBorder(LinearGradient(colors: [.white.opacity(0.95), .white.opacity(0.3), .black.opacity(0.07)], startPoint: .top, endPoint: .bottom), lineWidth: 1))
+    modifier(FrostPane(shape: shape, veil: veil, glassRadius: glassRadius, capsule: capsule))
   }
 }
 
-/// A bar across the window on the copy stand's light glass, the toolbar or the film strip's:
-/// frost over the blurred live view, Liquid Glass under it where the system has it, the panes'
-/// grain.
+private struct FrostPane<S: InsettableShape>: ViewModifier {
+  let shape: S, veil: Double, glassRadius: CGFloat, capsule: Bool
+  @Environment(\.accessibilityReduceTransparency) private var opaque
+  @Environment(\.colorSchemeContrast) private var contrast
+  func body(content: Content) -> some View {
+    let strong = contrast == .increased
+    if opaque {
+      content.background(shape.fill(Color(white: 0.96)))
+        .overlay(shape.strokeBorder(Color.black.opacity(strong ? 0.5 : 0.16), lineWidth: 1))
+    } else if Hardware.glass {
+      content.background(SystemGlassBackground(capsule: capsule, radius: glassRadius, tint: NSColor(white: 1, alpha: 0.25)))
+        .overlay { if strong { shape.strokeBorder(Color.black.opacity(0.4), lineWidth: 1) } }
+    } else {
+      content
+        .background {
+          ZStack {
+            shape.stroke(Color.black.opacity(0.12), lineWidth: 5).blur(radius: 7).offset(y: 4)
+            shape.fill(Color.white.opacity(strong ? min(0.9, veil + 0.25) : veil))
+          }
+        }
+        .overlay {
+          if let grain = Frost.grain {
+            Image(decorative: grain, scale: 2).resizable(resizingMode: .tile).opacity(0.05).blendMode(.multiply)
+              .clipShape(shape).allowsHitTesting(false)
+          }
+        }
+        .overlay(shape.strokeBorder(
+          strong ? AnyShapeStyle(Color.black.opacity(0.45))
+            : AnyShapeStyle(LinearGradient(colors: [.white.opacity(0.95), .white.opacity(0.3), .black.opacity(0.07)], startPoint: .top, endPoint: .bottom)),
+          lineWidth: 1))
+    }
+  }
+}
+
+/// A bar across the window on the copy stand's light glass, the toolbar or the film strip's: Liquid
+/// Glass where the system has it, frost before, opaque with Reduce Transparency.
 struct LightBarSurface: View {
+  @Environment(\.accessibilityReduceTransparency) private var opaque
   var body: some View {
     ZStack {
-      if Hardware.glass { SystemGlassBackground(capsule: false, radius: 0, tint: NSColor(white: 1, alpha: 0.25)) }
-      Color.white.opacity(Hardware.glass ? 0.3 : 0.6)
-      if let grain = Frost.grain {
-        Image(decorative: grain, scale: 2).resizable(resizingMode: .tile).opacity(0.05).blendMode(.multiply)
+      if opaque {
+        Color(white: 0.95)
+      } else if Hardware.glass {
+        SystemGlassBackground(capsule: false, radius: 0, tint: NSColor(white: 1, alpha: 0.25))
+      } else {
+        Color.white.opacity(0.6)
+        if let grain = Frost.grain {
+          Image(decorative: grain, scale: 2).resizable(resizingMode: .tile).opacity(0.05).blendMode(.multiply)
+        }
       }
     }.allowsHitTesting(false)
   }

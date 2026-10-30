@@ -73,7 +73,14 @@ struct ContentView: View {
       if page == .leak { m.leak.undoManager = undoManager } else { m.leak.save() }
     }
   }
+  /// The toolbar, its keys down to their icons where the window is too narrow for their names.
   var toolbar: some View {
+    ViewThatFits(in: .horizontal) {
+      toolbarRow
+      toolbarRow.labelStyle(.iconOnly)
+    }
+  }
+  var toolbarRow: some View {
     HStack(spacing: 16) {
       HStack(spacing: 7) {
         Image(systemName: "camera.aperture").foregroundStyle(accent)
@@ -103,8 +110,13 @@ struct ContentView: View {
             }
           }
         }
-      }
-      Spacer()
+      }.fixedSize()
+      Spacer(minLength: 8)
+      // The assistant in the middle of the bar, whatever the module: whether it may work on the
+      // conversion, seen at once, its settings a click away; in the bar's flow, so a narrow window
+      // never lays it over the keys.
+      AssistantKey(m: m, panel: assistantPanel)
+      Spacer(minLength: 8)
       if m.scanBatch.isActive || m.scanner.busy {
         VStack(alignment: .leading, spacing: 4) {
           Text(
@@ -145,11 +157,8 @@ struct ContentView: View {
             ).toolbarGlass("right-1")
           }
         }
-      }
+      }.fixedSize()
     }.buttonStyle(HardwareKeyStyle()).controlSize(.regular).padding(.horizontal, 18).padding(.vertical, 11)
-      // The assistant in the middle of the bar, whatever the module: whether it may work on the
-      // conversion, seen at once, its settings a click away.
-      .overlay { AssistantKey(m: m, panel: assistantPanel) }
       .environment(\.glassKeys, true).environment(\.glassNamespace, toolbarGlass)
       .animation(Liquid.available ? Liquid.flow : nil, value: m.page)
       .animation(Liquid.available ? Liquid.flow : nil, value: m.captureSource)
@@ -176,6 +185,21 @@ struct ContentView: View {
   var lampState: (lamp: StatusLED.Lamp, text: String) {
     if m.scanner.busy { return (.busy, m.scanner.cancellationHint == nil ? "工作中" : "取消中") }
     return m.scanner.ready ? (.ready, "就绪") : (.fault, "未就绪")
+  }
+  /// The view and tool keys over the light table, on the window or on glass.
+  var toolRow: some View {
+    HStack(spacing: 12) {
+      viewControls
+      Spacer(minLength: 8)
+      toolControls
+    }
+  }
+  var glassToolRow: some View {
+    HStack(spacing: 10) {
+      HStack(spacing: 10) { viewControls }.glassBar()
+      Spacer(minLength: 8)
+      HStack(spacing: 8) { toolControls }.glassBar()
+    }
   }
   /// The view switch, the loupe and how the table lies.
   @ViewBuilder var viewControls: some View {
@@ -341,11 +365,10 @@ struct ContentView: View {
   }
   var sheetWorkspace: some View {
     VStack(spacing: 0) {
-      HStack(spacing: 12) {
-        viewControls
-        Spacer()
-        toolControls
-      }.padding(.horizontal, 16).padding(.vertical, 10)
+      ViewThatFits(in: .horizontal) {
+        toolRow
+        toolRow.labelStyle(.iconOnly)
+      }.lineLimit(1).padding(.horizontal, 16).padding(.vertical, 10)
       ZStack(alignment: .topTrailing) {
         ScanCanvas(model: m).frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
         canvasOverlays
@@ -365,7 +388,7 @@ struct ContentView: View {
     return ZStack {
       if cameraStage {
         CameraStage(m: m, camera: m.camera)
-          .clipShape(RoundedRectangle(cornerRadius: 12))
+          .clipShape(RoundedRectangle(cornerRadius: CameraStage.corner))
           .padding(.leading, m.preferences.leftWidth + 2 * margin + 1).padding(.trailing, m.preferences.rightWidth + 2 * margin + 1)
           .padding(.vertical, margin)
       } else {
@@ -385,11 +408,10 @@ struct ContentView: View {
           Spacer()
         } else {
         VStack(spacing: 0) {
-          HStack(spacing: 10) {
-            HStack(spacing: 10) { viewControls }.glassBar()
-            Spacer()
-            HStack(spacing: 8) { toolControls }.glassBar()
-          }.padding(.horizontal, 10).padding(.top, 10)
+          ViewThatFits(in: .horizontal) {
+            glassToolRow
+            glassToolRow.labelStyle(.iconOnly)
+          }.lineLimit(1).padding(.horizontal, 10).padding(.top, 10)
           ZStack(alignment: .topTrailing) {
             Color.clear
             canvasOverlays

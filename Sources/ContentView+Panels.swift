@@ -440,11 +440,16 @@ extension ContentView {
       note("每次导入放进新的一卷，之后在 ② 去色罩里处理。")
     }
   }
-  /// Module ①'s right panel: the roll as the library files it.
+  /// Module ①'s right panel: with the camera the last picture's focus check first, then the roll as
+  /// the library files it.
   var rollPanel: some View {
     let full = m.frames.filter(\.hasFullResolution).count
     return ScrollView {
       VStack(alignment: .leading, spacing: 14) {
+        if m.captureSource == .camera {
+          FocusCheck(m: m, camera: m.camera)
+          Divider()
+        }
         sectionTitle("本卷", symbol: "archivebox")
         if m.sessionURL == nil {
           note("预览、扫描或导入之后，这一卷会自动放进库里。")
