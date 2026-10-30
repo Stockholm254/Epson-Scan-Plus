@@ -84,6 +84,19 @@ enum ContactPageTests {
     settle(0.8)
     canvas.applyOpenRequest()
     try check(canvas.opening == nil, "once the frame's own picture is here it takes the place of what grew")
+    func press(_ key: UInt16) {
+      canvas.keyDown(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+        windowNumber: window.windowNumber, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: key)!)
+    }
+    press(124)
+    let inSingle = model.selectedID == model.frames[4].id
+    model.singleView = false
+    model.select(model.frames[35].id)
+    press(124)
+    let across = model.selectedID == model.frames[36].id && model.contactPage == 1 && !model.singleView
+    press(123)
+    try check(inSingle && across && model.selectedID == model.frames[35].id && model.contactPage == 0,
+      "← → go to the frame before or after in single view and on the table, where the page turns with it")
     window.contentView = nil
     model.singleView = true
     try check(!model.onSheetPage && model.contactTurn == 0, "the single frame is not a page of the contact sheet")

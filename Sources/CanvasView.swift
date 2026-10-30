@@ -1425,14 +1425,9 @@ final class FilmCanvasView: NSView {
       model.straighten(model.screenAngle + (event.keyCode == 30 ? step : -step))
     } else if event.keyCode == 36 && model?.tool == .crop && model?.singleView == true {
       model?.useTool(.select)
-    } else if model?.singleView == true, [123, 124].contains(event.keyCode),
-      event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty
-    {
+    } else if [123, 124].contains(event.keyCode), event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty {
+      // The frame before or after, on the light table too, its page turning with it.
       model?.navigate(event.keyCode == 123 ? -1 : 1)
-    } else if let model, !model.singleView, model.contactPages.count > 1, [123, 124].contains(event.keyCode),
-      event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty
-    {
-      model.showContactPage(model.contactPage + (event.keyCode == 123 ? -1 : 1))
     } else if event.keyCode == 51 {
       model?.deletePressed()
     } else if event.keyCode == 53 {

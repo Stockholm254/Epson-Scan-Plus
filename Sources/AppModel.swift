@@ -310,8 +310,10 @@ final class AppModel: ObservableObject {
     viewportRevision += 1
   }
   func focusCanvas() { canvasFocusRevision += 1 }
+  /// The frame before or after the selected one, in the roll's order: in single view, and on the
+  /// light table, where the page turns with it.
   func canNavigate(_ offset: Int) -> Bool {
-    guard singleView, let i = selectedIndex else { return false }
+    guard let i = selectedIndex else { return false }
     return frames.indices.contains(i + offset)
   }
   func navigate(_ offset: Int) {
