@@ -217,6 +217,17 @@ struct ContentView: View {
       }
   }
   /// Which frame is shown, or how many there are.
+  /// The light table's pages, once a roll's frames fill more than one.
+  var pageControl: some View {
+    let pages = m.contactPages.count
+    return HStack(spacing: 6) {
+      Button { m.showContactPage(m.contactPage - 1) } label: { Image(systemName: "chevron.left") }
+        .disabled(m.contactPage == 0).accessibilityLabel("上一页")
+      Text("第 \(m.contactPage + 1) / \(pages) 页").font(.system(size: 11)).monospacedDigit()
+      Button { m.showContactPage(m.contactPage + 1) } label: { Image(systemName: "chevron.right") }
+        .disabled(m.contactPage >= pages - 1).accessibilityLabel("下一页")
+    }.buttonStyle(.borderless).help("接触表排满后翻到下一页；也可以在灯箱上左右滑动，或按 ← →")
+  }
   @ViewBuilder var placeLabel: some View {
       Text(m.singleView ? "第 \(m.selected?.name ?? "—") 张" : "\(m.frames.count) 个画面").font(
         .system(size: 11, design: .monospaced))
@@ -342,6 +353,7 @@ struct ContentView: View {
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
         HStack(spacing: 10) {
           placeLabel.glassBar()
+          if !m.singleView && m.contactPages.count > 1 { pageControl.glassBar() }
           Spacer()
           HStack(spacing: 8) { viewingControls }.glassBar()
         }.buttonStyle(.bordered).controlSize(.small).padding(.horizontal, 10).padding(.bottom, 10)
@@ -639,12 +651,11 @@ struct ContentView: View {
                   Rectangle().stroke(f.id == m.selectedID ? accent : Color.clear, lineWidth: 2)
                     .padding(-2)
                 ).onTapGesture {
-                  m.select(f.id)
+                  // From the light table it grows to the middle, shown on its own.
+                  m.open(f.id)
                   m.focusCanvas()
                 }.onTapGesture(count: 2) {
-                  m.select(f.id)
-                  m.singleView = true
-                  m.refresh()
+                  m.open(f.id)
                   m.focusCanvas()
                 }
                 // Edge print, as exposed along the film beside each frame.

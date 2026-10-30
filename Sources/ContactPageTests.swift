@@ -1,0 +1,91 @@
+import AppKit
+import Foundation
+
+/// The light table's pages: frames of their own files laid out as a contact sheet, 36 to a page,
+/// the page following the frame selected, and the film strip's pick for the loupe.
+enum ContactPageTests {
+  static func run(folder: URL) throws {
+    func check(_ value: Bool, _ label: String) throws {
+      guard value else { throw DeskError.message("FAIL: " + label) }; print("PASS: " + label)
+    }
+    // A page's layout: six strips of six, in reading order, each frame 3:2 inside the page.
+    let full = AppModel.sheetLayout(count: 36, pages: 2)
+    let inside = full.cells.allSatisfy { CGRect(origin: .zero, size: full.size).contains($0) }
+    let order = zip(full.cells, full.cells.dropFirst()).allSatisfy { a, b in b.minY > a.minY || (b.minY == a.minY && b.minX > a.maxX) }
+    let short = AppModel.sheetLayout(count: 4, pages: 2), alone = AppModel.sheetLayout(count: 4, pages: 1)
+    try check(full.cells.count == 36 && full.strips.count == 6 && inside && order
+      && full.cells.allSatisfy { abs($0.width / $0.height - 1.5) < 0.01 },
+      "a contact sheet page holds six strips of six frames, 3:2, in reading order")
+    try check(short.size == full.size && short.cells.count == 4 && alone.size.height < full.size.height,
+      "every page of a longer roll keeps the full page's size, so turning keeps the scale; a roll of one page is as tall as its strips")
+
+    // A roll of 40 pictures a file each, as a camera or an import brings them.
+    let pictures = folder.appendingPathComponent("contact-pages", isDirectory: true)
+    try? FileManager.default.removeItem(at: pictures)
+    try FileManager.default.createDirectory(at: pictures, withIntermediateDirectories: true)
+    var urls = [URL]()
+    for i in 0..<40 {
+      let ctx = CGContext(data: nil, width: 60, height: 40, bitsPerComponent: 8, bytesPerRow: 0, space: ImagePipeline.shared.outputSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+      ctx.setFillColor(CGColor(srgbRed: 0.8, green: 0.5, blue: CGFloat(i) / 40, alpha: 1))
+      ctx.fill(CGRect(x: 0, y: 0, width: 60, height: 40))
+      let url = pictures.appendingPathComponent(String(format: "p%02d.png", i))
+      try ImagePipeline.shared.savePNG(ctx.makeImage()!, to: url)
+      urls.append(url)
+    }
+    let suite = "EpsonScanPlus.tests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let model = AppModel(libraryURL: folder.appendingPathComponent("contact-pages-library"), preferences: Preferences(defaults: defaults))
+    model.importURLs(urls)
+    model.singleView = false
+    try check(model.contactPages == [.sheet(0), .sheet(1)] && model.onSheetPage && model.contactFrames.count == 36,
+      "40 pictures a file each lie on two contact sheet pages, 36 on the first")
+    let last = model.frames[38]
+    model.select(last.id)
+    let cell = model.contactRect(last), layout = AppModel.sheetLayout(count: 4, pages: 2)
+    try check(model.contactPage == 1 && model.contactFrames.count == 4 && model.contactFrames.contains { $0.id == last.id }
+      && abs(cell.x - layout.cells[2].minX / layout.size.width) < 1e-9 && abs(cell.y - layout.cells[2].minY / layout.size.height) < 1e-9,
+      "selecting the 39th turns the table to the second page, where it lies third")
+    model.showContactPage(5)
+    let clamped = model.contactPage == 1
+    model.showContactPage(0)
+    model.open(model.frames[3].id)
+    try check(clamped && model.contactPage == 0 && model.selectedID == model.frames[3].id
+      && model.openRequest?.id == model.frames[3].id && !model.singleView,
+      "the pages turn no further than there are; a pick in the film strip selects it and asks the canvas to open it")
+
+    // On the table: the loupe magnifies a frame of the page, and the pick grows to the middle.
+    func settle(_ seconds: Double) { RunLoop.current.run(until: Date().addingTimeInterval(seconds)) }
+    for _ in 0..<50 where model.displayed == nil || model.rendering { settle(0.1) }
+    let canvas = FilmCanvasView(frame: NSRect(x: 0, y: 0, width: 900, height: 600))
+    let window = NSWindow(contentRect: NSRect(x: -9000, y: -9000, width: 900, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+    window.contentView = canvas
+    canvas.model = model
+    canvas.display()
+    model.preferences.showLoupe = true
+    canvas.updateLoupe()
+    settle(0.3)
+    let box = canvas.screen(model.contactRect(model.frames[3]).cg)
+    try check(!canvas.loupe.isHidden && (canvas.loupe.magnification ?? 0) > 2 && canvas.loupeField * 2 >= box.width,
+      "on a contact sheet page the loupe magnifies, a frame's whole width in its field")
+    model.preferences.showLoupe = false
+    canvas.updateLoupe()
+    let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    canvas.applyOpenRequest()
+    let growing = canvas.opening, start = (growing?.picture.animation(forKey: "position") as? CABasicAnimation)?.fromValue as? NSValue
+    let middle = CGPoint(x: canvas.openRect.midX, y: canvas.openRect.midY)
+    try check(model.singleView && model.selectedID == model.frames[3].id && growing != nil
+      && growing.map { abs($0.picture.frame.midX - middle.x) < 1 && abs($0.picture.frame.midY - middle.y) < 1 && $0.picture.frame.width > box.width * 3 } == true
+      && (still || start.map { box.contains($0.pointValue) } == true)
+      && (still || growing.map { $0.cover.animation(forKey: "bounds.size") != nil && abs($0.cover.frame.width / canvas.bounds.width - $0.picture.frame.width / box.width) < 0.01 } == true),
+      "the view closes in on the pick: the table grows about it as much as it grows, to the middle of the canvas")
+    for _ in 0..<50 where model.rendering { settle(0.1) }
+    settle(0.8)
+    canvas.applyOpenRequest()
+    try check(canvas.opening == nil, "once the frame's own picture is here it takes the place of what grew")
+    window.contentView = nil
+    model.singleView = true
+    try check(!model.onSheetPage && model.contactTurn == 0, "the single frame is not a page of the contact sheet")
+  }
+}

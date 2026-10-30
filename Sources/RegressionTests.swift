@@ -25,6 +25,7 @@ enum RegressionTests {
     try CanvasTests.run(folder: folder)
     try LibraryTests.run(folder: folder)
     try RollGroupTests.run(folder: folder)
+    try ContactPageTests.run(folder: folder)
     try CameraTests.run(folder: folder)
     try CameraSimulationTests.run(folder: folder)
     try RowScanTests.run(folder: folder)

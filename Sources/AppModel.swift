@@ -6,7 +6,16 @@ import UniformTypeIdentifiers
 final class AppModel: ObservableObject {
   let scanner: ScannerController
   @Published var frames = [FilmFrame]()
-  @Published var selectedID: UUID?
+  @Published var selectedID: UUID? {
+    // The light table turns to the page the frame selected lies on.
+    didSet {
+      if let id = selectedID, id != oldValue, let page = contactPageIndex(of: id), page != contactPage { contactPage = page }
+    }
+  }
+  /// The light table's page shown: the holder's preview, or one laid out from frames of their own.
+  @Published var contactPage = 0
+  /// A frame to open from the light table, for the canvas to grow it from where it lies there.
+  @Published var openRequest: (id: UUID, revision: Int)?
   @Published var overview: CGImage?
   @Published var displayed: CGImage?
   /// The frames' positives, as the filmstrip shows them; the library keeps a small copy of each.
@@ -16,6 +25,7 @@ final class AppModel: ObservableObject {
       if !singleView, let picture = selected.flatMap({ thumbnails[$0.id] }), picture !== selected.flatMap({ oldValue[$0.id] }) {
         (histogram, channelHistograms) = Self.histograms(picture)
       }
+      if onSheetPage && contactPositive { refresh() }
       guard !thumbnails.isEmpty, !readOnly, let folder = sessionURL else { return }
       let images = thumbnails
       DispatchQueue.global(qos: .utility).async { RollLibrary.storePositives(images, folder: folder) }
@@ -191,15 +201,9 @@ final class AppModel: ObservableObject {
   /// holder stands upright; turned the way most frames are turned to stand up, and clockwise when
   /// none are: as film lies in the V850's holder, a frame shot across then stands upright (every
   /// frame turned in this computer's projects so far was turned clockwise).
-  /// A picture a file of its own lies on the table turned and mirrored as its frame is.
-  private var lonePicture: FilmFrame? {
-    guard !singleView, scanner.previewSoFar == nil, let f = selected, let path = f.sourcePath,
-      frames.filter({ $0.sourcePath == path }).count == 1
-    else { return nil }
-    return f
-  }
+  /// A page laid out from frames of their own lies upright, as it is printed.
   var contactTurn: Int {
-    if let f = lonePicture { return ((f.adjustments.rotation % 4) + 4) % 4 }
+    guard !onSheetPage else { return 0 }
     let picture = scanner.previewSoFar ?? displayed
     guard !singleView, preferences.contactLandscape, let d = picture, d.height > d.width else { return 0 }
     // A preview being read is the next roll's, whose frames are not known yet: clockwise, as a new
@@ -210,8 +214,7 @@ final class AppModel: ObservableObject {
   }
   /// The light table shows the film mirrored when most frames are, as the strips would lie flipped.
   var contactMirrored: Bool {
-    if let f = lonePicture { return f.adjustments.flipHorizontal == true }
-    guard scanner.previewSoFar == nil else { return false }
+    guard !onSheetPage, scanner.previewSoFar == nil else { return false }
     let frames = contactFrames
     return !singleView && frames.filter { $0.adjustments.flipHorizontal == true }.count * 2 > frames.count
   }
@@ -370,8 +373,9 @@ final class AppModel: ObservableObject {
       $0.baseFine = fine
     }
   }
+  /// The frames on the light table's page shown: laid out from their own files, or on the holder.
   var contactFrames: [FilmFrame] {
-    if let path = selected?.sourcePath { return frames.filter { $0.sourcePath == path } }
+    if onSheetPage { return sheetPageFrames }
     return frames.filter { $0.sourcePath == nil }
   }
   init(libraryURL: URL, scanner: ScannerController = ScannerController(), preferences: Preferences = Preferences()) {
@@ -1353,13 +1357,6 @@ final class AppModel: ObservableObject {
   }
   /// A picture of the roll's own file, as the light table shows it, kept for the next time; only
   /// on the render queue.
-  private var tableFile: (path: String, image: CGImage)?
-  private func tablePicture(_ path: String) -> CGImage? {
-    if tableFile?.path != path {
-      tableFile = (try? ImagePipeline.shared.load(URL(fileURLWithPath: path), maxDimension: 2200)).map { (path, $0) }
-    }
-    return tableFile?.image
-  }
   /// The luminance and channel histograms of a positive, 64 bins each, each scaled to its peak.
   static func histograms(_ image: CGImage) -> ([Double], [[Double]]) {
     let r = ImagePipeline.shared.raster(image, maxDimension: 250)
@@ -1387,25 +1384,26 @@ final class AppModel: ObservableObject {
       toneAnalysis = nil
       // The curves' histograms, from the selected frame's positive as the filmstrip has it.
       if let picture = selected.flatMap({ thumbnails[$0.id] }) { (histogram, channelHistograms) = Self.histograms(picture) }
-      // A picture a file of its own (a camera's, an import) lies on the table by itself, the one
-      // selected, not the roll's first.
-      if let picked = selected, let path = picked.sourcePath, path != overviewURL?.path {
-        let onPicture = frames.filter { $0.sourcePath == path }, positive = contactPositive, p = profile
+      // Frames of their own files (a camera's, imports) on a page laid out as a contact sheet:
+      // positives from the film strip's, negatives read small from their files.
+      if onSheetPage {
+        let page = sheetPageFrames, positive = contactPositive, positives = thumbnails, pages = contactPages.count
         rendering = true
         let work = DispatchWorkItem { [weak self] in
           guard let self else { return }
-          self.step(0.1, "读取照片", token)
-          let picture = self.tablePicture(path)
-          if positive { self.step(0.6, "冲印正片", token) }
-          let shown = positive ? picture.flatMap { ImagePipeline.shared.contactPrint($0, frames: onPicture, profile: p) ?? $0 } : picture
+          self.step(0.2, "排接触表", token)
+          let tiles = page.map { f -> (name: String, image: CGImage?) in
+            (f.name, positive ? positives[f.id] : try? self.source(for: f, maxDimension: 480))
+          }
+          let sheet = Self.composeSheet(tiles, pages: pages)
           DispatchQueue.main.async {
             guard self.revision == token else { return }
-            if let shown { self.displayed = shown }
+            if let sheet { self.displayed = sheet }
             self.rendering = false
           }
         }
         renderWork = work
-        renderQueue.asyncAfter(deadline: .now() + 0.07, execute: work)
+        renderQueue.asyncAfter(deadline: .now() + 0.05, execute: work)
         return
       }
       // Frames that lie on the displayed overview; imports from other files are not on it.

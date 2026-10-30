@@ -122,17 +122,18 @@ enum CanvasTests {
     try check(model.selectedID == frames[2].id && frames[2].rect.cg.contains(back),
       "a click on the turned table picks the frame under it")
     for _ in 0..<40 where model.rendering { settle(0.1) }
-    // Dragging the frame's (max x, max y) corner, wherever the turn puts it on screen.
+    // Dragging the frame's (max x, max y) corner, wherever the turn puts it on screen, or the frame.
     let corner = canvas.corners(frames[2].rect.cg)[3], drop = CGPoint(x: corner.x + 10, y: corner.y - 12)
     canvas.mouseDown(with: event(.leftMouseDown, corner))
     canvas.mouseDragged(with: event(.leftMouseDragged, CGPoint(x: corner.x + 5, y: corner.y - 6)))
     canvas.mouseDragged(with: event(.leftMouseDragged, drop))
     canvas.mouseUp(with: event(.leftMouseUp, drop))
-    let before = frames[2].rect, after = model.frames[2].rect, end = canvas.normal(drop)
-    try check(abs(after.x - before.x) < 1e-6 && abs(after.y - before.y) < 1e-6
-      && abs(after.x + after.width - end.x) < 1e-6 && abs(after.y + after.height - end.y) < 1e-6 && after != before,
-      String(format: "dragging a corner moves that corner to the mouse and keeps the opposite one, in the overview: %.3f × %.3f → %.3f × %.3f",
-        before.width, before.height, after.width, after.height))
+    let grip = CGPoint(x: strip[2].midX, y: strip[2].midY), moved = CGPoint(x: grip.x + 30, y: grip.y + 20)
+    canvas.mouseDown(with: event(.leftMouseDown, grip))
+    canvas.mouseDragged(with: event(.leftMouseDragged, moved))
+    canvas.mouseUp(with: event(.leftMouseUp, moved))
+    try check(model.frames[2].rect == frames[2].rect && model.selectedID == frames[2].id,
+      "on the light table a frame's box neither resizes by its corner nor moves: its crop is set on its own")
     let perMM = canvas.imageRect.height / 135.5
     try check(abs(canvas.loupeRadius(for: .pentax) - min(110, max(44, CGFloat(LoupeStyle.pentax.baseMM / 2) * perMM))) < 0.5,
       "the loupe keeps the film's scale on the turned table")

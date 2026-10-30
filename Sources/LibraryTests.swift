@@ -222,24 +222,30 @@ enum LibraryTests {
       NSEvent.mouseEvent(with: type, location: canvas.convert(p, to: nil), modifierFlags: [], timestamp: 0,
         windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
     }
+    // A frame's crop is set on its own, with the crop tool.
     model.select(model.frames[1].id)
+    model.singleView = true
+    model.useTool(.crop)
     for _ in 0..<40 where model.rendering { settle(0.1) }
-    let handle = canvas.corners(model.frames[1].rect.cg)[3], to = CGPoint(x: handle.x + 8, y: handle.y + 6)
+    canvas.display()
+    guard let crop = model.canvasCrop else { throw DeskError.message("FAIL: the crop tool shows the frame's crop") }
+    let handle = canvas.corners(crop.cg)[3], to = CGPoint(x: handle.x - 8, y: handle.y - 6)
     canvas.mouseDown(with: event(.leftMouseDown, handle))
     canvas.mouseDragged(with: event(.leftMouseDragged, to))
     canvas.display()
     let drawn = canvas.lensDrawn
     try check(canvas.lens != nil && drawn != nil && !drawn!.frame.contains(to) && canvas.bounds.contains(drawn!.frame),
-      "dragging a frame's corner brings up the glass bubble beside it, clear of the pointer")
+      "dragging a crop's corner brings up the glass bubble beside it, clear of the pointer")
     canvas.mouseUp(with: event(.leftMouseUp, to))
     try check(canvas.lens == nil && canvas.lensFading != nil, "letting go, the bubble fades")
     settle(0.4)
     try check(canvas.lensFading == nil, "and is gone")
-    let middleOfFrame = canvas.screen(model.frames[1].rect.cg)
+    for _ in 0..<40 where model.rendering { settle(0.1) }
+    let middleOfFrame = canvas.screen((model.canvasCrop ?? crop).cg)
     let grab = CGPoint(x: middleOfFrame.midX, y: middleOfFrame.midY)
     canvas.mouseDown(with: event(.leftMouseDown, grab))
     canvas.mouseDragged(with: event(.leftMouseDragged, CGPoint(x: grab.x + 10, y: grab.y)))
-    try check(canvas.lens == nil, "moving a whole frame box brings no bubble")
+    try check(canvas.lens == nil, "moving a whole crop brings no bubble")
     canvas.mouseUp(with: event(.leftMouseUp, CGPoint(x: grab.x + 10, y: grab.y)))
     window.contentView = nil
   }

@@ -29,6 +29,7 @@ struct ScanCanvas: NSViewRepresentable {
     view.needsDisplay = true
     view.updateLoupe()
     view.updateScanHead()
+    view.applyOpenRequest()
   }
 }
 
@@ -274,8 +275,31 @@ final class FilmCanvasView: NSView {
     addTrackingArea(tracking!)
     super.updateTrackingAreas()
   }
+  /// The light table's picture and page last drawn: a new picture of another page slides in.
+  private var drawnPicture: CGImage?
+  private(set) var drawnPage = 0
+  private func turnPage() {
+    guard let model, let picture = model.displayed, picture !== drawnPicture else { return }
+    defer {
+      drawnPicture = picture
+      drawnPage = model.contactPage
+    }
+    guard drawnPicture != nil, model.contactPage != drawnPage, !model.singleView, let layer else { return }
+    let slide = CATransition()
+    if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+      slide.type = .fade
+      slide.duration = 0.2
+    } else {
+      slide.type = .push
+      slide.subtype = model.contactPage > drawnPage ? .fromRight : .fromLeft
+      slide.duration = 0.35
+    }
+    slide.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+    layer.add(slide, forKey: "page")
+  }
   override func draw(_ dirtyRect: NSRect) {
     defer { tableDrawn() }
+    turnPage()
     NSGraphicsContext.saveGraphicsState()
     defer { NSGraphicsContext.restoreGraphicsState() }
     NSBezierPath(rect: bounds).addClip()
@@ -295,21 +319,27 @@ final class FilmCanvasView: NSView {
         ])
       return
     }
+    // A frame opened from the table grows over the single view until its own picture is here.
+    if let opening, model.singleView, model.displayed === opening.over { return }
     let rect = imageRect
-    NSGraphicsContext.saveGraphicsState()
-    if !lightTable {
-      let shadow = NSShadow()
-      shadow.shadowColor = NSColor.black.withAlphaComponent(0.55)
-      shadow.shadowBlurRadius = 18
-      shadow.shadowOffset = CGSize(width: 0, height: 5)
-      shadow.set()
+    let sheet = model.onSheetPage
+    if !sheet {
+      NSGraphicsContext.saveGraphicsState()
+      if !lightTable {
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.55)
+        shadow.shadowBlurRadius = 18
+        shadow.shadowOffset = CGSize(width: 0, height: 5)
+        shadow.set()
+      }
+      NSColor.black.setFill()
+      rect.insetBy(dx: -1, dy: -1).fill()
+      NSGraphicsContext.restoreGraphicsState()
     }
-    NSColor.black.setFill()
-    rect.insetBy(dx: -1, dy: -1).fill()
-    NSGraphicsContext.restoreGraphicsState()
     let image = NSImage(cgImage: channelled(cg, model.channelView), size: CGSize(width: cg.width, height: cg.height))
+    // A laid-out page's strips lie on the table, its perforations open to the light.
     image.draw(
-      in: rect, from: .zero, operation: .copy, fraction: 1, respectFlipped: true,
+      in: rect, from: .zero, operation: sheet ? .sourceOver : .copy, fraction: 1, respectFlipped: true,
       hints: [.interpolation: NSImageInterpolation.high])
     // Zoomed in past the picture shown, the part in view from the frame's own pixels over it:
     // square, once each is two pixels of the screen or more, so a pixel shows as one.
@@ -386,7 +416,7 @@ final class FilmCanvasView: NSView {
     }
     if !model.singleView && model.scanner.previewSoFar == nil {
       for f in model.contactFrames {
-        let r = screen(dragID == f.id ? (draft ?? f.rect.cg) : f.rect.cg)
+        let r = screen(model.contactRect(f).cg)
         let selected = f.id == model.selectedID
         let c =
           selected
@@ -398,8 +428,8 @@ final class FilmCanvasView: NSView {
         if !f.enabled { path.setLineDash([4, 4], count: 2, phase: 0) }
         path.stroke()
         // Straightened, the part kept, turned on the film as it lies.
-        if let degrees = f.adjustments.angle, abs(degrees) > 0.0001, let aspect = model.frameAspect(f) {
-          let box = dragID == f.id ? (draft ?? f.rect.cg) : f.rect.cg, b = imageRect
+        if !sheet, let degrees = f.adjustments.angle, abs(degrees) > 0.0001, let aspect = model.frameAspect(f) {
+          let box = f.rect.cg, b = imageRect
           let kept = [CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 0), CGPoint(x: 1, y: 1), CGPoint(x: 0, y: 1)].map { corner -> CGPoint in
             let q = ImageGeometry.straightened(corner, degrees: degrees, aspect: aspect, inverse: true)
             let s = turn.shown(CGPoint(x: box.minX + q.x * box.width, y: box.minY + q.y * box.height))
@@ -421,20 +451,8 @@ final class FilmCanvasView: NSView {
             .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
             .foregroundColor: NSColor.black,
           ])
-        if selected {
-          for p in [
-            CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY),
-            CGPoint(x: r.minX, y: r.maxY), CGPoint(x: r.maxX, y: r.maxY),
-          ] {
-            c.setFill()
-            NSBezierPath(
-              roundedRect: CGRect(x: p.x - 3.5, y: p.y - 3.5, width: 7, height: 7), xRadius: 1,
-              yRadius: 1
-            ).fill()
-          }
-        }
       }
-      if dragID == nil, let draft {
+      if let draft {
         NSColor.systemOrange.setStroke()
         let p = NSBezierPath(rect: screen(draft))
         p.lineWidth = 1.5
@@ -672,6 +690,11 @@ final class FilmCanvasView: NSView {
       let across = frame.adjustments.rotation % 2 == 0 ? mm.width : mm.height
       return imageRect.width / across
     }
+    // A laid-out page prints every frame in a cell the size of a 135 frame, whatever its file's
+    // own size, so the loupe's field takes in a whole one.
+    if model.onSheetPage, let f = model.contactFrames.first {
+      return imageRect.width * CGFloat(model.contactRect(f).width) / 36
+    }
     guard model.physicalMM.height > 0 else { return nil }
     let shownHeight = turn.sideways ? model.physicalMM.width : model.physicalMM.height
     return fitScale * CGFloat(cg.height) / max(1, shownHeight)
@@ -713,7 +736,7 @@ final class FilmCanvasView: NSView {
       let f = model.contactFrames.first(where: { $0.id == (loupeHomeFrame ?? model.selectedID) })
         ?? model.contactFrames.first(where: { $0.id == model.selectedID })
     {
-      let s = screen(f.rect.cg)
+      let s = screen(model.contactRect(f).cg)
       c = CGPoint(x: s.midX, y: s.midY)
     }
     return CGPoint(x: min(max(c.x, bounds.minX), bounds.maxX), y: min(max(c.y, bounds.minY), bounds.maxY))
@@ -766,6 +789,137 @@ final class FilmCanvasView: NSView {
     }
     if !hidden { loupeMoved() }
   }
+  // MARK: Opening a frame
+
+  private var openedRevision = 0
+  /// A frame opened from the light table on its way to the middle: the table's picture, the view
+  /// closing in on the frame, its own picture over it, until the frame's own is drawn.
+  private(set) var opening: (cover: CALayer, picture: CALayer, over: CGImage?, grown: Bool)?
+  /// Opens the frame the film strip asked for, and finishes an opening once its picture is here.
+  func applyOpenRequest() {
+    guard let model else { return }
+    if let opening, !model.singleView || (opening.grown && model.displayed !== opening.over) { finishOpening() }
+    guard let ask = model.openRequest, ask.revision != openedRevision else { return }
+    openedRevision = ask.revision
+    guard !model.singleView, let f = model.contactFrames.first(where: { $0.id == ask.id }) else { return }
+    open(f)
+  }
+  /// Shows a frame on the light table on its own: the view closes in on it, the whole table
+  /// growing about it on a spring, a little past and back, until it lies where the single view
+  /// shows it and the frames round it have gone off the canvas; the table then fades to the
+  /// single view's surround. Cross-faded, with Reduce Motion.
+  func open(_ f: FilmFrame) {
+    guard let model, !model.singleView else { return }
+    model.select(f.id)
+    defer {
+      model.singleView = true
+      model.refresh()
+    }
+    guard let layer, bounds.width > 0, let table = tableSnapshot() else { return }
+    let cell = screen(model.contactRect(f).cg)
+    // The positive the film strip has, where the table shows positives; else the table's own.
+    let face = model.contactPositive && !model.showNegative ? model.thumbnails[f.id] : nil
+    var from = cell, image: CGImage?
+    if let face, face.width > 0, face.height > 0 {
+      image = face
+      if model.onSheetPage { from = Self.fitted(CGSize(width: face.width, height: face.height), in: cell) }
+    } else {
+      let k = CGFloat(table.width) / bounds.width
+      image = table.cropping(to: CGRect(x: cell.minX * k, y: cell.minY * k, width: cell.width * k, height: cell.height * k).integral)
+    }
+    let area = CGRect(x: reserved.left + Self.inset, y: reserved.top + Self.inset,
+      width: max(1, open.width - 2 * Self.inset), height: max(1, open.height - 2 * Self.inset))
+    let to = Self.fitted(from.size, in: area)
+    // The table as the view closes in: scaled about the frame as much as the frame grows.
+    let k = to.width / max(1, from.width)
+    let tableTo = CGRect(x: to.midX + (bounds.minX - from.midX) * k, y: to.midY + (bounds.minY - from.midY) * k,
+      width: bounds.width * k, height: bounds.height * k)
+    finishOpening()
+    let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    let cover = CALayer(), picture = CALayer()
+    cover.frame = still ? bounds : tableTo
+    cover.contents = table
+    // The frame's own picture, sharper than the table's as it grows.
+    picture.contents = image
+    picture.contentsGravity = .resizeAspect
+    picture.frame = to
+    layer.addSublayer(cover)
+    layer.addSublayer(picture)
+    cover.opacity = 0
+    CATransaction.commit()
+    opening = (cover, picture, model.displayed, false)
+
+    // Grown once it is seen to have arrived: what is left of the spring is too small to see.
+    DispatchQueue.main.asyncAfter(deadline: .now() + (still ? 0.2 : 0.55)) { [weak self] in
+      guard let self, self.opening?.picture === picture else { return }
+      self.opening?.grown = true
+      self.applyOpenRequest()
+    }
+    CATransaction.begin()
+    // The table fades to the single view's surround once the frames round it are on their way
+    // off the canvas.
+    let fade = CABasicAnimation(keyPath: "opacity")
+    fade.fromValue = 1
+    fade.toValue = 0
+    fade.duration = still ? 0.2 : 0.3
+    if !still {
+      fade.beginTime = CACurrentMediaTime() + 0.2
+      fade.fillMode = .backwards
+    }
+    fade.timingFunction = CAMediaTimingFunction(controlPoints: 0.25, 0.1, 0.25, 1)
+    cover.add(fade, forKey: "fade")
+    if still {
+      let appear = CABasicAnimation(keyPath: "opacity")
+      appear.fromValue = 0
+      appear.toValue = 1
+      appear.duration = 0.2
+      picture.add(appear, forKey: "appear")
+    } else {
+      // As the system springs a window or a photo open: half a second, a slight bounce. The
+      // table and the frame on the same spring, so the frame stays where it lies on the table.
+      for (moving, start) in [(cover, bounds), (picture, from)] {
+        let move = CASpringAnimation(perceptualDuration: 0.5, bounce: 0.15)
+        move.keyPath = "position"
+        move.fromValue = NSValue(point: CGPoint(x: start.midX, y: start.midY))
+        let grow = CASpringAnimation(perceptualDuration: 0.5, bounce: 0.15)
+        grow.keyPath = "bounds.size"
+        grow.fromValue = NSValue(size: start.size)
+        for a in [move, grow] {
+          a.duration = a.settlingDuration
+          moving.add(a, forKey: a.keyPath)
+        }
+      }
+    }
+    CATransaction.commit()
+    // Should the frame's picture never come, the single view shows what it has.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+      if self?.opening?.picture === picture { self?.finishOpening() }
+    }
+  }
+  /// The opened frame's own picture is drawn: what grew there fades into it.
+  private func finishOpening() {
+    guard let done = opening else { return }
+    opening = nil
+    needsDisplay = true
+    CATransaction.begin()
+    CATransaction.setCompletionBlock {
+      done.cover.removeFromSuperlayer()
+      done.picture.removeFromSuperlayer()
+    }
+    CATransaction.setAnimationDuration(0.15)
+    done.picture.opacity = 0
+    done.cover.opacity = 0
+    CATransaction.commit()
+  }
+  /// A picture of `size` as large as fits in `box`, in its middle.
+  static func fitted(_ size: CGSize, in box: CGRect) -> CGRect {
+    let k = min(box.width / max(1, size.width), box.height / max(1, size.height))
+    let w = size.width * k, h = size.height * k
+    return CGRect(x: box.midX - w / 2, y: box.midY - h / 2, width: w, height: h)
+  }
+
   private var snapshot: (key: Int, image: CGImage)?
   private var snapshotting = false
   private var drawnKey = 0
@@ -790,8 +944,10 @@ final class FilmCanvasView: NSView {
       h.combine(f.id)
       h.combine(f.name)
       h.combine(f.enabled)
-      for v in [f.rect.x, f.rect.y, f.rect.width, f.rect.height] { h.combine(v) }
+      let r = model.contactRect(f)
+      for v in [r.x, r.y, r.width, r.height] { h.combine(v) }
     }
+    h.combine(model.contactPage)
     if let draft { for v in [draft.minX, draft.minY, draft.width, draft.height] { h.combine(v) } }
     h.combine(dragID)
     return h.finalize()
@@ -902,7 +1058,15 @@ final class FilmCanvasView: NSView {
       let frame = model.contactFrames.first(where: { $0.id == detail.id }), frame.rect == detail.rect
     {
       scene.detail = turnedDetail(detail.key, detail.image)
-      scene.detailRect = screen(frame.rect.cg)
+      let cell = screen(model.contactRect(frame).cg)
+      // On a laid-out page the frame is fitted in its cell, as the page shows it.
+      if model.onSheetPage, detail.image.width > 0, detail.image.height > 0 {
+        let k = min(cell.width / CGFloat(detail.image.width), cell.height / CGFloat(detail.image.height))
+        let size = CGSize(width: CGFloat(detail.image.width) * k, height: CGFloat(detail.image.height) * k)
+        scene.detailRect = CGRect(x: cell.midX - size.width / 2, y: cell.midY - size.height / 2, width: size.width, height: size.height)
+      } else {
+        scene.detailRect = cell
+      }
       if model.loupeDetailKey(frame) + "@\(loupePixels(for: frame))" != detail.key {
         DispatchQueue.main.async { [weak self] in self?.loupeMoved() }
       }
@@ -914,7 +1078,7 @@ final class FilmCanvasView: NSView {
   /// the lens shows it with, the frame's size on the table times the loupe's magnification at
   /// the screen's resolution, from 2400 to 8192.
   private func loupePixels(for frame: FilmFrame) -> Int {
-    let r = screen(frame.rect.cg), mag = CGFloat(loupe.magnification ?? loupe.style.magnification)
+    let r = screen(model?.contactRect(frame).cg ?? frame.rect.cg), mag = CGFloat(loupe.magnification ?? loupe.style.magnification)
     let needed = max(r.width, r.height) * mag * (window?.backingScaleFactor ?? 2)
     return min(8192, max(2400, Int((needed / 1024).rounded(.up)) * 1024))
   }
@@ -942,7 +1106,7 @@ final class FilmCanvasView: NSView {
       found = model.editingSingle ? nil : model.selected
     } else {
       let n = normal(center)
-      found = model.contactFrames.last(where: { $0.rect.cg.contains(n) })
+      found = model.contactFrames.last(where: { model.contactRect($0).cg.contains(n) })
     }
     guard let frame = found else { return }
     if single {
@@ -1104,25 +1268,10 @@ final class FilmCanvasView: NSView {
       draft = CGRect(origin: dragStart!, size: .zero)
       return
     }
-    if let f = model.frames.first(where: { $0.id == model.selectedID }) {
-      if let c = corners(f.rect.cg).firstIndex(where: { hypot($0.x - p.x, $0.y - p.y) < 10 }) {
-        corner = c
-        dragID = f.id
-        original = f.rect.cg
-        draft = f.rect.cg
-        return
-      }
-    }
-    if let f = model.contactFrames.reversed().first(where: { $0.rect.cg.contains(normal(p)) }) {
+    // On the table a click picks a frame and a double click opens it; its crop is set on its own.
+    if let f = model.contactFrames.reversed().first(where: { model.contactRect($0).cg.contains(normal(p)) }) {
       model.select(f.id)
-      if event.clickCount == 2 {
-        model.singleView = true
-        model.refresh()
-        return
-      }
-      dragID = f.id
-      original = f.rect.cg
-      draft = f.rect.cg
+      if event.clickCount == 2 { open(f) }
     }
   }
   override func mouseDragged(with event: NSEvent) {
@@ -1193,7 +1342,28 @@ final class FilmCanvasView: NSView {
       model?.addFrame(NormalRect(draft))
     }
   }
+  /// How far a horizontal swipe on the light table has gone; past 40 points it turns the page.
+  private var swipe: CGFloat = 0
+  private var lastStep = Date.distantPast
   override func scrollWheel(with event: NSEvent) {
+    if let model, !model.singleView, (model.zoom) <= 1, model.contactPages.count > 1,
+      abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) || swipe != 0
+    {
+      // Fingers moving left bring the next page in from the right, as pages turn in the system.
+      if event.phase == .began { swipe = 0 }
+      guard event.momentumPhase.isEmpty else { return }
+      swipe += event.scrollingDeltaX
+      let ended = event.phase == .ended || event.phase == .cancelled
+      let wheel = event.phase.isEmpty
+      if (ended || wheel) && abs(swipe) > 40 && Date().timeIntervalSince(lastStep) > 0.4 {
+        model.showContactPage(model.contactPage + (swipe < 0 ? 1 : -1))
+        lastStep = Date()
+        swipe = 0
+      } else if ended {
+        swipe = 0
+      }
+      return
+    }
     if event.modifierFlags.contains(.command) {
       setZoom(
         (model?.zoom ?? 1) * exp(-event.scrollingDeltaY * 0.01),
@@ -1259,6 +1429,10 @@ final class FilmCanvasView: NSView {
       event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty
     {
       model?.navigate(event.keyCode == 123 ? -1 : 1)
+    } else if let model, !model.singleView, model.contactPages.count > 1, [123, 124].contains(event.keyCode),
+      event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty
+    {
+      model.showContactPage(model.contactPage + (event.keyCode == 123 ? -1 : 1))
     } else if event.keyCode == 51 {
       model?.deletePressed()
     } else if event.keyCode == 53 {
