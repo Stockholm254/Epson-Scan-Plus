@@ -35,10 +35,9 @@ private struct GlassPane: ViewModifier {
   }
 }
 
-/// The shutter release: a round key of frosted glass with the red of the release glowing through
-/// it, sinking under the finger, the whole key in a drop of glass that gives as it is pressed. A
-/// ring of light at its edge shows amber while the camera is ready and blinks red while a picture
-/// is written and sent; a ring goes off round it each time the shutter goes.
+/// The shutter release: a round key of red frosted glass, sinking under the finger, the whole key
+/// in a drop of glass that gives as it is pressed. It glows while the camera is ready and pulses
+/// while a picture is written and sent; a ring goes off round it each time the shutter goes.
 struct ShutterKey: View {
   let enabled: Bool
   /// A picture still on its way: the key takes no press until it is in.
@@ -82,47 +81,40 @@ struct ShutterPress: ButtonStyle {
   }
 }
 
-/// The release as a round key of frosted glass: a red light behind the frost, glowing through it
-/// softly and brighter while pressed, the glass domed (lighter at the top, a soft highlight there,
-/// its rim lit from above) and grained. A ring of light at its edge shows amber while the camera
-/// is ready and blinks red while a picture is written and sent.
+/// The release as a round key of red frosted glass, one colour throughout: lighter at the top as
+/// a dome catches the light, grained, a soft highlight there and its rim lit from above, brighter
+/// while pressed. It glows softly red while the camera is ready, pulses while a picture is written
+/// and sent, and is grey with no camera.
 private struct ShutterFace: View {
   let pressed: Bool, enabled: Bool, busy: Bool, flash: Double, blink: Bool
   @Environment(\.colorScheme) private var scheme
   var body: some View {
-    let d = ShutterPress.size, light = scheme == .light
-    let ring = busy ? Color(red: 1, green: 0.25, blue: 0.2) : Hardware.amber
-    let lit = busy ? (blink ? 1.0 : 0.2) : enabled ? 0.9 : 0
+    let d = ShutterPress.size
+    let glow = enabled ? (busy ? (blink ? 0.9 : 0.2) : 0.55) : 0
+    let red = Color(red: 0.88, green: 0.16, blue: 0.13)
     ZStack {
-      // What the frost lies over: the red of the release, or grey while there is no camera.
-      Circle().fill(Color(white: light ? 0.93 : 0.12))
       Circle().fill(RadialGradient(
         colors: enabled
-          ? [Color(red: 1, green: 0.42, blue: 0.34), Color(red: 0.9, green: 0.14, blue: 0.11), Color(red: 0.62, green: 0.06, blue: 0.05).opacity(0.9)]
-          : [Color(white: 0.7), Color(white: 0.55), Color(white: 0.45)],
-        center: .center, startRadius: 0, endRadius: d * 0.36))
-        .frame(width: d * 0.72, height: d * 0.72)
-        .blur(radius: 2.5)
-        .brightness(pressed ? 0.1 : 0)
-      // The frost: a veil lighter at the top, as a dome catches the light, and its grain.
-      Circle().fill(LinearGradient(
-        colors: [.white.opacity(light ? 0.5 : 0.28), .white.opacity(light ? 0.14 : 0.05)], startPoint: .top, endPoint: .bottom))
+          ? [Color(red: 1, green: 0.5, blue: 0.42), red, Color(red: 0.6, green: 0.07, blue: 0.06)]
+          : [Color(white: 0.78), Color(white: 0.62), Color(white: 0.5)],
+        center: UnitPoint(x: 0.5, y: 0.32), startRadius: 0, endRadius: d * 0.62))
+      // The frost: a veil, lighter at the top, and its grain.
+      Circle().fill(LinearGradient(colors: [.white.opacity(0.3), .white.opacity(0.04)], startPoint: .top, endPoint: .bottom))
       if let grain = Frost.grain {
-        Image(decorative: grain, scale: 2).resizable(resizingMode: .tile).opacity(0.08).blendMode(.multiply)
+        Image(decorative: grain, scale: 2).resizable(resizingMode: .tile).opacity(0.09).blendMode(.multiply)
           .clipShape(Circle())
       }
-      Ellipse().fill(LinearGradient(colors: [.white.opacity(pressed ? 0.3 : 0.6), .clear], startPoint: .top, endPoint: .bottom))
-        .frame(width: d * 0.56, height: d * 0.26).offset(y: -d * 0.22)
-      Circle().strokeBorder(ring.opacity(lit), lineWidth: 2)
-        .shadow(color: ring.opacity(0.8 * lit), radius: 4)
-        .padding(2.5)
+      Ellipse().fill(LinearGradient(colors: [.white.opacity(pressed ? 0.25 : 0.5), .clear], startPoint: .top, endPoint: .bottom))
+        .frame(width: d * 0.58, height: d * 0.26).offset(y: -d * 0.24)
       Circle().strokeBorder(LinearGradient(
-        colors: [.white.opacity(0.95), .white.opacity(0.3), .black.opacity(light ? 0.14 : 0.3)], startPoint: .top, endPoint: .bottom), lineWidth: 1.2)
+        colors: [.white.opacity(0.75), .white.opacity(0.15), .black.opacity(0.18)], startPoint: .top, endPoint: .bottom), lineWidth: 1.2)
       Circle().stroke(Color.white.opacity(0.9 * flash), lineWidth: 3)
         .frame(width: d + 8, height: d + 8).scaleEffect(1 + 0.3 * (1 - flash))
     }
     .frame(width: d, height: d)
+    .brightness(pressed ? 0.1 : busy ? (blink ? 0.08 : -0.06) : 0)
     .clipShape(Circle().inset(by: -10))
+    .shadow(color: red.opacity(glow), radius: 9)
     .shadow(color: .black.opacity(pressed ? 0.12 : 0.22), radius: pressed ? 2 : 5, y: pressed ? 1 : 3)
     .scaleEffect(pressed ? 0.95 : 1)
     .animation(.spring(response: 0.16, dampingFraction: 0.6), value: pressed)
