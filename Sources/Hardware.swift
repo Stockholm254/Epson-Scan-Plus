@@ -39,7 +39,8 @@ enum Hardware {
 }
 
 /// A key, as the system draws one: bordered, and filled with the accent when it leads its panel
-/// or stands latched on.
+/// or stands latched on. Its label keeps the system's colours, light on the fill: a colour set
+/// inside the label shows on the fill too (macOS 27), and amber on amber reads as grey.
 struct KeyStyle: PrimitiveButtonStyle {
   var prominent = false
   var latched = false

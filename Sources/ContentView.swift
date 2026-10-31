@@ -178,8 +178,7 @@ struct ContentView: View {
       Button {
         m.toggleLoupe()
       } label: {
-        Label("看片镜", systemImage: "circle.circle").font(.system(size: 11)).foregroundStyle(
-          m.preferences.showLoupe ? Hardware.amberText : Color.primary)
+        Label("看片镜", systemImage: "circle.circle").font(.system(size: 11))
       }.buttonStyle(KeyStyle(latched: m.preferences.showLoupe)).controlSize(.small)
         .help("看片镜：点一下放到所选画面上，拖动放大细看，再点一下收起 · Z。接触表和单张都能用；右键选择型号")
       if !m.singleView {
@@ -187,8 +186,7 @@ struct ContentView: View {
           m.preferences.contactLandscape.toggle()
           m.fitView()
         } label: {
-          Label("横排", systemImage: "rectangle.landscape.rotate").font(.system(size: 11)).foregroundStyle(
-            m.preferences.contactLandscape ? Hardware.amberText : Color.primary)
+          Label("横排", systemImage: "rectangle.landscape.rotate").font(.system(size: 11))
         }.buttonStyle(KeyStyle(latched: m.preferences.contactLandscape)).controlSize(.small)
           .help("把竖放的片夹横过来摆在灯箱上，胶片条横向排开，更好地利用宽屏。方向跟随多数画面的旋转，都没有旋转时顺时针转")
       }
@@ -203,7 +201,7 @@ struct ContentView: View {
           HStack(spacing: 4) {
             Image(systemName: t.symbol).frame(width: 16, height: 14)
             if let label = t.label { Text(label).font(.system(size: 11)) }
-          }.foregroundStyle(m.tool == t ? Hardware.amberText : Color.primary)
+          }
         }.buttonStyle(KeyStyle(latched: m.tool == t)).controlSize(.small).help(t.help)
           .accessibilityLabel(t.rawValue)
       }
@@ -254,7 +252,6 @@ struct ContentView: View {
           m.mirrorRoll()
         } label: {
           Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
-            .foregroundStyle(m.contactMirrored ? Hardware.amberText : Color.primary)
         }.buttonStyle(KeyStyle(latched: m.contactMirrored)).help("全卷水平镜像：修正胶片正反面放反").disabled(m.frames.isEmpty)
         Picker("显示", selection: $m.contactPositive) {
           Text("原片").tag(false)
@@ -290,7 +287,6 @@ struct ContentView: View {
           m.toggleMirror()
         } label: {
           Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
-            .foregroundStyle(m.settings.flipHorizontal == true ? Hardware.amberText : Color.primary)
         }.buttonStyle(KeyStyle(latched: m.settings.flipHorizontal == true)).help(
           m.syncOrientation ? "全部水平镜像：修正整卷胶片正反面方向" : "水平镜像：修正胶片正反面方向")
         Button {
@@ -300,7 +296,6 @@ struct ContentView: View {
             Image(systemName: "link")
             Text("同步全部")
           }.font(.system(size: 11))
-            .foregroundStyle(m.syncOrientation ? Hardware.amberText : Color.primary)
         }.buttonStyle(KeyStyle(latched: m.syncOrientation))
           .help("开启后，旋转和水平镜像同步应用到本卷全部照片")
       }
