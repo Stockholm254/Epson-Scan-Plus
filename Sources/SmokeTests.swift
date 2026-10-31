@@ -1,4 +1,5 @@
 import AppKit
+import CoreImage
 import Foundation
 import ImageIO
 
@@ -34,6 +35,27 @@ enum SmokeTests {
         intent: .defaultIntent)!
       let raster = pipe.raster(input, maxDimension: 256)
       try check(raster.pixel(20, 5).g < raster.pixel(20, 120).g, "top-left raster orientation")
+      // The Metal kernels all compile, and each runs as itself in a context that ran another first:
+      // a red positive at double saturation, clipped and then not.
+      let red = CIImage(color: CIColor(red: 1, green: 0, blue: 0)).cropped(to: CGRect(x: 0, y: 0, width: 4, height: 4))
+      func redOut(_ kernel: CIColorKernel?) -> Float {
+        let one = CIVector(x: 1, y: 1, z: 1), none = CIVector(x: 0, y: 0, z: 0)
+        let args: [Any] = [
+          red, one, one, none, one, none, CIVector(x: 0, y: 1, z: 0, w: 1), CIVector(x: 0, y: 1, z: 1, w: 2),
+          CIVector(x: 0, y: 0, z: 0, w: 1), CIVector(x: 0, y: 2, z: 0, w: 0), 0.0, CIVector(x: 0, y: 1), CIVector(x: 0, y: 0),
+        ]
+        guard let out = kernel?.apply(extent: red.extent, arguments: args) else { return .nan }
+        var px = [Float](repeating: 0, count: 4 * 4 * 4)
+        px.withUnsafeMutableBytes {
+          pipe.context.render(out, toBitmap: $0.baseAddress!, rowBytes: 4 * 16, bounds: red.extent, format: .RGBAf, colorSpace: nil)
+        }
+        return px[0]
+      }
+      let clipped = redOut(Kernels.negative), unclipped = redOut(Kernels.negativeUnclipped)
+      try check(
+        [Kernels.colourOf, Kernels.withColour, Kernels.flatten].allSatisfy { $0 != nil } && Kernels.curves.map { !($0 is CIColorKernel) } == true
+          && abs(clipped - 1) < 1e-4 && unclipped > 1.7,
+        String(format: "the Metal kernels compile, and each runs as itself: red at double saturation %.3f clipped, then %.3f unclipped", clipped, unclipped))
       let cropped = try pipe.crop(input, rect: NormalRect(x: 0, y: 0, width: 0.5, height: 0.25))
       try check(cropped.width == 128 && cropped.height == 32, "normalized crop dimensions")
       let cr = pipe.raster(cropped)

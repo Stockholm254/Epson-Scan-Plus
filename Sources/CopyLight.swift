@@ -5,9 +5,6 @@ import Foundation
 /// The copy stand's light, measured and taken out of what the camera read: its crosstalk, then its
 /// fall-off across the frame.
 extension ImagePipeline {
-  private static let divideByFlat = CIColorKernel(
-    source: "kernel vec4 flatten(__sample p, __sample f) { return vec4(p.rgb / max(f.rgb, vec3(0.05)), p.a); }")
-
   /// `image`, linear as the camera read it, with the copy light's `crosstalk` taken out of every
   /// pixel (kept above nothing, so each still has a density) and then `flat` divided out, each light
   /// by its own fall-off, so the frame reads as if lit everywhere as its brightest part.
@@ -26,7 +23,7 @@ extension ImagePipeline {
         "inputMaxComponents": CIVector(x: 1, y: 1, z: 1, w: 1),
       ])
     }
-    if let flat, let divide = Self.divideByFlat, let grid = flatImage(flat, size: extent.size) {
+    if let flat, let divide = Kernels.flatten, let grid = flatImage(flat, size: extent.size) {
       ci = divide.apply(extent: extent, arguments: [ci, grid]) ?? ci
     }
     return context.createCGImage(ci.cropped(to: extent), from: extent, format: .RGBA16, colorSpace: image.colorSpace ?? outputSpace) ?? image
