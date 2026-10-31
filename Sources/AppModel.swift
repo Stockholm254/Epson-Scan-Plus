@@ -1265,11 +1265,26 @@ final class AppModel: ObservableObject {
     updateThumbnails()
     saveProject()
   }
-  /// The newest preset calibrated from `film` for what the roll was read with: this scanner, or the
-  /// camera on the copy stand.
+  /// The newest preset calibrated on this scanner from `film`, used without having to pick it. A copy
+  /// roll takes none: a copy-stand preset holds for one copy session, the camera and lights set up
+  /// once, so the session's other rolls pick it from the menu.
   func calibrated(for film: FilmProfile) -> FilmProfile? {
-    let made = film.name + (copyStandRoll ? " · 翻拍" : " · V850")
-    return film.offsets != nil ? nil : profiles.last { $0.offsets != nil && $0.name == made }
+    guard !copyStandRoll, film.offsets == nil else { return nil }
+    return profiles.last {
+      $0.offsets != nil && $0.name.hasSuffix(" · V850") && FilmCalibration.calibratedFrom($0).name == film.name
+    }
+  }
+  /// The copy session a preset calibrated on this roll is named after: when the roll was shot, from
+  /// its folder ("2026-10-30_194132_…"), else now.
+  var copyBatch: String {
+    let parts = (sessionURL?.lastPathComponent ?? "").split(separator: "_")
+    if parts.count >= 2, parts[0].count == 10, parts[1].count == 6, parts[1].allSatisfy(\.isNumber) {
+      return "\(parts[0]) \(parts[1].prefix(2)):\(parts[1].dropFirst(2).prefix(2))"
+    }
+    let now = DateFormatter()
+    now.locale = Locale(identifier: "en_US_POSIX")
+    now.dateFormat = "yyyy-MM-dd HH:mm"
+    return now.string(from: Date())
   }
   /// The roll was copied on the camera stand, not scanned: its neutral points make a copy-stand preset.
   var copyStandRoll: Bool { rollSource == .camera || frames.contains { $0.sensorRead == true } }
@@ -1366,8 +1381,11 @@ final class AppModel: ObservableObject {
       let made = FilmCalibration.profile(
         from: fit, basedOn: profile, points: calibrationPoints.count,
         scanner: copy ? (camera.model.isEmpty ? "A7R IV" : camera.model) : scanner.name, copyStand: copy,
-        unmixed: readings.count == 1 ? readings.first : nil, spots: spots.isEmpty ? nil : spots)
+        unmixed: readings.count == 1 ? readings.first : nil, spots: spots.isEmpty ? nil : spots, batch: copy ? copyBatch : nil)
       try made.validate()
+      // Calibrating a copy session again replaces its preset, so the menu holds one for each session;
+      // projects that used the old one keep their own copy.
+      if copy { preferences.customProfiles.removeAll { $0.offsets != nil && $0.name == made.name } }
       keepProfile(made)
       calibrationPoints = []
       showCalibrationPoints = true

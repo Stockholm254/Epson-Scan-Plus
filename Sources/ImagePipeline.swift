@@ -32,6 +32,9 @@ struct ToneAnalysis {
   var low: Double
   var high: Double
   var gain: RGB = .one
+  /// Over how much log exposure above the base the balance fades in (0: applied evenly), and how
+  /// far it has faded in at a picked grey, which keeps it in full, as everything lighter does.
+  var fade = 0.0, fadeAtGrey = 1.0
 }
 
 final class ImagePipeline {
@@ -49,6 +52,13 @@ final class ImagePipeline {
   /// `shadowColour` more saturation, less as they lighten, as colour runs out there on a screen.
   /// In the kernel's output values (encoded, 0-1).
   static var softToe = 0.05, softShoulder = 0.9, shadowColour = 0.3
+  /// A balance that makes the greys grey (a calibrated preset's neutral, a picked grey, Dmax) is
+  /// worked out on the straight part of the film's curve. Film that took no light is black in every
+  /// layer, and black is neutral; there the balance would only lift red and blue into a purple
+  /// black. So, where no fitted toe bends the curve down to the base, the balance fades in over
+  /// about a toe's width of log exposure above it (the Kodak sheets' toes are 0.10–0.165): 95% of
+  /// it by 0.36, 1.2 stops up.
+  static var unexposedFade = 0.12
   // Exposure (tone.x, in EV) is a print exposure: a shift of log exposure, 0.30103 per stop,
   // applied before the levels and clipping so −EV recovers highlights. Positive input scales the
   // linear value instead, through its encoding gamma.
@@ -59,11 +69,13 @@ final class ImagePipeline {
     source: ImagePipeline.negativeSource.replacingOccurrences(
       of: "return vec4(clamp(q,0.0,1.0),1.0);", with: "return vec4(q,1.0);"))
   private static let negativeSource = """
-      kernel vec4 negative(__sample p, vec3 base, vec3 slope, vec3 toe, vec3 gain, vec3 balance, vec4 levels, vec4 tone, vec4 color, vec4 ends, float inverted) {
+      kernel vec4 negative(__sample p, vec3 base, vec3 slope, vec3 toe, vec3 gain, vec3 balance, vec4 levels, vec4 tone, vec4 color, vec4 ends, float inverted, vec2 fade) {
         vec3 v = max(p.rgb, vec3(0.000001));
         vec3 e = log(max(base,vec3(0.000001))/v) * (color.w / 2.302585093) / slope;
         e += toe * log(max(vec3(1.0) - exp(-e / max(toe, vec3(0.000001))), vec3(0.02)));
-        vec3 q = (e * gain + balance + vec3(tone.x * 0.30103) - vec3(levels.x)) / max(levels.y-levels.x,0.001);
+        vec3 b = balance;
+        if (fade.x > 0.0) { b *= min((1.0 - exp(-max((e.r + e.g + e.b) / 3.0, 0.0) / fade.x)) / fade.y, 1.0); }
+        vec3 q = (e * gain + b + vec3(tone.x * 0.30103) - vec3(levels.x)) / max(levels.y-levels.x,0.001);
         if (inverted < 0.5) { q = v * pow(2.0, tone.x / max(color.w, 0.1)); }
         q = (q - vec3(levels.z)) / max(levels.w-levels.z,0.01);
         q += vec3(color.x * 0.12 + color.y * 0.05, -color.y * 0.10, -color.x * 0.12 + color.y * 0.05);
@@ -375,43 +387,46 @@ final class ImagePipeline {
     let commonSpan = quantile(spans, 0.5)
     var gain = RGB.one
     var balance = RGB.zero
-    if let sample = settings.neutralSample {
+    func pointExposure(_ v: RGB) -> [Double] {
+      (0..<3).map { exposure(log10(max(0.0001, base.values[$0]) / max(0.0001, v.values[$0])) * settings.inputGamma, $0) }
+    }
+    let grey = settings.neutralSample.map(pointExposure)
+    if let grey {
       // With auto white balance on, the generic preset still fits each channel's contrast to the
       // scene; the picked grey then sets where the channels meet.
       if settings.autoWhiteBalance && !fixed {
         gain = RGB(spans.map { clamp(commonSpan / $0, 0.5, 2) })
       }
-      let d = (0..<3).map {
-        exposure(log10(max(0.0001, base.values[$0]) / max(0.0001, sample.values[$0])) * settings.inputGamma, $0)
-          * gain.values[$0]
-      }
+      let d = (0..<3).map { grey[$0] * gain.values[$0] }
       let mean = d.reduce(0, +) / 3
       balance = RGB(d.map { mean - $0 })
     } else if let manual = settings.manualBalance {
       balance = manual
+    } else if let offsets = profile.offsets {
+      // A calibrated preset knows where this film, on this scanner or copy stand, puts a neutral in
+      // the light it was calibrated in, so that sets the balance, auto or not. The scene's darkest
+      // corner often lies on the base, unexposed: aligning it would take the layers' differing
+      // speeds for a cast.
+      balance = RGB(offsets.values.map { -$0 })
     } else if settings.autoWhiteBalance {
-      // Fixed slopes (calibrated, roll estimate or a film's data sheet) supply each channel's
-      // contrast, so auto white balance only aligns the channels' black points. The generic preset
-      // without a roll estimate stretches each channel to the scene's own contrast instead.
+      // Fixed slopes (roll estimate or a film's data sheet) supply each channel's contrast, so auto
+      // white balance only aligns the channels' black points. The generic preset without a roll
+      // estimate stretches each channel to the scene's own contrast instead.
       if !fixed {
         gain = RGB(spans.map { clamp(commonSpan / $0, 0.5, 2) })
       }
       balance = RGB((0..<3).map { -channelLow[$0] * gain.values[$0] })
-    } else if let offsets = profile.offsets {
-      // A calibrated preset knows where this film and scanner put a neutral.
-      balance = RGB(offsets.values.map { -$0 })
     }
     // The densest highlight picked as white (Dmax): each channel stretched from its own reference,
-    // the picked grey, the scene's black under auto white balance, else the film base, up to it,
-    // so the highlight comes out a neutral white, and with auto levels the white of the picture.
+    // the picked grey, a calibrated preset's neutral, the scene's black under auto white balance,
+    // else the film base, up to it, so the highlight comes out a neutral white, and with auto levels
+    // the white of the picture.
     var white: Double?
     if let picked = settings.highlightSample {
-      func pointExposure(_ v: RGB) -> [Double] {
-        (0..<3).map { exposure(log10(max(0.0001, base.values[$0]) / max(0.0001, v.values[$0])) * settings.inputGamma, $0) }
-      }
       let top = pointExposure(picked)
-      let grey = settings.neutralSample.map(pointExposure)
-      let reference = grey ?? (settings.autoWhiteBalance && settings.manualBalance == nil ? channelLow : [0, 0, 0])
+      let reference = grey
+        ?? (settings.manualBalance != nil ? [0, 0, 0]
+          : profile.offsets?.values ?? (settings.autoWhiteBalance ? channelLow : [0, 0, 0]))
       let reach = (0..<3).map { max(0.02, top[$0] - reference[$0]) }
       let target = reach.reduce(0, +) / 3
       gain = RGB(reach.map { clamp(target / $0, 0.5, 2) })
@@ -420,15 +435,30 @@ final class ImagePipeline {
       balance = RGB(anchored.map { meet - $0 })
       white = (0..<3).map { top[$0] * gain.values[$0] + balance.values[$0] }.reduce(0, +) / 3
     }
+    // Unexposed film comes out a neutral black (`unexposedFade`), unless the balance already starts
+    // from the scene's black or a fitted toe takes the curve down to the base.
+    let fromBlack = settings.neutralSample == nil && settings.manualBalance == nil && profile.offsets == nil
+      && settings.autoWhiteBalance
+    let fade = fromBlack || toe.values.contains { $0 > 0 } ? 0 : Self.unexposedFade
+    func fadedIn(_ e: [Double]) -> Double { 1 - exp(-max(0, e.reduce(0, +) / 3) / fade) }
+    let fadeAtGrey = fade > 0 ? max(0.001, grey.map(fadedIn) ?? 1) : 1
+    let weight = fade > 0
+      ? (0..<e[0].count).map { i in min(1, fadedIn([e[0][i], e[1][i], e[2][i]]) / fadeAtGrey) } : nil
     var lows = [Double]()
     var highs = [Double]()
     for c in 0..<3 {
-      lows.append(quantile(e[c], 0.005) * gain.values[c] + balance.values[c])
-      highs.append(quantile(e[c], 0.995) * gain.values[c] + balance.values[c])
+      if let weight {
+        let x = (0..<e[c].count).map { e[c][$0] * gain.values[c] + balance.values[c] * weight[$0] }
+        lows.append(quantile(x, 0.005))
+        highs.append(quantile(x, 0.995))
+      } else {
+        lows.append(quantile(e[c], 0.005) * gain.values[c] + balance.values[c])
+        highs.append(quantile(e[c], 0.995) * gain.values[c] + balance.values[c])
+      }
     }
     let low = settings.autoLevels ? (lows.min() ?? 0) : 0
     let high = settings.autoLevels ? max(low + 0.05, white ?? highs.max() ?? 2) : 3.6
-    return ToneAnalysis(base: base, balance: balance, low: low, high: high, gain: gain)
+    return ToneAnalysis(base: base, balance: balance, low: low, high: high, gain: gain, fade: fade, fadeAtGrey: fadeAtGrey)
   }
 
   /// `sharpener` deconvolves the scan in linear light first; tone statistics use the scan as is.
@@ -452,6 +482,7 @@ final class ImagePipeline {
       s.softEndsOn && s.inputIsNegative
         ? CIVector(x: Self.softToe, y: Self.softShoulder, z: Self.shadowColour, w: 0) : CIVector(x: 0, y: 2, z: 0, w: 0),
       s.inputIsNegative ? 1.0 : 0.0,
+      CIVector(x: a.fade, y: a.fadeAtGrey),
     ]
     guard var result = kernel.apply(extent: ci.extent, arguments: args) else {
       throw DeskError.message("图像处理失败。")

@@ -156,27 +156,44 @@ enum FilmCalibration {
   /// Grain and the film curve's gentle bend stay well under this; a tinted patch does not.
   static let maximumResidual = 0.08
 
-  /// A preset for this scanner and film, named after the preset it started from.
+  /// The film a preset was calibrated from, by name and id: past the " · 翻拍 · <copy session>" or
+  /// " · V850" (and "-copy-…" or "-v850-…") calibrating adds, however many a recalibration from such
+  /// a preset piled on before it named the new one after the film. A film's own preset is its own film.
+  static func calibratedFrom(_ p: FilmProfile) -> (name: String, id: String) {
+    guard p.offsets != nil else { return (p.name, p.id) }
+    return (p.name.replacingOccurrences(of: "( · (翻拍( · [^·]+)?|V850))+$", with: "", options: .regularExpression),
+      p.id.replacingOccurrences(of: "(-(copy|v850)-[0-9a-f]{6})+$", with: "", options: .regularExpression))
+  }
+  /// What a preset calibrated from `base` is called: "Kodak Portra 160 · V850", or on the copy stand
+  /// "Kodak Portra 160 · 翻拍 · 2026-10-30 19:41", after the copy session (`batch`) it holds for.
+  static func name(basedOn base: FilmProfile, copyStand: Bool, batch: String? = nil) -> String {
+    let root = calibratedFrom(base)
+    return "\(root.id == "generic" ? "本机标定胶片" : root.name) · \(copyStand ? "翻拍" : "V850")"
+      + (copyStand ? batch.map { " · \($0)" } ?? "" : "")
+  }
+
+  /// A preset for this scanner and film, named after the film it started from, also when that was
+  /// a preset calibrated here; on the copy stand also after its copy session (`batch`).
   /// The preset made from a fit: for the V850, or with `copyStand` for the camera and its copy light,
   /// `scanner` then naming the camera. `unmixed` is whether the points were read with the copy light's
   /// crosstalk taken out (nil: some were, some not, or it is not known), which the slopes hold for.
   static func profile(
     from fit: Fit, basedOn base: FilmProfile, points: Int, scanner: String, copyStand: Bool = false, unmixed: Bool? = nil,
-    spots: [CalibrationSpot]? = nil
+    spots: [CalibrationSpot]? = nil, batch: String? = nil
   ) -> FilmProfile {
     let date = Date().formatted(.iso8601.year().month().day())
-    let film = base.id == "generic" ? "本机标定胶片" : base.name
+    let root = calibratedFrom(base)
     let reading = unmixed.map { $0 ? "标定时去串色是开着的，用时也要开着" : "标定时没有去串色，用时也要关着" }
       ?? "标定的点里有的去了串色、有的没有，斜率可能不准"
     let applies = copyStand
-      ? "只适用于这台相机、这组翻拍灯和同一种胶片；灯的亮度配比怎么调都不影响。\(reading)"
+      ? "只适用于这一次翻拍：这台相机、这次架好的灯和同一种胶片；新开的卷不会自动用它，同一次翻拍的其他卷在「预设」里选它。\(reading)"
       : "只适用于这台扫描仪和同一种胶片"
     return FilmProfile(
-      id: "\(base.id == "generic" ? "film" : base.id)-\(copyStand ? "copy" : "v850")-\(UUID().uuidString.prefix(6).lowercased())",
-      name: "\(film) · \(copyStand ? "翻拍" : "V850")", aliases: [], iso: base.iso, process: base.process, sourceURL: "",
+      id: "\(root.id == "generic" ? "film" : root.id)-\(copyStand ? "copy" : "v850")-\(UUID().uuidString.prefix(6).lowercased())",
+      name: name(basedOn: base, copyStand: copyStand, batch: batch), aliases: [], iso: base.iso, process: base.process, sourceURL: "",
       publication: "\(copyStand ? "翻拍标定" : "本机标定") · \(scanner) · \(date) · \(points) 个中性点", slopes: fit.slopes,
       notes: String(
-        format: "由 %d 个中性点反解红、蓝通道的斜率与中性偏移，绿色斜率沿用「%@」。拟合残差 %.3f D，绿色密度跨度 %.2f D。%@；自动白平衡关闭时按标定的中性偏移配平。",
+        format: "由 %d 个中性点反解红、蓝通道的斜率与中性偏移，绿色斜率沿用「%@」。拟合残差 %.3f D，绿色密度跨度 %.2f D。%@；白平衡按标定的中性偏移配平，开着自动也一样。这个中性是在取点时的光下定的，别的光下拍的照片用取中性灰或冷暖调。",
         points, base.name, fit.residual, fit.span, applies)
         + (fit.toe.map {
           String(format: "中性点深入暗部，同时拟合了趾部宽度：R %.2f · G %.2f（数据表）· B %.2f，转换时据此还原暗部。", $0.r, $0.g, $0.b)

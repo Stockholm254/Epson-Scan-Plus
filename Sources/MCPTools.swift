@@ -71,7 +71,7 @@ enum MCPTools {
       "index": ["type": "integer", "minimum": 1, "description": "点的序号，见 calibration_state"],
     ], required: ["index"]),
     Tool(name: "calibration_clear", description: "预设标定：清除所有已取的中性点。", properties: [:]),
-    Tool(name: "calibration_make_preset", description: "预设标定：用已取的中性点生成预设并用到这一卷（翻拍的卷是「胶片 · 翻拍」，扫描的卷是「胶片 · V850」）。可用 ⌘Z 撤销选用。", properties: [:]),
+    Tool(name: "calibration_make_preset", description: "预设标定：用已取的中性点生成预设并用到这一卷（翻拍的卷是「胶片 · 翻拍 · 开拍时间」，只属于这一次翻拍，新开的卷不会自动用它；扫描的卷是「胶片 · V850」）。可用 ⌘Z 撤销选用。", properties: [:]),
   ]
   static var definitions: [[String: Any]] {
     tools.map { ["name": $0.name, "description": $0.description, "inputSchema": $0.schema] }
@@ -83,7 +83,7 @@ enum MCPTools {
     - 坐标是单张视图里画面的相对位置，0–1，左上为原点。
     - 翻拍的照片四周带着片基、漏光或片夹时，先用 auto_crop 裁到画面（whole_roll 整卷一起），再看和取样：自动白平衡和色阶只看裁切以内。
     - 每次调整都能在 App 里用 ⌘Z 撤销，也可以调用 undo。转换的工具不会扫描、删除或导出文件。
-    预设标定（calibration_*）定的是这种胶片在这台设备上各通道的反差（斜率），让灰从暗到亮都是灰；它不改白平衡，也不套色卡，胶片的风格保留。
+    预设标定（calibration_*）定的是这种胶片在这台设备上各通道的反差（斜率），让灰从暗到亮都是灰；它还记下中性落在哪里，用这个预设时白平衡按它配平（开着自动也一样），所以取点时那种光下的灰是灰。它不套色卡，胶片的风格保留。
     原理：中性的东西三个通道反射得一样多。除掉片基以后，它每个通道高于片基的密度 = 这个通道的斜率 ×（同一个曝光量 + 这个通道的偏移），偏移里是光的颜色。所以同一种光下的中性点，从亮到暗落在一条直线上（红对绿、蓝对绿），斜率就是要标定的。挑点和去点都只按这一条，不和别的软件或别的渲染比颜色。
     用户说「帮这卷做翻拍标定」时：
     1. 先确认胶片预设对（get_state，必要时 choose_preset），并用 calibration_clear 清掉旧点。
@@ -137,10 +137,10 @@ enum MCPTools {
   /// some lie off it, the largest group on one line, or that two groups disagree; when they do not
   /// fit together at all, which one left out lets the rest. Read on the main thread, worked out here.
   private static func calibrationReport(_ model: AppModel) -> String {
-    let (points, profile, names, measured, copy) = onMain {
+    let (points, profile, names, measured, copy, batch) = onMain {
       (model.calibrationPoints, model.profile, model.calibrationPoints.map { p in model.frames.first { $0.id == p.frame }?.name ?? "?" },
         model.calibrationPoints.allSatisfy { p in model.frames.first { $0.id == p.frame }.map { ($0.adjustments.base ?? $0.adjustments.rollBase) != nil } ?? false },
-        model.copyStandRoll)
+        model.copyStandRoll, model.copyBatch)
     }
     guard !points.isEmpty else { return "还没有中性点。" }
     let curve = measured ? profile.dataSheetToe : nil
@@ -164,7 +164,7 @@ enum MCPTools {
     if let f = found {
       lines.append(String(format: "拟合：R %.3f · G %.3f · B %.3f，残差 %.3f D", f.slopes.r, f.slopes.g, f.slopes.b, f.residual)
         + (f.toe.map { String(format: "，趾部 R %.2f · B %.2f", $0.r, $0.b) } ?? ""))
-      lines.append("可以 calibration_make_preset，会生成「\(profile.name.replacingOccurrences(of: " · 翻拍", with: "").replacingOccurrences(of: " · V850", with: "")) · \(copy ? "翻拍" : "V850")」。")
+      lines.append("可以 calibration_make_preset，会生成「\(FilmCalibration.name(basedOn: profile, copyStand: copy, batch: batch))」。")
     } else if points.count >= 3, let i = points.indices.first(where: { j in fit(points.enumerated().filter { $0.offset != j }.map(\.element)) != nil }) {
       lines.append("这些点拟合不到一起；去掉第 \(i + 1) 个以后就可以，它可能不是中性的。")
     } else if points.count >= 2 {
