@@ -304,6 +304,30 @@ extension ContentView {
         Text(String(format: "%d 点 · %.2f D", m.calibrationPoints.count, span)).readout()
       }
       Text(step).font(.system(size: 11)).foregroundStyle(ready ? Hardware.amber : Color.secondary)
+      // Where the points are: those being picked, else those the preset in use was made from, a
+      // button each to the frame it is on.
+      let picked = m.calibrationPoints.map { p in (frame: p.frame, name: m.frames.first { $0.id == p.frame }?.name ?? "?") }
+      let spots = picked.isEmpty ? (m.profile.spots ?? []).map { (frame: $0.frame, name: $0.name) } : picked
+      if !spots.isEmpty {
+        HStack {
+          Text(picked.isEmpty ? "「\(m.profile.name)」的中性点" : "中性点在").font(.system(size: 10)).foregroundStyle(.secondary)
+          Spacer()
+          if picked.isEmpty {
+            Toggle("标出", isOn: $m.showCalibrationPoints).toggleStyle(.switch).controlSize(.mini).font(.system(size: 10))
+              .help("在单张画面上标出这个预设的中性点")
+          }
+        }
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 64), spacing: 4)], alignment: .leading, spacing: 4) {
+          ForEach(Array(spots.enumerated()), id: \.offset) { i, s in
+            Button("\(i + 1) · \(s.name)") {
+              m.showCalibrationPoints = true
+              m.open(s.frame)
+            }
+            .font(.system(size: 10)).disabled(!m.frames.contains { $0.id == s.frame })
+            .help(m.frames.contains { $0.id == s.frame } ? "打开第 \(s.name) 张，看中性 \(i + 1) 在哪里" : "第 \(s.name) 张不在这一卷")
+          }
+        }
+      }
       HStack(spacing: 8) {
         Button(copy ? "生成翻拍预设" : "生成 V850 预设") { m.makeScannerPreset() }.disabled(!ready)
         Button("清除") { m.clearCalibration() }.disabled(m.calibrationPoints.isEmpty)

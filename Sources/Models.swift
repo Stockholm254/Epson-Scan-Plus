@@ -286,6 +286,15 @@ struct Adjustments: Codable, Equatable {
   }
 }
 
+/// Where a calibrated preset's neutral point was picked: the frame (and its name then), and the
+/// spot in its source, as `NeutralPoint.at`.
+struct CalibrationSpot: Codable, Equatable {
+  var frame: UUID
+  var name: String
+  var x: Double
+  var y: Double
+}
+
 struct FilmProfile: Codable, Identifiable, Equatable {
   var id: String
   var name: String
@@ -303,6 +312,8 @@ struct FilmProfile: Codable, Identifiable, Equatable {
   /// D = D-min + slope · w · ln(1 + e^(x / w)), undone in the conversion. Only presets calibrated
   /// on this scanner from neutrals reaching into the shadows have one; nil keeps the straight line.
   var toe: RGB? = nil
+  /// Calibrated presets only: where their neutral points were picked, so the frames can show them.
+  var spots: [CalibrationSpot]? = nil
   /// The toes of the Kodak data sheets' Status M curves, traced from their vector drawings (RMS
   /// under 0.03 D). Not applied as they are: on a V850 roll of Portra 160 the edges' channel ratios
   /// near the base did not follow them, and converting with them tinted the roll pink. Calibration

@@ -109,6 +109,17 @@ final class AppModel: ObservableObject {
   @Published var contactPositive = true
   /// Neutral patches picked with the calibration tool, across frames and rolls of one film.
   @Published var calibrationPoints = [NeutralPoint]()
+  /// The current preset's neutral points marked on their frames; on once a preset is made.
+  @Published var showCalibrationPoints = false
+  /// The neutral points to mark on `frame`, numbered as listed, in its source: those being picked,
+  /// else, asked for, those the current preset was calibrated from.
+  func neutralMarks(on frame: FilmFrame) -> [(number: Int, at: CGPoint)] {
+    if !calibrationPoints.isEmpty {
+      return calibrationPoints.enumerated().compactMap { i, p in p.frame == frame.id ? p.at.map { (i + 1, $0) } : nil }
+    }
+    guard showCalibrationPoints, let spots = profile.spots else { return [] }
+    return spots.enumerated().compactMap { i, s in s.frame == frame.id ? (i + 1, CGPoint(x: s.x, y: s.y)) : nil }
+  }
   @Published var measuringTarget = false
   /// Progress or failure of the last target measurement, shown in the scan tab.
   @Published var sharpeningMessage: String?
@@ -1348,13 +1359,18 @@ final class AppModel: ObservableObject {
       let copy = copyStandRoll
       // How the points' frames were read: the slopes hold for that reading.
       let readings = Set(calibrationPoints.compactMap { p in frames.first { $0.id == p.frame }.map { $0.crosstalk != nil } })
+      // Where they were picked, kept with the preset and marked on their frames.
+      let spots = calibrationPoints.compactMap { p in
+        p.at.flatMap { at in frames.first { $0.id == p.frame }.map { CalibrationSpot(frame: p.frame, name: $0.name, x: at.x, y: at.y) } }
+      }
       let made = FilmCalibration.profile(
         from: fit, basedOn: profile, points: calibrationPoints.count,
         scanner: copy ? (camera.model.isEmpty ? "A7R IV" : camera.model) : scanner.name, copyStand: copy,
-        unmixed: readings.count == 1 ? readings.first : nil)
+        unmixed: readings.count == 1 ? readings.first : nil, spots: spots.isEmpty ? nil : spots)
       try made.validate()
       keepProfile(made)
       calibrationPoints = []
+      showCalibrationPoints = true
       if tool == .calibrate { tool = .select }
       chooseProfile(made)
       status = String(
@@ -1879,10 +1895,12 @@ final class AppModel: ObservableObject {
       // Keep the tool for the next point. The base is the one this frame converts with.
       guard singleView, let analysis = toneAnalysis else { return }
       let fine = frames[i].adjustments.baseFine ?? .zero
+      let crop = frames[i].rect
       let point = NeutralPoint(
         frame: frames[i].id, value: color,
         base: RGB((0..<3).map { analysis.base.values[$0] * pow(2, fine.values[$0]) }),
-        gamma: frames[i].adjustments.inputGamma)
+        gamma: frames[i].adjustments.inputGamma,
+        at: CGPoint(x: crop.x + pt.x * crop.width, y: crop.y + pt.y * crop.height))
       calibrationPoints.append(point)
       let span = calibrationPoints.map { $0.density[1] }
       status = String(

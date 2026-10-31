@@ -99,9 +99,17 @@ enum MCPTests {
     try check(!call("calibration_remove_point", ["index": 2]).isError && model.calibrationPoints.count == 2
       && call("calibration_remove_point", ["index": 9]).isError && text(call("calibration_state")).contains("跨度"),
       "and takes a point out again; one that is not there says so")
+    // Where each was picked, in the frame's source: the frame lies at 0.15, 0.2, 0.7 × 0.6 of it.
+    let spotsPicked = model.calibrationPoints.compactMap(\.at)
     let made = call("calibration_make_preset")
     try check(!made.isError && model.profile.offsets != nil && model.profile.name.hasSuffix("· V850") && model.calibrationPoints.isEmpty,
       "and makes the preset from them, used on the roll: \(text(made))")
+    let spots = model.profile.spots ?? [], marks = model.neutralMarks(on: model.frames[0])
+    try check(spotsPicked.count == 2 && abs(spotsPicked[0].x - (0.15 + 0.143 * 0.7)) < 0.002 && abs(spotsPicked[1].x - (0.15 + 0.857 * 0.7)) < 0.002
+      && abs(spotsPicked[0].y - 0.5) < 0.002
+      && spots.map(\.x) == spotsPicked.map { Double($0.x) } && spots.allSatisfy { $0.frame == model.frames[0].id && $0.name == "01" }
+      && model.showCalibrationPoints && marks.map(\.number) == [1, 2] && marks.map(\.at) == spotsPicked,
+      "the preset keeps where its points were picked, and the frame shows them, numbered as listed")
     _ = call("undo")
     let preview = call("preview", ["max_size": 400])
     let jpeg = (preview.content.first?["data"] as? String).flatMap { Data(base64Encoded: $0) }

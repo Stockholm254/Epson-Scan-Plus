@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// A neutral patch picked for calibration: its raw negative value, with the film base and
@@ -7,6 +8,9 @@ struct NeutralPoint: Equatable {
   var value: RGB
   var base: RGB
   var gamma: Double
+  /// Where it was picked, in the frame's source normalised from the top left, as `FilmFrame.rect`
+  /// is: it stays on its spot when the crop changes. Nil when not known.
+  var at: CGPoint? = nil
   /// Density above the film base, per channel.
   var density: [Double] {
     (0..<3).map { log10(max(1e-6, base.values[$0]) / max(1e-6, value.values[$0])) * gamma }
@@ -157,7 +161,8 @@ enum FilmCalibration {
   /// `scanner` then naming the camera. `unmixed` is whether the points were read with the copy light's
   /// crosstalk taken out (nil: some were, some not, or it is not known), which the slopes hold for.
   static func profile(
-    from fit: Fit, basedOn base: FilmProfile, points: Int, scanner: String, copyStand: Bool = false, unmixed: Bool? = nil
+    from fit: Fit, basedOn base: FilmProfile, points: Int, scanner: String, copyStand: Bool = false, unmixed: Bool? = nil,
+    spots: [CalibrationSpot]? = nil
   ) -> FilmProfile {
     let date = Date().formatted(.iso8601.year().month().day())
     let film = base.id == "generic" ? "本机标定胶片" : base.name
@@ -176,6 +181,6 @@ enum FilmCalibration {
         + (fit.toe.map {
           String(format: "中性点深入暗部，同时拟合了趾部宽度：R %.2f · G %.2f（数据表）· B %.2f，转换时据此还原暗部。", $0.r, $0.g, $0.b)
         } ?? ""),
-      offsets: fit.offsets, toe: fit.toe)
+      offsets: fit.offsets, toe: fit.toe, spots: spots)
   }
 }

@@ -383,7 +383,9 @@ enum MCPTools {
         let x = Int(raw.x * Double(s.width - 1)), y = Int(raw.y * Double(s.height - 1))
         var sum = [0.0, 0.0, 0.0]
         for dy in -3...3 { for dx in -3...3 { let v = s.pixel(x + dx, y + dy).values; for c in 0..<3 { sum[c] += v[c] } } }
-        return NeutralPoint(frame: frame.id, value: RGB(sum.map { $0 / 49 }), base: base, gamma: frame.adjustments.inputGamma)
+        let crop = frame.rect
+        return NeutralPoint(frame: frame.id, value: RGB(sum.map { $0 / 49 }), base: base, gamma: frame.adjustments.inputGamma,
+          at: CGPoint(x: crop.x + raw.x * crop.width, y: crop.y + raw.y * crop.height))
       }
       onMain { model.calibrationPoints += added }
       return [["type": "text", "text": "已在第 \(frame.name) 张加了 \(added.count) 个中性点。\n" + calibrationReport(model)]]
@@ -410,7 +412,7 @@ enum MCPTools {
         return (error, model.profile.name, model.status)
       }
       if let error = result.error { throw DeskError.message(error) }
-      return [["type": "text", "text": result.status + "。这一卷现在用「\(result.name)」。"]]
+      return [["type": "text", "text": result.status + "。这一卷现在用「\(result.name)」。App 的单张画面上标出了这些点，「翻拍预设标定」（扫描的卷是「本机预设标定」）里列出了它们在哪几张。"]]
     case "auto_crop":
       _ = try selected(model)
       let roll = arguments["whole_roll"] as? Bool ?? false

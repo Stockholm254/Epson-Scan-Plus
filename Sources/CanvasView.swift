@@ -490,6 +490,11 @@ final class FilmCanvasView: NSView {
         drawBasePick(picked, settings: s, aspect: model.shownAspect(frame))
       }
     }
+    // The neutral points picked for a calibration on this frame, or those of the preset in use.
+    if model.singleView, let frame = model.selected {
+      let marks = model.neutralMarks(on: frame)
+      if !marks.isEmpty { drawNeutralMarks(marks, frame: frame, aspect: model.shownAspect(frame)) }
+    }
     drawLens()
   }
   /// Puts the glass bubble on the corner under `p`, as it is dragged.
@@ -633,6 +638,34 @@ final class FilmCanvasView: NSView {
     amber.setFill()
     NSBezierPath(roundedRect: label, xRadius: 4, yRadius: 4).fill()
     text.draw(at: CGPoint(x: label.minX + 6, y: label.minY + 3), withAttributes: [.font: font, .foregroundColor: NSColor.black])
+  }
+  /// Neutral points at their spots in the frame's source, through its crop, turn and mirror: a
+  /// white ring each, and its number as listed.
+  private func drawNeutralMarks(_ marks: [(number: Int, at: CGPoint)], frame: FilmFrame, aspect: Double?) {
+    let r = imageRect, crop = frame.rect
+    NSGraphicsContext.saveGraphicsState()
+    NSBezierPath(rect: r).addClip()
+    let font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+    for mark in marks {
+      let q = CGPoint(x: (mark.at.x - crop.x) / max(1e-6, crop.width), y: (mark.at.y - crop.y) / max(1e-6, crop.height))
+      guard (0...1).contains(q.x), (0...1).contains(q.y) else { continue }
+      let d = ImageGeometry.display(q, settings: frame.adjustments, aspect: aspect)
+      let c = CGPoint(x: r.minX + d.x * r.width, y: r.minY + d.y * r.height)
+      let ring = NSBezierPath(ovalIn: CGRect(x: c.x - 7, y: c.y - 7, width: 14, height: 14))
+      ring.lineWidth = 3
+      NSColor.black.withAlphaComponent(0.55).setStroke()
+      ring.stroke()
+      ring.lineWidth = 1.5
+      NSColor.white.setStroke()
+      ring.stroke()
+      let text = "中性 \(mark.number)" as NSString
+      let size = text.size(withAttributes: [.font: font])
+      let label = NSRect(x: min(c.x + 11, r.maxX - size.width - 10), y: max(r.minY + 2, c.y - size.height / 2 - 2), width: size.width + 10, height: size.height + 4)
+      NSColor.white.withAlphaComponent(0.9).setFill()
+      NSBezierPath(roundedRect: label, xRadius: 4, yRadius: 4).fill()
+      text.draw(at: CGPoint(x: label.minX + 5, y: label.minY + 2), withAttributes: [.font: font, .foregroundColor: NSColor.black])
+    }
+    NSGraphicsContext.restoreGraphicsState()
   }
   /// The cells of the frame's edges read as its film base, filled over the picture through its
   /// crop, turn and mirror, with a note at the largest.
