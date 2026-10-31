@@ -501,6 +501,12 @@ struct ContentView: View {
           ).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
           InfoButton(text: "自动白平衡按画面估计，忽略外缘 5%（不改变导出范围）。用本机或翻拍标定的预设时不按画面估计，按标定时记下的中性配平，开不开「自动」都一样；这个中性是在标定时的光下定的（比如阳光），阴天、树荫、室内的照片会带上光的颜色，用「取中性灰」或冷暖、绿 / 洋红调。「取中性灰」用滴管点画面中应为灰色的地方，按这一点自动白平衡（「自动」保持开着）。「取高光」（Dmax）点负片上最密、正片里应为纯白的地方，比如阳光下的白墙或高光反射：各通道从暗部（标定预设从标定的中性，取过中性灰时从那一点）拉到这一点，它在正片里是白色。「重算白平衡」放弃取样点，按画面重新估计，标定预设回到标定的中性。")
         }
+        HStack {
+          Toggle("整卷同一白平衡", isOn: Binding(get: { m.settings.sharedBalance == true }, set: { m.setSharedBalance($0) }))
+            .toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11)).disabled(m.selected == nil || m.isWorking)
+          Spacer()
+          InfoButton(text: "像冲印店印一卷那样，整卷用同一个配光：白平衡按整卷所有画面一起统计，卷里每张的颜色一致，不再各自按自己的暗部去配平（比如阴影里的天光不会把一张整体拉偏）。每张的明暗照旧。\n\n只替换交给软件的部分：哪一张取了中性灰或高光，或关了自动白平衡，那一张按你的来。用标定预设时，白平衡本来就按标定的中性，整卷一致。")
+        }
         slider("冷暖", key: \.warmth, range: -1...1)
         slider("绿 / 洋红", key: \.tint, range: -1...1)
         Button {
@@ -528,8 +534,10 @@ struct ContentView: View {
           Text("色阶").font(.system(size: 12, weight: .medium))
           Spacer()
           Toggle("自动", isOn: bool(\.autoLevels)).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
-          InfoButton(text: "自动：按画面的密度范围设定黑白两端。关闭后用黑点、白点和中间调手动设定。")
+          InfoButton(text: "自动：按画面的密度范围设定黑白两端。关闭后用黑点、白点和中间调手动设定。\n\n「整卷同一色阶」：整卷用同一组黑白两端，按整卷所有画面一起统计，像冲印店一卷用一个印放曝光：暗的场景就是暗的，亮的就是亮的。每张仍可以用「曝光」微调。取了高光（Dmax）或关了自动色阶的那一张按你的来。")
         }
+        Toggle("整卷同一色阶", isOn: Binding(get: { m.settings.sharedLevels == true }, set: { m.setSharedLevels($0) }))
+          .toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11)).disabled(m.selected == nil || m.isWorking)
         slider("黑点", key: \.black, range: 0...0.4)
         slider("白点", key: \.white, range: 0.6...1)
         slider("中间调", key: \.midtone, range: 0.4...2)

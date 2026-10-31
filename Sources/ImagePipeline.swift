@@ -379,6 +379,43 @@ final class ImagePipeline {
 
   func analyze(_ image: CGImage, settings: Adjustments, profile: FilmProfile) -> ToneAnalysis {
     let (base, density) = densities(image, settings: settings)
+    var a = analyze(base: base, density: density, settings: settings, profile: profile)
+    // The roll's print: its balance, or its ends, in place of this frame's own, where they are left
+    // to the app (no grey, white or balance of the frame's own, no calibrated neutral).
+    if let print = settings.rollPrint, settings.highlightSample == nil {
+      if settings.sharedBalance == true, settings.autoWhiteBalance, settings.neutralSample == nil, settings.manualBalance == nil, profile.offsets == nil {
+        // The frame's ends move with the balance, so it is lit as before, only its colour the roll's.
+        let shift = (0..<3).map { print.balance.values[$0] - a.balance.values[$0] }.reduce(0, +) / 3
+        a.balance = print.balance
+        a.gain = print.gain
+        a.low += shift
+        a.high += shift
+      }
+      if settings.sharedLevels == true, settings.autoLevels {
+        a.low = print.low
+        a.high = print.high
+      }
+    }
+    return a
+  }
+  /// One print for a roll from its frames' densities together, each above its own base, as one
+  /// frame's statistics are worked out; nil without frames.
+  func rollPrint(_ frames: [(image: CGImage, settings: Adjustments)], profile: FilmProfile) -> RollPrint? {
+    guard let first = frames.first else { return nil }
+    var pooled = [[Double](), [Double](), [Double]()]
+    for f in frames {
+      let d = densities(f.image, settings: f.settings).density
+      for c in 0..<3 { pooled[c] += d[c] }
+    }
+    guard !pooled[0].isEmpty else { return nil }
+    var s = first.settings
+    (s.neutralSample, s.manualBalance, s.highlightSample) = (nil, nil, nil)
+    (s.autoWhiteBalance, s.autoLevels) = (true, true)
+    let a = analyze(base: .one, density: pooled, settings: s, profile: profile)
+    return RollPrint(balance: a.balance, gain: a.gain, low: a.low, high: a.high)
+  }
+  /// A frame's balance and ends from its densities above `base`.
+  func analyze(base: RGB, density: [[Double]], settings: Adjustments, profile: FilmProfile) -> ToneAnalysis {
     let (slopes, fixed) = Self.slopes(settings, profile)
     let toe = Self.toe(settings, profile)
     func exposure(_ density: Double, _ c: Int) -> Double { FilmToe.exposure(density / slopes.values[c], width: toe.values[c]) }

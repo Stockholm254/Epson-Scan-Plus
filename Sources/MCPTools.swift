@@ -50,6 +50,8 @@ enum MCPTools {
       "shadows": number("阴影：暗部提亮（正）或压暗（负），黑白两端不动，-1 到 1", -1...1),
       "angle": number("拉直角度（度）：画面绕中心转动，正数顺时针，裁去转出的空角，-45 到 45", -45...45),
       "auto_white_balance": ["type": "boolean", "description": "自动白平衡"], "auto_levels": ["type": "boolean", "description": "自动色阶"],
+      "shared_balance": ["type": "boolean", "description": "整卷同一白平衡：整卷共用一个按所有画面统计的白平衡，每张颜色一致；作用于选中画面所在的整卷"],
+      "shared_levels": ["type": "boolean", "description": "整卷同一色阶：整卷共用一组黑白两端，暗的场景就是暗的，每张只按曝光微调；作用于选中画面所在的整卷"],
       "base_fine_ev": ["type": "array", "items": ["type": "number", "minimum": -0.5, "maximum": 0.5], "minItems": 3, "maxItems": 3,
         "description": "片基逐通道微调 [R, G, B]，单位 EV，-0.5 到 0.5"],
     ]),
@@ -358,7 +360,7 @@ enum MCPTools {
         return ["x": p.x, "y": p.y, "negative_linear": rgb(v), "density_above_base": rgb(d), "positive_srgb": rgb(out)]
       })
     case "adjust":
-      let known: Set = ["warmth", "tint", "exposure", "contrast", "saturation", "black", "white", "midtone", "highlights", "shadows", "auto_white_balance", "auto_levels", "base_fine_ev", "angle"]
+      let known: Set = ["warmth", "tint", "exposure", "contrast", "saturation", "black", "white", "midtone", "highlights", "shadows", "auto_white_balance", "auto_levels", "base_fine_ev", "angle", "shared_balance", "shared_levels"]
       let unknown = Set(arguments.keys).subtracting(known)
       guard unknown.isEmpty else { throw DeskError.message("不认识的参数：\(unknown.sorted().joined(separator: ", "))") }
       guard !arguments.isEmpty else { throw DeskError.message("没有要改的参数。") }
@@ -395,6 +397,8 @@ enum MCPTools {
           if let fine { a.baseFine = fine }
           if let angle { a.angle = abs(angle) < 0.005 ? nil : angle }
         }
+        if let b = arguments["shared_balance"] as? Bool { model.setSharedBalance(b) }
+        if let b = arguments["shared_levels"] as? Bool { model.setSharedLevels(b) }
       }
       return [["type": "text", "text": "已调整：\(arguments.keys.sorted().joined(separator: ", "))。可用 ⌘Z 或 undo 撤销。"]]
     case "pick_film_base", "pick_neutral", "pick_highlight":

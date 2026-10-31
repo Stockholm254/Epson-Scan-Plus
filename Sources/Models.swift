@@ -222,6 +222,15 @@ enum ImageGeometry {
   }
 }
 
+/// A roll's print: the balance (and per-channel gain) and the black and white ends, in the
+/// conversion's log exposure, as `ToneAnalysis` holds them for one frame.
+struct RollPrint: Codable, Equatable {
+  var balance: RGB
+  var gain: RGB
+  var low: Double
+  var high: Double
+}
+
 struct Adjustments: Codable, Equatable {
   var autoWhiteBalance = true
   var autoLevels = true
@@ -273,6 +282,15 @@ struct Adjustments: Codable, Equatable {
   /// The roll's channel slopes, estimated by the app across all its frames; used unless the
   /// preset is calibrated for this scanner.
   var rollSlopes: RGB? = nil
+  /// The roll printed as a lab prints one, worked out from all its frames together (`rollPrint`):
+  /// with `sharedBalance` its frames share one white balance, so each comes out in the same colour;
+  /// with `sharedLevels` one pair of black and white ends, so a dark scene stays dark, each frame
+  /// its own exposure. Nil each frame its own.
+  var sharedBalance: Bool? = nil
+  var sharedLevels: Bool? = nil
+  var printsWithRoll: Bool { sharedBalance == true || sharedLevels == true }
+  /// The roll's print, measured by the app across its frames; used while either is on.
+  var rollPrint: RollPrint? = nil
   var manualBalance: RGB? = nil
   var rotation = 0
   var flipHorizontal: Bool? = nil

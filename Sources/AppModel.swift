@@ -169,6 +169,7 @@ final class AppModel: ObservableObject {
   /// Scans of this batch to export as positives when it ends.
   private var autoExportIDs = [UUID]()
   private var rollSlopesRevision = 0
+  private var rollPrintRevision = 0
   private var exportsRunning = 0
   /// The left panel's tab: scanning and storage, film and presets, or output.
   enum PanelTab: String, CaseIterable { case scan = "扫描", film = "胶片", output = "输出" }
@@ -875,6 +876,8 @@ final class AppModel: ObservableObject {
       $0.angle = kept.angle
       // How the picture was read, not a setting: a copy shot keeps its colour noise reduction.
       $0.colourNoise = kept.colourNoise
+      // The roll's print is the roll's, not this frame's.
+      ($0.sharedBalance, $0.sharedLevels, $0.rollPrint) = (kept.sharedBalance, kept.sharedLevels, kept.rollPrint)
     }
   }
 
@@ -1322,6 +1325,68 @@ final class AppModel: ObservableObject {
         }
         for i in self.frames.indices {
           if let slopes = result[self.frames[i].id] { self.frames[i].adjustments.rollSlopes = slopes }
+        }
+        self.refresh()
+        self.updateThumbnails()
+        self.saveProject()
+        // New slopes put the roll's exposures elsewhere: its print with them.
+        self.updateRollPrint()
+        completion?()
+      }
+    }
+  }
+  /// One white balance for the selected frame's roll, `on` or off for every frame of it; one edit.
+  func setSharedBalance(_ on: Bool) {
+    setShared(on ? "整卷同一白平衡" : "每张单独白平衡", on) { $0.sharedBalance = on ? true : nil }
+  }
+  /// One pair of black and white ends for the selected frame's roll, likewise.
+  func setSharedLevels(_ on: Bool) {
+    setShared(on ? "整卷同一色阶" : "每张单独色阶", on) { $0.sharedLevels = on ? true : nil }
+  }
+  private func setShared(_ name: String, _ on: Bool, _ apply: (inout Adjustments) -> Void) {
+    guard let selected else { return }
+    let roll = Self.rollGroups(frames, poolPictures: poolPictures).first { $0.contains { $0.id == selected.id } } ?? [selected]
+    let ids = Set(roll.map(\.id))
+    recordEdit(name)
+    for i in frames.indices where ids.contains(frames[i].id) { apply(&frames[i].adjustments) }
+    status = on ? name + "：按整卷一起统计…" : name
+    if on {
+      updateRollPrint()
+    } else {
+      refresh()
+      updateThumbnails()
+      saveProject()
+    }
+  }
+  /// The print of every roll printed as one, from its frames together, apart from the main thread.
+  func updateRollPrint(completion: (() -> Void)? = nil) {
+    let snapshot = frames, p = profile, pool = poolPictures
+    rollPrintRevision += 1
+    let token = rollPrintRevision
+    guard snapshot.contains(where: { $0.adjustments.printsWithRoll }) else {
+      completion?()
+      return
+    }
+    renderQueue.async {
+      var result = [UUID: RollPrint?]()
+      for members in Self.rollGroups(snapshot, poolPictures: pool) where members.contains(where: { $0.adjustments.printsWithRoll }) {
+        let inputs = members.compactMap { f in
+          (try? self.source(for: f, maxDimension: 600)).map { (image: $0, settings: f.adjustments) }
+        }
+        let print = ImagePipeline.shared.rollPrint(inputs, profile: p)
+        for f in members { result[f.id] = .some(print) }
+      }
+      DispatchQueue.main.async {
+        guard token == self.rollPrintRevision else {
+          completion?()
+          return
+        }
+        for i in self.frames.indices {
+          if let print = result[self.frames[i].id] { self.frames[i].adjustments.rollPrint = print }
+        }
+        if let s = self.selected?.adjustments, s.printsWithRoll {
+          let what = [s.sharedBalance == true ? "白平衡" : nil, s.sharedLevels == true ? "黑白两端" : nil].compactMap { $0 }.joined(separator: "和")
+          self.status = "整卷 \(result.count) 张共用一个\(what)"
         }
         self.refresh()
         self.updateThumbnails()
