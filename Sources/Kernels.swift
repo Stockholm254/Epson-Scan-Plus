@@ -2,8 +2,8 @@ import CoreImage
 
 /// The app's own Core Image kernels, written in Metal and compiled the first time each is used,
 /// while the app runs, so building it needs no Metal compiler; the system keeps what it compiled, so
-/// only the first run after one changes waits for it (about a third of a second each). They replace
-/// kernels in the Core Image Kernel Language, deprecated since macOS 10.14, and give the same
+/// only the first run after one changes waits for it (about a third of a second each). They replaced
+/// kernels in the Core Image Kernel Language, deprecated since macOS 10.14, and gave the same
 /// pixels: within 1e-6 of what those gave.
 ///
 /// Each is compiled from a source of its own. Given a library of two kernels, Core Image runs
@@ -11,17 +11,21 @@ import CoreImage
 /// unclipped conversion came out clipped), so no library holds two.
 enum Kernels {
   /// A negative's (or a positive's) encoded readings to the picture, as `ImagePipeline.output` sets
-  /// it up, clipped to 0–1.
+  /// it up, clipped to 0–1. The saturation comes before the ends, as a print's colour is in its
+  /// dyes before the paper's curve: a bright colour it takes past white rolls off into the shoulder
+  /// with every channel graded, a bright blue sky keeping its gradation, instead of a channel
+  /// being cut. In between the ends, with the midtone at 1 and shadows and highlights at 0, it is
+  /// the same either way.
   static let negative = color("negative", conversion + """
     [[stitchable]] float4 negative(coreimage::sample_t p, NEGATIVE_ARGS) {
-      return float4(clamp(positive(p, NEGATIVE_PASS), float3(0.0), float3(1.0)), 1.0);
+      return float4(clamp(graded(p, true, NEGATIVE_PASS), float3(0.0), float3(1.0)), 1.0);
     }
     """)
-  /// The same without the final clip: colours the saturation control pushes past sRGB stay, for
-  /// exports into a wider colour space.
+  /// The tones first and the saturation after them, without the final clip: colours the saturation
+  /// control pushes past sRGB stay, for exports into a wider colour space.
   static let negativeUnclipped = color("negativeUnclipped", conversion + """
     [[stitchable]] float4 negativeUnclipped(coreimage::sample_t p, NEGATIVE_ARGS) {
-      return float4(positive(p, NEGATIVE_PASS), 1.0);
+      return float4(saturated(graded(p, false, NEGATIVE_PASS), tone, ends), 1.0);
     }
     """)
   /// Each pixel's colour apart from its lightness (luma), and the two put back together.
@@ -61,15 +65,23 @@ enum Kernels {
   }
   private static func color(_ name: String, _ source: String) -> CIColorKernel? { compiled(name, source) as? CIColorKernel }
 
-  /// The conversion both `negative` kernels share, up to its final clip.
+  /// The conversion both `negative` kernels share, up to its final clip: the tones (`graded`) and the
+  /// saturation, in one order or the other.
   private static let conversion = """
-    #define NEGATIVE_ARGS float3 base, float3 slope, float3 toe, float3 gain, float3 balance, float4 levels, float4 tone, float4 color, float4 ends, float inverted, float2 fade, float2 lights
-    #define NEGATIVE_PASS base, slope, toe, gain, balance, levels, tone, color, ends, inverted, fade, lights
+    #define NEGATIVE_ARGS float3 base, float3 slope, float3 toe, float3 gain, float3 balance, float4 levels, float4 tone, float4 color, float4 ends, float inverted, float2 fade, float2 lights, float4 shoulder
+    #define NEGATIVE_PASS base, slope, toe, gain, balance, levels, tone, color, ends, inverted, fade, lights, shoulder
 
+    // Saturation (tone.w) about each pixel's lightness, more in the shadows (ends.z).
+    static float3 saturated(float3 q, float4 tone, float4 ends) {
+      float l = dot(q, float3(0.2126, 0.7152, 0.0722)), m = clamp(l, 0.0, 1.0);
+      return mix(float3(l), q, float3(tone.w * (1.0 + ends.z * (1.0 - m) * (1.0 - m))));
+    }
+    // The tones, and with `first` the saturation ahead of the ends.
+    //
     // Exposure (tone.x, in EV) is a print exposure: a shift of log exposure, 0.30103 per stop,
     // applied before the levels and clipping so −EV recovers highlights. Positive input scales the
     // linear value instead, through its encoding gamma.
-    static float3 positive(float4 p, NEGATIVE_ARGS) {
+    static float3 graded(float4 p, bool first, NEGATIVE_ARGS) {
       float3 v = max(p.rgb, float3(0.000001));
       float3 e = log(max(base, float3(0.000001)) / v) * (color.w / 2.302585093) / slope;
       e += toe * log(max(float3(1.0) - exp(-e / max(toe, float3(0.000001))), float3(0.02)));
@@ -80,18 +92,31 @@ enum Kernels {
       q = (q - float3(levels.z)) / max(levels.w - levels.z, 0.01);
       q += float3(color.x * 0.12 + color.y * 0.05, -color.y * 0.10, -color.x * 0.12 + color.y * 0.05);
       q = (q - float3(0.5)) * tone.z + float3(0.5);
+      if (first) { q = saturated(q, tone, ends); }
       // Each side's curve only works out its own side, so a far value (the holder, opaque) does not
       // overflow the other's exp into infinity and come out as nothing.
       if (ends.x > 0.0) { float3 t = float3(ends.x); q = mix(t * exp(min(q, t) / t - float3(1.0)), q, step(t, q)); }
-      if (ends.y < 1.0) { float r = 1.0 - ends.y; float3 o = max(q, float3(ends.y)) - float3(ends.y); q = mix(q, float3(ends.y) + r * (float3(1.0) - exp(-o / r)), step(float3(ends.y), q)); }
+      if (ends.y < 1.0) {
+        float r = 1.0 - ends.y; float3 o = max(q, float3(ends.y)) - float3(ends.y);
+        float3 rolled = mix(q, float3(ends.y) + r * (float3(1.0) - exp(-o / r)), step(float3(ends.y), q));
+        // Highlights running further past white than that holds (`ImagePipeline.shoulder`): from
+        // shoulder.x along a log curve to 0.98 at the frame's brightest, then out to white, taking
+        // over by shoulder.w.
+        if (shoulder.w > 0.0) {
+          float k = shoulder.x, span = shoulder.y, c = shoulder.z;
+          float3 x = max(q - float3(k), float3(0.0));
+          float3 eased = float3(k) + (0.98 - k) * log(float3(1.0) + c * min(x, float3(span))) / log(1.0 + c * span);
+          float3 past = float3(0.98) + 0.02 * (float3(1.0) - exp(-max(x - float3(span), float3(0.0)) / (0.02 * (1.0 + c * span))));
+          rolled = mix(rolled, mix(q, mix(eased, past, step(float3(span), x)), step(float3(k), q)), shoulder.w);
+        }
+        q = rolled;
+      }
       q = clamp(q, float3(0.0), float3(1.0));
       // Shadows and highlights: the dark tones (most at a third) and the light ones (most at two
       // thirds) moved by up to 0.12, black and white held, every tone still in order.
       float3 r = float3(1.0) - q;
       q += lights.x * 0.81 * q * r * r + lights.y * 0.81 * q * q * r;
-      q = pow(q, float3(1.0 / max(tone.y, 0.1)));
-      float l = dot(q, float3(0.2126, 0.7152, 0.0722));
-      return mix(float3(l), q, float3(tone.w * (1.0 + ends.z * (1.0 - l) * (1.0 - l))));
+      return pow(q, float3(1.0 / max(tone.y, 0.1)));
     }
 
     """

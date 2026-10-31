@@ -223,12 +223,14 @@ enum ImageGeometry {
 }
 
 /// A roll's print: the balance (and per-channel gain) and the black and white ends, in the
-/// conversion's log exposure, as `ToneAnalysis` holds them for one frame.
+/// conversion's log exposure, as `ToneAnalysis` holds them for one frame; and how far its brightest
+/// frame's highlights run past the white (nil in prints made before it was kept).
 struct RollPrint: Codable, Equatable {
   var balance: RGB
   var gain: RGB
   var low: Double
   var high: Double
+  var reach: Double? = nil
 }
 
 struct Adjustments: Codable, Equatable {

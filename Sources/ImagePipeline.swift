@@ -35,6 +35,10 @@ struct ToneAnalysis {
   /// Over how much log exposure above the base the balance fades in (0: applied evenly), and how
   /// far it has faded in at a picked grey, which keeps it in full, as everything lighter does.
   var fade = 0.0, fadeAtGrey = 1.0
+  /// How far the highlights run past `high`: where the frame's brightest 0.1% lie, in the same log
+  /// exposure, in their brightest channel once saturated (`ImagePipeline.reach`); nil where the
+  /// white is set by hand (a picked highlight, levels off).
+  var reach: Double? = nil
 }
 
 final class ImagePipeline {
@@ -52,6 +56,35 @@ final class ImagePipeline {
   /// `shadowColour` more saturation, less as they lighten, as colour runs out there on a screen.
   /// In the kernel's output values (encoded, 0-1).
   static var softToe = 0.05, softShoulder = 0.9, shadowColour = 0.3
+  /// That shoulder holds what lies up to about half a stop past white; a frame's highlights often
+  /// run further, and the negative still has them. So the shoulder reaches as far as the frame's
+  /// brightest 0.1% (`ToneAnalysis.reach`), up to `reachStops` past its white, as a print's paper
+  /// eases its highlights into white (`shoulder`); highlights −1 takes it `highlightsReach` further.
+  static var reachStops = 2.0, highlightsReach = 2.0
+  /// The longer shoulder for `s` and `a`, as the kernel takes it: from `x` up along a log curve
+  /// that leaves the straight line at slope 1 and brings `x + y` to 0.98, `z` its bend, then out
+  /// to white; `w` how far it replaces the short one, nothing for highlights within its reach.
+  static func shoulder(_ s: Adjustments, _ a: ToneAnalysis) -> CIVector {
+    guard s.softEndsOn && s.inputIsNegative else { return CIVector(x: 0, y: 0, z: 0, w: 0) }
+    let stop = log10(2.0)
+    let top = min(max(a.reach ?? a.high, a.high), a.high + reachStops * stop) + max(0, -s.highlightsAmount) * highlightsReach * stop
+    // Where the kernel's levels, colour and contrast put it, in its warmest or coolest channel.
+    var q = (top + s.exposure * stop - a.low) / max(a.high - a.low, 0.001)
+    q = (q - s.black) / max(s.white - s.black, 0.01)
+    q += max(s.warmth * 0.12 + s.tint * 0.05, -s.tint * 0.10, -s.warmth * 0.12 + s.tint * 0.05)
+    q = (q - 0.5) * s.contrast + 0.5
+    // The short shoulder brings 1.1 within 0.015 of white; from there to 1.25 the longer takes over.
+    let t = min(1, max(0, (q - 1.1) / 0.15))
+    guard t > 0 else { return CIVector(x: 0, y: 0, z: 0, w: 0) }
+    let knee = 0.8, span = q - knee, room = 0.98 - knee
+    // Slope 1 where it leaves the straight line: room · c / ln(1 + c · span) = 1.
+    var lo = 1e-6, hi = 1e6
+    for _ in 0..<100 {
+      let c = (lo * hi).squareRoot()
+      if room * c / log1p(c * span) > 1 { hi = c } else { lo = c }
+    }
+    return CIVector(x: knee, y: span, z: (lo * hi).squareRoot(), w: t * t * (3 - 2 * t))
+  }
   /// A balance that makes the greys grey (a calibrated preset's neutral, a picked grey, Dmax) is
   /// worked out on the straight part of the film's curve. Film that took no light is black in every
   /// layer, and black is neutral; there the balance would only lift red and blue into a purple
@@ -204,8 +237,12 @@ final class ImagePipeline {
     return base
   }
   func quantile(_ a: [Double], _ p: Double) -> Double {
+    quantiles(a, [p])[0]
+  }
+  /// Several quantiles of `a` from one sort.
+  func quantiles(_ a: [Double], _ ps: [Double]) -> [Double] {
     let v = a.sorted()
-    return v.isEmpty ? 0 : v[min(v.count - 1, Int(Double(v.count - 1) * p))]
+    return ps.map { p in v.isEmpty ? 0 : v[min(v.count - 1, Int(Double(v.count - 1) * p))] }
   }
 
   /// The pixels colour statistics use, as density above the film base, with the base found.
@@ -341,36 +378,57 @@ final class ImagePipeline {
         a.gain = print.gain
         a.low += shift
         a.high += shift
+        a.reach = a.reach.map { $0 + shift }
       }
       if settings.sharedLevels == true, settings.autoLevels {
         a.low = print.low
         a.high = print.high
+        a.reach = print.reach ?? a.reach
       }
     }
     return a
   }
   /// One print for a roll from its frames' densities together, each above its own base, as one
-  /// frame's statistics are worked out; nil without frames.
+  /// frame's statistics are worked out; nil without frames. Its highlights reach as far as the
+  /// brightest frame's: the roll's shoulder holds every frame's.
   func rollPrint(_ frames: [(image: CGImage, settings: Adjustments)], profile: FilmProfile) -> RollPrint? {
     guard let first = frames.first else { return nil }
+    let each = frames.map { (density: densities($0.image, settings: $0.settings).density, settings: $0.settings) }
+      .filter { !$0.density[0].isEmpty }
     var pooled = [[Double](), [Double](), [Double]()]
-    for f in frames {
-      let d = densities(f.image, settings: f.settings).density
-      for c in 0..<3 { pooled[c] += d[c] }
-    }
+    for f in each { for c in 0..<3 { pooled[c] += f.density[c] } }
     guard !pooled[0].isEmpty else { return nil }
     var s = first.settings
     (s.neutralSample, s.manualBalance, s.highlightSample) = (nil, nil, nil)
     (s.autoWhiteBalance, s.autoLevels) = (true, true)
     let a = analyze(base: .one, density: pooled, settings: s, profile: profile)
-    return RollPrint(balance: a.balance, gain: a.gain, low: a.low, high: a.high)
+    let reach = each.map {
+      self.reach(exposures($0.density, settings: s, profile: profile), gain: a.gain, balance: a.balance, weight: nil, saturation: $0.settings.saturation)
+    }.max()
+    return RollPrint(balance: a.balance, gain: a.gain, low: a.low, high: a.high, reach: reach)
+  }
+  /// Each channel's log exposure from its density above the base, through the film's slopes and toe.
+  func exposures(_ density: [[Double]], settings: Adjustments, profile: FilmProfile) -> [[Double]] {
+    let (slopes, _) = Self.slopes(settings, profile)
+    let toe = Self.toe(settings, profile)
+    return (0..<3).map { c in density[c].map { FilmToe.exposure($0 / slopes.values[c], width: toe.values[c]) } }
+  }
+  /// How far highlights run: where the brightest 0.1% of `e` lie through `gain` and `balance`, in
+  /// their brightest channel once saturated, as the kernel saturates them ahead of the shoulder.
+  func reach(_ e: [[Double]], gain: RGB, balance: RGB, weight: [Double]?, saturation: Double) -> Double {
+    let peaks = (0..<e[0].count).map { (i: Int) -> Double in
+      let x: [Double] = (0..<3).map { (c: Int) -> Double in e[c][i] * gain.values[c] + balance.values[c] * (weight?[i] ?? 1) }
+      let l = 0.2126 * x[0] + 0.7152 * x[1] + 0.0722 * x[2]
+      return x.map { (v: Double) -> Double in l + saturation * (v - l) }.max()!
+    }
+    return quantile(peaks, 0.999)
   }
   /// A frame's balance and ends from its densities above `base`.
   func analyze(base: RGB, density: [[Double]], settings: Adjustments, profile: FilmProfile) -> ToneAnalysis {
     let (slopes, fixed) = Self.slopes(settings, profile)
     let toe = Self.toe(settings, profile)
     func exposure(_ density: Double, _ c: Int) -> Double { FilmToe.exposure(density / slopes.values[c], width: toe.values[c]) }
-    let e = (0..<3).map { c in density[c].map { exposure($0, c) } }
+    let e = exposures(density, settings: settings, profile: profile)
     // Independent robust endpoints correct color crossover, not just a single median offset.
     // They are scene statistics, not an ICC calibration; manual neutral/temperature remain available.
     let channelLow = e.map { quantile($0, 0.01) }
@@ -441,16 +499,21 @@ final class ImagePipeline {
     for c in 0..<3 {
       if let weight {
         let x = (0..<e[c].count).map { e[c][$0] * gain.values[c] + balance.values[c] * weight[$0] }
-        lows.append(quantile(x, 0.005))
-        highs.append(quantile(x, 0.995))
+        let q = quantiles(x, [0.005, 0.995])
+        lows.append(q[0])
+        highs.append(q[1])
       } else {
-        lows.append(quantile(e[c], 0.005) * gain.values[c] + balance.values[c])
-        highs.append(quantile(e[c], 0.995) * gain.values[c] + balance.values[c])
+        let q = quantiles(e[c], [0.005, 0.995]).map { $0 * gain.values[c] + balance.values[c] }
+        lows.append(q[0])
+        highs.append(q[1])
       }
     }
     let low = settings.autoLevels ? (lows.min() ?? 0) : 0
     let high = settings.autoLevels ? max(low + 0.05, white ?? highs.max() ?? 2) : 3.6
-    return ToneAnalysis(base: base, balance: balance, low: low, high: high, gain: gain, fade: fade, fadeAtGrey: fadeAtGrey)
+    let reach = settings.autoLevels && white == nil
+      ? self.reach(e, gain: gain, balance: balance, weight: weight, saturation: settings.saturation) : nil
+    return ToneAnalysis(
+      base: base, balance: balance, low: low, high: high, gain: gain, fade: fade, fadeAtGrey: fadeAtGrey, reach: reach)
   }
 
   /// `sharpener` deconvolves the scan in linear light first; tone statistics use the scan as is.
@@ -476,6 +539,7 @@ final class ImagePipeline {
       s.inputIsNegative ? 1.0 : 0.0,
       CIVector(x: a.fade, y: a.fadeAtGrey),
       CIVector(x: s.shadowsAmount, y: s.highlightsAmount),
+      Self.shoulder(s, a),
     ]
     guard var result = kernel.apply(extent: ci.extent, arguments: args) else {
       throw DeskError.message("图像处理失败。")
