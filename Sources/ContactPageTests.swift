@@ -193,5 +193,44 @@ enum ContactPageTests {
     window.contentView = nil
     model.singleView = true
     try check(!model.onSheetPage && model.contactTurn == 0, "the single frame is not a page of the contact sheet")
+
+    // The loupe over a frame turned upside down on a page: its sharper picture is turned as the
+    // page shows the frame, not as the frame lies on the film, so it does not turn over under it.
+    let marked = folder.appendingPathComponent("contact-pages-turned", isDirectory: true)
+    try? FileManager.default.removeItem(at: marked)
+    try FileManager.default.createDirectory(at: marked, withIntermediateDirectories: true)
+    var turnedURLs = [URL]()
+    for i in 0..<2 {
+      let ctx = CGContext(data: nil, width: 120, height: 80, bitsPerComponent: 8, bytesPerRow: 0, space: ImagePipeline.shared.outputSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+      ctx.setFillColor(CGColor(srgbRed: 0.6, green: 0.45, blue: 0.3, alpha: 1))
+      ctx.fill(CGRect(x: 0, y: 0, width: 120, height: 80))
+      // A dark corner at the top left (drawn with y up).
+      ctx.setFillColor(CGColor(srgbRed: 0.08, green: 0.06, blue: 0.04, alpha: 1))
+      ctx.fill(CGRect(x: 0, y: 50, width: 40, height: 30))
+      let url = marked.appendingPathComponent("t\(i).png")
+      try ImagePipeline.shared.savePNG(ctx.makeImage()!, to: url)
+      turnedURLs.append(url)
+    }
+    let turnedModel = AppModel(libraryURL: folder.appendingPathComponent("contact-pages-turned-library"), preferences: Preferences(defaults: defaults))
+    turnedModel.importURLs(turnedURLs)
+    turnedModel.singleView = false
+    turnedModel.frames[0].adjustments.rotation = 2
+    var detail: CGImage?
+    turnedModel.loupeDetail(for: turnedModel.frames[0]) { detail = $0 }
+    for _ in 0..<100 where detail == nil { settle(0.05) }
+    // Which corner differs from the rest: the dark one, now light in the positive.
+    func corner(_ image: CGImage?) -> Int? {
+      guard let image else { return nil }
+      let r = ImagePipeline.shared.samples(image, maxDimension: 120)
+      let means = [(0, 0), (1, 0), (0, 1), (1, 1)].map { qx, qy -> Double in
+        let x = qx == 0 ? r.width / 8 : r.width * 7 / 8, y = qy == 0 ? r.height / 8 : r.height * 7 / 8
+        return r.pixel(x, y).g
+      }
+      let middle = means.sorted()[1]
+      return means.indices.max { abs(means[$0] - middle) < abs(means[$1] - middle) }
+    }
+    try check(turnedModel.onSheetPage && corner(detail) == 3,
+      "on a contact sheet page the loupe shows a frame turned upside down as the page does, its marked corner at the bottom right, not as it lies on the film")
   }
 }

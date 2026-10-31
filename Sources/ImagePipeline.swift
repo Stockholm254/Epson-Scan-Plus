@@ -69,7 +69,7 @@ final class ImagePipeline {
     source: ImagePipeline.negativeSource.replacingOccurrences(
       of: "return vec4(clamp(q,0.0,1.0),1.0);", with: "return vec4(q,1.0);"))
   private static let negativeSource = """
-      kernel vec4 negative(__sample p, vec3 base, vec3 slope, vec3 toe, vec3 gain, vec3 balance, vec4 levels, vec4 tone, vec4 color, vec4 ends, float inverted, vec2 fade) {
+      kernel vec4 negative(__sample p, vec3 base, vec3 slope, vec3 toe, vec3 gain, vec3 balance, vec4 levels, vec4 tone, vec4 color, vec4 ends, float inverted, vec2 fade, vec2 lights) {
         vec3 v = max(p.rgb, vec3(0.000001));
         vec3 e = log(max(base,vec3(0.000001))/v) * (color.w / 2.302585093) / slope;
         e += toe * log(max(vec3(1.0) - exp(-e / max(toe, vec3(0.000001))), vec3(0.02)));
@@ -85,6 +85,10 @@ final class ImagePipeline {
         if (ends.x > 0.0) { vec3 t = vec3(ends.x); q = mix(t * exp(min(q, t) / t - vec3(1.0)), q, step(t, q)); }
         if (ends.y < 1.0) { float r = 1.0 - ends.y; vec3 o = max(q, vec3(ends.y)) - vec3(ends.y); q = mix(q, vec3(ends.y) + r * (vec3(1.0) - exp(-o / r)), step(vec3(ends.y), q)); }
         q = clamp(q,0.0,1.0);
+        // Shadows and highlights: the dark tones (most at a third) and the light ones (most at two
+        // thirds) moved by up to 0.12, black and white held, every tone still in order.
+        vec3 r = vec3(1.0) - q;
+        q += lights.x * 0.81 * q * r * r + lights.y * 0.81 * q * q * r;
         q = pow(q,vec3(1.0/max(tone.y,0.1)));
         float l = dot(q,vec3(0.2126,0.7152,0.0722));
         q = mix(vec3(l),q,tone.w * (1.0 + ends.z * (1.0 - l) * (1.0 - l)));
@@ -483,6 +487,7 @@ final class ImagePipeline {
         ? CIVector(x: Self.softToe, y: Self.softShoulder, z: Self.shadowColour, w: 0) : CIVector(x: 0, y: 2, z: 0, w: 0),
       s.inputIsNegative ? 1.0 : 0.0,
       CIVector(x: a.fade, y: a.fadeAtGrey),
+      CIVector(x: s.shadowsAmount, y: s.highlightsAmount),
     ]
     guard var result = kernel.apply(extent: ci.extent, arguments: args) else {
       throw DeskError.message("图像处理失败。")

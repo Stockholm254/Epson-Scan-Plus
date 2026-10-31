@@ -46,6 +46,8 @@ enum MCPTools {
       "exposure": number("曝光 EV", -2...2), "contrast": number("对比度", 0.5...1.6), "saturation": number("饱和度", 0...1.8),
       "black": number("黑点（关闭自动色阶时生效）", 0...0.4), "white": number("白点（关闭自动色阶时生效）", 0.6...1),
       "midtone": number("中间调", 0.4...2),
+      "highlights": number("高光：亮部压暗（负）或提亮（正），黑白两端不动，-1 到 1", -1...1),
+      "shadows": number("阴影：暗部提亮（正）或压暗（负），黑白两端不动，-1 到 1", -1...1),
       "angle": number("拉直角度（度）：画面绕中心转动，正数顺时针，裁去转出的空角，-45 到 45", -45...45),
       "auto_white_balance": ["type": "boolean", "description": "自动白平衡"], "auto_levels": ["type": "boolean", "description": "自动色阶"],
       "base_fine_ev": ["type": "array", "items": ["type": "number", "minimum": -0.5, "maximum": 0.5], "minItems": 3, "maxItems": 3,
@@ -356,7 +358,7 @@ enum MCPTools {
         return ["x": p.x, "y": p.y, "negative_linear": rgb(v), "density_above_base": rgb(d), "positive_srgb": rgb(out)]
       })
     case "adjust":
-      let known: Set = ["warmth", "tint", "exposure", "contrast", "saturation", "black", "white", "midtone", "auto_white_balance", "auto_levels", "base_fine_ev", "angle"]
+      let known: Set = ["warmth", "tint", "exposure", "contrast", "saturation", "black", "white", "midtone", "highlights", "shadows", "auto_white_balance", "auto_levels", "base_fine_ev", "angle"]
       let unknown = Set(arguments.keys).subtracting(known)
       guard unknown.isEmpty else { throw DeskError.message("不认识的参数：\(unknown.sorted().joined(separator: ", "))") }
       guard !arguments.isEmpty else { throw DeskError.message("没有要改的参数。") }
@@ -368,6 +370,7 @@ enum MCPTools {
       let numbers: [(WritableKeyPath<Adjustments, Double>, String, ClosedRange<Double>)] = [
         (\.warmth, "warmth", -1...1), (\.tint, "tint", -1...1), (\.exposure, "exposure", -2...2), (\.contrast, "contrast", 0.5...1.6),
         (\.saturation, "saturation", 0...1.8), (\.black, "black", 0...0.4), (\.white, "white", 0.6...1), (\.midtone, "midtone", 0.4...2),
+        (\.highlightsAmount, "highlights", -1...1), (\.shadowsAmount, "shadows", -1...1),
       ]
       let values = try numbers.compactMap { n in try value(n.1, n.2).map { (n.0, $0) } }
       let angle = try value("angle", -45...45)

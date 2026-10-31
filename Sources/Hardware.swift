@@ -230,31 +230,3 @@ struct FilmBase: View {
   }
 }
 
-/// A china-marker tick on the frame, the way frames are marked on a contact sheet.
-struct GreasePencilCheck: ToggleStyle {
-  func makeBody(configuration: Configuration) -> some View {
-    Button {
-      configuration.isOn.toggle()
-    } label: {
-      ZStack {
-        if configuration.isOn {
-          Path { p in
-            p.move(to: CGPoint(x: 2, y: 8.5))
-            p.addQuadCurve(to: CGPoint(x: 6.5, y: 14), control: CGPoint(x: 4, y: 12))
-            p.addQuadCurve(to: CGPoint(x: 16, y: 1.5), control: CGPoint(x: 9, y: 6))
-          }
-          .stroke(Hardware.greasePencil, style: StrokeStyle(lineWidth: 2.6, lineCap: .round, lineJoin: .round))
-          .shadow(color: .black.opacity(0.5), radius: 0.5, y: 0.5)
-        } else {
-          Circle().fill(.black.opacity(0.45))
-            .overlay(Circle().stroke(.white.opacity(0.55), lineWidth: 1))
-            .frame(width: 12, height: 12)
-        }
-      }
-      .frame(width: 18, height: 16).contentShape(Rectangle())
-    }
-    .buttonStyle(.plain)
-    .accessibilityLabel("勾选，用于扫描和导出")
-    .accessibilityValue(configuration.isOn ? "已勾选" : "未勾选")
-  }
-}

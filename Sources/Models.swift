@@ -240,6 +240,18 @@ struct Adjustments: Codable, Equatable {
     get { softEnds != false }
     set { softEnds = newValue ? nil : false }
   }
+  /// The dark tones and the light tones made lighter (positive) or darker, black and white held
+  /// and every tone kept in order: −1 to 1, nil as it is.
+  var shadows: Double? = nil
+  var shadowsAmount: Double {
+    get { shadows ?? 0 }
+    set { shadows = newValue == 0 ? nil : newValue }
+  }
+  var highlights: Double? = nil
+  var highlightsAmount: Double {
+    get { highlights ?? 0 }
+    set { highlights = newValue == 0 ? nil : newValue }
+  }
   /// Colour noise smoothed away, the grain's lightness left as it is: 0 (or nil) off, 1 as a copy
   /// shot comes in with.
   var colourNoise: Double? = nil

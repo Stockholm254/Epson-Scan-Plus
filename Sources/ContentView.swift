@@ -537,10 +537,12 @@ struct ContentView: View {
         HStack {
           Text("影调").font(.system(size: 12, weight: .medium))
           Spacer()
-          InfoButton(text: "曝光像放大时的印放曝光一样调整密度，在裁切前生效；−EV 可以找回高光。")
+          InfoButton(text: "曝光像放大时的印放曝光一样调整密度，在裁切前生效；−EV 可以找回高光。\n\n高光、阴影只动亮部或暗部：阴影往右提亮暗部、往左压暗；高光往左压暗亮部、找回层次，往右提亮。黑和白两端不动，明暗顺序也不会颠倒。")
         }
         slider("曝光 · EV", key: \.exposure, range: -2...2, format: "%+.2f")
         slider("对比度", key: \.contrast, range: 0.5...1.6)
+        slider("高光", key: \.highlightsAmount, range: -1...1, format: "%+.2f")
+        slider("阴影", key: \.shadowsAmount, range: -1...1, format: "%+.2f")
         Divider()
         HStack {
           Text("色彩").font(.system(size: 12, weight: .medium))
@@ -647,6 +649,7 @@ struct ContentView: View {
             })
         )
         .toggleStyle(.switch).tint(Hardware.accent).disabled(m.selected == nil || m.isWorking)
+        .help("勾选这一张用于扫描和导出。胶片条上没勾选的变暗；也可以在胶片条上右键勾选")
         Divider().frame(height: 14)
         Button("全选") { m.setAllEnabled(true) }
           .disabled(m.frames.isEmpty || m.enabledCount == m.frames.count || m.isWorking)
@@ -674,28 +677,19 @@ struct ContentView: View {
               VStack(spacing: 2) {
                 ZStack {
                   Rectangle().fill(Color.black.opacity(0.55))
-                  if let cg = m.thumbnails[f.id] {
-                    Image(decorative: cg, scale: 1).resizable().aspectRatio(contentMode: .fit)
-                      .padding(2)
-                  } else {
-                    // On the film, which is dark in either look.
-                    Text(f.name).font(.system(size: 22, design: .monospaced)).foregroundStyle(
-                      Color.white.opacity(0.55))
-                  }
-                  if f.hasFullResolution {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(accent).frame(
-                      maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing
-                    ).padding(4)
-                  }
+                  // A frame not ticked for scanning and export lies dimmed; the one shown has the border.
+                  Group {
+                    if let cg = m.thumbnails[f.id] {
+                      Image(decorative: cg, scale: 1).resizable().aspectRatio(contentMode: .fit)
+                        .padding(2)
+                    } else {
+                      // On the film, which is dark in either look.
+                      Text(f.name).font(.system(size: 22, design: .monospaced)).foregroundStyle(
+                        Color.white.opacity(0.55))
+                    }
+                  }.opacity(f.enabled ? 1 : 0.35)
                 }.frame(width: 84, height: 60)
-                .overlay(alignment: .topLeading) {
-                  Toggle(
-                    "勾选",
-                    isOn: Binding(
-                      get: { f.enabled }, set: { value in m.setEnabled(f.id, enabled: value) })
-                  )
-                  .toggleStyle(GreasePencilCheck()).disabled(m.isWorking).padding(2)
-                }
+                .accessibilityValue(f.enabled ? "已勾选" : "未勾选")
                 .overlay(
                   Rectangle().stroke(f.id == m.selectedID ? accent : Color.clear, lineWidth: 2)
                     .padding(-2)
@@ -708,6 +702,9 @@ struct ContentView: View {
                   m.focusCanvas()
                 }
                 .contextMenu {
+                  Button(f.enabled ? "取消勾选" : "勾选", systemImage: f.enabled ? "circle" : "checkmark.circle") {
+                    m.setEnabled(f.id, enabled: !f.enabled)
+                  }.disabled(m.isWorking)
                   if m.page != .leak {
                     Button("删除这张", systemImage: "trash", role: .destructive) { m.remove(f.id) }.disabled(m.isWorking)
                   }

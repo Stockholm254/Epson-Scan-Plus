@@ -82,6 +82,31 @@ enum ToneTests {
     brighter.exposure = 1
     let mid = matching.pixel(w / 2, 4).g * 255, lifted = try render(brighter, portra).pixel(w / 2, 4).g * 255
     try check(lifted > mid + 20, String(format: "+1 EV brightens the midtones: %.0f → %.0f", mid, lifted))
+    // Shadows and highlights move their own tones along the neutral ramp, black and white held,
+    // the ramp still rising.
+    func ramp(_ s: Adjustments) throws -> [Double] {
+      let r = try render(s, portra)
+      return (0..<w).map { r.pixel($0, 4).g * 255 }
+    }
+    let plain = try ramp(straight)
+    func at(_ v: [Double], _ share: Double) -> Double { v[Int(Double(w - 1) * share)] }
+    // Where the plain ramp is a quarter and three quarters of the way up.
+    let dark = plain.firstIndex { $0 > 64 }.map { Double($0) / Double(w - 1) } ?? 0.25
+    let light = plain.firstIndex { $0 > 191 }.map { Double($0) / Double(w - 1) } ?? 0.75
+    var lifted2 = straight
+    lifted2.shadows = 1
+    var held = straight
+    held.highlights = -1
+    var both = straight
+    both.shadows = -1
+    both.highlights = 1
+    let up = try ramp(lifted2), down = try ramp(held), crossed = try ramp(both)
+    func rising(_ v: [Double]) -> Bool { zip(v, v.dropFirst()).allSatisfy { $1 >= $0 - 1 } }
+    try check(at(up, dark) > at(plain, dark) + 8 && abs(at(up, light) - at(plain, light)) < (at(up, dark) - at(plain, dark)) / 2
+      && at(down, light) < at(plain, light) - 8 && abs(at(down, dark) - at(plain, dark)) < (at(plain, light) - at(down, light)) / 2
+      && abs(up[0] - plain[0]) < 2 && plain[0] < 1 && highlights(try render(held, portra)).last! > 254.5 && rising(up) && rising(down) && rising(crossed),
+      String(format: "shadows +1 lifts the dark tones (%.0f → %.0f) more than the light, highlights −1 lowers the light (%.0f → %.0f) more than the dark; black and white stay, and the ramp keeps rising",
+        at(plain, dark), at(up, dark), at(plain, light), at(down, light)))
     // Positive input scales the linear value: one stop at input gamma 2.2 multiplies by 2^(1/2.2).
     let grey = CGImage(
       width: 8, height: 8, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: 32,

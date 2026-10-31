@@ -1591,16 +1591,21 @@ final class AppModel: ObservableObject {
   /// as that view shows it, turned and mirrored, at full resolution.
   func loupeDetail(for frame: FilmFrame, single: Bool = false, pixels: Int = 2400, completion: @escaping (CGImage?) -> Void) {
     let positive = single ? !showNegative : contactPositive, p = profile
+    // A page laid out from files of their own shows each positive as the film strip has it,
+    // turned, mirrored and straightened; the holder's preview, as the frame lies under its box.
+    let asLaidOut = onSheetPage && sheetPageFrames.contains { $0.id == frame.id }
     renderQueue.async {
       var image = try? self.source(for: frame, full: single, maxDimension: single ? nil : pixels)
       if single, let crop = image {
         image = ImagePipeline.shared.render(crop, settings: frame.adjustments, profile: p, analysis: nil, negative: !positive)
       } else if positive, let crop = image {
-        // Upright and as it lies, as in the contact print, so it lies under its frame box.
         var s = frame.adjustments
-        s.rotation = 0
-        s.flipHorizontal = nil
-        s.angle = nil
+        if !asLaidOut {
+          // Upright and as it lies, as in the contact print, so it lies under its frame box.
+          s.rotation = 0
+          s.flipHorizontal = nil
+          s.angle = nil
+        }
         image = try? ImagePipeline.shared.preview(crop, settings: s, profile: p)
       }
       DispatchQueue.main.async { completion(image) }
