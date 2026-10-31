@@ -83,12 +83,19 @@ enum MCPTools {
     - 坐标是单张视图里画面的相对位置，0–1，左上为原点。
     - 翻拍的照片四周带着片基、漏光或片夹时，先用 auto_crop 裁到画面（whole_roll 整卷一起），再看和取样：自动白平衡和色阶只看裁切以内。
     - 每次调整都能在 App 里用 ⌘Z 撤销，也可以调用 undo。转换的工具不会扫描、删除或导出文件。
-    预设标定（calibration_*）定的是这种胶片在这台设备上各通道的反差（斜率），让灰从暗到亮都是灰；它不改白平衡，也不套色卡，胶片的风格保留。用户说「帮这卷做翻拍标定」时：
+    预设标定（calibration_*）定的是这种胶片在这台设备上各通道的反差（斜率），让灰从暗到亮都是灰；它不改白平衡，也不套色卡，胶片的风格保留。
+    原理：中性的东西三个通道反射得一样多。除掉片基以后，它每个通道高于片基的密度 = 这个通道的斜率 ×（同一个曝光量 + 这个通道的偏移），偏移里是光的颜色。所以同一种光下的中性点，从亮到暗落在一条直线上（红对绿、蓝对绿），斜率就是要标定的。挑点和去点都只按这一条，不和别的软件或别的渲染比颜色。
+    用户说「帮这卷做翻拍标定」时：
     1. 先确认胶片预设对（get_state，必要时 choose_preset），并用 calibration_clear 清掉旧点。
-    2. 用 list_frames、select_frame、preview 看几张，按物体找本来就中性的东西：拍在胶片上的色卡或灰卡的灰块（最好）、白色或灰色的牌子、白墙、灰水泥、柏油路、阴天的云、雪。避开天空、植物、皮肤、木头、刷了颜色的墙、夕阳或灯光下的东西、已经溢出的白和最暗的黑。预览可能整体偏蓝或偏色，按「这是什么东西」判断，不要按颜色判断。
-    3. 明暗要拉开：至少一个亮的（白）、一个中间的、一个暗的（阴影里的灰），共 3–6 个，可以跨画面。每个点放在平坦一块的中间，不要压在边缘或纹理上。
-    4. 用 calibration_add_points 加点。看返回的偏离：某个点偏离 0.03 D 以上，多半不是中性的，用 calibration_remove_point 去掉。跨度不到 0.3 D 时再加更亮或更暗的点。
-    5. 用 calibration_make_preset 生成，然后告诉用户选了哪些地方（哪张、什么东西）、得到的斜率和残差。
+    2. 用 list_frames、select_frame、preview 看几张，按物体找光谱平坦、本来就中性的东西：拍在胶片上的色卡或灰卡的灰块（最好）、白色或灰色的牌子、白墙、灰水泥、柏油路、白云、雪。避开天空、植物、皮肤、木头、石头和碎石（常带锈色）、刷了颜色的墙、金属（映着天空）、已经溢出的白和最暗的黑。预览可能整体偏蓝或偏色，按「这是什么东西」判断，不要按颜色判断。
+    3. 光要一样：所有点都在直射阳光下，或都在同一片阴影里，不要混。阴影里是天光，比阳光蓝，同一面白墙的阴影和阳光两部分不在一条线上。夕阳、灯光下的东西不要。
+    4. 明暗要拉开，在同一种光下：亮的（白墙、白牌子）和暗的（柏油路、深灰的东西）各至少两样不同的东西，中间再一两个，共 4–8 个，可以跨画面。每个点放在平坦一块的中间，不要压在边缘或纹理上。加点前可以先 sample，确认点在那个东西上。
+    5. 用 calibration_add_points 加点，看报告：
+       - 某个点偏离 0.03 D 以上时，报告会给出彼此落在一条线上的最大一组，按它用 calibration_remove_point 去掉组外的点（从序号大的去起）。
+       - 报告说有两组各自一致、斜率不同时，不要猜哪组对：在同样的光下再加几个暗的或亮的中性点，直到只剩一组。
+       - 同一段画面（比如中途调过灯以后拍的几张）的点都往一个方向偏时，这一段和别的不能混，只用其中一段的点。
+       - 跨度不到 0.3 D 时再加更亮或更暗的点。
+    6. 用 calibration_make_preset 生成，然后告诉用户选了哪些地方（哪张、什么东西）、得到的斜率和残差；App 会在画面上标出这些点。
     看预览时图像会发给你所在的 AI 服务；只在用户请求时这样做。
     """ + "\n" + leakInstructions
 
@@ -126,46 +133,84 @@ enum MCPTools {
     else { throw DeskError.message("需要 0 到 1 之间的 x 和 y。") }
     return CGPoint(x: x, y: y)
   }
-  /// The negative's linear reading around a point of the frame as shown, 5 × 5 pixels.
   /// The neutral points so far, how far apart, the fit they give, and how far each lies off it; when
-  /// they do not fit together, which one left out lets the rest.
+  /// some lie off it, the largest group on one line, or that two groups disagree; when they do not
+  /// fit together at all, which one left out lets the rest. Read on the main thread, worked out here.
   private static func calibrationReport(_ model: AppModel) -> String {
-    onMain {
-      let points = model.calibrationPoints, profile = model.profile
-      guard !points.isEmpty else { return "还没有中性点。" }
-      let measured = points.allSatisfy { p in model.frames.first { $0.id == p.frame }.map { ($0.adjustments.base ?? $0.adjustments.rollBase) != nil } ?? false }
-      let curve = measured ? profile.dataSheetToe : nil
-      func fit(_ p: [NeutralPoint]) -> FilmCalibration.Fit? { try? FilmCalibration.fit(p, greenSlope: profile.slopes.g, curve: curve) }
-      let found = fit(points)
-      var lines = [String]()
-      for (i, p) in points.enumerated() {
-        let d = p.density, name = model.frames.first { $0.id == p.frame }?.name ?? "?"
-        var line = String(format: "%d. 第 %@ 张 · 高于片基的密度 R %.3f G %.3f B %.3f", i + 1, name, d[0], d[1], d[2])
-        if let f = found {
-          let toe = f.toe ?? .zero
-          let xg = FilmToe.exposure(d[1] / f.slopes.g, width: toe.g)
-          let off = [0, 2].map { c in (FilmToe.exposure(d[c] / f.slopes.values[c], width: toe.values[c]) - xg - f.offsets.values[c]) * f.slopes.values[c] }
-          line += String(format: " · 偏离 R %+.3f B %+.3f D", off[0], off[1])
-        }
-        lines.append(line)
-      }
-      let greens = points.map { $0.density[1] }, span = greens.max()! - greens.min()!
-      lines.append(String(format: "绿色密度跨度 %.2f D（至少 %.1f）", span, FilmCalibration.minimumSpan))
-      if let f = found {
-        lines.append(String(format: "拟合：R %.3f · G %.3f · B %.3f，残差 %.3f D", f.slopes.r, f.slopes.g, f.slopes.b, f.residual)
-          + (f.toe.map { String(format: "，趾部 R %.2f · B %.2f", $0.r, $0.b) } ?? ""))
-        lines.append("可以 calibration_make_preset，会生成「\(profile.name.replacingOccurrences(of: " · 翻拍", with: "").replacingOccurrences(of: " · V850", with: "")) · \(model.copyStandRoll ? "翻拍" : "V850")」。")
-      } else if points.count >= 3, let i = points.indices.first(where: { j in fit(points.enumerated().filter { $0.offset != j }.map(\.element)) != nil }) {
-        lines.append("这些点拟合不到一起；去掉第 \(i + 1) 个以后就可以，它可能不是中性的。")
-      } else if points.count >= 2 {
-        lines.append("还拟合不出来：" + ((try? FilmCalibration.fit(points, greenSlope: profile.slopes.g, curve: curve)).map { _ in "" } ?? fitError(points, profile.slopes.g, curve)))
-      }
-      return lines.joined(separator: "\n")
+    let (points, profile, names, measured, copy) = onMain {
+      (model.calibrationPoints, model.profile, model.calibrationPoints.map { p in model.frames.first { $0.id == p.frame }?.name ?? "?" },
+        model.calibrationPoints.allSatisfy { p in model.frames.first { $0.id == p.frame }.map { ($0.adjustments.base ?? $0.adjustments.rollBase) != nil } ?? false },
+        model.copyStandRoll)
     }
+    guard !points.isEmpty else { return "还没有中性点。" }
+    let curve = measured ? profile.dataSheetToe : nil
+    func fit(_ p: [NeutralPoint]) -> FilmCalibration.Fit? { try? FilmCalibration.fit(p, greenSlope: profile.slopes.g, curve: curve) }
+    let found = fit(points)
+    var lines = [String]()
+    for (i, p) in points.enumerated() {
+      let d = p.density
+      var line = String(format: "%d. 第 %@ 张 · 高于片基的密度 R %.3f G %.3f B %.3f", i + 1, names[i], d[0], d[1], d[2])
+      if let f = found {
+        let off = misfit(p, f)
+        line += String(format: " · 偏离 R %+.3f B %+.3f D", off[0], off[1])
+      }
+      lines.append(line)
+    }
+    let greens = points.map { $0.density[1] }, span = greens.max()! - greens.min()!
+    lines.append(String(format: "绿色密度跨度 %.2f D（至少 %.1f）", span, FilmCalibration.minimumSpan))
+    if let f = found, points.count >= 4, points.contains(where: { p in misfit(p, f).contains { abs($0) > agreement } }) {
+      lines.append(agreeingGroups(points, fit))
+    }
+    if let f = found {
+      lines.append(String(format: "拟合：R %.3f · G %.3f · B %.3f，残差 %.3f D", f.slopes.r, f.slopes.g, f.slopes.b, f.residual)
+        + (f.toe.map { String(format: "，趾部 R %.2f · B %.2f", $0.r, $0.b) } ?? ""))
+      lines.append("可以 calibration_make_preset，会生成「\(profile.name.replacingOccurrences(of: " · 翻拍", with: "").replacingOccurrences(of: " · V850", with: "")) · \(copy ? "翻拍" : "V850")」。")
+    } else if points.count >= 3, let i = points.indices.first(where: { j in fit(points.enumerated().filter { $0.offset != j }.map(\.element)) != nil }) {
+      lines.append("这些点拟合不到一起；去掉第 \(i + 1) 个以后就可以，它可能不是中性的。")
+    } else if points.count >= 2 {
+      lines.append("还拟合不出来：" + fitError(points, profile.slopes.g, curve))
+    }
+    return lines.joined(separator: "\n")
+  }
+  /// How far apart two neutral points may lie off one line, red's or blue's, and still count as
+  /// the same grey.
+  static let agreement = 0.03
+  /// How far `p` lies off fit `f`, red and blue, in density.
+  private static func misfit(_ p: NeutralPoint, _ f: FilmCalibration.Fit) -> [Double] {
+    let d = p.density, toe = f.toe ?? .zero
+    let xg = FilmToe.exposure(d[1] / f.slopes.g, width: toe.g)
+    return [0, 2].map { c in (FilmToe.exposure(d[c] / f.slopes.values[c], width: toe.values[c]) - xg - f.offsets.values[c]) * f.slopes.values[c] }
+  }
+  /// Of `points`, the largest groups lying on one line within `agreement` (every group of three or
+  /// more, up to twelve points): which those are and which are not, or, where two such groups give
+  /// slopes 0.03 apart, that the points they differ on cannot both be neutral.
+  private static func agreeingGroups(_ points: [NeutralPoint], _ fit: ([NeutralPoint]) -> FilmCalibration.Fit?) -> String {
+    guard points.count <= 12 else { return "点超过 12 个，不再找一致的一组；去掉偏离最大的再看。" }
+    var best = [(members: [Int], fit: FilmCalibration.Fit)](), size = 0
+    for mask in 1..<(1 << points.count) where mask.nonzeroBitCount >= max(3, size) {
+      let members = points.indices.filter { mask & (1 << $0) != 0 }
+      guard let f = fit(members.map { points[$0] }),
+        members.allSatisfy({ i in misfit(points[i], f).allSatisfy { abs($0) <= agreement } })
+      else { continue }
+      if members.count > size { (best, size) = ([], members.count) }
+      best.append((members, f))
+    }
+    func list(_ m: [Int]) -> String { m.map { String($0 + 1) }.joined(separator: "、") }
+    guard let first = best.first else { return "找不到三个以上彼此落在一条线上的点：这些点多半混了不同的光，或有几个不是中性的。" }
+    let apart = best.filter { g in max(abs(g.fit.slopes.r - first.fit.slopes.r), abs(g.fit.slopes.b - first.fit.slopes.b)) > agreement }
+    if let other = apart.first {
+      let differ = Set(first.members).symmetricDifference(other.members).sorted()
+      return String(format: "有两组各自落在一条线上，斜率不同：第 %@ 个（R %.3f · B %.3f）和第 %@ 个（R %.3f · B %.3f）。分歧在第 %@ 个点，不会都是中性的；在同样的光下再加几个中性点，让多数决定。",
+        list(first.members), first.fit.slopes.r, first.fit.slopes.b, list(other.members), other.fit.slopes.r, other.fit.slopes.b, list(differ))
+    }
+    let out = points.indices.filter { !first.members.contains($0) }
+    return String(format: "彼此落在一条线上的最大一组：第 %@ 个（R %.3f · B %.3f）。不在里面的第 %@ 个可能不是中性的，或者光不一样，可以去掉。",
+      list(first.members), first.fit.slopes.r, first.fit.slopes.b, list(out))
   }
   private static func fitError(_ points: [NeutralPoint], _ green: Double, _ curve: RGB?) -> String {
     do { _ = try FilmCalibration.fit(points, greenSlope: green, curve: curve); return "" } catch { return error.localizedDescription }
   }
+  /// The negative's linear reading around a point of the frame as shown, 5 × 5 pixels.
   private static func reading(_ raster: Raster, at p: CGPoint, settings: Adjustments) -> RGB {
     let raw = ImageGeometry.raw(p, settings: settings, aspect: Double(raster.width) / Double(max(1, raster.height)))
     let x = Int(raw.x * Double(raster.width - 1)), y = Int(raw.y * Double(raster.height - 1))

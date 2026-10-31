@@ -110,6 +110,24 @@ enum MCPTests {
       && spots.map(\.x) == spotsPicked.map { Double($0.x) } && spots.allSatisfy { $0.frame == model.frames[0].id && $0.name == "01" }
       && model.showCalibrationPoints && marks.map(\.number) == [1, 2] && marks.map(\.at) == spotsPicked,
       "the preset keeps where its points were picked, and the frame shows them, numbered as listed")
+    // Two bright greys and two dark ones, the second dark one 0.08 D bluer: each dark one lies on a
+    // line with the bright ones, at slopes 0.1 apart, so the report says they disagree rather than
+    // guessing. A middle grey cannot tell them apart (the lines are close there); another dark one
+    // on the first one's line does.
+    func grey(_ x: Double, blue: Double = 0) -> NeutralPoint {
+      let s = [0.44, model.profile.slopes.g, 0.70]
+      return NeutralPoint(frame: model.frames[0].id, value: RGB((0..<3).map { pow(10, -(s[$0] * x + ($0 == 2 ? blue : 0))) }), base: .one, gamma: 1)
+    }
+    model.calibrationPoints = [grey(1.4), grey(1.38), grey(0.6), grey(0.6, blue: 0.08)]
+    let split = text(call("calibration_state"))
+    model.calibrationPoints.append(grey(1.0))
+    let middle = text(call("calibration_state"))
+    model.calibrationPoints.append(grey(0.62))
+    let settled = text(call("calibration_state"))
+    _ = call("calibration_clear")
+    try check(split.contains("有两组") && split.contains("分歧在第 3、4 个点") && middle.contains("有两组")
+      && settled.contains("最大一组：第 1、2、3、5、6 个") && settled.contains("不在里面的第 4 个"),
+      "where two groups of points each lie on a line at different slopes, the report says which points they differ on; a middle grey leaves them apart, another dark one settles it")
     _ = call("undo")
     let preview = call("preview", ["max_size": 400])
     let jpeg = (preview.content.first?["data"] as? String).flatMap { Data(base64Encoded: $0) }
