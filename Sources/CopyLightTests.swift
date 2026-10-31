@@ -56,6 +56,12 @@ enum CopyLightTests {
         return (v.max()! - v.min()!) / v.max()!
       }.max()!
     }
+    // Shown as a negative, the film base is a neutral grey, not the copy light's colour.
+    var settings = Adjustments()
+    settings.rollBase = RGB((0..<3).map { c in plain.pixel(w / 2, h / 2).values[c] })
+    let shownBase = pipe.samples(pipe.neutralNegative(pipe.corrected(negative, crosstalk: light.crosstalk, flat: nil), settings: settings), maxDimension: w).pixel(w / 2, h / 2)
+    try check(max(shownBase.r, shownBase.g, shownBase.b) - min(shownBase.r, shownBase.g, shownBase.b) < 0.02,
+      String(format: "a negative is shown with its film base a neutral grey, not the copy light's colour: %.2f · %.2f · %.2f", shownBase.r, shownBase.g, shownBase.b))
     try check(spread(even) < 0.04 && spread(plain) > 0.2,
       String(format: "a film base lit unevenly reads the same in the corners as in the middle once the light is taken out: %.0f%% apart, %.0f%% before",
         spread(even) * 100, spread(plain) * 100))

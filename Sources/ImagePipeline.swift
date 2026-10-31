@@ -551,6 +551,24 @@ final class ImagePipeline {
     guard r.width >= 1, r.height >= 1, let cg = context.createCGImage(ci, from: r, format: .RGBA8, colorSpace: outputSpace) else { return nil }
     return (cg, NormalRect(x: r.minX / e.width, y: 1 - r.maxY / e.height, width: r.width / e.width, height: r.height / e.height))
   }
+  /// Each channel divided by the film base (picked, the roll's, or the frame's edges'): the base
+  /// shows neutral grey at its own brightness, neither the mask's orange nor a copy light's green,
+  /// and what is left is what the layers made, which also shows whether a pick was on the base. A
+  /// power-law encoding keeps neutral neutral, so no decoding is needed. As it is with no base.
+  static func baseNeutral(_ ci: CIImage, base: RGB?) -> CIImage {
+    guard let base, base.values.allSatisfy({ $0 > 1e-4 }) else { return ci }
+    let mean = (base.r + base.g + base.b) / 3
+    return ci.applyingFilter("CIColorMatrix", parameters: [
+      "inputRVector": CIVector(x: mean / base.r, y: 0, z: 0, w: 0),
+      "inputGVector": CIVector(x: 0, y: mean / base.g, z: 0, w: 0),
+      "inputBVector": CIVector(x: 0, y: 0, z: mean / base.b, w: 0),
+    ])
+  }
+  /// A negative as the light table shows it, as it lies: its base a neutral grey (`baseNeutral`).
+  func neutralNegative(_ image: CGImage, settings: Adjustments) -> CGImage {
+    let ci = Self.baseNeutral(CIImage(cgImage: image, options: [.colorSpace: NSNull()]), base: settings.base ?? settings.rollBase)
+    return context.createCGImage(ci, from: ci.extent, format: .RGBA8, colorSpace: image.colorSpace ?? outputSpace) ?? image
+  }
   /// The picture as shown, positive or negative, straightened, turned and mirrored, from the origin.
   private func shown(
     _ image: CGImage, settings: Adjustments, profile: FilmProfile, analysis: ToneAnalysis?,
@@ -558,19 +576,7 @@ final class ImagePipeline {
   ) -> CIImage? {
     var ci: CIImage
     if negative {
-      ci = CIImage(cgImage: image, options: [.colorSpace: NSNull()])
-      // Each channel divided by the film base, picked or estimated: the base shows neutral grey at
-      // its own brightness, neither the mask's orange nor a raw sensor's green, and what is left is
-      // what the layers made, which also shows whether a pick was on the base. A power-law encoding
-      // keeps neutral neutral, so no decoding is needed.
-      if let base = analysis?.base, base.values.allSatisfy({ $0 > 1e-4 }) {
-        let mean = (base.r + base.g + base.b) / 3
-        ci = ci.applyingFilter("CIColorMatrix", parameters: [
-          "inputRVector": CIVector(x: mean / base.r, y: 0, z: 0, w: 0),
-          "inputGVector": CIVector(x: 0, y: mean / base.g, z: 0, w: 0),
-          "inputBVector": CIVector(x: 0, y: 0, z: mean / base.b, w: 0),
-        ])
-      }
+      ci = Self.baseNeutral(CIImage(cgImage: image, options: [.colorSpace: NSNull()]), base: analysis?.base ?? settings.base ?? settings.rollBase)
       ci = Self.straightened(ci, degrees: settings.angle ?? 0)
       ci = ci.oriented(forExifOrientation: [1, 6, 3, 8][((settings.rotation % 4) + 4) % 4])
       if settings.flipHorizontal == true {

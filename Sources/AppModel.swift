@@ -1607,6 +1607,9 @@ final class AppModel: ObservableObject {
           s.angle = nil
         }
         image = try? ImagePipeline.shared.preview(crop, settings: s, profile: p)
+      } else if let crop = image {
+        // The negative as the table shows it, its base grey.
+        image = ImagePipeline.shared.neutralNegative(crop, settings: frame.adjustments)
       }
       DispatchQueue.main.async { completion(image) }
     }
@@ -1737,7 +1740,7 @@ final class AppModel: ObservableObject {
           guard let self else { return }
           self.step(0.2, "排接触表", token)
           let tiles = page.map { f -> (name: String, image: CGImage?) in
-            (f.name, positive ? positives[f.id] : try? self.source(for: f, maxDimension: 480))
+            (f.name, positive ? positives[f.id] : (try? self.source(for: f, maxDimension: 480)).map { ImagePipeline.shared.neutralNegative($0, settings: f.adjustments) })
           }
           let sheet = Self.composeSheet(tiles, pages: pages)
           DispatchQueue.main.async {
