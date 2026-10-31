@@ -86,7 +86,7 @@ struct Crosstalk: Codable, Equatable {
   /// A reading with the mix put back, as the camera read it.
   func mixed(_ v: RGB) -> RGB { Self.times(m, v) }
   private static func times(_ a: [Double], _ v: RGB) -> RGB {
-    RGB((0..<3).map { max(1e-6, a[3 * $0] * v.r + a[3 * $0 + 1] * v.g + a[3 * $0 + 2] * v.b) })
+    RGB((0..<3).map { (c: Int) -> Double in max(1e-6, a[3 * c] * v.r + a[3 * c + 1] * v.g + a[3 * c + 2] * v.b) })
   }
   /// The leak of each light into the other channels, as percentages, the largest first: for saying
   /// what a calibration found.

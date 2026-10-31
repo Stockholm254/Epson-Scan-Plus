@@ -47,7 +47,9 @@ enum CopyLightTests {
 
     // A blank film base under all three lights, lit unevenly, reads evenly once corrected.
     let film = [0.6, 0.35, 0.25]
-    let negative = picture { x, y in (0..<3).map { c in (0..<3).map { j in mix.m[3 * c + j] * 0.8 * lit(j, x, y) * film[j] }.reduce(0, +) } }
+    let negative = picture { (x: Int, y: Int) -> [Double] in
+      (0..<3).map { (c: Int) -> Double in (0..<3).map { (j: Int) -> Double in mix.m[3 * c + j] * 0.8 * lit(j, x, y) * film[j] }.reduce(0, +) }
+    }
     let even = pipe.samples(pipe.corrected(negative, crosstalk: light.crosstalk, flat: light.flat), maxDimension: w)
     let plain = pipe.samples(pipe.corrected(negative, crosstalk: light.crosstalk, flat: nil), maxDimension: w)
     func spread(_ s: Samples) -> Double {

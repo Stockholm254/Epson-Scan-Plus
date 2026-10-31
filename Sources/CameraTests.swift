@@ -298,12 +298,18 @@ enum CameraTests {
 
     // The copy light's crosstalk: undone exactly, and a reading moved between the ways of reading.
     let mix = Crosstalk.measured, undo = mix.inverse
-    let product = (0..<9).map { i in (0..<3).map { mix.m[3 * (i / 3) + $0] * undo[3 * $0 + i % 3] }.reduce(0, +) }
+    // In steps the type checker of Swift 6.0 (the Command Line Tools) gets through in time.
+    let product: [Double] = (0..<9).map { (i: Int) -> Double in
+      (0..<3).map { (k: Int) -> Double in mix.m[3 * (i / 3) + k] * undo[3 * k + i % 3] }.reduce(0, +)
+    }
+    let identity = product.enumerated().allSatisfy { abs($0.element - ($0.offset % 4 == 0 ? 1.0 : 0.0)) < 1e-9 }
     let reading = RGB(r: 0.3, g: 0.5, b: 0.2)
     func close(_ a: RGB, _ b: RGB, _ e: Double = 1e-9) -> Bool { zip(a.values, b.values).allSatisfy { abs($0 - $1) < e } }
-    try check(product.enumerated().allSatisfy { abs($0.element - ($0.offset % 4 == 0 ? 1 : 0)) < 1e-9 }
-      && close(mix.unmixed(mix.mixed(reading)), reading) && Crosstalk.moved(reading, from: nil, to: mix) == mix.unmixed(reading)
-      && close(Crosstalk.moved(mix.unmixed(reading), from: mix, to: nil), reading) && Crosstalk.moved(reading, from: mix, to: mix) == reading,
+    let undone = close(mix.unmixed(mix.mixed(reading)), reading)
+    let movedIn = Crosstalk.moved(reading, from: nil, to: mix) == mix.unmixed(reading)
+    let movedBack = close(Crosstalk.moved(mix.unmixed(reading), from: mix, to: nil), reading)
+    let stays = Crosstalk.moved(reading, from: mix, to: mix) == reading
+    try check(identity && undone && movedIn && movedBack && stays,
       "the copy light's crosstalk is undone exactly, and a reading moves from one way of reading the picture to the other and back")
     // A picture read from the sensor is told from one the system's RAW engine decoded, in old projects too.
     try arw(orientation: 1).write(to: arwURL)

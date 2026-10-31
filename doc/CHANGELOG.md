@@ -4,6 +4,7 @@
 
 ## 未发布 A7R IV 联机翻拍；翻拍和扫描用同一套去色罩
 
+- **Command Line Tools 又能构建了**：从 10-30 去串色的提交（01664f6）起，Command Line Tools 的 Swift 6.0 在三处推断不出表达式的类型（超时），编译不过；之后的试用版都是用 Xcode 构建的。三处都补上了明确的类型，算法没变。
 - **图像内核改用 Metal**（macOS 27.2 上做的；最低系统仍是 macOS 14）：
   - **原来**：转换、去色噪、曲线和翻拍光场的 6 个 Core Image 内核用 Core Image Kernel Language 写，Apple 从 macOS 10.14 起就把它标为过时，每次构建都有警告。
   - **现在**：都用 Metal 写，放在 `Sources/Kernels.swift`，App 运行时编译，构建不需要 Metal 工具链。系统会缓存编译结果，只有内核改过以后第一次运行时，每个内核多等约 0.3 秒，之后几毫秒。
