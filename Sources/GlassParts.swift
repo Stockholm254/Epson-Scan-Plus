@@ -2,13 +2,13 @@ import AppKit
 import SwiftUI
 
 extension View {
-  /// A pane of glass behind a group of controls floating over a picture: the system's Liquid Glass
-  /// on macOS 26, lensing what lies under it, a little darkened so light text reads (on the copy
-  /// stand's light glass frosted instead); before, a translucent plate of the same shape.
+  /// A pane of glass behind a group of controls floating over a picture: the system's Liquid Glass,
+  /// lensing what lies under it, a little darkened so light text reads (on the copy stand's light
+  /// glass frosted instead); without glass, a translucent plate of the same shape.
   func glassPane(radius: CGFloat = 16, darken: CGFloat = 0.28) -> some View {
     modifier(GlassPane(radius: radius, darken: darken))
   }
-  /// Tinted glass, as a coloured gel is: the system's glass in `tint` on macOS 26, else a plate.
+  /// Tinted glass, as a coloured gel is: the system's glass in `tint`, without glass a plate.
   @ViewBuilder func tintedGlass(_ tint: Color, strength: Double, radius: CGFloat) -> some View {
     if Hardware.glass {
       background(SystemGlassBackground(capsule: false, radius: radius, tint: NSColor(tint).withAlphaComponent(strength)))
@@ -27,7 +27,7 @@ private struct GlassPane: ViewModifier {
     if opaque && !light {
       content.background(RoundedRectangle(cornerRadius: radius).fill(Color(white: 0.12)))
     } else if light {
-      // Liquid Glass where the system has it, under a thin frost; frost alone before.
+      // Liquid Glass under a thin frost; frost alone without glass.
       content.frost(RoundedRectangle(cornerRadius: radius), veil: Hardware.glass ? 0.18 : 0.62, glassRadius: radius)
     } else if Hardware.glass {
       content.background(SystemGlassBackground(capsule: false, radius: radius, tint: NSColor(white: 0, alpha: darken)))
@@ -39,7 +39,7 @@ private struct GlassPane: ViewModifier {
 }
 
 /// The shutter release, as the system draws its leading action: a large round key of prominent
-/// Liquid Glass in red (on earlier systems a prominent bordered one). While a picture is written and
+/// Liquid Glass in red (built with an earlier SDK, a prominent bordered one). While a picture is written and
 /// sent it takes no press and shows the system's spinner; a ring goes off round it each time the
 /// shutter goes.
 struct ShutterKey: View {
@@ -190,8 +190,8 @@ struct CopyStandBackdrop: View {
 }
 
 extension View {
-  /// A pane on light glass: where the system has Liquid Glass, that glass alone, as the system draws
-  /// it; before, frost: a veil of white with a fine grain, its rim lit from above, and a soft shadow
+  /// A pane on light glass: the system's Liquid Glass alone, as the system draws it; without glass,
+  /// frost: a veil of white with a fine grain, its rim lit from above, and a soft shadow
   /// as of a pane standing off what lies under it. With Reduce Transparency an opaque pane instead.
   func frost<S: InsettableShape>(_ shape: S, veil: Double, glassRadius: CGFloat, capsule: Bool = false) -> some View {
     modifier(FrostPane(shape: shape, veil: veil, glassRadius: glassRadius, capsule: capsule))

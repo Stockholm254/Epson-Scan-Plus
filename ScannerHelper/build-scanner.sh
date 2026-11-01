@@ -37,7 +37,7 @@ if [ ! -f "$build_dir/sane-backends-1.4.0/backend/.libs/libsane-epson2.1.dylib" 
     make -j6 -C backend libsane-epson2.la
   ) > "$build_dir/sane-build.log" 2>&1
 fi
-xcrun clang++ -std=c++17 -fobjc-arc -O2 -target arm64-apple-macos14.0 \
+xcrun clang++ -std=c++17 -fobjc-arc -O2 -target arm64-apple-macos26.0 \
   -I"$build_dir/sane-backends-1.4.0/include" \
   -framework Foundation -framework ImageIO -framework CoreGraphics \
   "$project_dir/ScannerHelper/SaneCapture.mm" -o "$destination/SaneCapture"
@@ -57,7 +57,7 @@ for artifact in SaneCapture libsane-epson2.1.dylib libusb-1.0.0.dylib; do
   # Nothing here checks availability at run time, so a weakly linked function is one the
   # deployment target may not have.
   if xcrun nm -um "$destination/$artifact" | grep -q "weak external"; then
-    echo "Weakly linked functions in $artifact, which macOS 14 may not have:" >&2
+    echo "Weakly linked functions in $artifact, which macOS 26 may not have:" >&2
     xcrun nm -um "$destination/$artifact" | grep "weak external" >&2
     exit 1
   fi

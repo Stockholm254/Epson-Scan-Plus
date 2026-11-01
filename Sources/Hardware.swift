@@ -32,10 +32,10 @@ enum Hardware {
   static let ink = adaptive(NSColor(white: 0.92, alpha: 1), NSColor(white: 0.13, alpha: 1))
   /// Amber that reads on either: the console's, or a deeper one on light glass.
   static let amberText = adaptive(NSColor(red: 0.91, green: 0.68, blue: 0.37, alpha: 1), NSColor(red: 0.66, green: 0.4, blue: 0.08, alpha: 1))
-  /// The system draws Liquid Glass (macOS 26): the panels float as glass over the light table and
-  /// the keys, lamps and readouts take its look. Before, the scanner console; also with
-  /// EPSON_SCAN_PLUS_NO_GLASS set, for screenshots, which cannot catch the system's glass.
-  static let glass = SystemGlass.viewClass != nil && ProcessInfo.processInfo.environment["EPSON_SCAN_PLUS_NO_GLASS"] == nil
+  /// The panels float as the system's Liquid Glass over the light table and the keys, lamps and
+  /// readouts take its look. With EPSON_SCAN_PLUS_NO_GLASS set, for screenshots, which cannot catch
+  /// the system's glass, the scanner console instead.
+  static let glass = ProcessInfo.processInfo.environment["EPSON_SCAN_PLUS_NO_GLASS"] == nil
 }
 
 /// A key, as the system draws one: bordered, and filled with the accent when it leads its panel
@@ -93,8 +93,8 @@ struct PlotScreen: View {
   }
 }
 
-/// The system's Liquid Glass on macOS 26, found at run time: this app is built with an SDK from
-/// before it, but the system draws it all the same. Nil on earlier systems.
+/// The system's Liquid Glass, found at run time: built with an SDK from before macOS 26, this app
+/// has no name for it, but the system draws it all the same.
 enum SystemGlass {
   static var viewClass: NSView.Type? { NSClassFromString("NSGlassEffectView") as? NSView.Type }
 }
@@ -138,10 +138,10 @@ struct SystemGlassBackground: NSViewRepresentable {
 }
 
 extension View {
-  /// The plate under a control floating over the picture. Where the system has Liquid Glass
-  /// (macOS 26) the picture shows through it, lensed at its rim: with its SDK through SwiftUI,
-  /// which keeps the text legible by itself; built with an earlier one, the system's glass view
-  /// behind light text, a little darkened. Before macOS 26, a dark translucent plate.
+  /// The plate under a control floating over the picture. The picture shows through the system's
+  /// Liquid Glass, lensed at its rim: with the macOS 26 SDK through SwiftUI, which keeps the text
+  /// legible by itself; built with an earlier one, the system's glass view behind light text, a
+  /// little darkened. Without glass, a dark translucent plate.
   @ViewBuilder func floatingPlate<S: Shape>(_ shape: S, text: Color, opacity: Double) -> some View {
     liquid(shape) { content in
       if Hardware.glass {

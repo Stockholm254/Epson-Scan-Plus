@@ -16,12 +16,12 @@ if [ ! -f "$sdk/include/CameraRemote_SDK.h" ] || [ ! -f "$sdk/lib/libCr_Core.dyl
   exit 0
 fi
 mkdir -p "$frameworks/CrAdapter"
-xcrun clang++ -std=c++17 -O2 -Wall -Wno-unused-parameter -target arm64-apple-macos14.0 \
+xcrun clang++ -std=c++17 -O2 -Wall -Wno-unused-parameter -target arm64-apple-macos26.0 \
   -isystem "$sdk/include" "$project_dir/CameraHelper/CameraHelper.cpp" \
   -L"$sdk/lib" -lCr_Core -Wl,-rpath,@executable_path/../Frameworks -o "$helper"
 # The same process against a simulated camera (SimulatedCamera.cpp, not Sony's library), for the
 # self-test to take pictures with: only ever started by the self-test.
-xcrun clang++ -std=c++17 -O2 -Wall -Wno-unused-parameter -target arm64-apple-macos14.0 \
+xcrun clang++ -std=c++17 -O2 -Wall -Wno-unused-parameter -target arm64-apple-macos26.0 \
   -isystem "$sdk/include" "$project_dir/CameraHelper/CameraHelper.cpp" "$project_dir/CameraHelper/SimulatedCamera.cpp" \
   -o "$app_dir/Contents/MacOS/EpsonCameraSimulator"
 # libCr_Core finds its adapters in the bundle's Contents/Frameworks/CrAdapter.

@@ -13,7 +13,7 @@ include="$work/sane-backends-1.4.0/include"
 xcrun clang -dynamiclib -O2 -I"$include" "$helper_dir/FakeSane.c" -o "$work/libfake.dylib"
 # A 2-second no-data window. Each fake read takes 30 ms, so only a deliberate stall trips it,
 # while the whole 10-second scan is far longer than the window.
-xcrun clang++ -std=c++17 -fobjc-arc -O2 -DSTALL_SECONDS=2 -target arm64-apple-macos14.0 \
+xcrun clang++ -std=c++17 -fobjc-arc -O2 -DSTALL_SECONDS=2 -target arm64-apple-macos26.0 \
   -I"$include" -framework Foundation -framework ImageIO -framework CoreGraphics \
   "$helper_dir/SaneCapture.mm" -o "$work/SaneCapture"
 

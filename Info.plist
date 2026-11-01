@@ -8,7 +8,7 @@
 <key>CFBundleVersion</key><string>24</string>
 <key>CFBundleShortVersionString</key><string>0.6.6</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>LSMinimumSystemVersion</key><string>14.0</string>
+<key>LSMinimumSystemVersion</key><string>26.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSCameraUsageDescription</key><string>Epson Scan plus 需要访问连接的扫描仪来预览和扫描胶片。</string>
 <key>NSPrincipalClass</key><string>NSApplication</string>

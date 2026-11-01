@@ -1,17 +1,18 @@
 import AppKit
 import SwiftUI
 
-/// SwiftUI's own Liquid Glass, with the macOS 26 SDK on macOS 26: glass that flows from one place
-/// to the next, runs together with its neighbours like drops, and gives under a press. Built with
-/// an earlier SDK, on an earlier system, or with EPSON_SCAN_PLUS_NO_GLASS set, every part here
-/// draws what the app drew before, through the run-time glass view or the console look.
+/// SwiftUI's own Liquid Glass, with the macOS 26 SDK: glass that flows from one place to the next,
+/// runs together with its neighbours like drops, and gives under a press. Built with an earlier
+/// SDK, or with EPSON_SCAN_PLUS_NO_GLASS set, every part here draws what the app drew before,
+/// through the run-time glass view or the console look.
 enum Liquid {
   /// SwiftUI's glass is there to use.
   static var available: Bool {
     #if compiler(>=6.2)
-      if #available(macOS 26.0, *) { return Hardware.glass }
+      return Hardware.glass
+    #else
+      return false
     #endif
-    return false
   }
   /// How a piece of glass moves when it flows, runs together or comes apart.
   /// The glass flowing from one place to the next; with Reduce Motion a short fade instead.
@@ -27,7 +28,6 @@ struct LiquidStyle {
   var tint: Color?
   var interactive = false
   #if compiler(>=6.2)
-    @available(macOS 26.0, *)
     var glass: Glass {
       var g: Glass = clear ? .clear : .regular
       if let tint { g = g.tint(tint) }
@@ -46,11 +46,7 @@ extension View {
   ) -> some View {
     #if compiler(>=6.2)
       if Hardware.glass {
-        if #available(macOS 26.0, *) {
-          LiquidPiece(content: self, shape: shape, style: style, id: id, union: union, namespace: namespace)
-        } else {
-          fallback(self)
-        }
+        LiquidPiece(content: self, shape: shape, style: style, id: id, union: union, namespace: namespace)
       } else {
         fallback(self)
       }
@@ -61,7 +57,6 @@ extension View {
 }
 
 #if compiler(>=6.2)
-  @available(macOS 26.0, *)
   private struct LiquidPiece<Content: View, S: Shape>: View {
     let content: Content
     let shape: S
@@ -84,7 +79,7 @@ extension View {
   /// in a `LiquidGroup` grows out of it and runs back into it; without SwiftUI's glass, nothing.
   @ViewBuilder func liquidName(_ id: String, in namespace: Namespace.ID) -> some View {
     #if compiler(>=6.2)
-      if Hardware.glass, #available(macOS 26.0, *) {
+      if Hardware.glass {
         glassEffectID(id, in: namespace)
       } else {
         self
@@ -103,7 +98,7 @@ struct LiquidGroup<Content: View>: View {
   var body: some View {
     #if compiler(>=6.2)
       if Hardware.glass {
-        if #available(macOS 26.0, *) { GlassEffectContainer(spacing: spacing) { content } } else { content }
+        GlassEffectContainer(spacing: spacing) { content }
       } else {
         content
       }
@@ -130,23 +125,23 @@ struct PictureExtension: View {
 }
 
 extension View {
-  /// The one action a bar or panel leads to, as the system draws it: prominent Liquid Glass on
-  /// macOS 26, a prominent bordered button before, in `tint`.
+  /// The one action a bar or panel leads to, as the system draws it: prominent Liquid Glass with
+  /// the macOS 26 SDK, a prominent bordered button built with an earlier one, in `tint`.
   @ViewBuilder func leadingAction(_ tint: Color = Hardware.accent) -> some View {
     #if compiler(>=6.2)
-      if #available(macOS 26.0, *) { buttonStyle(.glassProminent).tint(tint) } else { buttonStyle(.borderedProminent).tint(tint) }
+      buttonStyle(.glassProminent).tint(tint)
     #else
       buttonStyle(.borderedProminent).tint(tint)
     #endif
   }
-  /// A key floating over the picture, as the system draws one: Liquid Glass on macOS 26, a bordered
-  /// button before; one that is `on` filled with the accent.
+  /// A key floating over the picture, as the system draws one: Liquid Glass with the macOS 26 SDK, a
+  /// bordered button built with an earlier one; one that is `on` filled with the accent.
   @ViewBuilder func glassAction(on: Bool = false) -> some View {
     if on {
       leadingAction()
     } else {
       #if compiler(>=6.2)
-        if #available(macOS 26.0, *) { buttonStyle(.glass) } else { buttonStyle(.bordered) }
+        buttonStyle(.glass)
       #else
         buttonStyle(.bordered)
       #endif
