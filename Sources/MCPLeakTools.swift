@@ -21,7 +21,7 @@ extension MCPTools {
   private static let fileField: [String: Any] = ["type": "string", "description": "文件的完整路径（以 / 或 ~ 开头）"]
   private static let regionFields: [String: Any] = [
     "x": number("椭圆中心的横向位置", 0...1), "y": number("椭圆中心的纵向位置", 0...1),
-    "rx": number("横向半径，占画宽", 0.005...0.5), "ry": number("纵向半径，占画高", 0.005...0.5),
+    "rx": number("横向半径，占画宽；可以大于 0.5", 0.005...4), "ry": number("纵向半径，占画高；可以大于 0.5，比如 4 让椭圆盖住一整条边、上下几乎不衰减", 0.005...4),
     "clean_point": pointPair("[x, y]：同材质、没有漏光的干净位置，区域按它的颜色校正"),
     "mode": ["type": "string", "enum": ["chroma", "fog", "gain"], "description": "chroma 去掉色偏、保留明暗（默认）；fog 减去亮雾、恢复暗部；gain 按比例去色偏：在 cast_point 量出色偏，整片按同一个比例改，跨过不同物体不会染色，适合翻拍灯的颜色暗角，不受高光保护"],
     "cast_point": pointPair("[x, y]：只用于 gain，量色偏的位置，要和 clean_point 是同一种东西（比如都是天空）；不给则用椭圆中心"),
@@ -104,7 +104,7 @@ extension MCPTools {
     - 先用 leak_open 打开本卷照片或任务（或 leak_import 导入文件），leak_get_state 和 leak_preview 看情况；已有参考图时 leak_start 在本地免费修复。
     - 生成参考图要上传缩图并计费，只能由用户确认：用 leak_request_reference 在 App 里打开确认窗口，不要替用户决定。用户已有干净版本时用 leak_import_reference，免费。
     - 不想用 API 时：用户可以用自己订阅的图像模型做参考图——leak_export_upload 请用户存缩图（提示词同时复制），或 leak_reference_prompt 把提示词给用户；用户在 ChatGPT 等应用里上传、下载结果后，用 leak_import_reference 导入，再 leak_start。
-    - 没有参考图也能修：看 leak_preview，用 leak_detect 找候选、leak_sample 量颜色，判断哪里是漏光、哪里是真实的红色物体；leak_update_region 启用对的候选，或 leak_add_region 画椭圆，clean_point 点在同材质、没有漏光的地方；然后 leak_start 只按这些区域校正，不调用 API。chroma 把区域的色度拉向干净点（适合同一种材质上的漏光，比如天空上的一片红），fog 减去亮雾；跨过不同物体、往边上逐渐加重的偏色（比如翻拍灯的颜色暗角，左右对称、越靠边越红）用 gain：cast_point 点在偏色最重、和 clean_point 同一种东西的地方（比如边上的天空对中间的天空），椭圆放在那一边、半径盖住偏色的范围、羽化开大。chroma 和 fog 在亮处受高光保护（protect_highlights），gain 不受。
+    - 没有参考图也能修：看 leak_preview，用 leak_detect 找候选、leak_sample 量颜色，判断哪里是漏光、哪里是真实的红色物体；leak_update_region 启用对的候选，或 leak_add_region 画椭圆，clean_point 点在同材质、没有漏光的地方；然后 leak_start 只按这些区域校正，不调用 API。chroma 把区域的色度拉向干净点（适合同一种材质上的漏光，比如天空上的一片红），fog 减去亮雾；跨过不同物体、往边上逐渐加重的偏色（比如翻拍灯的颜色暗角，左右对称、越靠边越红）用 gain：cast_point 点在偏色最重、和 clean_point 同一种东西的地方（比如边上的天空对中间的天空），椭圆中心放在那条边上（x 为 0 或 1），ry 设到 4 让整条边上下都校正，羽化 1。偏色往里衰减得像指数时，同一边叠一窄一宽两层，强度加起来为 1（比如 rx 0.12 强度 0.42 和 rx 0.3 强度 0.6）；修完用 leak_sample 沿边到中间量一行，看各处的 R/G 是否和中间接近。chroma 和 fog 在亮处受高光保护（protect_highlights），gain 不受。
     - 结果不理想时先检查场景（夜景的边缘白雾只在夜晚模式校正），再调 strength；灯光红晕被抹掉时确认 protect_highlights 开着，或用 leak_add_protection 画保护区。
     - 局部漏光：leak_detect 找候选（默认不启用），leak_list_regions 查看，leak_update_region 启用或修改；也可以 leak_add_region 画椭圆，clean_point 点在同材质、没有漏光的地方。
     - 自动对齐不可靠时用 leak_set_landmarks 给 4 对以上对应点，再 leak_start。旋转和裁切会清空区域、保护区和对应点，先定方向和裁切。
@@ -441,7 +441,7 @@ extension MCPTools {
       try requireBase(lab)
       try only(arguments, ["x", "y", "rx", "ry", "clean_point", "cast_point", "mode", "amount", "feather", "name"])
       guard let x = try double(arguments, "x", 0...1), let y = try double(arguments, "y", 0...1),
-        let rx = try double(arguments, "rx", 0.005...0.5), let ry = try double(arguments, "ry", 0.005...0.5)
+        let rx = try double(arguments, "rx", 0.005...4), let ry = try double(arguments, "ry", 0.005...4)
       else { throw DeskError.message("需要椭圆的中心 x、y 和半径 rx、ry。") }
       guard let clean = try spot(arguments["clean_point"], "clean_point") else {
         throw DeskError.message("需要 clean_point：同材质、没有漏光的干净位置 [x, y]，区域按它的颜色校正。")
@@ -478,7 +478,7 @@ extension MCPTools {
       if arguments["enabled"] != nil, !(arguments["enabled"] is Bool) { throw DeskError.message("enabled 应为 true 或 false。") }
       let enabled = arguments["enabled"] as? Bool
       let x = try double(arguments, "x", 0...1), y = try double(arguments, "y", 0...1)
-      let rx = try double(arguments, "rx", 0.005...0.5), ry = try double(arguments, "ry", 0.005...0.5)
+      let rx = try double(arguments, "rx", 0.005...4), ry = try double(arguments, "ry", 0.005...4)
       let amount = try double(arguments, "amount", 0...1), feather = try double(arguments, "feather", 0...1)
       let clean = try spot(arguments["clean_point"], "clean_point"), mode = try choice(arguments, "mode", ["chroma", "fog", "gain"])
       let cast = try spot(arguments["cast_point"], "cast_point")

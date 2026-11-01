@@ -475,11 +475,12 @@ enum LightLeakTests {
       "without a reference, leak_start repairs by the region drawn alone, asking nothing of the API: inside it the colour moves, outside nothing does")
     _ = mcp("undo")
     try check(pageLab.params.regions.isEmpty && !pageLab.repaired, "undo takes the region, and the repair with it, away")
-    let gain = mcp("leak_add_region", ["x": 0, "y": 0.5, "rx": 0.3, "ry": 0.6, "clean_point": [0.6, 0.2], "cast_point": [0.04, 0.2], "mode": "gain"])
+    let gain = mcp("leak_add_region", ["x": 0, "y": 0.5, "rx": 0.3, "ry": 4, "clean_point": [0.6, 0.2], "cast_point": [0.04, 0.2], "mode": "gain", "feather": 1])
     let gainListed = said(mcp("leak_list_regions"))
     try check(!gain.isError && pageLab.params.regions.last?.mode == "gain" && pageLab.params.regions.last?.cast == LeakPoint(x: 0.04, y: 0.2)
+      && pageLab.params.regions.last?.ry == 4
       && gainListed.contains("cast_point") && mcp("leak_add_region", ["x": 0, "y": 0.5, "rx": 0.3, "ry": 0.6, "clean_point": [0.6, 0.2], "mode": "tint"]).isError,
-      "leak_add_region draws a gain region measured where it is told, and refuses a mode it does not know")
+      "leak_add_region draws a gain region measured where it is told, as tall as a whole edge, and refuses a mode it does not know")
     _ = mcp("undo")
     pageLab.importReference(referenceURL)
     pageLab.wait()
