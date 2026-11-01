@@ -144,7 +144,7 @@
       - **生成预设以后**：点的位置存在预设里，画面上照样标出。面板列出每个点在哪一张，点一下打开那一张；「标出」开关显示或隐藏。
       - **裁切以后**：位置记在照片上，改了裁切或拉直，标记照样落在原处。
     - **和去串色的关系**：去串色在读图时先做，标定叠在它后面，只改斜率，不会替换串色矩阵。标定和使用时去串色要保持同一个状态（默认打开）；预设说明里如实记着标定时是开还是关。
-  - 本机预设的使用、导出、删除和导入。
+  - 本机预设的使用、导出、删除和导入。「预设…」（「模块」菜单，或「胶片」页预设旁的「管理…」）打开预设表格：所有预设的类型、斜率、来源，这一卷在用哪个，图库里各有几卷在用、是哪几卷。可以多选删除本机预设，或一次清除没有卷在用的；删除只从列表移除，在用它的卷各自保留一份，之后能在表格里恢复到列表。内置预设不能删除。
   - AI 助手（MCP）：允许助手读取和调整转换，并复制连接配置（见下文）。
 - **② 去色罩 · 输出**：
   - 导出格式与 JPEG 质量、色彩空间、文件名模板，导出当前 / 勾选，扫描后自动导出正片。
@@ -239,7 +239,7 @@
 
 ## AI 助手（MCP）
 
-Epson Scan plus 可以作为 [MCP](https://modelcontextprotocol.io) 服务器，让 Claude 等 AI 助手帮你看转换：读取选中画面的片基与来源、胶片的通道斜率、整卷估计、白平衡、色阶、负片密度和正片的直方图、白点以上的高光和 SDR 范围，看预览、在画面上取点，并调整片基、中性灰、冷暖、曝光、色阶等。每次调整都是 App 里的一步编辑，可以用 ⌘Z 撤销；助手不能扫描、删除或导出文件。
+Epson Scan plus 可以作为 [MCP](https://modelcontextprotocol.io) 服务器，让 Claude 等 AI 助手帮你看转换：读取选中画面的片基与来源、胶片的通道斜率、整卷估计、白平衡、色阶、负片密度和正片的直方图、白点以上的高光和 SDR 范围，画面的裁切、拉直、去串色和手动取过的点，转换实际用的斜率和来源、自动分析定出的两端，高光、阴影和整卷同一白平衡 / 色阶，每个预设的说明和在哪些卷里用，以及图库里的各卷；看预览、在画面上取点，并调整片基、中性灰、冷暖、曝光、色阶等。每次调整都是 App 里的一步编辑，可以用 ⌘Z 撤销；助手不能扫描、删除或导出文件。
 
 1. 在「胶片」页的「AI 助手 · MCP」打开「允许 AI 助手读取和调整转换」（默认关闭）。
 2. 连接助手：
@@ -259,7 +259,7 @@ Epson Scan plus 可以作为 [MCP](https://modelcontextprotocol.io) 服务器，
   - 取点用浮点读数，密的地方也不会因为 8 位量化而不准。
   - 看预览时，画面会发给助手所在的 AI 服务处理。
 
-助手启动的是 App 自己（`EpsonScanPlus --mcp`），它通过只有你的账户能访问的本机连接与正在运行的 App 通信，不经过网络。工具列表：`get_state`、`list_frames`、`list_presets`、`select_frame`、`preview`、`sample`、`adjust`、`pick_film_base`、`auto_film_base`、`pick_neutral`、`pick_highlight`、`choose_preset`、`apply_to_roll`、`reset_adjustments`、`undo`、`auto_crop`，以及预设标定的 `calibration_add_points`、`calibration_state`、`calibration_remove_point`、`calibration_clear`、`calibration_make_preset`。
+助手启动的是 App 自己（`EpsonScanPlus --mcp`），它通过只有你的账户能访问的本机连接与正在运行的 App 通信，不经过网络。工具列表：`get_state`、`list_frames`、`list_presets`、`list_rolls`、`select_frame`、`preview`、`sample`、`adjust`、`pick_film_base`、`auto_film_base`、`pick_neutral`、`pick_highlight`、`choose_preset`、`apply_to_roll`、`reset_adjustments`、`undo`、`auto_crop`，以及预设标定的 `calibration_add_points`、`calibration_state`、`calibration_remove_point`、`calibration_clear`、`calibration_make_preset`。
 
 去漏光页也在同一个 MCP 服务器里。FilmLightLab 原来本机 HTTP 接口能做的，这里都能做，对照表见 [去漏光](doc/light-leak.md#通过-mcp)：
 

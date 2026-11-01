@@ -50,6 +50,7 @@ struct ContentView: View {
     }
     .sheet(isPresented: $showInfo) { profileInfo }
     .sheet(isPresented: $m.showLibrary) { LibrarySheet(m: m) }
+    .sheet(isPresented: $m.showPresets) { PresetManagerSheet(m: m) }
     .onChange(of: m.tool) { m.refresh() }
     .onAppear {
       m.undoManager = undoManager

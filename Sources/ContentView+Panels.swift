@@ -197,7 +197,9 @@ extension ContentView {
       HStack {
         Button("应用") { m.matchFilm() }
         Menu("预设") { ForEach(m.profiles) { p in Button(p.name) { m.chooseProfile(p) } } }
+        Button("管理…") { m.showPresets = true }.help("所有预设、各在哪些卷里用，删除不用的")
       }
+      Text("在用「\(m.profile.name)」").font(.system(size: 11)).lineLimit(2)
       Text(m.profile.publication).font(.system(size: 10)).foregroundStyle(.secondary)
       Button("配置与技术文档…") { showInfo = true }.font(.system(size: 11))
       VStack(alignment: .leading, spacing: 4) {
@@ -349,13 +351,16 @@ extension ContentView {
           Text(p.name).font(.system(size: 11))
           Text(String(format: "R %.3f · G %.3f · B %.3f", p.slopes.r, p.slopes.g, p.slopes.b)).readout(9)
           HStack {
-            Button("使用") { m.chooseProfile(p) }.disabled(m.profile == p)
+            Button(m.profile.id == p.id ? "在用" : "使用") { m.chooseProfile(p) }.disabled(m.profile == p)
             Button("导出…") { m.exportProfile(p) }
             Button("删除") { m.deleteCustomProfile(p.id) }
           }.font(.system(size: 10)).controlSize(.mini)
         }
       }
-      Button("导入 JSON…") { m.importProfile() }.font(.system(size: 11))
+      HStack {
+        Button("导入 JSON…") { m.importProfile() }
+        Button("管理预设…") { m.showPresets = true }
+      }.font(.system(size: 11))
     }
   }
 

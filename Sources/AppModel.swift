@@ -222,6 +222,8 @@ final class AppModel: ObservableObject {
   @Published var captureSource = CaptureSource.scanner
   /// The library, the window's cabinet of rolls, is open.
   @Published var showLibrary = false
+  /// The presets table is open.
+  @Published var showPresets = false
   /// The 去漏光 page, made when it is first shown.
   lazy var leak: LeakLab = makeLeakLab()
   /// New previews and imports create their project folders here.

@@ -35,6 +35,8 @@ struct RollEntry: Identifiable, Equatable {
   let exported: Int
   let overview: URL?
   let notes: String
+  /// The preset it converts with, as its project keeps it.
+  let profile: FilmProfile
   /// In the folder versions before 0.4.9 used.
   let legacy: Bool
 }
@@ -107,7 +109,7 @@ enum RollLibrary {
       film: p.filmName, date: date, source: source, frames: frames,
       fullResolution: p.frames.filter(\.hasFullResolution).count, exported: exported,
       overview: files.fileExists(atPath: overview) ? URL(fileURLWithPath: overview) : nil,
-      notes: p.notes ?? "", legacy: legacy)
+      notes: p.notes ?? "", profile: p.profile, legacy: legacy)
   }
   /// When a roll was started, from the folder name new rolls get (`2026-10-25_174913_…`).
   static func started(_ folderName: String) -> Date? {

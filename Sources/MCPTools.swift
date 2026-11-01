@@ -29,9 +29,10 @@ enum MCPTools {
   ]
   static let tools: [Tool] = conversionTools + leakTools
   private static let conversionTools: [Tool] = [
-    Tool(name: "get_state", description: "读取当前工程和选中画面的转换状态：胶片预设与各通道斜率、片基 RGB 及来源、整卷估计、白平衡、色阶、影调、扫描与对齐信息，以及负片密度和正片各通道的百分位与溢出比例；sdr_range 给出进入两端之前（色阶黑点为 0、白点为 1）白点以上的比例、最亮 0.1% 的位置和高出白点几档、屏幕上从哪里起是纯白或纯黑，以及屏幕上纯白、纯黑的比例。调整前先调用。", properties: [:]),
-    Tool(name: "list_frames", description: "列出本卷所有画面：编号、是否勾选、是否已正式扫描及 dpi、方向。", properties: [:]),
-    Tool(name: "list_presets", description: "列出可用的胶片预设：名称、通道斜率、来源，是否为本机标定。", properties: [:]),
+    Tool(name: "get_state", description: "读取当前工程和选中画面的转换状态：胶片预设与各通道斜率、片基 RGB 及来源、整卷估计、白平衡、色阶、影调、扫描与对齐信息，以及负片密度和正片各通道的百分位与溢出比例；sdr_range 给出进入两端之前（色阶黑点为 0、白点为 1）白点以上的比例、最亮 0.1% 的位置和高出白点几档、屏幕上从哪里起是纯白或纯黑，以及屏幕上纯白、纯黑的比例。还有：画面的裁切、拉直、来源文件、是否从传感器读出和去串色、手动取过哪些点；预设的类型和说明（适用条件写在里面）；slopes_in_use 是转换实际用的斜率和它来自哪里（标定预设、整卷估计或预设）；analysis 是自动分析实际定出的片基、白平衡、色阶两端（对数曝光）和高光伸到多远；tone 里的高光、阴影、去色噪；roll 是整卷同一白平衡 / 色阶、去串色和标定点数。调整前先调用。", properties: [:]),
+    Tool(name: "list_frames", description: "列出本卷所有画面：编号、是否勾选、是否已正式扫描及 dpi、方向、镜像、拉直、裁切、来源文件，和手动取过的片基、中性灰、高光。", properties: [:]),
+    Tool(name: "list_presets", description: "列出所有胶片预设：名称、类型（内置 / V850 标定 / 翻拍标定 / 导入 / 只在卷里）、通道斜率、来源和说明，这一卷是否在用，图库里有几卷在用及是哪几卷，能否删除。「只在卷里」是已从列表删除、只有卷里还留着的预设。只读，删除和恢复在 App 的「预设…」表格里做。", properties: [:]),
+    Tool(name: "list_rolls", description: "列出图库里的卷（只读）：标题、文件夹、开始时间、来源（扫描 / 翻拍 / 导入）、胶片、用的预设、画面数、全分辨率张数、已导出的文件数、备注，以及哪一卷是打开的。", properties: [:]),
     Tool(name: "select_frame", description: "选中某张画面（按编号，如 \"09\"）。", properties: ["name": ["type": "string", "description": "画面编号"]], required: ["name"]),
     Tool(name: "preview", description: "取得选中画面的 JPEG：positive 为当前设置转换出的正片，negative 为未反相的负片（线性数据，看起来很暗）。", properties: [
       "kind": ["type": "string", "enum": ["positive", "negative"], "description": "默认 positive"],
@@ -87,6 +88,9 @@ enum MCPTools {
     - 坐标是单张视图里画面的相对位置，0–1，左上为原点。
     - 翻拍的照片四周带着片基、漏光或片夹时，先用 auto_crop 裁到画面（whole_roll 整卷一起），再看和取样：自动白平衡和色阶只看裁切以内。
     - 每次调整都能在 App 里用 ⌘Z 撤销，也可以调用 undo。转换的工具不会扫描、删除或导出文件。
+    - 翻拍预设的斜率属于那台相机和那组灯，灯的配比变了也照样成立；它记下的中性却是标定那次的灯光。套用以后整体偏色、而白色或灰色的东西彼此一致时，在它们上面 pick_neutral 重新配平就好，不必重做标定。
+    - 画面的方向和镜像这里改不了，要请用户在 App 里转。
+    - 要看图库里别的卷，或某个预设有哪些卷在用、适用条件（说明里写着去串色要开还是关），用 list_rolls 和 list_presets，都只读。
     预设标定（calibration_*）定的是这种胶片在这台设备上各通道的反差（斜率），让灰从暗到亮都是灰；它还记下中性落在哪里，用这个预设时白平衡按它配平（开着自动也一样），所以取点时那种光下的灰是灰。它不套色卡，胶片的风格保留。
     原理：中性的东西三个通道反射得一样多。除掉片基以后，它每个通道高于片基的密度 = 这个通道的斜率 ×（同一个曝光量 + 这个通道的偏移），偏移里是光的颜色。所以同一种光下的中性点，从亮到暗落在一条直线上（红对绿、蓝对绿），斜率就是要标定的。挑点和去点都只按这一条，不和别的软件或别的渲染比颜色。
     用户说「帮这卷做翻拍标定」时：
@@ -124,6 +128,16 @@ enum MCPTools {
     ["r": (v.r * 10000).rounded() / 10000, "g": (v.g * 10000).rounded() / 10000, "b": (v.b * 10000).rounded() / 10000]
   }
   private static func round(_ v: Double, _ digits: Double = 1000) -> Double { (v * digits).rounded() / digits }
+  /// How a frame is cut from its picture and turned, its file, and what was picked on it by hand.
+  private static func geometry(_ f: FilmFrame) -> [String: Any] {
+    let s = f.adjustments
+    var g: [String: Any] = ["mirrored": s.flipHorizontal == true,
+      "crop": ["x": round(f.rect.x), "y": round(f.rect.y), "width": round(f.rect.width), "height": round(f.rect.height)],
+      "picked": ["film_base": s.base != nil, "neutral": s.neutralSample != nil, "highlight": s.highlightSample != nil]]
+    if let angle = s.angle { g["straighten_degrees"] = angle }
+    if let path = f.sourcePath { g["file"] = URL(fileURLWithPath: path).lastPathComponent }
+    return g
+  }
   /// The selected frame and what converting it needs, read on the main thread.
   private static func selected(_ model: AppModel) throws -> (FilmFrame, FilmProfile) {
     try onMain {
@@ -270,7 +284,10 @@ enum MCPTools {
         "mirrored": s.flipHorizontal == true]
       if let dpi = frame.scanDPI, AppModel.readsScan(frame) { framePart["scan_dpi"] = dpi }
       if let l = frame.levels { framePart["aligned_to_preview"] = ["used": l.usable, "fit": round(l.fit, 10000), "gain": rgb(l.gain)] }
-      var preset: [String: Any] = ["name": profile.name, "id": profile.id, "source": profile.publication, "channel_slopes": rgb(profile.slopes)]
+      framePart.merge(geometry(frame)) { a, _ in a }
+      if frame.sensorRead == true { framePart["read_from_sensor"] = true; framePart["crosstalk_removed"] = frame.crosstalk != nil }
+      var preset: [String: Any] = ["name": profile.name, "id": profile.id, "source": profile.publication, "channel_slopes": rgb(profile.slopes),
+        "kind": PresetTable.kind(profile, builtin: FilmProfile.builtins.contains { $0.id == profile.id }).rawValue, "notes": profile.notes]
       if let toe = profile.toe { preset["toe"] = rgb(toe) }
       if let offsets = profile.offsets { preset["calibrated_neutral_offsets"] = rgb(offsets) }
       let fromEdges: String? = onMain {
@@ -286,12 +303,29 @@ enum MCPTools {
       state["preset"] = preset
       state["film_base"] = base
       if let slopes = s.rollSlopes { state["roll_estimate_slopes"] = rgb(slopes) }
+      let used = ImagePipeline.slopes(s, profile)
+      state["slopes_in_use"] = ["rgb": rgb(used.slopes),
+        "from": profile.offsets != nil ? "calibrated preset" : s.rollSlopes != nil ? "roll estimate"
+          : "preset (no roll estimate: it needs two frames or more with enough edges between light and dark)"]
+      var auto: [String: Any] = ["film_base": rgb(analysis.base), "balance": rgb(analysis.balance), "channel_gain": rgb(analysis.gain),
+        "levels_black_log_exposure": round(analysis.low), "levels_white_log_exposure": round(analysis.high)]
+      if let reach = analysis.reach { auto["highlights_reach_log_exposure"] = round(reach) }
+      state["analysis"] = auto
+      state["roll"] = onMain { () -> [String: Any] in
+        var roll: [String: Any] = ["shared_balance": s.sharedBalance == true, "shared_levels": s.sharedLevels == true,
+          "calibration_points": model.calibrationPoints.count]
+        if let source = model.rollSource { roll["source"] = source.rawValue }
+        if model.hasSensorPictures { roll["crosstalk_removed"] = model.crosstalkRemoved }
+        if model.hasSinglePictures { roll["pool_single_pictures"] = model.poolPictures }
+        return roll
+      }
       var balance: [String: Any] = ["auto": s.autoWhiteBalance, "warmth": s.warmth, "tint": s.tint]
       if let neutral = s.neutralSample { balance["neutral_sample"] = rgb(neutral) }
       if let highlight = s.highlightSample { balance["highlight_sample_dmax"] = rgb(highlight) }
       state["white_balance"] = balance
       state["levels"] = ["auto": s.autoLevels, "black": s.black, "white": s.white, "midtone": s.midtone]
-      state["tone"] = ["exposure": s.exposure, "contrast": s.contrast, "saturation": s.saturation, "curves": s.curves != nil]
+      state["tone"] = ["exposure": s.exposure, "contrast": s.contrast, "saturation": s.saturation, "curves": s.curves != nil,
+        "highlights": s.highlightsAmount, "shadows": s.shadowsAmount, "colour_noise": s.colourNoiseAmount, "soft_ends": s.softEndsOn]
       state["input"] = ["negative": s.inputIsNegative, "gamma": s.inputGamma]
       state["negative_density_above_base"] = ["r": percentiles(densities[0]), "g": percentiles(densities[1]), "b": percentiles(densities[2])]
       state["positive_srgb"] = ["r": percentiles(outputs[0]), "g": percentiles(outputs[1]), "b": percentiles(outputs[2]),
@@ -314,15 +348,28 @@ enum MCPTools {
           var item: [String: Any] = ["name": f.name, "ticked": f.enabled, "selected": f.id == model.selectedID,
             "scanned": AppModel.readsScan(f), "rotation_quarter_turns": f.adjustments.rotation]
           if let dpi = f.scanDPI, AppModel.readsScan(f) { item["scan_dpi"] = dpi }
+          item.merge(geometry(f)) { a, _ in a }
           return item
         }
       })
     case "list_presets":
+      let rolls = RollLibrary.scan(onMain { model.libraryRoots })
       return text(onMain {
-        model.profiles.map { p -> [String: Any] in
-          ["name": p.name, "id": p.id, "source": p.publication, "channel_slopes": rgb(p.slopes), "calibrated_here": p.offsets != nil,
-           "in_use": p.id == model.profile.id]
+        model.presetRows(rolls).map { r -> [String: Any] in
+          let p = r.profile
+          return ["name": p.name, "id": p.id, "kind": r.kind.rawValue, "source": p.publication, "notes": p.notes,
+            "channel_slopes": rgb(p.slopes), "calibrated_here": p.offsets != nil, "in_use": r.current, "deletable": r.deletable,
+            "rolls_using": r.rolls.count, "rolls": r.rolls.prefix(12).map { "\($0.title) · \($0.folder.lastPathComponent)" }]
         }
+      })
+    case "list_rolls":
+      let (roots, open) = onMain { (model.libraryRoots, model.sessionURL) }
+      let started = ISO8601DateFormatter()
+      return text(RollLibrary.scan(roots).map { r -> [String: Any] in
+        ["title": r.title, "folder": r.folder.lastPathComponent, "started": started.string(from: r.date), "source": r.source.rawValue,
+         "film": r.film, "preset": r.profile.name, "preset_id": r.profile.id, "frames": r.frames.count,
+         "full_resolution": r.fullResolution, "exported": r.exported, "notes": r.notes,
+         "open": open.map { $0.resolvingSymlinksInPath().standardizedFileURL.path == r.folder.resolvingSymlinksInPath().standardizedFileURL.path } ?? false]
       })
     case "select_frame":
       guard let wanted = arguments["name"] as? String else { throw DeskError.message("需要画面编号 name。") }
