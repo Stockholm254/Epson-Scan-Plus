@@ -102,6 +102,9 @@ final class AppModel: ObservableObject {
   @Published var histogram = [Double](repeating: 0, count: 64)
   /// Red, green and blue of the positive, on one scale, for the curves.
   @Published var channelHistograms = [[Double]](repeating: [Double](repeating: 0, count: 64), count: 3)
+  /// The selected frame's tones against what a screen shows of them; only in the single view, of
+  /// the positive.
+  @Published var toneRange: ToneRange?
   @Published var exportType = "tiff"
   /// Rotate and mirror act on the current frame, or on every frame while syncing.
   @Published var syncOrientation = false
@@ -1787,6 +1790,7 @@ final class AppModel: ObservableObject {
       canvasRegion = nil
       samplingInput = nil
       toneAnalysis = nil
+      toneRange = nil
       // The curves' histograms, from the selected frame's positive as the filmstrip has it.
       if let picture = selected.flatMap({ thumbnails[$0.id] }) { (histogram, channelHistograms) = Self.histograms(picture) }
       // Frames of their own files (a camera's, imports) on a page laid out as a contact sheet:
@@ -1881,6 +1885,9 @@ final class AppModel: ObservableObject {
         else { throw DeskError.message("无法生成预览") }
         self.step(0.9, "直方图", token)
         let (hist, channels) = Self.histograms(output)
+        var range = negative ? nil : ImagePipeline.shared.toneRange(cropped, settings: frame.adjustments, profile: p, analysis: analysis)
+        // What shows white or black, counted on the picture itself where it is only the frame.
+        if !edit, range != nil { (range!.atWhite, range!.atBlack) = ImagePipeline.shared.screenShares(output) }
         var pixels = CGSize(width: input.width, height: input.height)
         if frame.hasFullResolution, let path = frame.scanPath ?? frame.sourcePath {
           let info = ImagePipeline.shared.info(URL(fileURLWithPath: path))
@@ -1904,6 +1911,7 @@ final class AppModel: ObservableObject {
           if !edit && !negative { self.thumbnails[frame.id] = output }
           self.histogram = hist
           self.channelHistograms = channels
+          self.toneRange = range
           self.rendering = false
           self.sourceSummary = summary
           self.readAhead(around: frame, token: token)

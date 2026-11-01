@@ -542,6 +542,15 @@ struct ContentView: View {
           Spacer()
           InfoButton(text: "曝光像放大时的印放曝光一样调整密度，在裁切前生效；−EV 可以找回高光。\n\n高光、阴影只动亮部或暗部：阴影往右提亮暗部、往左压暗；高光往左压暗亮部、找回层次，往右提亮。黑和白两端不动，明暗顺序也不会颠倒。")
         }
+        // In the single view, the frame's tones against what an ordinary screen shows of them.
+        if let range = m.toneRange {
+          HStack {
+            Text("直方图 · SDR 范围").font(.system(size: 11, weight: .medium))
+            Spacer()
+            InfoButton(text: "按印放曝光画的直方图，比屏幕能显示的范围宽：标着「黑」「白」的竖线是色阶的黑点和白点，「+1」「+2」是白点以上一档、两档。\n\n亮的一段是普通（SDR）屏幕上有层次的范围，从屏幕上的黑到屏幕上的白；两边暗下去的部分在屏幕上已是纯黑或纯白。柔和的高光把白点以上的一段收进这个范围，亮的一段因此伸过「白」。高光落在暗下去的部分时，可以把「曝光」往负调，或把「高光」往负调让肩部伸得更远。\n\n下面的「纯白」「纯黑」按屏幕上这张实际的像素数，有一个通道到顶或到底就算，色彩降噪等两端之后的处理也算在内。\n\n纵向按平方根画，少量的高光也看得见。按整张的每个像素计数，只算裁切以内；曲线算在屏幕范围里。")
+          }
+          ToneRangeView(range: range)
+        }
         slider("曝光 · EV", key: \.exposure, range: -2...2, format: "%+.2f")
         slider("对比度", key: \.contrast, range: 0.5...1.6)
         slider("高光", key: \.highlightsAmount, range: -1...1, format: "%+.2f")

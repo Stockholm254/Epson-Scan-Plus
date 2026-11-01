@@ -525,23 +525,7 @@ final class ImagePipeline {
     guard let kernel = extendedRange ? Kernels.negativeUnclipped : Kernels.negative else { throw DeskError.message("图像处理内核初始化失败。") }
     let source = try sharpener.map { try sharpen(image, with: $0) } ?? image
     let ci = CIImage(cgImage: source, options: [.colorSpace: NSNull()])
-    func v(_ c: RGB) -> CIVector { CIVector(x: c.r, y: c.g, z: c.b) }
-    let fine = s.baseFine ?? .zero
-    let effectiveBase = RGB(
-      (0..<3).map { max(0.0001, a.base.values[$0]) * pow(2, fine.values[$0]) })
-    let args: [Any] = [
-      ci, v(effectiveBase), v(Self.slopes(s, profile).slopes), v(Self.toe(s, profile)), v(a.gain), v(a.balance),
-      CIVector(x: a.low, y: a.high, z: s.black, w: s.white),
-      CIVector(x: s.exposure, y: s.midtone, z: s.contrast, w: s.saturation),
-      CIVector(x: s.warmth, y: s.tint, z: 0, w: s.inputGamma),
-      s.softEndsOn && s.inputIsNegative
-        ? CIVector(x: Self.softToe, y: Self.softShoulder, z: Self.shadowColour, w: 0) : CIVector(x: 0, y: 2, z: 0, w: 0),
-      s.inputIsNegative ? 1.0 : 0.0,
-      CIVector(x: a.fade, y: a.fadeAtGrey),
-      CIVector(x: s.shadowsAmount, y: s.highlightsAmount),
-      Self.shoulder(s, a),
-    ]
-    guard var result = kernel.apply(extent: ci.extent, arguments: args) else {
+    guard var result = kernel.apply(extent: ci.extent, arguments: Self.arguments(ci, s, profile, a)) else {
       throw DeskError.message("图像处理失败。")
     }
     if let amount = s.colourNoise, amount > 0 {
@@ -558,6 +542,126 @@ final class ImagePipeline {
     }
     return result.transformed(
       by: CGAffineTransform(translationX: -result.extent.minX, y: -result.extent.minY))
+  }
+  /// The `negative` kernels' arguments for `ci`.
+  static func arguments(_ ci: CIImage, _ s: Adjustments, _ profile: FilmProfile, _ a: ToneAnalysis) -> [Any] {
+    func v(_ c: RGB) -> CIVector { CIVector(x: c.r, y: c.g, z: c.b) }
+    let fine = s.baseFine ?? .zero
+    let effectiveBase = RGB(
+      (0..<3).map { max(0.0001, a.base.values[$0]) * pow(2, fine.values[$0]) })
+    return [
+      ci, v(effectiveBase), v(Self.slopes(s, profile).slopes), v(Self.toe(s, profile)), v(a.gain), v(a.balance),
+      CIVector(x: a.low, y: a.high, z: s.black, w: s.white),
+      CIVector(x: s.exposure, y: s.midtone, z: s.contrast, w: s.saturation),
+      CIVector(x: s.warmth, y: s.tint, z: 0, w: s.inputGamma),
+      s.softEndsOn && s.inputIsNegative
+        ? CIVector(x: Self.softToe, y: Self.softShoulder, z: Self.shadowColour, w: 0) : CIVector(x: 0, y: 2, z: 0, w: 0),
+      s.inputIsNegative ? 1.0 : 0.0,
+      CIVector(x: a.fade, y: a.fadeAtGrey),
+      CIVector(x: s.shadowsAmount, y: s.highlightsAmount),
+      Self.shoulder(s, a),
+    ]
+  }
+  /// Where `image`'s tones lie against what a screen shows of them (`ToneRange`), as `negative`
+  /// takes them into its ends: counted over every pixel, as grain and fine highlights are what
+  /// reach furthest and a smaller copy averages them away (the brightest 0.1% of a sunlit frame
+  /// read a stop lower at 300 pixels across than at 3000). The screen's black and white are found
+  /// by sending a grey ramp over that scale through the frame's ends, midtone and curves.
+  func toneRange(_ image: CGImage, settings s: Adjustments, profile: FilmProfile, analysis a: ToneAnalysis) -> ToneRange? {
+    guard let toned = Kernels.negativeRange, let ended = Kernels.negative else { return nil }
+    let ci = CIImage(cgImage: image, options: [.colorSpace: NSNull()])
+    guard let tones = toned.apply(extent: ci.extent, arguments: Self.arguments(ci, s, profile, a)) else { return nil }
+    // Counted on the GPU in `n` steps from `lo` to `lo + span`, past them in the end steps: each
+    // channel, and each pixel's brightest and darkest channel; shares of the frame.
+    let n = 2048, lo = -1.0, span = 4.0, width = span / Double(n)
+    let onto = tones.applyingFilter("CIColorMatrix", parameters: [
+      "inputRVector": CIVector(x: 1 / span, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0, y: 1 / span, z: 0, w: 0),
+      "inputBVector": CIVector(x: 0, y: 0, z: 1 / span, w: 0), "inputBiasVector": CIVector(x: -lo / span, y: -lo / span, z: -lo / span, w: 0),
+    ])
+    func counted(_ image: CIImage) -> [Float] {
+      let counts = image.applyingFilter("CIAreaHistogram", parameters: [
+        kCIInputExtentKey: CIVector(cgRect: image.extent), "inputCount": n, kCIInputScaleKey: 1,
+      ])
+      var out = [Float](repeating: 0, count: n * 4)
+      out.withUnsafeMutableBytes {
+        context.render(counts, toBitmap: $0.baseAddress!, rowBytes: n * 16, bounds: CGRect(x: 0, y: 0, width: n, height: 1), format: .RGBAf, colorSpace: nil)
+      }
+      return out
+    }
+    let each = counted(onto), tops = counted(onto.applyingFilter("CIMaximumComponent")), bottoms = counted(onto.applyingFilter("CIMinimumComponent"))
+    let channels = (0..<3).map { c in (0..<n).map { Double(each[$0 * 4 + c]) } }
+    let top = (0..<n).map { Double(tops[$0 * 4]) }, bottom = (0..<n).map { Double(bottoms[$0 * 4]) }
+    func at(_ i: Int) -> Double { lo + (Double(i) + 0.5) * width }
+    func step(_ q: Double) -> Int { min(n - 1, max(0, Int((q - lo) / width))) }
+    func above(_ h: [Double], _ q: Double) -> Double { h[step(q)...].reduce(0, +) / max(1e-12, h.reduce(0, +)) }
+    func below(_ h: [Double], _ q: Double) -> Double { h[...step(q)].reduce(0, +) / max(1e-12, h.reduce(0, +)) }
+    func quantile(_ h: [Double], _ p: Double) -> Double {
+      let want = h.reduce(0, +) * p
+      var run = 0.0
+      for (i, v) in h.enumerated() {
+        run += v
+        if run >= want { return at(i) }
+      }
+      return at(n - 1)
+    }
+    // The ramp from −1 to 3 on that scale, passed in 2 higher, as a positive is, and levelled from 2
+    // to 3 with nothing else in front, so the kernel's ends are all that acts on it.
+    let m = 1601, rampStep = span / Double(m - 1)
+    let grey = (0..<m).flatMap { (i: Int) -> [Float] in let v = Float(lo + Double(i) * rampStep + 2); return [v, v, v, 1] }
+    let line = CIImage(bitmapData: Data(bytes: grey, count: grey.count * 4), bytesPerRow: m * 16,
+      size: CGSize(width: m, height: 1), format: .RGBAf, colorSpace: nil)
+    var flat = Self.arguments(line, s, profile, a)
+    flat[6] = CIVector(x: 0, y: 1, z: 2, w: 3)
+    flat[7] = CIVector(x: 0, y: s.midtone, z: 1, w: 1)
+    flat[8] = CIVector(x: 0, y: 0, z: 0, w: 1)
+    flat[10] = 0.0
+    guard var shown = ended.apply(extent: line.extent, arguments: flat) else { return nil }
+    if let curves = s.curves { shown = applyCurves(curves, to: shown) }
+    var screen = [Float](repeating: 0, count: m * 4)
+    screen.withUnsafeMutableBytes {
+      context.render(shown, toBitmap: $0.baseAddress!, rowBytes: m * 16, bounds: line.extent, format: .RGBAf, colorSpace: nil)
+    }
+    // A channel shows black up to the last step at 0 in 8 bits, white from the first at 255; the
+    // band is where every channel still has gradation.
+    let blackSteps = (0..<3).map { c in (0..<m).last { screen[$0 * 4 + c] < 0.5 / 255 } }
+    let whiteSteps = (0..<3).map { c in (0..<m).first { screen[$0 * 4 + c] >= 254.5 / 255 } }
+    let black = blackSteps.compactMap { $0 }.max().map { lo + Double($0) * rampStep }
+    let white = whiteSteps.compactMap { $0 }.min().map { lo + Double($0) * rampStep }
+    let stop = s.inputIsNegative
+      ? log10(2.0) * s.contrast / (max(a.high - a.low, 0.001) * max(s.white - s.black, 0.01)) : nil
+    // Shown from a little below the darkest 0.1% (the holder's black left to the first step) to a
+    // little past the brightest 0.05%, the screen's ends and two stops past white.
+    let from = max(-0.35, min(-0.1, (black ?? 0) - 0.05, quantile(bottom, 0.001) - 0.05))
+    let to = min(lo + span, max(1.3, (white ?? 1) + 0.1, quantile(top, 0.9995) + 0.05, 1 + 2 * (stop ?? 0) + 0.05))
+    let bins = 120
+    var counts = [[Double]](repeating: [Double](repeating: 0, count: bins), count: 3)
+    for c in 0..<3 {
+      for i in 0..<n where channels[c][i] > 0 {
+        counts[c][min(bins - 1, max(0, Int((at(i) - from) / (to - from) * Double(bins))))] += channels[c][i]
+      }
+    }
+    return ToneRange(
+      counts: counts, domain: from...to, black: black, white: white, stop: stop,
+      pastWhite: above(top, 1 + width / 2), atWhite: white.map { above(top, $0) } ?? 0,
+      atBlack: black.map { below(bottom, $0) } ?? 0, brightest: quantile(top, 0.999))
+  }
+  /// The shares of `image`, a picture as shown, with a channel at white and with one at black: what
+  /// comes after the ends included, as the colour smoothing, which can take a channel of a bright
+  /// edge over white.
+  func screenShares(_ image: CGImage) -> (white: Double, black: Double) {
+    let ci = CIImage(cgImage: image, options: [.colorSpace: NSNull()])
+    func counted(_ filter: String) -> [Float] {
+      let counts = ci.applyingFilter(filter).applyingFilter("CIAreaHistogram", parameters: [
+        kCIInputExtentKey: CIVector(cgRect: ci.extent), "inputCount": 256, kCIInputScaleKey: 1,
+      ])
+      var out = [Float](repeating: 0, count: 256 * 4)
+      out.withUnsafeMutableBytes {
+        context.render(counts, toBitmap: $0.baseAddress!, rowBytes: 256 * 16, bounds: CGRect(x: 0, y: 0, width: 256, height: 1), format: .RGBAf, colorSpace: nil)
+      }
+      return out
+    }
+    let tops = counted("CIMaximumComponent"), bottoms = counted("CIMinimumComponent")
+    return (Double(tops[255 * 4]), Double(bottoms[0]))
   }
   /// `image` turned clockwise on screen by `degrees` about its middle and cut to the largest
   /// rectangle of its own shape inside, so no corner is left empty; as ImageGeometry maps it.

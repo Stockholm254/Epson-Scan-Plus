@@ -75,6 +75,93 @@ struct Histogram: Equatable {
   }
 }
 
+/// Where a frame's tones lie against what a screen shows of them (`ImagePipeline.toneRange`): each
+/// channel as the conversion takes it into its ends, on the print's straight line (the levels'
+/// black at 0, their white at 1, log exposure in between, and past them as far as the negative
+/// goes), as shares of the frame in equal steps over `domain`, the first and last holding what lies
+/// beyond; and the part of that a screen shows with gradation, from `black` (at or below it a
+/// channel shows black) to `white` (from it on a channel shows white), through the ends, the
+/// midtone and the curves; nil where the screen never gets there.
+struct ToneRange: Equatable {
+  var counts: [[Double]]
+  var domain: ClosedRange<Double>
+  var black: Double?, white: Double?
+  /// A stop of print exposure on that scale; nil for a positive, whose scale is not log exposure.
+  var stop: Double?
+  /// Shares of the frame: a channel past the white, a channel white on screen, one black on screen;
+  /// the last two as the scale puts them, or counted on the picture as shown
+  /// (`ImagePipeline.screenShares`), which takes in what comes after the ends.
+  var pastWhite: Double, atWhite: Double, atBlack: Double
+  /// Where the brightest 0.1% lie, in their brightest channel.
+  var brightest: Double
+}
+
+/// A frame's histogram over more than a screen shows (`ToneRange`): the part an ordinary (SDR)
+/// screen shows with gradation lit, what it shows as black or white dimmed, the levels' black and
+/// white marked, and whole stops past the white. On a square-root scale, so a few highlights still
+/// show beside the midtones' thousands.
+struct ToneRangeView: View {
+  let range: ToneRange
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Canvas { ctx, size in
+        let d = range.domain
+        func x(_ q: Double) -> CGFloat { size.width * CGFloat((q - d.lowerBound) / (d.upperBound - d.lowerBound)) }
+        let from = x(range.black ?? d.lowerBound), to = x(range.white ?? d.upperBound)
+        ctx.fill(Path(CGRect(x: from, y: 0, width: max(0, to - from), height: size.height)), with: .color(.white.opacity(0.08)))
+        let bins = range.counts[0].count
+        let peak = max(1e-9, range.counts.flatMap { $0.dropFirst().dropLast() }.max() ?? 1)
+        var lit = ctx
+        lit.blendMode = .plusLighter
+        for c in 0..<3 {
+          var p = Path()
+          p.move(to: CGPoint(x: 0, y: size.height))
+          for b in 0..<bins {
+            let y = size.height * (1 - 0.92 * CGFloat(min(1, (range.counts[c][b] / peak).squareRoot())))
+            p.addLine(to: CGPoint(x: size.width * CGFloat(b) / CGFloat(bins), y: y))
+            p.addLine(to: CGPoint(x: size.width * CGFloat(b + 1) / CGFloat(bins), y: y))
+          }
+          p.addLine(to: CGPoint(x: size.width, y: size.height))
+          p.closeSubpath()
+          lit.fill(p, with: .color(HistogramView.colours[c].opacity(0.45)))
+        }
+        // What shows black or white on screen, dimmed.
+        ctx.fill(Path(CGRect(x: 0, y: 0, width: from, height: size.height)), with: .color(.black.opacity(0.5)))
+        ctx.fill(Path(CGRect(x: to, y: 0, width: max(0, size.width - to), height: size.height)), with: .color(.black.opacity(0.5)))
+        func mark(_ q: Double, _ label: String, dashed: Bool) {
+          guard d.contains(q) else { return }
+          let at = x(q)
+          ctx.stroke(Path { $0.move(to: CGPoint(x: at, y: 9)); $0.addLine(to: CGPoint(x: at, y: size.height)) },
+            with: .color(.white.opacity(dashed ? 0.3 : 0.45)), style: StrokeStyle(lineWidth: 0.6, dash: dashed ? [2, 2] : []))
+          ctx.draw(Text(label).font(.system(size: 8)).foregroundStyle(.white.opacity(0.6)), at: CGPoint(x: at, y: 4))
+        }
+        mark(0, "黑", dashed: false)
+        mark(1, "白", dashed: false)
+        if let stop = range.stop, x(1 + stop) - x(1) >= 14 {
+          for n in 1...4 { mark(1 + Double(n) * stop, "+\(n)", dashed: true) }
+        }
+      }
+      .frame(height: 64)
+      .padding(4).background(PlotScreen())
+      .accessibilityElement().accessibilityLabel("直方图 · SDR 范围").accessibilityValue(lines.joined(separator: "；"))
+      VStack(alignment: .leading, spacing: 1) {
+        ForEach(lines, id: \.self) { Text($0) }
+      }.font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+    }
+  }
+  private func percent(_ v: Double) -> String {
+    v < 0.0001 ? "0" : v < 0.01 ? String(format: "%.2f%%", v * 100) : String(format: "%.1f%%", v * 100)
+  }
+  /// How far past white the frame goes, and what shows white or black.
+  var lines: [String] {
+    var past = "白点以上 \(percent(range.pastWhite))"
+    if let stop = range.stop, range.brightest > 1 {
+      past += String(format: "，最亮的 0.1%% 在白点以上 %.1f 档", (range.brightest - 1) / stop)
+    }
+    return [past, "屏幕上纯白 \(percent(range.atWhite))，纯黑 \(percent(range.atBlack))"]
+  }
+}
+
 /// A histogram as a camera back draws one, on a dark screen in either look: the three channels as
 /// light added together, so where they overlap they mix towards white, scaled to the tallest count
 /// away from the two ends, which a black border or a clipped sky would otherwise dwarf everything

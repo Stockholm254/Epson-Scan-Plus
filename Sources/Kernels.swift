@@ -28,6 +28,13 @@ enum Kernels {
       return float4(saturated(graded(p, false, NEGATIVE_PASS), tone, ends), 1.0);
     }
     """)
+  /// What `negative` takes into its ends, unclipped: each channel on the print's straight line,
+  /// black at 0 and white at 1, past them as far as the negative goes (`ImagePipeline.toneRange`).
+  static let negativeRange = color("negativeRange", conversion + """
+    [[stitchable]] float4 negativeRange(coreimage::sample_t p, NEGATIVE_ARGS) {
+      return float4(toned(p, true, NEGATIVE_PASS), 1.0);
+    }
+    """)
   /// Each pixel's colour apart from its lightness (luma), and the two put back together.
   static let colourOf = color("colourOf", """
     [[stitchable]] float4 colourOf(coreimage::sample_t p) {
@@ -65,7 +72,7 @@ enum Kernels {
   }
   private static func color(_ name: String, _ source: String) -> CIColorKernel? { compiled(name, source) as? CIColorKernel }
 
-  /// The conversion both `negative` kernels share, up to its final clip: the tones (`graded`) and the
+  /// The conversion the `negative` kernels share, up to its final clip: the tones (`graded`) and the
   /// saturation, in one order or the other.
   private static let conversion = """
     #define NEGATIVE_ARGS float3 base, float3 slope, float3 toe, float3 gain, float3 balance, float4 levels, float4 tone, float4 color, float4 ends, float inverted, float2 fade, float2 lights, float4 shoulder
@@ -76,12 +83,13 @@ enum Kernels {
       float l = dot(q, float3(0.2126, 0.7152, 0.0722)), m = clamp(l, 0.0, 1.0);
       return mix(float3(l), q, float3(tone.w * (1.0 + ends.z * (1.0 - m) * (1.0 - m))));
     }
-    // The tones, and with `first` the saturation ahead of the ends.
+    // The tones up to the ends, and with `first` the saturation: on the print's straight line,
+    // black at 0 and white at 1, unclipped.
     //
     // Exposure (tone.x, in EV) is a print exposure: a shift of log exposure, 0.30103 per stop,
     // applied before the levels and clipping so −EV recovers highlights. Positive input scales the
     // linear value instead, through its encoding gamma.
-    static float3 graded(float4 p, bool first, NEGATIVE_ARGS) {
+    static float3 toned(float4 p, bool first, NEGATIVE_ARGS) {
       float3 v = max(p.rgb, float3(0.000001));
       float3 e = log(max(base, float3(0.000001)) / v) * (color.w / 2.302585093) / slope;
       e += toe * log(max(float3(1.0) - exp(-e / max(toe, float3(0.000001))), float3(0.02)));
@@ -93,6 +101,10 @@ enum Kernels {
       q += float3(color.x * 0.12 + color.y * 0.05, -color.y * 0.10, -color.x * 0.12 + color.y * 0.05);
       q = (q - float3(0.5)) * tone.z + float3(0.5);
       if (first) { q = saturated(q, tone, ends); }
+      return q;
+    }
+    // The ends, the clip, shadows and highlights, and the midtone.
+    static float3 ended(float3 q, NEGATIVE_ARGS) {
       // Each side's curve only works out its own side, so a far value (the holder, opaque) does not
       // overflow the other's exp into infinity and come out as nothing.
       if (ends.x > 0.0) { float3 t = float3(ends.x); q = mix(t * exp(min(q, t) / t - float3(1.0)), q, step(t, q)); }
@@ -117,6 +129,10 @@ enum Kernels {
       float3 r = float3(1.0) - q;
       q += lights.x * 0.81 * q * r * r + lights.y * 0.81 * q * q * r;
       return pow(q, float3(1.0 / max(tone.y, 0.1)));
+    }
+    // The tones, and with `first` the saturation ahead of the ends.
+    static float3 graded(float4 p, bool first, NEGATIVE_ARGS) {
+      return ended(toned(p, first, NEGATIVE_PASS), NEGATIVE_PASS);
     }
 
     """

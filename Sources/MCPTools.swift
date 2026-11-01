@@ -29,7 +29,7 @@ enum MCPTools {
   ]
   static let tools: [Tool] = conversionTools + leakTools
   private static let conversionTools: [Tool] = [
-    Tool(name: "get_state", description: "读取当前工程和选中画面的转换状态：胶片预设与各通道斜率、片基 RGB 及来源、整卷估计、白平衡、色阶、影调、扫描与对齐信息，以及负片密度和正片各通道的百分位与溢出比例。调整前先调用。", properties: [:]),
+    Tool(name: "get_state", description: "读取当前工程和选中画面的转换状态：胶片预设与各通道斜率、片基 RGB 及来源、整卷估计、白平衡、色阶、影调、扫描与对齐信息，以及负片密度和正片各通道的百分位与溢出比例；sdr_range 给出进入两端之前（色阶黑点为 0、白点为 1）白点以上的比例、最亮 0.1% 的位置和高出白点几档、屏幕上从哪里起是纯白或纯黑，以及屏幕上纯白、纯黑的比例。调整前先调用。", properties: [:]),
     Tool(name: "list_frames", description: "列出本卷所有画面：编号、是否勾选、是否已正式扫描及 dpi、方向。", properties: [:]),
     Tool(name: "list_presets", description: "列出可用的胶片预设：名称、通道斜率、来源，是否为本机标定。", properties: [:]),
     Tool(name: "select_frame", description: "选中某张画面（按编号，如 \"09\"）。", properties: ["name": ["type": "string", "description": "画面编号"]], required: ["name"]),
@@ -247,7 +247,8 @@ enum MCPTools {
       let source = try model.source(for: frame, maxDimension: 600)
       let analysis = pipe.analyze(source, settings: s, profile: profile)
       let negative = pipe.raster(source, maxDimension: 300)
-      let positive = pipe.raster(try pipe.preview(source, settings: s, profile: profile), maxDimension: 300)
+      let shown = try pipe.preview(source, settings: s, profile: profile)
+      let positive = pipe.raster(shown, maxDimension: 300)
       var densities = [[Double]](repeating: [], count: 3), outputs = [[Double]](repeating: [], count: 3)
       var dark = 0.0, bright = 0.0, count = 0.0
       for y in stride(from: negative.height / 20, to: negative.height * 19 / 20, by: 2) {
@@ -295,6 +296,17 @@ enum MCPTools {
       state["negative_density_above_base"] = ["r": percentiles(densities[0]), "g": percentiles(densities[1]), "b": percentiles(densities[2])]
       state["positive_srgb"] = ["r": percentiles(outputs[0]), "g": percentiles(outputs[1]), "b": percentiles(outputs[2]),
         "clipped_black_percent": round(dark / max(1, count) * 100, 10), "clipped_white_percent": round(bright / max(1, count) * 100, 10)]
+      if var range = pipe.toneRange(source, settings: s, profile: profile, analysis: analysis) {
+        (range.atWhite, range.atBlack) = pipe.screenShares(shown)
+        // On the print's straight line before its ends: the levels' black at 0, white at 1.
+        var sdr: [String: Any] = ["past_white_percent": round(range.pastWhite * 100, 100),
+          "white_on_screen_percent": round(range.atWhite * 100, 100), "black_on_screen_percent": round(range.atBlack * 100, 100),
+          "brightest_0_1_percent": round(range.brightest)]
+        if let white = range.white { sdr["screen_white_from"] = round(white) }
+        if let black = range.black { sdr["screen_black_up_to"] = round(black) }
+        if let stop = range.stop { sdr["brightest_stops_past_white"] = round((range.brightest - 1) / stop, 100) }
+        state["sdr_range"] = sdr
+      }
       return text(state)
     case "list_frames":
       return text(onMain {

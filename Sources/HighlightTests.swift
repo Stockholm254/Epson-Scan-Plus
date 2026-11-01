@@ -125,5 +125,44 @@ enum HighlightTests {
     }
     let old = try JSONDecoder().decode(RollPrint.self, from: Data(#"{"balance":{"r":0,"g":0,"b":0},"gain":{"r":1,"g":1,"b":1},"low":0.1,"high":1.5}"#.utf8))
     try check(old.reach == nil && old.high == 1.5, "a roll print kept before it had a reach still reads, without one")
+
+    // The histogram over more than the screen shows: the band's top two stops past the white,
+    // its brightest 0.1% about one and a half.
+    let ab = pipe.analyze(bright, settings: Adjustments(), profile: portra)
+    guard let range = pipe.toneRange(bright, settings: Adjustments(), profile: portra, analysis: ab),
+      let heldRange = short({ pipe.toneRange(bright, settings: Adjustments(), profile: portra, analysis: ab) }),
+      let white = range.white, let heldWhite = heldRange.white, let stop = range.stop
+    else { return try check(false, "a frame's tone range is worked out") }
+    let stops = (range.brightest - 1) / stop
+    try check(range.pastWhite > 0.003 && stops > 1.2 && stops < 1.9,
+      String(format: "the tone range sees past the white: %.2f%% of the frame, its brightest 0.1%% %.1f stops past", range.pastWhite * 100, stops))
+    // What it says shows white or black on screen is what does.
+    func shares(_ r: Raster) -> (white: Double, black: Double) {
+      let all = Double(r.width * r.height)
+      let px = (0..<(r.width * r.height)).map { Array(r.bytes[$0 * 4..<$0 * 4 + 3]) }
+      return (Double(px.filter { $0.max()! == 255 }.count) / all, Double(px.filter { $0.min()! == 0 }.count) / all)
+    }
+    let seen = shares(reached), heldSeen = shares(held)
+    try check(abs(range.atWhite - seen.white) < 0.001 && abs(heldRange.atWhite - heldSeen.white) < 0.001
+      && abs(range.atBlack - seen.black) < 0.001 && heldRange.atWhite > range.atWhite + 0.001,
+      String(format: "the screen's white in the tone range is where the picture turns white: %.2f%% said, %.2f%% shown; with the shoulder held at white %.2f%% said, %.2f%% shown",
+        range.atWhite * 100, seen.white * 100, heldRange.atWhite * 100, heldSeen.white * 100))
+    let heldPicture = try short { try pipe.preview(bright, settings: Adjustments(), profile: portra) }
+    let counted = pipe.screenShares(heldPicture)
+    try check(abs(counted.white - heldSeen.white) < 1e-5 && abs(counted.black - heldSeen.black) < 1e-5,
+      String(format: "counted on the picture as shown, %.3f%% shows white and %.3f%% black, as its pixels have it", counted.white * 100, counted.black * 100))
+    try check(white > range.brightest && heldWhite < 1.35 && white > heldWhite + 0.2,
+      String(format: "the shoulder takes the screen's white past the frame's brightest (%.2f against %.2f), where held at white it came at %.2f", white, range.brightest, heldWhite))
+    var straight = Adjustments()
+    straight.softEnds = false
+    let cutRange = pipe.toneRange(bright, settings: straight, profile: portra, analysis: pipe.analyze(bright, settings: straight, profile: portra))
+    try check(cutRange?.white.map { abs($0 - 1) < 0.01 } == true && (cutRange?.black ?? -1) >= -0.005,
+      String(format: "cut straight at the ends, the screen shows from the levels' black to their white (%.3f…%.3f)", cutRange?.black ?? .nan, cutRange?.white ?? .nan))
+    var dimmed = Adjustments(), curves = ToneCurves()
+    curves.rgb.points[1].y = 0.9
+    dimmed.curves = curves
+    let dimRange = pipe.toneRange(bright, settings: dimmed, profile: portra, analysis: ab)
+    try check(dimRange != nil && dimRange?.white == nil && dimRange?.atWhite == 0,
+      "with a curve that takes white down to 0.9, nothing shows white on screen")
   }
 }
