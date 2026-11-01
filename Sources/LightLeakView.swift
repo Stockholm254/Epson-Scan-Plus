@@ -303,7 +303,9 @@ struct LeakPanel: View {
       } label: {
         Label("开始去漏光", systemImage: "wand.and.stars").frame(maxWidth: .infinity)
       }.buttonStyle(KeyStyle(prominent: true)).disabled(!lab.hasBase || lab.busy != nil)
-      note(lab.hasReference ? "已有参考图，点击即在本地去漏光，不产生 API 费用。" : "首次点击会通过 API 生成参考图；确认上传与费用后自动去漏光。")
+      note(lab.hasReference ? "已有参考图，点击即在本地去漏光，不产生 API 费用。"
+        : lab.regionsAct ? "没有参考图：点击只校正启用的局部区域，区域外不变，不调用 API。"
+        : "首次点击会通过 API 生成参考图；确认上传与费用后自动去漏光。也可以先标出局部区域（「找漏光」或画区域，或请 MCP 助手标），只修这些地方，不花钱。")
       Toggle(
         "保留灯光红晕和真实红色物体",
         isOn: Binding(get: { lab.params.protectHighlights }, set: { v in lab.change("保留灯光红晕") { $0.protectHighlights = v } })
@@ -334,7 +336,7 @@ struct LeakPanel: View {
   }
   var reference: some View {
     VStack(alignment: .leading, spacing: 10) {
-      header("参考图", symbol: "photo.on.rectangle", info: "参考图由 OpenAI 图像模型生成：只在你确认后上传最长边 1536 px、无 EXIF 的正片 JPEG 缩图及附加要求，原尺寸照片留在本机。每次 1 张，不自动重试；失败或超时仍可能已计费。\n\n已有参考图后，重新应用、换场景、旋转都在本地免费重算，不再调用 API。也可以导入在别处得到的同一张照片的干净参考图。")
+      header("参考图", symbol: "photo.on.rectangle", info: "参考图由 OpenAI 图像模型生成：只在你确认后上传最长边 1536 px、无 EXIF 的正片 JPEG 缩图及附加要求，原尺寸照片留在本机。每次 1 张，不自动重试；失败或超时仍可能已计费。\n\n已有参考图后，重新应用、换场景、旋转都在本地免费重算，不再调用 API。也可以导入在别处得到的同一张照片的干净参考图，比如用你自己订阅的图像模型（ChatGPT 等）按「导出缩图…」和「复制提示词」做的。\n\n没有参考图时，标出的局部区域也能单独去漏光，不调用 API。")
       Text(lab.job?.guideName ?? "尚无参考图").font(.system(size: 11, weight: .medium))
       if let receipt { note(receipt).textSelection(.enabled) }
       if lab.hasReference { note(fitInfo) }
@@ -350,6 +352,14 @@ struct LeakPanel: View {
       } label: {
         Label("导入已有参考图…", systemImage: "square.and.arrow.down.on.square")
       }.disabled(!lab.hasBase || lab.busy != nil)
+      VStack(alignment: .leading, spacing: 6) {
+        Text("或用自己订阅的图像模型做").font(.system(size: 11, weight: .medium))
+        HStack {
+          Button("导出缩图…") { lab.chooseReferenceUpload() }
+          Button("复制提示词") { lab.copyReferencePrompt() }
+        }.disabled(!lab.hasBase || lab.busy != nil)
+        note("缩图和提示词与 API 用的一样，导出缩图时提示词一起复制。在 ChatGPT 等能改图的应用里上传缩图、粘贴提示词，下载生成的图，再用「导入已有参考图…」导回来。这样不用 API Key。")
+      }
       HStack {
         Button("停用参考校正") { lab.clearReferenceCorrection() }.disabled(lab.model == nil || lab.busy != nil)
         Button("API 管理…") { lab.showAPI = true }

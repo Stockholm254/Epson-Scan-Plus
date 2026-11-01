@@ -89,6 +89,49 @@ enum LightLeakTests {
     damaged.grid.nodes.removeLast()
     try check((try? damaged.validate()) == nil && (try? LeakEngine.apply(leaked, damaged, fitted)) == nil, "a damaged model is refused, not read out of bounds")
 
+    // A cast across different things, growing to the left edge as a copy light's colour fall-off:
+    // the gain mode takes it out by ratio, measured on the sky, and leaves the ground its own green,
+    // where chroma would paint it the sky's colour.
+    func vignetted(cast: Bool) -> LeakImage {
+      let w = 400, h = 200
+      var data = [UInt16](repeating: 0, count: w * h * 3)
+      for j in 0..<h {
+        for i in 0..<w {
+          let x = (Double(i) + 0.5) / Double(w), y = (Double(j) + 0.5) / Double(h)
+          let p = y < 0.5 ? SIMD3(0.45, 0.6, 0.85) : SIMD3(0.3, 0.42, 0.2)
+          let k = cast ? pow(max(0, 1 - x / 0.5), 2) : 0
+          let g = SIMD3(1 + 0.4 * k, 1.0, 1 + 0.1 * k)
+          for c in 0..<3 { data[(j * w + i) * 3 + c] = UInt16((min(1, pow(pow(p[c], 2.2) * g[c], 1 / 2.2)) * 65535).rounded()) }
+        }
+      }
+      return LeakImage(width: w, height: h, data: data)
+    }
+    let castImage = vignetted(cast: true), plain = vignetted(cast: false)
+    func edge(_ mode: String) throws -> LeakImage {
+      var p = LeakParams()
+      p.regions = [LeakRegion(id: "edge", shape: "ellipse", mode: mode, x: 0, y: 0.5, rx: 0.5, ry: 0.9, amount: 1, feather: 1,
+        ref: LeakPoint(x: 0.75, y: 0.25), cast: LeakPoint(x: 0.03, y: 0.25), enabled: true)]
+      return try LeakEngine.result(castImage, base: castImage, params: p)
+    }
+    func linear(_ im: LeakImage, _ x: Double, _ y: Double) -> SIMD3<Double> {
+      let v = LeakEngine.sample(im, x, y)
+      return SIMD3(pow(v.x, 2.2), pow(v.y, 2.2), pow(v.z, 2.2))
+    }
+    /// How far apart two colours' channel ratios are, whatever their brightness.
+    func hue(_ a: SIMD3<Double>, _ b: SIMD3<Double>) -> Double { abs(log(a.x / a.y * b.y / b.x)) + abs(log(a.z / a.y * b.y / b.z)) }
+    let gained = try edge("gain"), painted = try edge("chroma")
+    let skyBefore = hue(linear(castImage, 0.03, 0.25), linear(plain, 0.03, 0.25)), skyAfter = hue(linear(gained, 0.03, 0.25), linear(plain, 0.03, 0.25))
+    let groundBefore = hue(linear(castImage, 0.03, 0.75), linear(plain, 0.03, 0.75))
+    let groundAfter = hue(linear(gained, 0.03, 0.75), linear(plain, 0.03, 0.75))
+    let groundPainted = hue(linear(painted, 0.03, 0.75), linear(plain, 0.03, 0.75))
+    let y0 = linear(castImage, 0.03, 0.75), y1 = linear(gained, 0.03, 0.75)
+    let brightness = abs((0.2974 * y1.x + 0.6273 * y1.y + 0.0753 * y1.z) / (0.2974 * y0.x + 0.6273 * y0.y + 0.0753 * y0.z) - 1)
+    let far = 395 * 3 + 100 * 400 * 3
+    try check(skyAfter < skyBefore * 0.3 && groundAfter < groundBefore * 0.3 && groundPainted > groundAfter * 3 && brightness < 0.02
+      && gained.data[far..<(far + 3)] == castImage.data[far..<(far + 3)],
+      String(format: "a fall-off cast is taken out by ratio: sky %.3f → %.3f, ground %.3f → %.3f (chroma would leave %.3f), brightness kept within %.1f%%, nothing outside it moved",
+        skyBefore, skyAfter, groundBefore, groundAfter, groundPainted, brightness * 100))
+
     // Colour: sRGB into Adobe RGB exactly, as the engine's pure 563/256 gamma decodes it.
     var ramp = [UInt8](repeating: 255, count: 256 * 2 * 4)
     for v in 0..<256 { for r in 0..<2 { let i = (r * 256 + v) * 4; ramp[i] = UInt8(v); ramp[i + 1] = UInt8(v); ramp[i + 2] = UInt8(v) } }
@@ -391,9 +434,15 @@ enum LightLeakTests {
       while done.wait(timeout: .now() + 0.01) == .timedOut { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
       return result
     }
+    func said(_ r: (content: [[String: Any]], isError: Bool)) -> String { r.content.first?["text"] as? String ?? "" }
     let names = MCPTools.tools.map(\.name)
-    try check(names.filter { $0.hasPrefix("leak_") }.count == 23 && Set(names).count == names.count && MCPTools.instructions.contains("leak_request_reference"),
+    try check(names.filter { $0.hasPrefix("leak_") }.count == 25 && Set(names).count == names.count && MCPTools.instructions.contains("leak_request_reference"),
       "the MCP server lists the 去漏光 tools beside the conversion ones")
+    app.page = .convert
+    app.openInLeak(frame.id)
+    pageLab.wait()
+    try check(app.page == .leak && app.selectedID == frame.id && pageLab.job?.origin?.frame == frame.id && pageLab.hasBase,
+      "from taking the mask off, the frame selected opens on the 去漏光 page as it is converted now")
     let opened = mcp("leak_open", ["frame": "01"])
     try check(!opened.isError && app.page == .leak && pageLab.job?.origin?.frame == frame.id && pageLab.hasBase && !FileManager.default.fileExists(atPath: pageLab.root.path),
       "leak_open converts the roll's frame for the page, and keeps nothing until it is worked on")
@@ -408,6 +457,30 @@ enum LightLeakTests {
     try check(!asked.isError && pageLab.showAPI && pageLab.busy == nil && pageLab.job?.generatedAI == nil,
       "leak_request_reference only opens the app's own confirmation: no upload, no charge")
     pageLab.showAPI = false
+    let asked2 = (said(mcp("leak_reference_prompt")).data(using: .utf8)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+    try check((asked2?["prompt"] as? String)?.hasPrefix("TASK:") == true && asked2?["scene"] != nil
+      && (asked2?["steps"] as? String)?.contains("leak_import_reference") == true && pageLab.job?.generatedAI == nil,
+      "leak_reference_prompt gives the API's own words for the user's image model, and the steps; nothing is sent")
+    // Without a reference: a region drawn over the leak, and the repair by it alone, free.
+    let marked = mcp("leak_add_region", ["x": 0.08, "y": 0.75, "rx": 0.08, "ry": 0.12, "clean_point": [0.6, 0.75]])
+    let localStart = mcp("leak_start")
+    let probes = (said(mcp("leak_sample", ["points": [[0.08, 0.75], [0.9, 0.2]]])).data(using: .utf8))
+      .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [[String: Any]] } ?? []
+    func shift(_ p: [String: Any]) -> Double {
+      guard let a = p["original_adobe_rgb"] as? [String: Double], let b = p["result_adobe_rgb"] as? [String: Double] else { return -1 }
+      return ["r", "g", "b"].map { abs((a[$0] ?? 0) - (b[$0] ?? 0)) }.max()!
+    }
+    try check(!marked.isError && !localStart.isError && pageLab.repaired && pageLab.model == nil && pageLab.after != nil && !pageLab.showGenerate
+      && probes.count == 2 && shift(probes[0]) > 0.01 && shift(probes[1]) == 0,
+      "without a reference, leak_start repairs by the region drawn alone, asking nothing of the API: inside it the colour moves, outside nothing does")
+    _ = mcp("undo")
+    try check(pageLab.params.regions.isEmpty && !pageLab.repaired, "undo takes the region, and the repair with it, away")
+    let gain = mcp("leak_add_region", ["x": 0, "y": 0.5, "rx": 0.3, "ry": 0.6, "clean_point": [0.6, 0.2], "cast_point": [0.04, 0.2], "mode": "gain"])
+    let gainListed = said(mcp("leak_list_regions"))
+    try check(!gain.isError && pageLab.params.regions.last?.mode == "gain" && pageLab.params.regions.last?.cast == LeakPoint(x: 0.04, y: 0.2)
+      && gainListed.contains("cast_point") && mcp("leak_add_region", ["x": 0, "y": 0.5, "rx": 0.3, "ry": 0.6, "clean_point": [0.6, 0.2], "mode": "tint"]).isError,
+      "leak_add_region draws a gain region measured where it is told, and refuses a mode it does not know")
+    _ = mcp("undo")
     pageLab.importReference(referenceURL)
     pageLab.wait()
     try check(!mcp("leak_start").isError && pageLab.repaired && FileManager.default.fileExists(atPath: pageLab.folder!.appendingPathComponent("job.json").path),
@@ -447,7 +520,6 @@ enum LightLeakTests {
     // The rest of FilmLightLab's API over MCP: a file and a reference imported, regions drawn,
     // changed and deleted, a protection, landmarks, a turn, a crop, a preset. Writing a file stays
     // the user's: those tools are only checked where they refuse, which opens nothing.
-    func said(_ r: (content: [[String: Any]], isError: Bool)) -> String { r.content.first?["text"] as? String ?? "" }
     let frameJob = pageLab.job?.id
     try check(mcp("leak_import", ["path": root.path]).isError && mcp("leak_import", ["path": "leaked.tif"]).isError
       && mcp("leak_import", ["path": root.appendingPathComponent("missing.tif").path]).isError && pageLab.job?.id == frameJob,
@@ -492,10 +564,13 @@ enum LightLeakTests {
       && !mcp("leak_start").isError && pageLab.model?.alignment.method == "manual-landmarks",
       "leak_set_landmarks wants four pairs or more, and leak_start then fits by them")
     try check(!mcp("leak_set_landmarks", ["pairs": [Any]()]).isError && pageLab.pairs.isEmpty, "an empty list clears the landmarks")
-    try check(!mcp("leak_clear_correction").isError && pageLab.model == nil && !pageLab.repaired && mcp("leak_clear_correction").isError
-      && mcp("leak_export").isError, "leak_clear_correction stops the reference's correction, and then there is nothing to export")
+    try check(!mcp("leak_clear_correction").isError && pageLab.model == nil && pageLab.repaired && mcp("leak_clear_correction").isError,
+      "leak_clear_correction stops the reference's correction; the region drawn still repairs on its own")
+    try check(!mcp("leak_update_region", ["id": regionID, "enabled": false]).isError && !pageLab.repaired && mcp("leak_export").isError,
+      "with neither the reference's correction nor a region acting, there is nothing to export")
     _ = mcp("undo")
-    try check(pageLab.repaired, "undo puts the correction back")
+    _ = mcp("undo")
+    try check(pageLab.repaired && pageLab.model != nil, "undo puts the region and the correction back")
     let aspect = Double(pageLab.before?.width ?? 1) / Double(pageLab.before?.height ?? 1)
     let quarter = mcp("leak_rotate", ["quarter_turns": 1])
     let turnedAspect = Double(pageLab.before?.height ?? 1) / Double(pageLab.before?.width ?? 1)

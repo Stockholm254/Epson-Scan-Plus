@@ -171,6 +171,7 @@ struct LeakRegionsSection: View {
       Picker("方式", selection: Binding(get: { r.mode ?? "chroma" }, set: { v in lab.editRegion(r.id, "区域方式") { $0.mode = v } })) {
         Text("去色偏（保留亮度）").tag("chroma")
         Text("减雾（恢复暗部）").tag("fog")
+        Text("按比例去色偏（色暗角）").tag("gain")
       }.font(.system(size: 11)).disabled(r.fog != nil || r.ratios != nil)
       amount("强度", r.amount ?? 1) { v in lab.editRegion(r.id, "区域强度") { $0.amount = v } }
       amount("羽化", r.feather ?? 0.7) { v in lab.editRegion(r.id, "区域羽化") { $0.feather = v } }
@@ -178,6 +179,11 @@ struct LeakRegionsSection: View {
       Text(r.ref.map { String(format: "干净参考点：%.3f, %.3f", $0.x, $0.y) }
         ?? (r.target != nil || r.fog != nil ? "已标定的区域，可调强度。" : "尚未选参考点：用「参考点」点同材质、没有漏光的位置。"))
         .font(.system(size: 10)).foregroundStyle(r.ref == nil && r.target == nil && r.fog == nil ? Hardware.amber : .secondary)
+      if r.mode == "gain" {
+        Text(r.cast.map { String(format: "量色偏的位置：%.3f, %.3f", $0.x, $0.y) }
+          ?? "在区域中心量色偏：中心要和参考点是同一种东西（比如都是天空）。整片按同一个比例改，跨过不同物体也不染色，亮处照样校正。")
+          .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      }
     }.padding(8).background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.05)))
   }
   func amount(_ title: String, _ value: Double, _ set: @escaping (Double) -> Void) -> some View {

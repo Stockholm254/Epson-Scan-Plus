@@ -51,7 +51,9 @@ struct LeakJob: Codable, Identifiable {
 
 /// The 去漏光 page. One photograph at a time: a frame of the open roll or an imported positive,
 /// shown before and after, repaired against a reference that is generated once (the only step
-/// that calls the API) and refitted for free after every change of scene or orientation.
+/// that calls the API), imported, or made with the user's own image model, and refitted for free
+/// after every change of scene or orientation; or, without one, by the local regions alone, drawn
+/// here or by an assistant over MCP.
 final class LeakLab: ObservableObject {
   @Published private(set) var job: LeakJob?
   @Published private(set) var params = LeakParams()
@@ -101,8 +103,11 @@ final class LeakLab: ObservableObject {
   var hasBase: Bool { base != nil }
   var hasReference: Bool { job?.guide != nil }
   var model: LeakModel? { params.referenceModel }
-  /// The reference is applied, to this base.
-  var repaired: Bool { model.map { $0.strength > 0 && ($0.sourceBase == nil || $0.sourceBase == job?.base) } ?? false }
+  /// Local regions act on the picture: those enabled (detected ones are not until ticked).
+  var regionsAct: Bool { params.regions.contains { $0.enabled != false } }
+  /// The repair is applied to this base: the reference's correction, or local regions, with or
+  /// without one.
+  var repaired: Bool { (model.map { $0.strength > 0 && ($0.sourceBase == nil || $0.sourceBase == job?.base) } ?? false) || regionsAct }
 
   // MARK: Opening
 
@@ -623,11 +628,18 @@ final class LeakLab: ObservableObject {
 
   // MARK: Repairing
 
-  /// 开始去漏光: with a reference, fitted here for free; without one, the API is asked for it.
+  /// 开始去漏光: with a reference, fitted here for free; without one, the local regions alone when
+  /// some are drawn or ticked, free too; with neither, the API is asked for a reference.
   func start() {
     guard base != nil, busy == nil else { return }
     if hasReference {
       fit()
+    } else if regionsAct {
+      try? persist()
+      preview()
+      wipe = 0.5
+      let n = params.regions.filter { $0.enabled != false }.count
+      notice = "已按 \(n) 个局部区域去漏光：没有参考图，只校正标出的区域，其余像素不变，没有调用 API。请检查区域边缘和真实红色物体。"
     } else if !credentials.configured {
       showAPI = true
       notice = "首次去漏光需要生成参考图：请在「API 管理」中设置 OpenAI API Key。不要把 Key 发到聊天中。"
@@ -669,6 +681,51 @@ final class LeakLab: ObservableObject {
           + (a?.reliable == false ? "自动对齐不确定，请检查参考图与原片是否同一构图。" : "请检查灯光红晕和真实红色物体。")
       }
     }
+  }
+  /// What to ask an image model of the user's own for (a subscription's image editing, say): the
+  /// prompt the API is sent, for this photograph's scene.
+  func referencePrompt() throws -> (text: String, scene: String) {
+    let (current, input) = onMain { (self.base, self.params) }
+    guard let current else { throw DeskError.message("去漏光页还没有照片。") }
+    let scene = try LeakEngine.prepare(base: current, params: input, target: nil).sceneInfo?.type ?? "mixed"
+    return (LeakOpenAI.buildPrompt(scene: scene, note: ""), scene)
+  }
+  /// The photograph to upload there, as the API is sent it: 1536 px at most, no Exif.
+  func referenceThumbnail() throws -> Data {
+    guard let current = onMain({ self.base }) else { throw DeskError.message("去漏光页还没有照片。") }
+    return Self.withoutExif(try current.jpeg(maxDimension: 1536, quality: 0.94).data)
+  }
+  /// Saves the thumbnail where the user chooses, and puts the prompt on the clipboard.
+  func chooseReferenceUpload() {
+    guard let j = job, base != nil, busy == nil else { return }
+    let panel = NSSavePanel()
+    panel.allowedContentTypes = [.jpeg]
+    panel.canCreateDirectories = true
+    panel.nameFieldStringValue = Self.stem(j.sourceName) + "-参考图用.jpg"
+    panel.message = "最长边 1536 px、无 EXIF 的缩图，上传到你自己的图像模型；提示词同时复制到剪贴板"
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    run("准备缩图和提示词") {
+      let prompt = try self.referencePrompt()
+      try self.referenceThumbnail().write(to: url, options: .atomic)
+      return {
+        Self.copy(prompt.text)
+        self.notice = "缩图已存为「\(url.lastPathComponent)」，提示词（英文）已复制。在 ChatGPT 等能改图的应用里上传缩图、粘贴提示词，下载生成的图，再用「导入已有参考图…」导回来；不调用 API。"
+      }
+    }
+  }
+  func copyReferencePrompt() {
+    guard base != nil, busy == nil else { return }
+    run("准备提示词") {
+      let prompt = try self.referencePrompt()
+      return {
+        Self.copy(prompt.text)
+        self.notice = "提示词（英文，按\(["day": "白天", "night": "夜晚"][prompt.scene] ?? "混合光")场景）已复制。配合「导出缩图…」存下的缩图，在你自己的图像模型里用。"
+      }
+    }
+  }
+  static func copy(_ text: String) {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(text, forType: .string)
   }
   /// A reference from a file: the same photograph, cleaned elsewhere.
   func importReference(_ url: URL) {
@@ -918,6 +975,14 @@ final class LeakLab: ObservableObject {
 extension AppModel {
   /// The open project's file.
   var projectPath: String? { sessionURL?.appendingPathComponent(projectFileName).path }
+  /// From taking the mask off to the 去漏光 page: the frame selected and opened there as it is
+  /// converted now; a job already made of it opens as it was left.
+  func openInLeak(_ id: UUID) {
+    guard let f = frames.first(where: { $0.id == id }), let origin = leakOrigin(f) else { return }
+    if selectedID != id { select(id) }
+    page = .leak
+    leak.open(origin: origin)
+  }
   /// What a light-leak job keeps of a frame of the open roll: its conversion as it is now.
   func leakOrigin(_ frame: FilmFrame) -> LeakJob.Origin? {
     projectPath.map { LeakJob.Origin(project: $0, frame: frame.id, frameName: frame.name, adjustments: frame.adjustments, profile: profile) }

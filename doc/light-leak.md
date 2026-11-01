@@ -40,7 +40,7 @@ FilmLightLab 按它附带的 Adobe RGB (1998) 配置文件解码：纯 563/256 G
 
 右侧「局部区域与保护」一节，按 FilmLightLab 的界面做：
 
-- **画区域**：在照片上拖出椭圆，框住一处漏光；再用**参考点**点同材质、没有漏光的干净位置。区域按它「去色偏」（保留亮度，改色比）或「减雾」（减去漏光的亮雾，恢复暗部），可调强度和羽化；「查看」时按住区域拖动可移动。
+- **画区域**：在照片上拖出椭圆，框住一处漏光；再用**参考点**点同材质、没有漏光的干净位置。区域按它「去色偏」（保留亮度，改色比）、「减雾」（减去漏光的亮雾，恢复暗部），或「按比例去色偏」：在量色偏的位置（默认区域中心，MCP 可另指，要和参考点是同一种东西）量出各通道和参考点的比例，整片在线性光里乘上同一个比例、再还原亮度，所以跨过不同物体也不会被染成参考点的颜色，适合翻拍灯往四周逐渐加重的颜色暗角；这一种不受「保留灯光红晕」的高光门限，手绘保护照样生效。可调强度和羽化；没有参考图时，启用的区域单独就能去漏光，不调用 API；「查看」时按住区域拖动可移动。
 - **保护**：用画笔涂出真实的红色物体、灯光等，保护区里参考校正和区域校正都不作用（基础调整照常），手绘保护始终优先。
 - **自动检测**：在 320 px 的缩图上按灵敏度找候选漏光区域和灯光保护区。候选区域默认不启用，勾选后才生效（并算作认可，下次拟合保留）；检测到的保护替换之前检测的，手绘的不变。结果只是建议，不是漏光定论。
 - **对应点**：自动对齐不确定时，在原片和参考图上依次点同一位置，至少 4 对，拟合按它们求单应映射对齐；清空则按相同构图。换参考图、旋转或裁切后对应点清空。
@@ -62,10 +62,10 @@ FilmLightLab 原来自己有一套本机 HTTP 接口（`server.cjs`），网页�
 | `prepare`（方向、裁切） | `leak_rotate`、`leak_crop` |
 | `preview` 与 `/files/…` | `leak_preview`（结果、原片、参考图），`leak_sample` |
 | `detect` | `leak_detect` |
-| `fit`（带对应点） | `leak_set_landmarks`，然后 `leak_start` |
+| `fit`（带对应点） | `leak_set_landmarks`，然后 `leak_start`；没有参考图时 `leak_start` 只按启用的局部区域校正 |
 | 参数 | `leak_set`、`leak_add_region`、`leak_update_region`、`leak_delete_region`、`leak_add_protection`、`leak_clear_correction` |
 | 预设 | `leak_load_preset`；`leak_save_preset` 只打开保存窗口 |
-| `generate` | `leak_request_reference`：只打开确认窗口，可预填质量和附加要求 |
+| `generate` | `leak_request_reference`：只打开确认窗口，可预填质量和附加要求；不用 API 时 `leak_reference_prompt` 给出同样的提示词，`leak_export_upload` 打开保存缩图的窗口，用户用自己的图像模型做好后 `leak_import_reference` |
 | `export` | `leak_export`：只打开导出窗口 |
 | `GET /api/ai/config` | `leak_get_state` 里的 `api_key_configured` |
 | `POST /api/ai/config` | 没有：Key 只能由用户在「API 管理」里填 |

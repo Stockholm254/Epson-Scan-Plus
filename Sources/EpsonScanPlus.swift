@@ -90,6 +90,8 @@ struct EpsonScanPlusApp: App {
         Button("逆时针旋转") { model.turn(clockwise: false) }.keyboardShortcut(
           "r", modifiers: [.command, .shift])
         Button("水平镜像") { model.toggleMirror() }
+        Button("在去漏光里打开") { if let id = model.selectedID { model.openInLeak(id) } }
+          .keyboardShortcut("l", modifiers: [.command, .option]).disabled(model.selected == nil || model.page == .leak)
         Toggle("旋转 / 镜像同步到全部照片", isOn: $model.syncOrientation)
         Divider()
         Button("导出当前…") { model.exportImages(all: false) }.keyboardShortcut("e")

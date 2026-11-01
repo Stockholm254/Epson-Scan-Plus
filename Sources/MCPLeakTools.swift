@@ -23,7 +23,8 @@ extension MCPTools {
     "x": number("椭圆中心的横向位置", 0...1), "y": number("椭圆中心的纵向位置", 0...1),
     "rx": number("横向半径，占画宽", 0.005...0.5), "ry": number("纵向半径，占画高", 0.005...0.5),
     "clean_point": pointPair("[x, y]：同材质、没有漏光的干净位置，区域按它的颜色校正"),
-    "mode": ["type": "string", "enum": ["chroma", "fog"], "description": "chroma 去掉色偏、保留明暗（默认）；fog 减去亮雾、恢复暗部"],
+    "mode": ["type": "string", "enum": ["chroma", "fog", "gain"], "description": "chroma 去掉色偏、保留明暗（默认）；fog 减去亮雾、恢复暗部；gain 按比例去色偏：在 cast_point 量出色偏，整片按同一个比例改，跨过不同物体不会染色，适合翻拍灯的颜色暗角，不受高光保护"],
+    "cast_point": pointPair("[x, y]：只用于 gain，量色偏的位置，要和 clean_point 是同一种东西（比如都是天空）；不给则用椭圆中心"),
     "amount": number("强度，新建默认 0.8", 0...1), "feather": number("羽化，新建默认 0.8", 0...1),
     "name": ["type": "string", "maxLength": 80, "description": "名称"],
   ]
@@ -33,7 +34,7 @@ extension MCPTools {
     Tool(name: "leak_open", description: "切到去漏光页并打开一张照片：frame 为本卷画面编号（如 \"09\"，按它当前的调色），或 job 为 leak_list_jobs 里的任务编号。", properties: [
       "frame": ["type": "string", "description": "本卷画面编号"], "job": ["type": "string", "description": "任务编号"],
     ]),
-    Tool(name: "leak_start", description: "开始去漏光：用已有参考图在本地拟合并应用（免费，不调用 API）。还没有参考图时会提示先请用户生成或导入。", properties: [:]),
+    Tool(name: "leak_start", description: "开始去漏光（免费，不调用 API）：有参考图时按它在本地拟合并应用；没有参考图时只按启用的局部区域校正，区域外的像素不变。两样都没有时会提示先请用户生成或导入参考图，或先标出区域。", properties: [:]),
     Tool(name: "leak_set", description: "调整去漏光参数，只改给出的项；场景改变时用已有参考图在本地重新拟合。可用 ⌘Z 或 undo 撤销。", properties: [
       "scene": ["type": "string", "enum": ["auto", "day", "night"], "description": "场景：自动判断、白天 / 自然光、夜晚 / 点光源"],
       "strength": number("去偏色强度，0 为原片，1 为完全按参考校正", 0...1),
@@ -56,6 +57,8 @@ extension MCPTools {
       "quality": ["type": "string", "enum": ["high", "medium"], "description": "预填的质量，默认 high"],
       "note": ["type": "string", "maxLength": 2000, "description": "预填的附加要求（可选）"],
     ]),
+    Tool(name: "leak_reference_prompt", description: "取得给用户自己的图像模型（比如 ChatGPT 订阅里的改图）做参考图用的英文提示词（和 API 用的一样）、它按的场景，以及步骤。只读：不上传、不写文件、不计费；你不能替用户上传。", properties: [:]),
+    Tool(name: "leak_export_upload", description: "请用户存下给图像模型的缩图：只在 App 里打开保存窗口（最长边 1536 px、无 EXIF 的 JPEG，和 API 上传的一样，提示词同时复制到剪贴板），由用户选位置；本工具自己不写文件、不上传。", properties: [:]),
     Tool(name: "leak_import", description: "切到去漏光页，导入一张已去色罩、反相的正片文件（TIFF / PNG / JPEG，推荐带 ICC 的 16 位 TIFF），复制进一个新任务；原文件不改动。", properties: [
       "path": fileField,
     ], required: ["path"]),
@@ -100,6 +103,8 @@ extension MCPTools {
     去漏光页（FilmLightLab 修订 9）修复正片上的红色 / 品红漏光：参考图（同一张照片的干净版本，通常由图像模型生成）只指导平滑的色彩和明暗校正，输出像素都来自原片。
     - 先用 leak_open 打开本卷照片或任务（或 leak_import 导入文件），leak_get_state 和 leak_preview 看情况；已有参考图时 leak_start 在本地免费修复。
     - 生成参考图要上传缩图并计费，只能由用户确认：用 leak_request_reference 在 App 里打开确认窗口，不要替用户决定。用户已有干净版本时用 leak_import_reference，免费。
+    - 不想用 API 时：用户可以用自己订阅的图像模型做参考图——leak_export_upload 请用户存缩图（提示词同时复制），或 leak_reference_prompt 把提示词给用户；用户在 ChatGPT 等应用里上传、下载结果后，用 leak_import_reference 导入，再 leak_start。
+    - 没有参考图也能修：看 leak_preview，用 leak_detect 找候选、leak_sample 量颜色，判断哪里是漏光、哪里是真实的红色物体；leak_update_region 启用对的候选，或 leak_add_region 画椭圆，clean_point 点在同材质、没有漏光的地方；然后 leak_start 只按这些区域校正，不调用 API。chroma 把区域的色度拉向干净点（适合同一种材质上的漏光，比如天空上的一片红），fog 减去亮雾；跨过不同物体、往边上逐渐加重的偏色（比如翻拍灯的颜色暗角，左右对称、越靠边越红）用 gain：cast_point 点在偏色最重、和 clean_point 同一种东西的地方（比如边上的天空对中间的天空），椭圆放在那一边、半径盖住偏色的范围、羽化开大。chroma 和 fog 在亮处受高光保护（protect_highlights），gain 不受。
     - 结果不理想时先检查场景（夜景的边缘白雾只在夜晚模式校正），再调 strength；灯光红晕被抹掉时确认 protect_highlights 开着，或用 leak_add_protection 画保护区。
     - 局部漏光：leak_detect 找候选（默认不启用），leak_list_regions 查看，leak_update_region 启用或修改；也可以 leak_add_region 画椭圆，clean_point 点在同材质、没有漏光的地方。
     - 自动对齐不可靠时用 leak_set_landmarks 给 4 对以上对应点，再 leak_start。旋转和裁切会清空区域、保护区和对应点，先定方向和裁切。
@@ -194,6 +199,7 @@ extension MCPTools {
     item["amount"] = short(r.amount ?? 1)
     item["feather"] = short(r.feather ?? 0.7)
     if let ref = r.ref { item["clean_point"] = [short(ref.x), short(ref.y)] }
+    if let cast = r.cast { item["cast_point"] = [short(cast.x), short(cast.y)] }
     // A region acts only once it has a clean colour to go to: a point, or one measured when detected.
     item["has_clean_colour"] = r.ref != nil || r.target != nil || r.fog != nil
     return item
@@ -276,8 +282,8 @@ extension MCPTools {
       return say(onMain { "已打开「\(lab.job?.sourceName ?? "")」。" + (lab.hasReference ? "已有参考图。" : "还没有参考图。") + lab.notice })
     case "leak_start":
       try requireBase(lab)
-      guard onMain({ lab.hasReference }) else {
-        throw DeskError.message("还没有参考图。生成参考图要计费，请用 leak_request_reference 请用户在 App 里确认，或请用户导入已有参考图。")
+      guard onMain({ lab.hasReference || lab.regionsAct }) else {
+        throw DeskError.message("还没有参考图，也没有启用的漏光区域。生成参考图要计费，请用 leak_request_reference 请用户在 App 里确认，或请用户导入已有参考图；也可以用 leak_detect 找候选后 leak_update_region 启用，或 leak_add_region 画区域，只修这些地方。")
       }
       guard onMain({ lab.busy == nil }) else { throw DeskError.message("去漏光页正在处理，稍后再试。") }
       onMain { lab.start() }
@@ -433,14 +439,15 @@ extension MCPTools {
       })
     case "leak_add_region":
       try requireBase(lab)
-      try only(arguments, ["x", "y", "rx", "ry", "clean_point", "mode", "amount", "feather", "name"])
+      try only(arguments, ["x", "y", "rx", "ry", "clean_point", "cast_point", "mode", "amount", "feather", "name"])
       guard let x = try double(arguments, "x", 0...1), let y = try double(arguments, "y", 0...1),
         let rx = try double(arguments, "rx", 0.005...0.5), let ry = try double(arguments, "ry", 0.005...0.5)
       else { throw DeskError.message("需要椭圆的中心 x、y 和半径 rx、ry。") }
       guard let clean = try spot(arguments["clean_point"], "clean_point") else {
         throw DeskError.message("需要 clean_point：同材质、没有漏光的干净位置 [x, y]，区域按它的颜色校正。")
       }
-      let mode = try choice(arguments, "mode", ["chroma", "fog"]) ?? "chroma"
+      let mode = try choice(arguments, "mode", ["chroma", "fog", "gain"]) ?? "chroma"
+      let cast = try spot(arguments["cast_point"], "cast_point")
       let amount = try double(arguments, "amount", 0...1) ?? 0.8, feather = try double(arguments, "feather", 0...1) ?? 0.8
       let given = try label(arguments)
       try idle(lab)
@@ -448,7 +455,7 @@ extension MCPTools {
       onMain {
         let r = LeakRegion(
           id: id, name: given ?? "AI 区域 \(lab.params.regions.count + 1)", shape: "ellipse", mode: mode, x: x, y: y, rx: rx, ry: ry,
-          amount: amount, feather: feather, ref: clean, enabled: true)
+          amount: amount, feather: feather, ref: clean, cast: cast, enabled: true)
         lab.change("AI 新建漏光区域") { $0.regions.append(r) }
       }
       try settle(lab)
@@ -457,7 +464,7 @@ extension MCPTools {
       return say("已新建漏光区域 \(id)，按 (\(short(clean.x)), \(short(clean.y))) 的颜色校正。可用 ⌘Z 或 undo 撤销。")
     case "leak_update_region":
       try requireBase(lab)
-      try only(arguments, ["id", "enabled", "x", "y", "rx", "ry", "clean_point", "mode", "amount", "feather", "name"])
+      try only(arguments, ["id", "enabled", "x", "y", "rx", "ry", "clean_point", "cast_point", "mode", "amount", "feather", "name"])
       guard let id = arguments["id"] as? String else { throw DeskError.message("需要 id：leak_list_regions 里的编号。") }
       let found = onMain { () -> (LeakRegion, Bool)? in
         if let r = lab.params.regions.first(where: { $0.id == id }) { return (r, false) }
@@ -473,7 +480,8 @@ extension MCPTools {
       let x = try double(arguments, "x", 0...1), y = try double(arguments, "y", 0...1)
       let rx = try double(arguments, "rx", 0.005...0.5), ry = try double(arguments, "ry", 0.005...0.5)
       let amount = try double(arguments, "amount", 0...1), feather = try double(arguments, "feather", 0...1)
-      let clean = try spot(arguments["clean_point"], "clean_point"), mode = try choice(arguments, "mode", ["chroma", "fog"])
+      let clean = try spot(arguments["clean_point"], "clean_point"), mode = try choice(arguments, "mode", ["chroma", "fog", "gain"])
+      let cast = try spot(arguments["cast_point"], "cast_point")
       let given = try label(arguments)
       try idle(lab)
       onMain {
@@ -490,6 +498,7 @@ extension MCPTools {
           if let amount { r.amount = amount }
           if let feather { r.feather = feather }
           if let mode { r.mode = mode }
+          if let cast { r.cast = cast }
           if let given { r.name = given }
           // A new clean point: what was measured from the old one, or when detected, goes.
           if let clean {
@@ -593,6 +602,23 @@ extension MCPTools {
       onMain { lab.loadPreset(from: url) }
       try settle(lab)
       return say(onMain { lab.notice })
+    case "leak_reference_prompt":
+      try requireBase(lab)
+      try only(arguments, [])
+      let prompt = try lab.referencePrompt()
+      return text([
+        "scene": prompt.scene, "prompt": prompt.text,
+        "steps": "1. 用户在 App 去漏光页点「导出缩图…」（或你调用 leak_export_upload）存下缩图；2. 在 ChatGPT 等能改图的应用里上传缩图、粘贴这段提示词；3. 下载生成的图；4. 用 leak_import_reference 导入，再 leak_start。不用 API Key，也不经 App 上传。",
+      ])
+    case "leak_export_upload":
+      try requireBase(lab)
+      try only(arguments, [])
+      try idle(lab)
+      DispatchQueue.main.async {
+        model.page = .leak
+        lab.chooseReferenceUpload()
+      }
+      return say("已在 App 里打开保存缩图的窗口，由用户选位置；存好后提示词会复制到剪贴板。本工具没有写文件，也没有上传。")
     case "leak_save_preset", "leak_export":
       try requireBase(lab)
       try only(arguments, [])

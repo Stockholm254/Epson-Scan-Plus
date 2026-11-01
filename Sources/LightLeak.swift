@@ -36,12 +36,17 @@ struct LeakRegion: Codable, Equatable, Identifiable {
   var name: String?
   /// ellipse, stroke (a brush path) or polygon.
   var shape: String
-  /// chroma (remove the cast, keep the brightness) or fog (subtract the veil, restore the blacks).
+  /// chroma (remove the cast, keep the brightness), fog (subtract the veil, restore the blacks) or
+  /// gain (scale each channel by the cast measured at `cast` against the clean point, the scene's
+  /// own colours kept: for a cast across different things, as a copy light's colour fall-off).
   var mode: String?
   var x: Double?, y: Double?, rx: Double?, ry: Double?
   var amount: Double?, feather: Double?
   /// A clean point of the same material, whose colour the region is corrected to.
   var ref: LeakPoint?
+  /// gain only: where the cast is measured, on the same material as the clean point; nil, the
+  /// region's centre.
+  var cast: LeakPoint?
   var enabled: Bool?
   var confidence: String?
   var detected: Bool?
@@ -219,6 +224,8 @@ fileprivate func smooth(_ a: Double, _ b: Double, _ x: Double) -> Double {
   return t * t * (3 - 2 * t)
 }
 @inline(__always) fileprivate func luma(_ p: SIMD3<Double>) -> Double { 0.30 * p.x + 0.59 * p.y + 0.11 * p.z }
+/// Luminance of linear Adobe RGB.
+@inline(__always) fileprivate func linearLuma(_ p: SIMD3<Double>) -> Double { 0.2974 * p.x + 0.6273 * p.y + 0.0753 * p.z }
 /// JavaScript's Math.round: halves round up.
 @inline(__always) fileprivate func jsRound(_ x: Double) -> Double { (x + 0.5).rounded(.down) }
 /// The upper median, as FilmLightLab takes it.
@@ -324,15 +331,24 @@ extension LeakEngine {
   }
 
   /// The local regions' corrections over the picture, at most 900 cells across: fog to subtract
-  /// (three channels) and a chroma weight with its target ratios (four). Nil when no region acts.
+  /// (three channels), a chroma weight with its target ratios (four) and each channel's log gain
+  /// (three). Nil when no region acts.
   struct RegionField { let width: Int, height: Int; var values: [Float] }
+  static let fieldChannels = 10
   static func compile(_ image: LeakImage, _ params: LeakParams, maxWidth: Int = 900) -> RegionField? {
-    struct Active { var region: LeakRegion; var fog: SIMD3<Double>?; var ratios: SIMD3<Double>? }
+    struct Active { var region: LeakRegion; var fog: SIMD3<Double>?; var ratios: SIMD3<Double>?; var gains: SIMD3<Double>? = nil }
     let regions: [Active] = params.regions.filter { $0.enabled != false }.compactMap { r in
-      let src = globalColor(sample(image, r.x ?? 0.5, r.y ?? 0.5), params)
+      let src = globalColor(sample(image, r.cast?.x ?? r.x ?? 0.5, r.cast?.y ?? r.y ?? 0.5), params)
       let ref: SIMD3<Double>? = r.target.map { SIMD3($0[0], $0[1], $0[2]) }
         ?? r.ref.map { globalColor(sample(image, $0.x, $0.y), params) }
       guard ref != nil || r.fog != nil else { return nil }
+      if r.mode == "gain" {
+        // Each channel's share of the light at the cast against at the clean point, in linear light.
+        guard let ref else { return nil }
+        let s = SIMD3((0..<3).map { pow(max(1e-6, src[$0]), 2.2) }), t = SIMD3((0..<3).map { pow(max(1e-6, ref[$0]), 2.2) })
+        let gains = SIMD3((0..<3).map { log((t[$0] / linearLuma(t)) / (s[$0] / linearLuma(s))) })
+        return Active(region: r, fog: nil, ratios: nil, gains: gains)
+      }
       let y = ref.map(luma) ?? 1
       let fog = r.fog.map { SIMD3($0[0], $0[1], $0[2]) }
         ?? SIMD3((0..<3).map { pow(src[$0], 2.2) - pow(ref![$0], 2.2) })
@@ -342,10 +358,11 @@ extension LeakEngine {
     guard !regions.isEmpty else { return nil }
     let W = min(maxWidth, image.width), H = max(2, Int(jsRound(Double(W) * Double(image.height) / Double(image.width))))
     let aspect = image.aspect
-    var fields = [Float](repeating: 0, count: W * H * 7)
+    let n = fieldChannels
+    var fields = [Float](repeating: 0, count: W * H * n)
     for yy in 0..<H {
       for xx in 0..<W {
-        let x = Double(xx) / Double(W - 1), y = Double(yy) / Double(H - 1), i = (yy * W + xx) * 7
+        let x = Double(xx) / Double(W - 1), y = Double(yy) / Double(H - 1), i = (yy * W + xx) * n
         var protect = 0.0
         for r in params.protect { protect = max(protect, r.weight(x, y, aspect: aspect, protection: true)) }
         for a in regions {
@@ -353,7 +370,9 @@ extension LeakEngine {
           var w = r.weight(x, y, aspect: aspect) * (r.amount ?? 1) * (1 - protect)
           if let fade = r.yFade { w *= 1 - smooth(fade[0], fade[1], y) }
           if w < 1e-6 { continue }
-          if r.mode == "fog", let fog = a.fog {
+          if let gains = a.gains {
+            for c in 0..<3 { fields[i + 7 + c] = Float(Double(fields[i + 7 + c]) + w * gains[c]) }
+          } else if r.mode == "fog", let fog = a.fog {
             for c in 0..<3 {
               var wc = w
               if let channelRy = r.channelRy, let rx = r.rx, let cx = r.x, let cy = r.y {
@@ -381,14 +400,14 @@ extension LeakEngine {
     let out = eachRow(h, image.data) { src, dst, y in renderRow(src, dst, y, w, h, field, params, gated) }
     return LeakImage(width: w, height: h, data: out)
   }
-  /// The seven region values at a pixel, bilinearly from the field.
+  /// The region values at a pixel, bilinearly from the field.
   @inline(__always) private static func fieldValues(_ field: RegionField, _ fx: Double, _ fy: Double) -> [Double] {
-    let W = field.width, H = field.height, v = field.values
+    let W = field.width, H = field.height, v = field.values, n = fieldChannels
     let ix = min(W - 2, floorInt(fx)), iy = min(H - 2, floorInt(fy))
     let ax = fx - Double(ix), ay = fy - Double(iy)
-    let i00 = (iy * W + ix) * 7, i01 = (iy * W + ix + 1) * 7, i10 = ((iy + 1) * W + ix) * 7, i11 = ((iy + 1) * W + ix + 1) * 7
-    var f = [Double](repeating: 0, count: 7)
-    for c in 0..<7 {
+    let i00 = (iy * W + ix) * n, i01 = (iy * W + ix + 1) * n, i10 = ((iy + 1) * W + ix) * n, i11 = ((iy + 1) * W + ix + 1) * n
+    var f = [Double](repeating: 0, count: n)
+    for c in 0..<n {
       let top: Double = (1 - ax) * Double(v[i00 + c]) + ax * Double(v[i01 + c])
       let bottom: Double = (1 - ax) * Double(v[i10 + c]) + ax * Double(v[i11 + c])
       f[c] = (1 - ay) * top + ay * bottom
@@ -399,7 +418,7 @@ extension LeakEngine {
     _ src: UnsafeBufferPointer<UInt16>, _ dst: UnsafeMutableBufferPointer<UInt16>, _ y: Int, _ w: Int, _ h: Int,
     _ field: RegionField?, _ params: LeakParams, _ gated: Bool
   ) {
-    let none = [Double](repeating: 0, count: 7)
+    let none = [Double](repeating: 0, count: fieldChannels)
     for x in 0..<w {
       let i = (y * w + x) * 3
       let f: [Double] = field.map { fieldValues($0, Double(x) / Double(w - 1) * Double($0.width - 1), Double(y) / Double(h - 1) * Double($0.height - 1)) } ?? none
@@ -418,6 +437,15 @@ extension LeakEngine {
           let toward: Double = a * l * f[c + 4] / max(1e-9, f[3])
           q[c] = q[c] * (1 - a) + toward
         }
+      }
+      // The cast taken out by ratio, in linear light, brightness kept; not gated, since a lamp or a
+      // red thing keeps its own colour under a gain.
+      if f[7] != 0 || f[8] != 0 || f[9] != 0 {
+        let before = SIMD3((0..<3).map { pow(max(0, q[$0]), 2.2) })
+        var after = SIMD3((0..<3).map { before[$0] * exp(f[7 + $0]) })
+        let y0 = linearLuma(before), y1 = linearLuma(after)
+        if y1 > 1e-9 { after *= y0 / y1 }
+        for c in 0..<3 { q[c] = pow(max(0, after[c]), 1 / 2.2) }
       }
       for c in 0..<3 { dst[i + c] = UInt16(jsRound(clamp(q[c]) * 65535)) }
     }

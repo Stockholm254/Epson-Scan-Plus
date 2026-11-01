@@ -87,6 +87,13 @@ struct ContentView: View {
             Label("导入", systemImage: "square.and.arrow.down")
           }.help("导入 TIFF、PNG 或 JPEG，放进库里新的一卷")
         }
+        if m.page == .convert {
+          Button {
+            if let id = m.selectedID { m.openInLeak(id) }
+          } label: {
+            Label("去漏光", systemImage: "wand.and.rays")
+          }.help("在去漏光页打开选中的这张，按它现在的调色（⌥⌘L）").disabled(m.selected == nil || m.isWorking)
+        }
       }
     }
     ToolbarItem(placement: .principal) {
@@ -719,6 +726,7 @@ struct ContentView: View {
                     m.setEnabled(f.id, enabled: !f.enabled)
                   }.disabled(m.isWorking)
                   if m.page != .leak {
+                    Button("在去漏光里打开", systemImage: "wand.and.rays") { m.openInLeak(f.id) }.disabled(m.isWorking)
                     Button("删除这张", systemImage: "trash", role: .destructive) { m.remove(f.id) }.disabled(m.isWorking)
                   }
                 }

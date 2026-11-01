@@ -189,7 +189,7 @@ final class AppModel: ObservableObject {
       switch self {
       case .capture: return "采集：用 V850 预览和扫描，用 A7R IV 翻拍，或导入文件；每卷自动放进库里"
       case .convert: return "去色罩：片基、白平衡、预设、曲线、接触表和看片镜，以及导出"
-      case .leak: return "去漏光：用参考图修复正片上的漏光"
+      case .leak: return "去漏光：用参考图（API 生成或导入）或标出的漏光区域，修复正片上的漏光；在去色罩里选中一张，点「去漏光」进来"
       }
     }
   }
