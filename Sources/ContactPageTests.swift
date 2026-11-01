@@ -18,6 +18,30 @@ enum ContactPageTests {
       "a contact sheet page holds six strips of six frames, 3:2, in reading order")
     try check(short.size == full.size && short.cells.count == 4 && alone.size.height < full.size.height,
       "every page of a longer roll keeps the full page's size, so turning keeps the scale; a roll of one page is as tall as its strips")
+    // A frame turned upright among 3:2 ones, and a wide one: each cell its frame's shape.
+    let mixed = AppModel.sheetLayout(aspects: [1.5, 2.0 / 3, 1.5, 3], pages: 1), band = mixed.cells[0]
+    try check(mixed.cells[1].size == CGSize(width: 160, height: 240) && mixed.cells[1].minY == band.minY
+      && mixed.cells[3].size == CGSize(width: 360, height: 120) && mixed.cells[3].midY == band.midY
+      && mixed.cells[2].minX - mixed.cells[1].maxX == mixed.cells[1].minX - band.maxX
+      && mixed.size == alone.size && mixed.strips[0].width == alone.strips[0].width - 200,
+      "on a page a frame turned upright gets an upright cell as tall as a 3:2 one, a wide one a lower cell, the next a gap on")
+    func solid(_ w: Int, _ h: Int) -> CGImage {
+      let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: ImagePipeline.shared.outputSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+      ctx.setFillColor(CGColor(srgbRed: 0.8, green: 0.8, blue: 0.8, alpha: 1))
+      ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+      return ctx.makeImage()!
+    }
+    guard let composed = AppModel.composeSheet([("01", solid(60, 40), 1.5), ("02", solid(40, 60), 2.0 / 3)], pages: 1) else {
+      throw DeskError.message("FAIL: a page with a frame turned upright is composed")
+    }
+    let shown = ImagePipeline.shared.raster(composed, maxDimension: max(composed.width, composed.height))
+    let upright = AppModel.sheetLayout(aspects: [1.5, 2.0 / 3], pages: 1).cells[1]
+    let edges = [shown.pixel(Int(upright.minX) + 1, Int(upright.midY)), shown.pixel(Int(upright.maxX) - 2, Int(upright.midY)),
+      shown.pixel(Int(upright.midX), Int(upright.minY) + 1), shown.pixel(Int(upright.midX), Int(upright.maxY) - 2)]
+    try check(shown.width == composed.width && edges.allSatisfy { $0.values.min()! > 0.7 }
+      && shown.pixel(Int(upright.maxX) + 10, Int(upright.midY)).values.max()! < 0.2,
+      "the frame turned upright fills its cell to every edge, the film strip just beyond it")
 
     // A roll of 40 pictures a file each, as a camera or an import brings them.
     let pictures = folder.appendingPathComponent("contact-pages", isDirectory: true)
@@ -54,6 +78,19 @@ enum ContactPageTests {
     try check(clamped && model.contactPage == 0 && model.selectedID == model.frames[3].id && model.singleView,
       "the pages turn no further than there are; a pick in the film strip selects it and, with no canvas, shows it on its own at once")
     model.singleView = false
+    // A picture turned upright: its cell on the page stands upright, the next frame right after
+    // it; among the negatives, which lie as on the film, it stays 3:2.
+    let pageSize = AppModel.sheetLayout(count: 36, pages: 2).size
+    func shape(_ r: NormalRect) -> CGFloat { CGFloat(r.width) * pageSize.width / (CGFloat(r.height) * pageSize.height) }
+    model.frames[0].adjustments.rotation = 1
+    let turned = model.contactRect(model.frames[0]), next = model.contactRect(model.frames[1])
+    model.contactPositive = false
+    let lying = model.contactRect(model.frames[0])
+    model.contactPositive = true
+    model.frames[0].adjustments.rotation = 0
+    try check(abs(shape(turned) - 2.0 / 3) < 0.01 && abs(shape(lying) - 1.5) < 0.01
+      && abs((next.x - turned.x - turned.width) * pageSize.width - 18) < 0.01,
+      "a picture turned upright lies in an upright cell on the page, the next one a gap after it; its negative lies 3:2")
 
     // On the table: the loupe magnifies a frame of the page, and the pick grows to the middle.
     func settle(_ seconds: Double) { RunLoop.current.run(until: Date().addingTimeInterval(seconds)) }

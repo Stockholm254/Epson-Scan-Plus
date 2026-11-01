@@ -51,7 +51,9 @@ enum ContactSheet {
     let portrait = sizes.filter { $0.height > $0.width }.count * 2 > sizes.count
     return portrait ? CGSize(width: short, height: long) : CGSize(width: long, height: short)
   }
-  static func geometry(count: Int, cell: CGSize, layout: Layout) -> Geometry {
+  /// With `sizes`, each frame's own size as it prints: in strips each cell is as wide as its frame
+  /// fitted in `cell`, so a frame turned the other way leaves no black rebate beside it.
+  static func geometry(count: Int, cell: CGSize, layout: Layout, sizes: [CGSize]? = nil) -> Geometry {
     let cols = columns(count: count, layout: layout)
     let rows = max(1, Int((Double(count) / Double(cols)).rounded(.up)))
     // Proportions follow 135 film, with u as the 24 mm frame height.
@@ -66,21 +68,26 @@ enum ContactSheet {
       // About 5.5 mm of rebate either side of the frame and 2 mm between frames.
       let rebate = px(0.23), gap = px(0.085), pad = px(0.12), stripGap = px(0.25)
       let stripHeight = cell.height + 2 * rebate
+      func width(_ i: Int) -> CGFloat {
+        guard let s = sizes?[i], s.width > 0, s.height > 0 else { return cell.width }
+        return (s.width * min(cell.width / s.width, cell.height / s.height, 1)).rounded()
+      }
       for r in 0..<rows {
         let n = min(cols, count - r * cols)
         let y = top + CGFloat(r) * (stripHeight + stripGap)
-        g.strips.append(
-          CGRect(x: margin, y: y, width: CGFloat(n) * cell.width + CGFloat(n - 1) * gap + 2 * pad, height: stripHeight))
+        var x = margin + pad
         for c in 0..<n {
-          let cellRect = CGRect(
-            x: margin + pad + CGFloat(c) * (cell.width + gap), y: y + rebate, width: cell.width, height: cell.height)
+          let w = width(r * cols + c)
+          let cellRect = CGRect(x: x, y: y + rebate, width: w, height: cell.height)
           g.cells.append(cellRect)
-          g.labels.append(CGRect(x: cellRect.minX, y: cellRect.maxY + px(0.012), width: cell.width, height: px(0.07)))
-          g.edgePrints.append(CGRect(x: cellRect.minX, y: cellRect.minY - px(0.082), width: cell.width, height: px(0.07)))
+          g.labels.append(CGRect(x: cellRect.minX, y: cellRect.maxY + px(0.012), width: w, height: px(0.07)))
+          g.edgePrints.append(CGRect(x: cellRect.minX, y: cellRect.minY - px(0.082), width: w, height: px(0.07)))
+          x += w + gap
         }
+        g.strips.append(CGRect(x: margin, y: y, width: x - gap + pad - margin, height: stripHeight))
       }
       g.size = CGSize(
-        width: CGFloat(cols) * cell.width + CGFloat(cols - 1) * gap + 2 * pad + 2 * margin,
+        width: (g.strips.map(\.maxX).max() ?? margin) + margin,
         height: top + CGFloat(rows) * stripHeight + CGFloat(rows - 1) * stripGap + margin)
     case .grid:
       let gap = px(0.12), label = layout.numbers ? px(0.2) : 0
@@ -121,7 +128,7 @@ enum ContactSheet {
       return sideways ? CGSize(width: h, height: w) : CGSize(width: w, height: h)
     }
     let cell = Self.cell(for: sizes)
-    let g = geometry(count: tiles.count, cell: cell, layout: layout)
+    let g = geometry(count: tiles.count, cell: cell, layout: layout, sizes: sizes)
     let width = Int(g.size.width), height = Int(g.size.height)
     let bits = format.sixteenBit ? 16 : 8
     guard Double(width) * Double(height) * Double(bits / 2) < 3e9 else {

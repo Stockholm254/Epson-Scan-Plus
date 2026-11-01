@@ -30,6 +30,13 @@ enum ContactSheetTests {
       "a chosen column count is used")
     try check(ContactSheet.cell(for: [CGSize(width: 30, height: 20), CGSize(width: 20, height: 30), CGSize(width: 20, height: 30)])
       == CGSize(width: 20, height: 30), "mostly portrait frames get portrait cells")
+    let turnedSizes = [CGSize(width: 30, height: 20), CGSize(width: 20, height: 30), CGSize(width: 30, height: 20)]
+    let turned = ContactSheet.geometry(count: 3, cell: CGSize(width: 30, height: 20), layout: ContactSheet.Layout(), sizes: turnedSizes)
+    let even = ContactSheet.geometry(count: 3, cell: CGSize(width: 30, height: 20), layout: ContactSheet.Layout())
+    try check(turned.cells.map(\.width) == [30, 13, 30] && turned.cells.allSatisfy { $0.height == 20 }
+      && abs((turned.cells[2].minX - turned.cells[1].maxX) - (turned.cells[1].minX - turned.cells[0].maxX)) < 0.01
+      && turned.strips[0].width == even.strips[0].width - 17 && turned.size.width == even.size.width - 17,
+      "in a strip a frame turned the other way gets a cell as narrow as it prints, the next one a gap after it")
 
     // Every export format writes its own type and depth.
     let sample = try pipe.load(folder.appendingPathComponent("high-precision-test.tif"))
@@ -127,7 +134,7 @@ enum ContactSheetTests {
       let w = CGFloat(s.width) * 2, h = CGFloat(s.height) * 2
       return f.adjustments.rotation % 2 == 1 ? CGSize(width: h, height: w) : CGSize(width: w, height: h)
     }
-    let expected = ContactSheet.geometry(count: 4, cell: ContactSheet.cell(for: sizes), layout: model.preferences.sheet).size
+    let expected = ContactSheet.geometry(count: 4, cell: ContactSheet.cell(for: sizes), layout: model.preferences.sheet, sizes: sizes).size
     let jpeg = try compose(.jpeg, "sheet-strips.jpg")
     let jpegInfo = pipe.info(jpeg)
     try check(jpegInfo.width == Int(expected.width) && jpegInfo.height == Int(expected.height) && jpegInfo.bits == 8
@@ -141,22 +148,26 @@ enum ContactSheetTests {
     model.preferences.sheet.resolution = .preview
     let previewSizes = sizes.map { CGSize(width: $0.width / 2, height: $0.height / 2) }
     let direct = pipe.info(try compose(.jpeg, "sheet-preview.jpg", fromPreview: true))
-    let directExpected = ContactSheet.geometry(count: 4, cell: ContactSheet.cell(for: previewSizes), layout: model.preferences.sheet).size
+    let directExpected = ContactSheet.geometry(count: 4, cell: ContactSheet.cell(for: previewSizes), layout: model.preferences.sheet, sizes: previewSizes).size
     try check(direct.width == Int(directExpected.width) && direct.height == Int(directExpected.height) && Int(direct.dpi) == Int(model.overviewDPI),
       "from the preview the sheet is made at the preview's \(Int(model.overviewDPI)) dpi, not enlarged: \(direct.width) × \(direct.height)")
     // The strip's rebate prints black between frames; the paper around it stays light.
     let sheet = pipe.raster(try pipe.load(jpeg), maxDimension: 2000)
-    let layout = ContactSheet.geometry(count: 4, cell: ContactSheet.cell(for: sizes), layout: model.preferences.sheet)
+    let layout = ContactSheet.geometry(count: 4, cell: ContactSheet.cell(for: sizes), layout: model.preferences.sheet, sizes: sizes)
     let margin = sheet.pixel(3, 3).values.min()!, strip = layout.strips[0]
     let scale = Double(sheet.width) / Double(jpegInfo.width)
     // Midway between the strip's left edge and its first frame, at mid height: pure rebate.
     let rebateX = (strip.minX + layout.cells[0].minX) / 2
     let rebateInk = sheet.pixel(Int(rebateX * scale), Int(strip.midY * scale)).values.max()!
     try check(margin > 0.85 && rebateInk < 0.15, "white paper around a black film rebate")
+    let upright = layout.cells[3]
+    try check(upright.width < layout.cells[0].width * 0.75 && abs(upright.width / upright.height - layout.cells[0].height / layout.cells[0].width) < 0.02
+      && abs(layout.strips[0].maxX - upright.maxX - (layout.cells[0].minX - layout.strips[0].minX)) < 0.5,
+      "the frame turned upright prints in a cell its own width, the strip ending just after it")
     model.preferences.sheet.style = .grid
     model.preferences.sheet.whitePaper = false
     let tiff = try compose(.tiff, "sheet-grid.tif")
-    let gridExpected = ContactSheet.geometry(count: 4, cell: ContactSheet.cell(for: sizes), layout: model.preferences.sheet).size
+    let gridExpected = ContactSheet.geometry(count: 4, cell: ContactSheet.cell(for: sizes), layout: model.preferences.sheet, sizes: sizes).size
     let tiffInfo = pipe.info(tiff)
     try check(tiffInfo.width == Int(gridExpected.width) && tiffInfo.height == Int(gridExpected.height) && tiffInfo.bits == 16
       && !pipe.storesAlpha(tiff) && !pipe.storesAlpha(jpeg),

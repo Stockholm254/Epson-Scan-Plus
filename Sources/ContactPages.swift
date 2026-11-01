@@ -55,10 +55,21 @@ extension AppModel {
   /// A frame's rectangle on the light table, normalised to the picture shown: its cell on a laid-out
   /// page, else where it lies on the holder's preview.
   func contactRect(_ f: FilmFrame) -> NormalRect {
-    guard onSheetPage, let i = sheetPageFrames.firstIndex(where: { $0.id == f.id }) else { return f.rect }
-    let layout = Self.sheetLayout(count: sheetPageFrames.count, pages: contactPages.count)
+    let page = sheetPageFrames
+    guard onSheetPage, let i = page.firstIndex(where: { $0.id == f.id }) else { return f.rect }
+    let positive = contactPositive
+    let layout = Self.sheetLayout(aspects: page.map { sheetAspect($0, positive: positive) }, pages: contactPages.count)
     let c = layout.cells[i]
     return NormalRect(x: c.minX / layout.size.width, y: c.minY / layout.size.height, width: c.width / layout.size.width, height: c.height / layout.size.height)
+  }
+  /// A frame's width over its height on a laid-out page, from its file and its crop: turned as it
+  /// is printed for the positives, as it lies on the film for the negatives; 3:2 until its file
+  /// is read.
+  func sheetAspect(_ f: FilmFrame, positive: Bool) -> CGFloat {
+    let pixels = f.sourcePath.map(filePixels) ?? .zero
+    guard pixels.width > 0, pixels.height > 0, f.rect.width > 0, f.rect.height > 0 else { return Self.sheetCell.width / Self.sheetCell.height }
+    let aspect = CGFloat(f.rect.width) * pixels.width / (CGFloat(f.rect.height) * pixels.height)
+    return positive && ((f.adjustments.rotation % 4) + 4) % 2 == 1 ? 1 / aspect : aspect
   }
   /// From the film strip, the view switch or a finished preview: the frame selected, and from
   /// the light table shown on its own, the view closing in on it there. Without a canvas, at once.
@@ -84,11 +95,20 @@ extension AppModel {
     }
   }
 
-  /// A page's layout in pixels, top-left origin: frames 3:2 in strips of film with their rebates.
-  /// Every page of a roll with more than one has room for six strips, so turning keeps the scale.
+  /// A 3:2 frame on a laid-out page, in pixels: 36 mm across.
+  static let sheetCell = CGSize(width: 360, height: 240)
+  /// A page of frames all 3:2.
   static func sheetLayout(count: Int, pages: Int) -> (size: CGSize, cells: [CGRect], strips: [CGRect]) {
-    let cell = CGSize(width: 360, height: 240), gap: CGFloat = 18, rebate: CGFloat = 40, side: CGFloat = 28
+    sheetLayout(aspects: Array(repeating: sheetCell.width / sheetCell.height, count: count), pages: pages)
+  }
+  /// A page's layout in pixels, top-left origin: frames in strips of film with their rebates, each
+  /// cell the shape of its frame (`aspects`, width over height), so none leaves black beside it: one
+  /// narrower than 3:2 as tall as a 3:2 frame, one wider as wide and lower. Every page of a roll
+  /// with more than one has room for six strips of six 3:2 frames, so turning keeps the scale.
+  static func sheetLayout(aspects: [CGFloat], pages: Int) -> (size: CGSize, cells: [CGRect], strips: [CGRect]) {
+    let cell = sheetCell, gap: CGFloat = 18, rebate: CGFloat = 40, side: CGFloat = 28
     let stripGap: CGFloat = 40, margin: CGFloat = 48
+    let count = aspects.count
     let strips = pages > 1 ? sheetStrips : max(1, (count + sheetPerStrip - 1) / sheetPerStrip)
     let stripWidth = side * 2 + cell.width * CGFloat(sheetPerStrip) + gap * CGFloat(sheetPerStrip - 1)
     let stripHeight = cell.height + rebate * 2
@@ -96,21 +116,25 @@ extension AppModel {
     var cells = [CGRect](), stripRects = [CGRect]()
     for s in 0..<strips {
       let y = margin + CGFloat(s) * (stripHeight + stripGap)
-      let inStrip = min(sheetPerStrip, count - s * sheetPerStrip)
-      guard inStrip > 0 else { continue }
-      stripRects.append(CGRect(x: margin, y: y, width: side * 2 + cell.width * CGFloat(inStrip) + gap * CGFloat(inStrip - 1), height: stripHeight))
-      for c in 0..<inStrip {
-        cells.append(CGRect(x: margin + side + CGFloat(c) * (cell.width + gap), y: y + rebate, width: cell.width, height: cell.height))
+      let inStrip = aspects.dropFirst(s * sheetPerStrip).prefix(sheetPerStrip)
+      guard !inStrip.isEmpty else { continue }
+      var x = margin + side
+      for aspect in inStrip {
+        let a = min(max(aspect, 0.25), 4)
+        let w = (min(a, cell.width / cell.height) * cell.height).rounded(), h = min(cell.height, cell.width / a).rounded()
+        cells.append(CGRect(x: x, y: y + rebate + ((cell.height - h) / 2).rounded(), width: w, height: h))
+        x += w + gap
       }
+      stripRects.append(CGRect(x: margin, y: y, width: x - gap + side - margin, height: stripHeight))
     }
     return (size, cells, stripRects)
   }
 
   /// The page as the light table shows it: each strip of dark film, its perforations open to the
   /// table's light, the frames in it as they are (positives, or the negatives as they came), each
-  /// fitted in its frame, its number printed on the rebate above.
-  static func composeSheet(_ tiles: [(name: String, image: CGImage?)], pages: Int) -> CGImage? {
-    let layout = sheetLayout(count: tiles.count, pages: pages)
+  /// filling its frame, of its `aspect`, its number printed on the rebate above.
+  static func composeSheet(_ tiles: [(name: String, image: CGImage?, aspect: CGFloat)], pages: Int) -> CGImage? {
+    let layout = sheetLayout(aspects: tiles.map(\.aspect), pages: pages)
     let w = Int(layout.size.width), h = Int(layout.size.height)
     guard let ctx = CGContext(
       data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: ImagePipeline.shared.outputSpace,
@@ -138,19 +162,27 @@ extension AppModel {
       ctx.setFillColor(CGColor(srgbRed: 0.05, green: 0.04, blue: 0.035, alpha: 1))
       ctx.fill(flip(cell))
       if let image = tile.image {
-        let k = min(cell.width / CGFloat(image.width), cell.height / CGFloat(image.height))
+        let kx = cell.width / CGFloat(image.width), ky = cell.height / CGFloat(image.height)
+        // Filling its cell, which has its shape; fitted in it while a picture just turned is not
+        // yet in as turned.
+        let k = abs(kx / ky - 1) < 0.03 ? max(kx, ky) : min(kx, ky)
         let size = CGSize(width: CGFloat(image.width) * k, height: CGFloat(image.height) * k)
         let fit = CGRect(x: cell.midX - size.width / 2, y: cell.midY - size.height / 2, width: size.width, height: size.height)
         ctx.interpolationQuality = .high
+        ctx.saveGState()
+        ctx.clip(to: flip(cell))
         ctx.draw(image, in: flip(fit))
+        ctx.restoreGState()
       }
-      // The frame's number on the rebate above it, as the film's edge print.
+      // The frame's number on the rebate above it, as the film's edge print: above where a 3:2
+      // frame's top is, for a lower one too.
       let text = NSAttributedString(string: "▸ " + tile.name, attributes: [
         NSAttributedString.Key(kCTFontAttributeName as String): font,
         NSAttributedString.Key(kCTForegroundColorAttributeName as String): CGColor(srgbRed: 0.98, green: 0.71, blue: 0.4, alpha: 0.9),
       ])
       let line = CTLineCreateWithAttributedString(text)
-      ctx.textPosition = CGPoint(x: cell.minX + 4, y: CGFloat(h) - (cell.minY - 7))
+      let top = layout.strips.first { $0.minY <= cell.minY && cell.maxY <= $0.maxY }.map { $0.midY - sheetCell.height / 2 } ?? cell.minY
+      ctx.textPosition = CGPoint(x: cell.minX + 4, y: CGFloat(h) - (top - 7))
       CTLineDraw(line, ctx)
     }
     return ctx.makeImage()

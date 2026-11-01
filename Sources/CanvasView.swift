@@ -809,10 +809,11 @@ final class FilmCanvasView: NSView {
       let across = frame.adjustments.rotation % 2 == 0 ? mm.width : mm.height
       return imageRect.width / across
     }
-    // A laid-out page prints every frame in a cell the size of a 135 frame, whatever its file's
-    // own size, so the loupe's field takes in a whole one.
-    if model.onSheetPage, let f = model.contactFrames.first {
-      return imageRect.width * CGFloat(model.contactRect(f).width) / 36
+    // A laid-out page prints every frame to the scale of a 135 frame, a 3:2 one 36 mm across,
+    // whatever its file's own size, so the loupe's field takes in a whole one.
+    if model.onSheetPage, !model.contactFrames.isEmpty {
+      let page = AppModel.sheetLayout(count: model.contactFrames.count, pages: model.contactPages.count).size
+      return imageRect.width * AppModel.sheetCell.width / page.width / 36
     }
     guard model.physicalMM.height > 0 else { return nil }
     let shownHeight = turn.sideways ? model.physicalMM.width : model.physicalMM.height

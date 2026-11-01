@@ -1697,7 +1697,7 @@ final class AppModel: ObservableObject {
   }
   /// A file's size in pixels, read once.
   private var filePixelsRead = [String: CGSize]()
-  private func filePixels(_ path: String) -> CGSize {
+  func filePixels(_ path: String) -> CGSize {
     if let known = filePixelsRead[path] { return known }
     let info = ImagePipeline.shared.info(URL(fileURLWithPath: path))
     let size = CGSize(width: info.width, height: info.height)
@@ -1797,6 +1797,7 @@ final class AppModel: ObservableObject {
       // positives from the film strip's, negatives read small from their files.
       if onSheetPage {
         let page = sheetPageFrames, positive = contactPositive, positives = thumbnails, pages = contactPages.count
+        let aspects = page.map { sheetAspect($0, positive: positive) }
         let index = contactPage
         // Back from the single frame, the page as it was until the new one is laid out.
         if let kept = tablePrint, kept.page == index, kept.positive == positive,
@@ -1808,8 +1809,8 @@ final class AppModel: ObservableObject {
         let work = DispatchWorkItem { [weak self] in
           guard let self else { return }
           self.step(0.2, "排接触表", token)
-          let tiles = page.map { f -> (name: String, image: CGImage?) in
-            (f.name, positive ? positives[f.id] : (try? self.source(for: f, maxDimension: 480)).map { ImagePipeline.shared.neutralNegative($0, settings: f.adjustments) })
+          let tiles = zip(page, aspects).map { f, aspect -> (name: String, image: CGImage?, aspect: CGFloat) in
+            (f.name, positive ? positives[f.id] : (try? self.source(for: f, maxDimension: 480)).map { ImagePipeline.shared.neutralNegative($0, settings: f.adjustments) }, aspect)
           }
           let sheet = Self.composeSheet(tiles, pages: pages)
           DispatchQueue.main.async {
