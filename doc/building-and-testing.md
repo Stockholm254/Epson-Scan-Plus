@@ -57,6 +57,7 @@ bash release.sh
 - **检查**：打开约 5 秒后和之后每六小时读一次更新列表，取比自己构建号新、而且这台系统能运行的最新版本。
 - **核对**：下载后核对大小、SHA-256、Ed25519 签名（签名覆盖 App 标识、版本、构建号、校验值和最低系统）、包里 App 的标识和版本，以及 `codesign --verify --deep --strict`。
 - **替换**：App 退出后，一个独立的脚本把旧版本移到 `~/Library/Application Support/epscan/旧版/Epson Scan plus <版本> (<构建号>).app`，再把新版本放回原处。新版本放不进去时，把旧版本放回去。日志在 `~/Library/Application Support/epscan/Updates/install.log`。
+  - 结果写在同一目录的 `install-result` 里。没换上的那个版本，下次打开时只显示原因，不再自动下载；在「检查更新…」里点检查会再试。
 - **换更新列表**：用 `defaults write local.epscan.mac updateFeed <URL>`，https 地址也行，签名照样核对。
 - **签名方式**：App 是临时签名（ad-hoc），没有 Apple 公证。从网上下载到别的 Mac 时，第一次打开要在「系统设置 → 隐私与安全性」里允许。更新时系统可能再问一次权限。
 

@@ -51,7 +51,7 @@ struct EpsonScanPlusApp: App {
       CommandGroup(after: .appInfo) {
         Button("检查更新…") {
           model.showUpdates = true
-          model.updater.check()
+          model.updater.check(manual: true)
         }
       }
       CommandGroup(replacing: .newItem) {

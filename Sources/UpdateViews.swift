@@ -27,7 +27,7 @@ struct UpdateSheet: View {
       Toggle("自动下载新版本，退出时安装", isOn: Binding(get: { updater.automatic }, set: { updater.automatic = $0 }))
         .toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 12)).disabled(!updater.updatesItself)
       HStack {
-        Button("检查更新") { updater.check() }.disabled(!updater.updatesItself || !updater.canCheck)
+        Button("检查更新") { updater.check(manual: true) }.disabled(!updater.updatesItself || !updater.canCheck)
         if case .available(let r) = updater.phase {
           Button("下载 \(r.version)") { updater.prepare(r) }
         }

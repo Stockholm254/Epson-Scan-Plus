@@ -87,12 +87,13 @@ enum UpdaterTests {
     ended.executableURL = URL(fileURLWithPath: "/usr/bin/true")
     try ended.run()
     ended.waitUntilExit()
-    let parked = updater.parkedURL(version: updater.version, build: updater.build)
-    try updater.launchInstaller(new: staged, over: installed, parked: parked, relaunch: false, pid: ended.processIdentifier)
-    let log = updater.workRoot.appendingPathComponent("install.log")
-    for _ in 0..<100 where !((try? String(contentsOf: log, encoding: .utf8))?.contains("installed") ?? false) {
-      Thread.sleep(forTimeInterval: 0.1)
+    // Waits for the installer to say how it ended.
+    func finished(_ build: Int) {
+      for _ in 0..<100 where updater.lastInstall?.build != build { Thread.sleep(forTimeInterval: 0.1) }
     }
+    let parked = updater.parkedURL(version: updater.version, build: updater.build)
+    try updater.launchInstaller(new: staged, build: 26, over: installed, parked: parked, relaunch: false, pid: ended.processIdentifier)
+    finished(26)
     let now = NSDictionary(contentsOf: installed.appendingPathComponent("Contents/Info.plist"))?["CFBundleVersion"] as? String
     let kept = NSDictionary(contentsOf: parked.appendingPathComponent("Contents/Info.plist"))?["CFBundleVersion"] as? String
     try check(now == "26" && kept == "25" && parked.lastPathComponent == "Epson Scan plus 0.7.0 (25).app"
@@ -101,6 +102,28 @@ enum UpdaterTests {
       "once the app has ended, 0.7.1 is where 0.7.0 was, its signature whole, and 0.7.0 is kept by its version")
     try check(updater.parkedURL(version: "0.7.0", build: 25).lastPathComponent != parked.lastPathComponent,
       "a copy kept before is never replaced by the next one of that version")
+
+    // A folder the installer may not change: the copy stays as it was, and the next launch says
+    // why instead of fetching that version again at every quit.
+    let locked = root.appendingPathComponent("Locked", isDirectory: true)
+    try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
+    let stuck = try app(in: locked, version: "0.7.0", build: 25)
+    let again = try updater.stage(next)
+    try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: locked.path)
+    defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path) }
+    try FileManager.default.removeItem(at: updater.workRoot.appendingPathComponent("install-result"))
+    try updater.launchInstaller(new: again, build: 26, over: stuck,
+      parked: updater.parkedURL(version: "0.7.0", build: 25), relaunch: false, pid: ended.processIdentifier)
+    finished(26)
+    let stayed = NSDictionary(contentsOf: stuck.appendingPathComponent("Contents/Info.plist"))?["CFBundleVersion"] as? String
+    let later = Updater(bundle: installed, feed: feedURL, publicKey: key.publicKey.rawRepresentation.base64EncodedString(), support: support)
+    later.offer(next, manual: false)
+    let quiet = later.phase
+    later.offer(next, manual: true)
+    try check(stayed == "25" && updater.lastInstall?.failure?.contains("挪不开") == true
+      && { if case .failed(let text) = quiet { return text.contains("上次没能换上 0.7.1") }; return false }()
+      && later.phase == .available(next),
+      "when the copy cannot be moved it stays as it was; the next launch says so and leaves that version until asked again")
 
     // Only copies in Applications update; old kept copies past five go.
     let home = FileManager.default.homeDirectoryForCurrentUser

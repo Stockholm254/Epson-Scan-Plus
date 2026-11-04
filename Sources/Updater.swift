@@ -53,6 +53,14 @@ final class Updater: ObservableObject {
     workRoot = support.appendingPathComponent("Updates", isDirectory: true)
     parkRoot = support.appendingPathComponent("旧版", isDirectory: true)
   }
+  /// What the installer last wrote: the build it put in, and nil, or why it could not.
+  var lastInstall: (build: Int, failure: String?)? {
+    guard let text = try? String(contentsOf: workRoot.appendingPathComponent("install-result"), encoding: .utf8),
+      let space = text.firstIndex(of: " "), let build = Int(text[..<space])
+    else { return nil }
+    let rest = text[text.index(after: space)...].trimmingCharacters(in: .whitespacesAndNewlines)
+    return (build, rest == "installed" ? nil : rest)
+  }
 
   /// Only a copy in Applications (the system's or the user's) that it may replace updates itself.
   static func updatesItself(_ bundle: URL) -> Bool {
@@ -119,21 +127,32 @@ final class Updater: ObservableObject {
     default: return true
     }
   }
-  func check() {
+  /// Looks at the feed. A version the installer could not put in is not fetched again on its own,
+  /// only when asked (`manual`), so a refused update does not repeat at every quit.
+  func check(manual: Bool = false) {
     guard updatesItself, canCheck else { return }
     phase = .checking
     queue.async {
       let found = Result { try self.newest() }
       DispatchQueue.main.async {
         switch found {
-        case .success(nil): self.phase = .upToDate(Date())
-        case .success(let r?):
-          self.phase = .available(r)
-          if self.automatic { self.prepare(r) }
+        case .success(let r): self.offer(r, manual: manual)
         case .failure(let error): self.phase = .failed(error.localizedDescription)
         }
       }
     }
+  }
+  func offer(_ release: UpdateRelease?, manual: Bool) {
+    guard let release else {
+      phase = .upToDate(Date())
+      return
+    }
+    if !manual, let last = lastInstall, last.build == release.build, let failure = last.failure {
+      phase = .failed("上次没能换上 \(release.version)：\(failure)。可以在「检查更新…」里再试，或用磁盘映像手动安装。")
+      return
+    }
+    phase = .available(release)
+    if automatic { prepare(release) }
   }
   /// The newest version on the feed after this one; none while nothing has been published.
   func newest() throws -> UpdateRelease? {
@@ -197,7 +216,7 @@ final class Updater: ObservableObject {
   func install(relaunch: Bool) {
     guard !launched, let staged, case .ready(let release) = phase else { return }
     do {
-      try launchInstaller(new: staged, over: bundleURL, parked: parkedURL(version: version, build: build), relaunch: relaunch)
+      try launchInstaller(new: staged, build: release.build, over: bundleURL, parked: parkedURL(version: version, build: build), relaunch: relaunch)
       launched = true
       phase = .installing(release)
       if relaunch { NSApp.terminate(nil) }
@@ -215,9 +234,10 @@ final class Updater: ObservableObject {
     return parkRoot.appendingPathComponent("\(name) \(stamp.string(from: Date())).app")
   }
   /// Waits, outside this process, for `pid` to end; moves `current` (if there is one) to
-  /// `parked` and `new` to where it was, putting `current` back if that fails; opens it if
-  /// `relaunch`. Writes what it did to `install.log` in `workRoot`.
-  func launchInstaller(new: URL, over current: URL, parked: URL, relaunch: Bool, pid: Int32 = getpid()) throws {
+  /// `parked` and `new` (at `build`) to where it was, putting `current` back if that fails; opens
+  /// it if `relaunch`. Writes what it did to `install.log` in `workRoot`, and how it ended to
+  /// `install-result` (`lastInstall`).
+  func launchInstaller(new: URL, build: Int, over current: URL, parked: URL, relaunch: Bool, pid: Int32 = getpid()) throws {
     try FileManager.default.createDirectory(at: workRoot, withIntermediateDirectories: true)
     let script = workRoot.appendingPathComponent("install.sh")
     try Self.installScript.write(to: script, atomically: true, encoding: .utf8)
@@ -225,29 +245,31 @@ final class Updater: ObservableObject {
     p.executableURL = URL(fileURLWithPath: "/bin/bash")
     // Started in the background and left, so it outlives this process.
     p.arguments = ["-c", "nohup /bin/bash \"$0\" \"$@\" >/dev/null 2>&1 &", script.path, String(pid), current.path, new.path,
-      parked.path, relaunch ? "1" : "0", workRoot.appendingPathComponent("install.log").path]
+      parked.path, relaunch ? "1" : "0", workRoot.appendingPathComponent("install.log").path,
+      workRoot.appendingPathComponent("install-result").path, String(build)]
     try p.run()
     p.waitUntilExit()
     guard p.terminationStatus == 0 else { throw DeskError.message("没能启动安装") }
   }
   static let installScript = """
     #!/bin/bash
-    pid="$1" current="$2" new="$3" parked="$4" relaunch="$5" log="$6"
+    pid="$1" current="$2" new="$3" parked="$4" relaunch="$5" log="$6" result="$7" build="$8"
     exec >>"$log" 2>&1
+    failed() { echo "$1"; echo "$build $1" > "$result"; exit 1; }
     while kill -0 "$pid" 2>/dev/null; do sleep 0.3; done
     echo "$(date '+%F %T') $new -> $current"
     if [ -e "$current" ]; then
       mkdir -p "$(dirname "$parked")"
-      mv "$current" "$parked" || { echo "could not move $current aside"; exit 1; }
+      mv "$current" "$parked" || failed "旧版本挪不开，系统可能不允许改动这里的 App"
       echo "kept $parked"
     fi
     if ! mv "$new" "$current"; then
-      echo "could not move the new version in; the old one goes back"
       [ -e "$parked" ] && mv "$parked" "$current"
-      exit 1
+      failed "新版本放不进去，旧版本已放回原处"
     fi
     xattr -dr com.apple.quarantine "$current" 2>/dev/null
     echo "installed"
+    echo "$build installed" > "$result"
     if [ "$relaunch" = 1 ]; then open "$current"; fi
     """
   /// Opened from the disk image: offers to copy the app into Applications and open it there. A
@@ -270,7 +292,7 @@ final class Updater: ObservableObject {
       try Self.run("/usr/bin/ditto", [bundleURL.path, copy.path])
       let parked = parkedURL(version: old?["CFBundleShortVersionString"] as? String ?? "?",
         build: (old?["CFBundleVersion"] as? String).flatMap(Int.init) ?? 0)
-      try launchInstaller(new: copy, over: target, parked: parked, relaunch: true)
+      try launchInstaller(new: copy, build: build, over: target, parked: parked, relaunch: true)
       NSApp.terminate(nil)
     } catch {
       let failed = NSAlert()
