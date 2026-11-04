@@ -37,14 +37,19 @@ xcrun swiftc -swift-version 5 -O -module-cache-path "$build_dir/module-cache" -t
 "$tool" check-feed "$key" "$feed_dir/appcast.json" "$version" "$build"
 # The notes are the headings of this version's entries in the change log.
 notes="$build_dir/notes-$build.txt"
-awk -v v="$version" '
-  /^## / { inside = (index($0, "## " v " ") == 1 || $0 == "## " v); next }
-  inside && /^- \*\*/ { line = $0; sub(/^- \*\*/, "", line); sub(/\*\*.*/, "", line); sub(/[：:]$/, "", line); print line }
-' "$project_dir/doc/CHANGELOG.md" > "$notes"
+"$tool" notes "$project_dir/doc/CHANGELOG.md" "$version" > "$notes"
 if [ ! -s "$notes" ]; then echo "doc/CHANGELOG.md has no section \"## $version\"" >&2; exit 1; fi
 
 stage="$(mktemp -d "${TMPDIR:-/tmp}/epscan-release.XXXXXX")"
-trap 'rm -rf "$stage"' EXIT
+# What this run put out goes again if it does not finish, so a failed release leaves nothing
+# that would stop the next one.
+placed=()
+finish() {
+  local status=$?
+  if [ "$status" != 0 ]; then for out in "${placed[@]}"; do rm -f "$out"; done; fi
+  rm -rf "$stage"
+}
+trap finish EXIT
 app="$stage/Epson Scan plus.app"
 EPSON_SCAN_PLUS_BUILD_DIR="$build_dir" EPSON_SCAN_PLUS_APP_DIR="$app" bash "$project_dir/build.sh" >/dev/null
 codesign --verify --deep --strict "$app"
@@ -62,9 +67,11 @@ ditto "$app" "$stage/image/Epson Scan plus.app"
 ln -s /Applications "$stage/image/Applications"
 hdiutil create -quiet -volname "Epson Scan plus $version" -srcfolder "$stage/image" -fs APFS -format UDZO "$stage/image.dmg"
 mkdir -p "$image_dir" "$feed_dir"
-mv "$stage/image.dmg" "$image"
 # The update: the app zipped without extended attributes, so its signature checks strictly.
 ditto -c -k --norsrc --keepParent "$app" "$stage/update.zip"
+placed+=("$image")
+mv "$stage/image.dmg" "$image"
+placed+=("$archive")
 mv "$stage/update.zip" "$archive"
 "$tool" publish "$key" "$feed_dir/appcast.json" "$archive" "$version" "$build" "$minimum" "$commit" "$notes"
 printf '%s\n%s\n' "$image" "$archive"

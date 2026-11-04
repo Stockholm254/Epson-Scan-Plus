@@ -3,6 +3,7 @@ import Foundation
 
 // release.sh's helper, built with Sources/UpdateFeed.swift so both read the feed the same way.
 //   keygen KEYFILE                  makes the release key if there is none; prints its public half
+//   notes CHANGELOG VERSION         prints the headings of that version's entries
 //   check-key KEYFILE               fails unless the app's UpdateFeed.publicKey is this key's
 //   publish KEYFILE FEED ARCHIVE VERSION BUILD MINIMUM COMMIT NOTES
 //                                   signs ARCHIVE and adds it to FEED; never replaces a version
@@ -39,6 +40,19 @@ case "keygen":
     else { fail("could not write \(keyPath)") }
   }
   print(readKey(keyPath).publicKey.rawRepresentation.base64EncodedString())
+case "notes":
+  // notes CHANGELOG VERSION: the headings of that version's entries, a line each.
+  guard args.count == 4, let log = try? String(contentsOfFile: args[2], encoding: .utf8) else { fail("usage: release-tool notes CHANGELOG VERSION") }
+  var inside = false
+  for line in log.split(separator: "\n", omittingEmptySubsequences: false) {
+    if line.hasPrefix("## ") {
+      inside = line == "## \(args[3])" || line.hasPrefix("## \(args[3]) ")
+    } else if inside, line.hasPrefix("- **"), let end = line.dropFirst(4).range(of: "**") {
+      var title = String(line.dropFirst(4)[..<end.lowerBound])
+      while let last = title.last, "：:".contains(last) { title.removeLast() }
+      print(title)
+    }
+  }
 case "check-key":
   let own = readKey(keyPath).publicKey.rawRepresentation.base64EncodedString()
   guard own == UpdateFeed.publicKey else {
