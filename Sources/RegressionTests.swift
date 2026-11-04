@@ -38,6 +38,7 @@ enum RegressionTests {
     try LevelRegistrationTests.run(folder: folder)
     try MCPTests.run(folder: folder)
     try LightLeakTests.run(folder: folder)
+    try UpdaterTests.run(folder: folder)
     let pipe = ImagePipeline.shared
     func check(_ value: Bool, _ label: String) throws {
       guard value else { throw DeskError.message("FAIL: " + label) }

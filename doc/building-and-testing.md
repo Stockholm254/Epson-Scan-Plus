@@ -25,6 +25,41 @@ bash build.sh
 
 `--rotation 0|1|2|3` 可在离线导出时覆盖方向，`--mirror` 启用水平镜像（均不改工程）。正常启动支持 `--library PATH`、`--project FILE` 或 `--image FILE`。
 
+## 发布和更新
+
+发布前先把 `Info.plist` 的 `CFBundleShortVersionString` 和 `CFBundleVersion` 改成新版本（版本号每次加一），`doc/CHANGELOG.md` 写好 `## <版本> …` 一节，然后提交。之后执行：
+
+```sh
+bash release.sh
+```
+
+**它依次做这些事：**
+
+1. 工作区有没提交的改动时直接停下，所以每个版本都对应一个提交。
+2. 版本已经发过（更新列表里有，或磁盘映像已经存在）时也停下。已发布的版本从不替换。
+3. 从提交构建 App，校验代码签名，跑全部自检。
+4. 输出两样东西：
+   - 磁盘映像 `../Epson-Scan-plus-<版本>.dmg`，里面有 App 和指向「应用程序」的链接，用来手动安装。
+   - 更新包 `Epson-Scan-plus-<版本>-<构建号>.zip`，放进更新列表的目录。
+5. 用发布密钥签名，加进 `appcast.json`。列表里每个版本的说明是更新记录里那一节各条的标题。
+
+**各个位置：**
+
+- **更新列表**：默认 `~/Library/Application Support/epscan/Releases/`。
+- **发布密钥**：`~/Library/Application Support/epscan-release/update-signing.key`，Ed25519 私钥，只有本人能读，不在仓库里。第一次执行时生成。
+  - 它的公钥写在 `Sources/UpdateFeed.swift` 里，`release.sh` 会核对两边是否一致。
+  - 要备份这个文件。丢了以后，装好的 App 不会接受用新密钥签的版本，只能用磁盘映像重装一次。
+- **可以换的位置**：`EPSCAN_RELEASE_FEED_DIR`、`EPSCAN_RELEASE_KEY`、`EPSCAN_RELEASE_IMAGE_DIR`。`EPSCAN_RELEASE_SKIP_TESTS=1` 跳过自检。
+
+**装好的 App 怎么更新**（`Sources/Updater.swift`）：
+
+- **哪一份会更新**：只有放在 `/Applications` 或 `~/Applications`、而且能被替换的那一份。
+- **检查**：打开约 5 秒后和之后每六小时读一次更新列表，取比自己构建号新、而且这台系统能运行的最新版本。
+- **核对**：下载后核对大小、SHA-256、Ed25519 签名（签名覆盖 App 标识、版本、构建号、校验值和最低系统）、包里 App 的标识和版本，以及 `codesign --verify --deep --strict`。
+- **替换**：App 退出后，一个独立的脚本把旧版本移到 `~/Library/Application Support/epscan/旧版/Epson Scan plus <版本> (<构建号>).app`，再把新版本放回原处。新版本放不进去时，把旧版本放回去。日志在 `~/Library/Application Support/epscan/Updates/install.log`。
+- **换更新列表**：用 `defaults write local.epscan.mac updateFeed <URL>`，https 地址也行，签名照样核对。
+- **签名方式**：App 是临时签名（ad-hoc），没有 Apple 公证。从网上下载到别的 Mac 时，第一次打开要在「系统设置 → 隐私与安全性」里允许。更新时系统可能再问一次权限。
+
 ## 早期验证记录（2026-10-25，0.1–0.3）
 
 2026-10-25，本机扫描仪实测：

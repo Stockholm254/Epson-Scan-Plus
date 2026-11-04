@@ -51,6 +51,7 @@ struct ContentView: View {
     .sheet(isPresented: $showInfo) { profileInfo }
     .sheet(isPresented: $m.showLibrary) { LibrarySheet(m: m) }
     .sheet(isPresented: $m.showPresets) { PresetManagerSheet(m: m) }
+    .sheet(isPresented: $m.showUpdates) { UpdateSheet(m: m, updater: m.updater) }
     .onChange(of: m.tool) { m.refresh() }
     .onAppear {
       m.undoManager = undoManager
@@ -761,6 +762,7 @@ struct ContentView: View {
     HStack(spacing: 12) {
       if m.exporting { ProgressView().controlSize(.small) }
       Text(m.activityStatus).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+      UpdateNotice(m: m, updater: m.updater)
       if m.scanBatch.isActive || m.scanner.busy {
         scanProgress
         Button("取消") { m.cancel() }.disabled(m.scanBatch.phase == .cancelling).controlSize(.small)

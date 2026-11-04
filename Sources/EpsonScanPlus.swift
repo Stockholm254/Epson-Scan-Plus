@@ -48,6 +48,12 @@ struct EpsonScanPlusApp: App {
           model.panelTab = .scan
         }.keyboardShortcut(",")
       }
+      CommandGroup(after: .appInfo) {
+        Button("检查更新…") {
+          model.showUpdates = true
+          model.updater.check()
+        }
+      }
       CommandGroup(replacing: .newItem) {
         Button("导入图像…") { model.importImages() }.keyboardShortcut("o")
         Button("打开工程…") { model.openProject() }.keyboardShortcut(
@@ -119,6 +125,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationWillTerminate(_ notification: Notification) {
     model?.saveProject()
     model?.scanner.close()
+    // A version fetched and checked goes in once this process has ended.
+    model?.updater.install(relaunch: false)
   }
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }

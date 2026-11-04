@@ -164,6 +164,12 @@ final class Preferences: ObservableObject {
   @Published var rowScanning: Bool { didSet { defaults?.set(rowScanning, forKey: "rowScanning") } }
   /// The light-leak job open last, opened again with the page.
   @Published var leakJob: String? { didSet { defaults?.set(leakJob, forKey: "leakJob") } }
+  /// A copy in Applications fetches a newer version by itself and installs it on quitting. On
+  /// unless turned off.
+  @Published var autoUpdate: Bool { didSet { defaults?.set(autoUpdate, forKey: "autoUpdate") } }
+  /// The update feed, when not this computer's releases (`Updater.localFeed`): set with
+  /// `defaults write local.epscan.mac updateFeed URL`.
+  let updateFeed: String?
   init(defaults: UserDefaults? = nil) {
     self.defaults = defaults
     libraryPath = defaults?.string(forKey: "libraryPath")
@@ -193,6 +199,8 @@ final class Preferences: ObservableObject {
     rowScanning = defaults?.object(forKey: "rowScanning") as? Bool ?? true
     mcpEnabled = defaults?.bool(forKey: "mcpEnabled") ?? false
     leakJob = defaults?.string(forKey: "leakJob")
+    autoUpdate = defaults?.object(forKey: "autoUpdate") as? Bool ?? true
+    updateFeed = defaults?.string(forKey: "updateFeed")
     rightWidth = right > 0 ? min(Self.rightWidths.upperBound, max(Self.rightWidths.lowerBound, right)) : 258
   }
   var libraryURL: URL { libraryPath.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? Self.defaultLibraryURL }

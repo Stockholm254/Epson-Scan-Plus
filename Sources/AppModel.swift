@@ -224,6 +224,10 @@ final class AppModel: ObservableObject {
   @Published var showLibrary = false
   /// The presets table is open.
   @Published var showPresets = false
+  /// The window about updates is open.
+  @Published var showUpdates = false
+  /// Keeps a copy in Applications up to date; started with the app.
+  lazy var updater = Updater(preferences: preferences)
   /// The 去漏光 page, made when it is first shown.
   lazy var leak: LeakLab = makeLeakLab()
   /// New previews and imports create their project folders here.
@@ -462,6 +466,7 @@ final class AppModel: ObservableObject {
   func start() {
     scanner.start()
     updateMCP()
+    updater.start()
   }
 
   // MARK: Assistant (MCP)
