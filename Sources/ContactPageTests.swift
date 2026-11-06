@@ -65,6 +65,11 @@ enum ContactPageTests {
     model.singleView = false
     try check(model.contactPages == [.sheet(0), .sheet(1)] && model.onSheetPage && model.contactFrames.count == 36,
       "40 pictures a file each lie on two contact sheet pages, 36 on the first")
+    model.mirrorRoll()
+    let mirroredAll = model.rollMirrored && model.frames.allSatisfy { $0.adjustments.flipHorizontal == true }
+    model.mirrorRoll()
+    try check(mirroredAll && !model.rollMirrored && model.frames.allSatisfy { $0.adjustments.flipHorizontal == false },
+      "on pages laid out from files the roll's mirror key mirrors every frame, and pressed again takes it back")
     let last = model.frames[38]
     model.select(last.id)
     let cell = model.contactRect(last), layout = AppModel.sheetLayout(count: 4, pages: 2)

@@ -261,7 +261,7 @@ struct ContentView: View {
           m.mirrorRoll()
         } label: {
           Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
-        }.buttonStyle(KeyStyle(latched: m.contactMirrored)).help("全卷水平镜像：修正胶片正反面放反").disabled(m.frames.isEmpty)
+        }.buttonStyle(KeyStyle(latched: m.rollMirrored)).help(m.rollMirrored ? "取消全卷水平镜像" : "全卷水平镜像：修正胶片正反面放反").disabled(m.frames.isEmpty)
         Picker("显示", selection: $m.contactPositive) {
           Text("原片").tag(false)
           Text("反相").tag(true)

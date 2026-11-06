@@ -3,7 +3,7 @@ import SwiftUI
 
 /// The left panel. In module ① the source, the scanner (with storage), the camera or files; in
 /// module ② film and presets, and output, in two tabs. This is also where every setting lives;
-/// ⌘, opens the scanner's.
+/// ⌘, comes back to ①'s.
 extension ContentView {
   var leftPanel: some View {
     VStack(spacing: 0) {
@@ -94,7 +94,7 @@ extension ContentView {
       }
       Divider()
       titled("画面", symbol: "rectangle.dashed", info:
-        "预览后自动识别画面。在接触表上拖动框内移动，拖动四角缩放；「手动画框」在灯箱上拖出新的画框。双击画面进入单张，在单张中可以细调裁切。「收紧现有边界」只收紧已有画面框，保留逐张调色和原始扫描。")
+        "预览后自动识别画面。点接触表上的一张进入单张，在单张里用「画框」细调裁切：拖四角缩放，拖框内移动。漏掉的画面用「手动画框」在灯箱上拖出新的画框。「收紧现有边界」只收紧已有画面框，保留逐张调色和原始扫描。")
       labeled("规格") {
         Picker("", selection: $m.format) {
           ForEach(FilmFormat.allCases, id: \.self) { Text($0.rawValue).tag($0) }

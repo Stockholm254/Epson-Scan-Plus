@@ -10,8 +10,7 @@ struct EpsonScanPlusApp: App {
     // Started by an assistant: a stdio MCP server that talks to the running app, never a window.
     if args.contains("--mcp") { MCPBridge.run() }
     if args.contains("--self-test") { SmokeTests.run() }
-    if args.contains("--hardware-test") { HardwareTest.run() }
-    if args.contains("--sane-hardware-test") { HardwareTest.run(sane: true) }
+    if args.contains("--sane-hardware-test") { HardwareTest.run() }
     if args.contains("--export-project") { ExportCommand.run() }
     Preferences.migrate(into: .standard)
     let preferences = Preferences(defaults: .standard)
@@ -21,9 +20,8 @@ struct EpsonScanPlusApp: App {
     } else {
       library = preferences.libraryURL
     }
-    let scanner: ScannerController = args.contains("--ica") ? ScannerController() : SaneScannerController()
     _model = StateObject(
-      wrappedValue: AppModel(libraryURL: library, scanner: scanner, preferences: preferences))
+      wrappedValue: AppModel(libraryURL: library, scanner: SaneScannerController(), preferences: preferences))
   }
   var body: some Scene {
     WindowGroup("Epson Scan plus") {

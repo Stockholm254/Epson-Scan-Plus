@@ -86,10 +86,6 @@ final class AppModel: ObservableObject {
   /// A 16-shot group brought back to the sensor's size from its doubled grid: cleaner colours and a
   /// little less noise than 4 shots, a quarter of the size, the same resolution as 4 shots.
   @Published var shiftSupersample = false
-  /// The channel the picture and the camera's live view are looked at through: all, or one alone.
-  @Published var channelView = ChannelView.all {
-    didSet { canvasFocusRevision += 0 }
-  }
   /// The files of a pixel-shift shot still to come, and the folder they go in.
   @Published var pendingShift = [URL]()
   /// The camera's last picture as it arrived, RAW or JPEG, for checking focus.
@@ -192,13 +188,6 @@ final class AppModel: ObservableObject {
   enum Page: String, CaseIterable {
     case capture = "采集", convert = "去色罩", leak = "去漏光"
     var number: String { ["①", "②", "③"][Self.allCases.firstIndex(of: self) ?? 0] }
-    var help: String {
-      switch self {
-      case .capture: return "采集：用 V850 预览和扫描，用 A7R IV 翻拍，或导入文件；每卷自动放进库里"
-      case .convert: return "去色罩：片基、白平衡、预设、曲线、接触表和看片镜，以及导出"
-      case .leak: return "去漏光：用参考图（API 生成或导入）或标出的漏光区域，修复正片上的漏光；在去色罩里选中一张，点「去漏光」进来"
-      }
-    }
   }
   @Published var page = Page.capture {
     didSet {
@@ -607,7 +596,7 @@ final class AppModel: ObservableObject {
       detectFrames()
     } catch { errorText = error.localizedDescription }
   }
-  func detectFrames(enterSingle: Bool = false) {
+  func detectFrames() {
     guard let overview, !isWorking else { return }
     if frames.contains(where: { $0.hasFullResolution }) {
       let a = NSAlert()
@@ -644,7 +633,6 @@ final class AppModel: ObservableObject {
         self.detectingFrames = false
         self.tool = .select
         self.editRegionLock = nil
-        if enterSingle, let first = found.first { self.open(first.id) }
         self.fitView()
         self.focusCanvas()
         self.rendering = false
@@ -844,10 +832,6 @@ final class AppModel: ObservableObject {
     updateRollSlopes()
     refresh()
     saveProject()
-  }
-  func toggleEnabled(_ id: UUID) {
-    guard let i = frames.firstIndex(where: { $0.id == id }) else { return }
-    setEnabled(id, enabled: !frames[i].enabled)
   }
   func setEnabled(_ id: UUID, enabled: Bool) {
     guard !isWorking, let i = frames.firstIndex(where: { $0.id == id }),
@@ -1231,9 +1215,12 @@ final class AppModel: ObservableObject {
     viewWillChange?(.orient(turns: clockwise ? 1 : -1, mirror: false))
     orient(clockwise ? "顺时针旋转 90°" : "逆时针旋转 90°", roll: true) { $0.turn(clockwise: clockwise) }
   }
+  /// Most of the roll's frames mirrored: what the contact view's mirror key shows and takes back,
+  /// on a page laid out from files of their own too, where the table itself is not mirrored.
+  var rollMirrored: Bool { frames.filter { $0.adjustments.flipHorizontal == true }.count * 2 > frames.count }
   func mirrorRoll() {
     guard !frames.isEmpty else { return }
-    let mirrored = !contactMirrored
+    let mirrored = !rollMirrored
     viewWillChange?(.orient(turns: 0, mirror: true))
     orient(mirrored ? "水平镜像" : "取消水平镜像", roll: true) { $0.flipHorizontal = mirrored }
   }

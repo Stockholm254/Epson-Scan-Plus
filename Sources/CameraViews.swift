@@ -2,19 +2,13 @@ import AppKit
 import SwiftUI
 
 /// Module ①'s workspace with the camera: the live view filling the copy stand's dark base, and
-/// floating over it on glass the zoom and sharpness above and the focus controls and the
-/// shutter below. On the picture the focus box (click to move it). The last picture's focus check
-/// is in the right panel.
+/// floating over it on glass the camera's focus magnifier and the sharpness above and the focus
+/// controls and the shutter below. On the picture the focus box (click to move it). The last
+/// picture's focus check is in the right panel.
 struct CameraStage: View {
   @ObservedObject var m: AppModel
   @ObservedObject var camera: CameraController
-  @State private var zoom = 1
   @State private var ring: CGFloat = 0
-  /// The light table's loupe standing on the live view at the focus point: put away, and its key
-  /// hidden, while the frame is set (the camera's own magnifier shows the focus). `loupeKey`
-  /// brings the key back.
-  @State private var magnifier = false
-  static let loupeKey = false
   @State private var histogram = true
   /// Where the pieces of glass over the stage are named, so one flows out of another.
   @Namespace private var glass
@@ -77,35 +71,18 @@ struct CameraStage: View {
       topRow(strip: false)
     }
   }
-  /// The zoom, the histogram, and the sharpness.
+  /// The camera's focus magnifier, the histogram, and the sharpness.
   @ViewBuilder func topRow(strip: Bool) -> some View {
     HStack(spacing: 10) {
-      let viewing = HStack(spacing: 10) {
-        if camera.magnifications.isEmpty {
-          Picker("放大", selection: $zoom) {
-            Text("1×").tag(1)
-            Text("2×").tag(2)
-            Text("4×").tag(4)
-          }.pickerStyle(.segmented).labelsHidden().frame(width: 120).help("取景放大：按对焦框放大实时取景（相机没有报对焦放大，只能放大取景小图）")
-        } else {
-          // The camera's own magnifier: the live view is then that part of the sensor, pixel for pixel.
-          Picker("对焦放大", selection: Binding(get: { camera.magnification }, set: { camera.magnify($0) })) {
-            Text("1×").tag(Int64(0))
-            ForEach(camera.magnifications, id: \.self) { m in Text(String(format: "%.1f×", Double(m) / 10)).tag(m) }
-          }.pickerStyle(.segmented).labelsHidden().frame(width: 150)
-            .help("相机的对焦放大：实时取景传回对焦点附近的真实像素，用来看清楚对没对上焦；点画面移对焦点前先回 1×")
-        }
-      }
-      // The pickers and the readout on drops of glass; the keys are glass themselves.
-      if Liquid.available { drop(viewing) } else { viewing }
-      if Self.loupeKey {
-        Button {
-          magnifier.toggle()
-        } label: {
-          Image(systemName: "magnifyingglass.circle").frame(width: 16)
-        }.glassAction(on: magnifier).controlSize(.small)
-          .accessibilityLabel("放大镜").accessibilityValue(magnifier ? "开" : "关")
-          .help(magnifier ? "收起对焦框上的玻璃放大镜" : "在对焦框上放一个放大 4 倍的玻璃放大镜")
+      // The camera's own magnifier: the live view is then that part of the sensor, pixel for pixel.
+      if !camera.magnifications.isEmpty {
+        let viewing = Picker("对焦放大", selection: Binding(get: { camera.magnification }, set: { camera.magnify($0) })) {
+          Text("1×").tag(Int64(0))
+          ForEach(camera.magnifications, id: \.self) { m in Text(String(format: "%.1f×", Double(m) / 10)).tag(m) }
+        }.pickerStyle(.segmented).labelsHidden().frame(width: 150)
+          .help("相机的对焦放大：实时取景传回对焦点附近的真实像素，用来看清楚对没对上焦；点画面移对焦点前先回 1×")
+        // The picker and the readout on drops of glass; the keys are glass themselves.
+        if Liquid.available { drop(viewing) } else { viewing }
       }
       Button {
         withAnimation(Liquid.flow) { histogram.toggle() }
@@ -131,32 +108,20 @@ struct CameraStage: View {
   /// focus box over it.
   @ViewBuilder func liveView(in size: CGSize) -> some View {
     if let live = camera.live {
-      let shown = view(live)
-      let fit = fitted(CGSize(width: shown.width, height: shown.height), in: size)
+      let fit = fitted(CGSize(width: live.width, height: live.height), in: size)
       let at = CGPoint(x: camera.focusPoint.x * fit.width, y: camera.focusPoint.y * fit.height)
-      Image(decorative: shown, scale: 1).resizable().interpolation(zoom > 1 ? .none : .high)
+      Image(decorative: live, scale: 1).resizable().interpolation(.high)
         .frame(width: fit.width, height: fit.height)
         .overlay {
-          if zoom == 1 && camera.magnification == 0 {
+          if camera.magnification == 0 {
             let b = camera.focusBox
             Rectangle().stroke(Hardware.amber, lineWidth: 1.5)
               .frame(width: b.width * fit.width, height: b.height * fit.width).position(at)
           }
         }
-        .overlay(alignment: .topLeading) {
-          // The light table's loupe, the one chosen, standing on the live view at the focus point.
-          if zoom == 1, camera.magnification == 0, magnifier,
-            let loupe = LiveLoupe.render(shown, size: fit, at: at, style: m.preferences.loupeStyle, backing: NSScreen.main?.backingScaleFactor ?? 2)
-          {
-            Image(decorative: loupe.image, scale: NSScreen.main?.backingScaleFactor ?? 2)
-              .frame(width: loupe.frame.width, height: loupe.frame.height)
-              .offset(x: loupe.frame.minX, y: loupe.frame.minY)
-              .allowsHitTesting(false)
-          }
-        }
         .contentShape(Rectangle())
         .gesture(SpatialTapGesture().onEnded { tap in
-          guard zoom == 1, camera.magnification == 0 else { return }
+          guard camera.magnification == 0 else { return }
           camera.setFocusPoint(CGPoint(x: tap.location.x / fit.width, y: tap.location.y / fit.height))
         })
         .frame(width: size.width, height: size.height)
@@ -167,17 +132,6 @@ struct CameraStage: View {
           .font(.system(size: 13)).foregroundStyle(.secondary)
       }.frame(width: size.width, height: size.height)
     }
-  }
-  /// The live frame as shown: zoomed about the focus point, through the chosen gel.
-  func view(_ live: CGImage) -> CGImage {
-    var image = live
-    if zoom > 1 {
-      let w = CGFloat(live.width) / CGFloat(zoom), h = CGFloat(live.height) / CGFloat(zoom)
-      let x = min(max(camera.focusPoint.x * CGFloat(live.width) - w / 2, 0), CGFloat(live.width) - w)
-      let y = min(max(camera.focusPoint.y * CGFloat(live.height) - h / 2, 0), CGFloat(live.height) - h)
-      image = live.cropping(to: CGRect(x: x, y: y, width: w, height: h).integral) ?? live
-    }
-    return m.channelView.apply(image)
   }
   func fitted(_ size: CGSize, in box: CGSize) -> CGSize {
     let k = min((box.width - 24) / max(1, size.width), (box.height - 24) / max(1, size.height))
@@ -334,7 +288,7 @@ struct FocusRing: View {
 }
 
 /// The last picture about the focus point at full resolution, one pixel of the file to one pixel of
-/// the screen or larger, unsmoothed, through the chosen gel, with its sharpness channel by channel.
+/// the screen or larger, unsmoothed, with its sharpness channel by channel.
 struct FocusCheck: View {
   @ObservedObject var m: AppModel
   @ObservedObject var camera: CameraController
@@ -353,7 +307,7 @@ struct FocusCheck: View {
       // A square as wide as the panel, the file's pixels shown about its middle.
       Color.black.opacity(0.4).aspectRatio(1, contentMode: .fit).overlay {
         if let crop {
-          let shown = m.channelView.apply(crop)
+          let shown = crop
           let pixels = 248 / CGFloat(scale)
           Image(decorative: shown, scale: NSScreen.main?.backingScaleFactor ?? 2).resizable().interpolation(.none)
             .frame(width: CGFloat(shown.width) * CGFloat(scale) / (NSScreen.main?.backingScaleFactor ?? 2),
@@ -543,27 +497,6 @@ struct CameraPanel: View {
         Text(p?.text ?? "--").readout(10)
       }
     }
-  }
-}
-
-/// The light table's loupe over the live view: the same ray-marched loupe, standing at the focus
-/// point, seen from in front, magnifying the live picture as much as its pixels allow (the
-/// camera's own magnifier shows the sensor's pixels; the live picture is only 1024 across).
-enum LiveLoupe {
-  static func render(_ live: CGImage, size: CGSize, at point: CGPoint, style: LoupeStyle, backing: CGFloat) -> (image: CGImage, frame: CGRect)? {
-    guard size.width > 40, size.height > 40 else { return nil }
-    let radius = min(size.width, size.height) * 0.2 * CGFloat(style.baseMM / 48).squareRoot()
-    let perPoint = Double(live.width) / Double(size.width)
-    let pose = LoupeRenderer.Pose(
-      style: style, center: point, radius: radius,
-      eye: SIMD3(Float(size.width / 2), Float(size.height), Float(max(size.width, size.height) * 2)),
-      magnification: min(style.magnification, max(2, perPoint * 1.5)))
-    let frame = CGRect(x: point.x - radius * 2.1, y: point.y - radius * 2.1, width: radius * 4.2, height: radius * 4.2)
-      .intersection(CGRect(origin: .zero, size: size)).integral
-    guard frame.width > 1, frame.height > 1 else { return nil }
-    let scene = LoupeRenderer.Scene(table: live, canvas: size, film: live, filmRect: CGRect(origin: .zero, size: size))
-    // One ray a pixel: it is drawn again for every frame the camera sends.
-    return LoupeRenderer.shared.render(frame: frame, scale: backing, pose: pose, scene: scene, samples: 1).map { ($0, frame) }
   }
 }
 

@@ -119,15 +119,6 @@ final class FilmCanvasView: NSView {
   var lensDrawn: (key: String, image: CGImage, frame: CGRect)?
   var lensFading: (image: CGImage, frame: CGRect, since: CFTimeInterval)?
   private var lensTimer: Timer?
-  /// The picture through the chosen channel gel, kept while the picture and the gel stay the same.
-  private var channelCache: (source: CGImage, channel: ChannelView, image: CGImage)?
-  private func channelled(_ cg: CGImage, _ channel: ChannelView) -> CGImage {
-    guard channel != .all else { return cg }
-    if let c = channelCache, c.source === cg, c.channel == channel { return c.image }
-    let image = channel.apply(cg)
-    channelCache = (cg, channel, image)
-    return image
-  }
   var pan = CGPoint.zero
   var panStart: CGPoint?
   /// A frame clicked on the light table, and where: it opens if the mouse comes up there.
@@ -348,7 +339,7 @@ final class FilmCanvasView: NSView {
       rect.insetBy(dx: -1, dy: -1).fill()
       NSGraphicsContext.restoreGraphicsState()
     }
-    let image = NSImage(cgImage: channelled(cg, model.channelView), size: CGSize(width: cg.width, height: cg.height))
+    let image = NSImage(cgImage: cg, size: CGSize(width: cg.width, height: cg.height))
     // A laid-out page's strips lie on the table, its perforations open to the light.
     image.draw(
       in: rect, from: .zero, operation: sheet ? .sourceOver : .copy, fraction: 1, respectFlipped: true,

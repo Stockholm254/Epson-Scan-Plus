@@ -105,27 +105,6 @@ enum Sharpness {
   }
 }
 
-/// Which of the picture's channels is shown: all, or one alone in grey.
-enum ChannelView: String, CaseIterable {
-  case all = "RGB", r = "R", g = "G", b = "B"
-  private static let context = CIContext(options: [.workingColorSpace: NSNull()])
-  /// `image` as this view shows it.
-  func apply(_ image: CGImage) -> CGImage {
-    guard self != .all, let filter = CIFilter(name: "CIColorMatrix") else { return image }
-    let pick: CIVector = self == .r ? CIVector(x: 1, y: 0, z: 0, w: 0) : self == .g ? CIVector(x: 0, y: 1, z: 0, w: 0) : CIVector(x: 0, y: 0, z: 1, w: 0)
-    filter.setValue(CIImage(cgImage: image, options: [.colorSpace: NSNull()]), forKey: kCIInputImageKey)
-    filter.setValue(pick, forKey: "inputRVector")
-    filter.setValue(pick, forKey: "inputGVector")
-    filter.setValue(pick, forKey: "inputBVector")
-    guard let out = filter.outputImage,
-      let cg = Self.context.createCGImage(
-        out, from: out.extent, format: image.bitsPerComponent > 8 ? .RGBA16 : .RGBA8,
-        colorSpace: image.colorSpace ?? ImagePipeline.shared.outputSpace)
-    else { return image }
-    return cg
-  }
-}
-
 /// The camera on the copy stand, driven by a process of its own over Sony's Camera Remote SDK
 /// (`EpsonCameraHelper`, built when the SDK is on this Mac). Live view arrives as JPEG frames, and
 /// each picture taken arrives as a file, which `onCapture` hands on.
@@ -234,8 +213,7 @@ final class CameraController: ObservableObject {
   /// sends the last (an uncompressed RAW is 120 MB), and says nothing, so the shutter waits too.
   @Published private(set) var awaitingPicture = false
   /// The camera's own focus magnifications, in tenths (59 is 5.9×), as it offers them: its live
-  /// view then shows that part of the sensor pixel for pixel, where the app's zoom only enlarges
-  /// the small live picture. None when the camera does not say.
+  /// view then shows that part of the sensor pixel for pixel. None when the camera does not say.
   var magnifications: [Int64] {
     (properties["Focus_Magnifier_Setting"]?.values ?? []).map { $0 >> 32 }.filter { $0 > 10 }
   }
