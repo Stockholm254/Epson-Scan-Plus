@@ -88,7 +88,7 @@ struct PresetManagerSheet: View {
           HStack(spacing: 6) {
             Text(r.profile.name).lineLimit(1)
             if r.current {
-              Text("这一卷").font(.system(size: 10, weight: .semibold)).foregroundStyle(.white)
+              Text("这一卷").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white)
                 .padding(.horizontal, 5).padding(.vertical, 1).background(Capsule().fill(Hardware.accent))
             }
           }

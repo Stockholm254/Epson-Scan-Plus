@@ -40,7 +40,7 @@ extension MCPTools {
       "strength": number("去偏色强度，0 为原片，1 为完全按参考校正", 0...1),
       "protect_highlights": ["type": "boolean", "description": "保留灯光红晕和真实红色物体"],
       "exposure": number("曝光 EV（去漏光之前作用于原片）", -2...2), "temperature": number("冷 ↔ 暖", -100...100),
-      "tint": number("绿 ↔ 品红", -100...100), "contrast": number("对比度", -50...80),
+      "tint": number("绿 / 洋红", -100...100), "contrast": number("对比度", -50...80),
     ]),
     Tool(name: "leak_preview", description: "取得去漏光页的 JPEG：result 为当前结果，original 为修复前，reference 为参考图。", properties: [
       "kind": ["type": "string", "enum": ["result", "original", "reference"], "description": "默认 result"],

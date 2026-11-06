@@ -44,7 +44,7 @@ struct ContentView: View {
   }
   /// Module ②'s sidebar, opened on calibrating the preset.
   func openCalibration() {
-    m.panelTab = .film
+    m.panelTab = .calibration
     withAnimation(Liquid.flow) { convertSidebarShown = true }
   }
   /// Module ②'s sidebar, opened on the export settings.
@@ -528,6 +528,14 @@ struct ContentView: View {
   }
   /// The frame's own controls wait for a frame, and for an export to finish.
   private var frameControlsOff: Bool { m.selected == nil || m.exporting }
+  /// A preset as the film menu names it: with the day it was calibrated where another preset has
+  /// its name (two calibrations of one film on the V850 are both "Kodak Portra 160 · V850").
+  func presetTitle(_ p: FilmProfile) -> String {
+    guard m.profiles.filter({ $0.name == p.name }).count > 1,
+      let day = p.publication.range(of: #"\d{4}-\d{2}-\d{2}"#, options: .regularExpression)
+    else { return p.name }
+    return "\(p.name)（\(p.publication[day])）"
+  }
   /// The film: its preset, where the channel slopes come from in a line (the whole of it behind
   /// ⓘ), and the roll's switches that change how it is read.
   var filmSection: some View {
@@ -538,7 +546,7 @@ struct ContentView: View {
             Button {
               m.chooseProfile(p)
             } label: {
-              if p.id == m.profile.id { Label(p.name, systemImage: "checkmark") } else { Text(p.name) }
+              if p.id == m.profile.id { Label(presetTitle(p), systemImage: "checkmark") } else { Text(presetTitle(p)) }
             }
           }
           Divider()
@@ -546,7 +554,7 @@ struct ContentView: View {
           Button("配置与技术文档…") { showInfo = true }
           Button(m.copyStandRoll ? "翻拍预设标定…" : "本机预设标定…") { openCalibration() }
         } label: {
-          Text(m.profile.name).lineLimit(1)
+          Text(presetTitle(m.profile)).lineLimit(1)
         }
         .menuStyle(.button).frame(maxWidth: .infinity, alignment: .leading)
         .help("这一卷用的预设：通道斜率和标定的中性。也可以在下面输入胶片名")
@@ -637,7 +645,7 @@ struct ContentView: View {
             ForEach(0..<3, id: \.self) { channel in baseSlider(channel) }
             if let base = m.toneAnalysis?.base ?? m.settings.base ?? m.settings.rollBase {
               Text(String(format: "基准 RGB  %.3f  %.3f  %.3f", base.r, base.g, base.b)).font(
-                .system(size: 10, design: .monospaced)
+                .system(size: 11, design: .monospaced)
               ).foregroundStyle(.secondary)
             }
           }
@@ -668,14 +676,14 @@ struct ContentView: View {
       VStack(alignment: .leading, spacing: 8) {
         if let f = m.selected, m.isSinglePicture(f) {
           HStack {
-            Text("裁切").font(.system(size: 11)).foregroundStyle(.secondary)
+            Text("裁切").font(.system(size: 12)).foregroundStyle(.secondary)
             Spacer()
             cropKey
           }
         }
         VStack(spacing: 3) {
           HStack {
-            Text("拉直").font(.system(size: 11)).foregroundStyle(.secondary)
+            Text("拉直").font(.system(size: 12)).foregroundStyle(.secondary)
             Spacer()
             Text(String(format: "%+.2f°", m.screenAngle)).readout()
             Button("画线") {
@@ -728,7 +736,7 @@ struct ContentView: View {
         // The two pickers, latched while one is in use and marked once a point is picked; the
         // same pickers lie over the picture.
         HStack(spacing: 6) {
-          Text("取样").font(.system(size: 11)).foregroundStyle(.secondary)
+          Text("取样").font(.system(size: 12)).foregroundStyle(.secondary)
           Button {
             m.useTool(.neutral)
           } label: {
@@ -868,20 +876,20 @@ struct ContentView: View {
     let names = ["左", "上", "右", "下"]
     let values = [crop.x, crop.y, crop.x + crop.width, crop.y + crop.height]
     return HStack {
-      Text(names[edge]).font(.system(size: 11))
+      Text(names[edge]).font(.system(size: 12))
       Spacer()
       Text(String(format: "%.1f%%", values[edge] * 100)).font(
-        .system(size: 10, design: .monospaced))
+        .system(size: 11, design: .monospaced))
       Button {
         m.adjustCropEdge(edge, delta: -0.001)
       } label: {
         Image(systemName: "minus")
-      }
+      }.help("\(names[edge])边 −0.1%").accessibilityLabel("\(names[edge])边减 0.1%")
       Button {
         m.adjustCropEdge(edge, delta: 0.001)
       } label: {
         Image(systemName: "plus")
-      }
+      }.help("\(names[edge])边 +0.1%").accessibilityLabel("\(names[edge])边加 0.1%")
     }.controlSize(.mini).disabled(m.isWorking || m.rendering)
   }
   /// The status line: while something is under way, an update waits, or a while after it changed.
@@ -909,10 +917,10 @@ struct ContentView: View {
         .toggleStyle(.switch).tint(Hardware.accent).disabled(m.selected == nil || m.isWorking)
         .help("勾选这一张用于扫描和导出。胶片条上没勾选的变暗；也可以在胶片条上右键勾选")
         Divider().frame(height: 14)
-        Button("全选") { m.setAllEnabled(true) }
+        Button("全部勾选") { m.setAllEnabled(true) }
           .disabled(m.frames.isEmpty || m.enabledCount == m.frames.count || m.isWorking)
           .help("勾选当前工程中的全部照片，用于批量扫描和导出")
-        Button("全不选") { m.setAllEnabled(false) }
+        Button("全部不勾选") { m.setAllEnabled(false) }
           .disabled(m.enabledCount == 0 || m.isWorking)
           .help("取消全部扫描和导出勾选；不删除照片、不切换当前画面")
         Text("已选 \(m.enabledCount) / \(m.frames.count)").readout()

@@ -568,7 +568,7 @@ enum CanvasTool: String, CaseIterable {
     case .base: what = "取片基：点未曝光的橙色片基，作为去色罩的基准"
     case .neutral: what = "取中性灰：点画面中应为灰色的地方，校正白平衡"
     case .highlight: what = "取高光（Dmax）：点负片上最密、正片里应为纯白的地方，各通道以它为白点对齐"
-    case .calibrate: what = "标定中性点：点选灰卡等中性灰，生成本机预设"
+    case .calibrate: what = "标定中性点：点选灰卡等中性灰，生成这台扫描仪或这次翻拍的预设"
     case .it8: what = "IT8 色卡：按提示点色卡上的 6 个点"
     }
     return what + (shortcut.map { " · \($0.uppercased())" } ?? "")

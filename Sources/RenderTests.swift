@@ -1,5 +1,6 @@
 import Combine
 import CoreGraphics
+import CoreImage
 import Foundation
 
 /// The single frame's render while a slider moves: pictures as it moves, the analysis it keeps
@@ -34,6 +35,33 @@ enum RenderTests {
     try check([nil, weight].allSatisfy { w in
       [1.0, 1.6].allSatisfy { pipe.reach(e, gain: gain, balance: balance, weight: w, saturation: $0) == plainReach(w, $0) }
     }, "how far highlights run comes out bit for bit as the plain sums give it, weighted or not")
+
+    // An export rendered straight into a bitmap without alpha: the same values, the same way up,
+    // as rendered with alpha and then drawn without it.
+    func drawn(_ image: CGImage) -> [UInt16] {
+      let w = image.width, h = image.height
+      var px = [UInt16](repeating: 0, count: w * h * 4)
+      px.withUnsafeMutableBytes { buffer in
+        let ctx = CGContext(data: buffer.baseAddress, width: w, height: h, bitsPerComponent: 16, bytesPerRow: w * 8,
+          space: pipe.outputSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder16Little.rawValue)!
+        ctx.interpolationQuality = .none
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+      }
+      return px
+    }
+    let gradient = CIFilter(name: "CILinearGradient", parameters: [
+      "inputPoint0": CIVector(x: 0, y: 0), "inputPoint1": CIVector(x: 37, y: 23),
+      "inputColor0": CIColor(red: 0.9, green: 0.2, blue: 0.1), "inputColor1": CIColor(red: 0.1, green: 0.5, blue: 0.95),
+    ])!.outputImage!.cropped(to: CGRect(x: 0, y: 0, width: 41, height: 29))
+    let corner = CIImage(color: CIColor(red: 1, green: 1, blue: 0)).cropped(to: CGRect(x: 0, y: 25, width: 6, height: 4))
+    let picture = corner.composited(over: gradient)
+    try check([true, false].allSatisfy { sixteen in
+      guard let straight = pipe.opaqueImage(picture, sixteenBit: sixteen, colorSpace: pipe.outputSpace),
+        let withAlpha = pipe.context.createCGImage(picture, from: picture.extent, format: sixteen ? .RGBA16 : .RGBA8, colorSpace: pipe.outputSpace)
+      else { return false }
+      let dropped = pipe.opaque(withAlpha)
+      return straight.alphaInfo == .noneSkipLast && drawn(straight) == drawn(dropped)
+    }, "an export is rendered without alpha, 8 and 16 bits, to the values and the way up it had drawn without it")
 
     // One large frame on a preview, so a render takes a while, as a real one does.
     let roll = folder.appendingPathComponent("render-throttle")
@@ -100,5 +128,54 @@ enum RenderTests {
     for _ in 0..<80 where model.rendering { settle(0.05) }
     try check(same(model.toneAnalysis, try fresh()) && !same(before, model.toneAnalysis!),
       "what the analysis reads (auto white balance, saturation) analyses again")
+
+    // Three frames on a holder's preview: the film strip and the light table keep what is the same.
+    let strip = folder.appendingPathComponent("render-strip")
+    try? FileManager.default.removeItem(at: strip)
+    try FileManager.default.createDirectory(at: strip, withIntermediateDirectories: true)
+    let sw = 1500, sh = 400
+    let sheet = CGContext(data: nil, width: sw, height: sh, bitsPerComponent: 8, bytesPerRow: 0,
+      space: pipe.outputSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    sheet.setFillColor(red: 0.95, green: 0.62, blue: 0.38, alpha: 1)
+    sheet.fill(CGRect(x: 0, y: 0, width: sw, height: sh))
+    for i in 0..<3 {
+      sheet.setFillColor(red: 0.6 - 0.15 * Double(i), green: 0.35, blue: 0.2 + 0.05 * Double(i), alpha: 1)
+      sheet.fill(CGRect(x: 60 + i * 480, y: 60, width: 420, height: 280))
+    }
+    let stripOverview = strip.appendingPathComponent("overview.png")
+    try pipe.savePNG(sheet.makeImage()!, to: stripOverview)
+    let three = (0..<3).map { i in
+      FilmFrame(name: "0\(i + 1)", rect: NormalRect(x: (60 + Double(i) * 480) / 1500, y: 0.15, width: 0.28, height: 0.7), format: "135")
+    }
+    let stripProject = strip.appendingPathComponent("Session.epscan")
+    try JSONEncoder().encode(DeskProject(
+      overviewPath: stripOverview.path, overviewDPI: 300, physicalWidthMM: 127, physicalHeightMM: 34,
+      filmName: "Kodak Portra 160", profile: FilmProfile.builtins[0], scanDPI: 2400, frames: three)).write(to: stripProject)
+    let table = AppModel(libraryURL: strip)
+    table.readOnly = true
+    table.loadProject(stripProject)
+    for _ in 0..<100 where table.rendering || table.thumbnails.count < 3 { settle(0.1) }
+    settle(0.5)
+    let ids = table.frames.map(\.id)
+    let first = ids.map { table.thumbnails[$0] }
+    table.select(ids[1])
+    table.change("曝光") { $0.exposure = 0.4 }
+    table.updateThumbnails()
+    for _ in 0..<60 where table.thumbnails[ids[1]] === first[1] { settle(0.05) }
+    let second = ids.map { table.thumbnails[$0] }
+    try check(first.allSatisfy { $0 != nil } && second[0] === first[0] && second[2] === first[2] && second[1] !== first[1],
+      "after one frame changes, only its positive in the film strip is converted again")
+    try check([first[0]!, second[1]!].allSatisfy { max($0.width, $0.height) <= AppModel.thumbnailDimension },
+      "and the film strip keeps them no larger than \(AppModel.thumbnailDimension) pixels")
+    for _ in 0..<80 where table.rendering { settle(0.05) }
+    settle(0.3)
+    let printed = table.displayed
+    table.select(ids[2])
+    table.refresh()
+    try check(printed != nil && table.displayed === printed && !table.rendering,
+      "another frame selected on the light table shows the print as it is, not printed again")
+    table.change("曝光") { $0.exposure = -0.3 }
+    for _ in 0..<80 where table.rendering { settle(0.05) }
+    try check(table.displayed !== printed, "and a frame changed prints it again")
   }
 }

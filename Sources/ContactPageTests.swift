@@ -92,9 +92,9 @@ enum ContactPageTests {
     func shape(_ r: NormalRect) -> CGFloat { CGFloat(r.width) * pageSize.width / (CGFloat(r.height) * pageSize.height) }
     model.frames[0].adjustments.rotation = 1
     let turned = model.contactRect(model.frames[0]), next = model.contactRect(model.frames[1])
-    model.contactPositive = false
+    model.showNegative = true
     let lying = model.contactRect(model.frames[0]), oneChoice = model.showNegative
-    model.contactPositive = true
+    model.showNegative = false
     model.frames[0].adjustments.rotation = 0
     try check(oneChoice && !model.showNegative, "the light table and the single frame show negatives or positives as one choice")
     try check(abs(shape(turned) - 2.0 / 3) < 0.01 && abs(shape(lying) - 1.5) < 0.01

@@ -50,7 +50,7 @@ struct PanelSection<Accessory: View, Content: View>: View {
         .accessibilityLabel(title).accessibilityValue(shown ? "已展开" : "已收起")
         Spacer(minLength: 6)
         accessory
-        if let info { InfoButton(text: info) }
+        if let info { InfoButton(text: info, about: title) }
       }
       if shown { content.transition(.opacity) }
     }

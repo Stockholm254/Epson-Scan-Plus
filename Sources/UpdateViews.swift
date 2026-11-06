@@ -14,7 +14,7 @@ struct UpdateSheet: View {
         Spacer()
         InfoButton(text: "放在「应用程序」文件夹里的 Epson Scan plus 会自己更新：打开后几秒和之后每六小时看一次更新列表，有新版本就下载，核对发布签名、校验值和代码签名，退出时换上新版本，下次打开就是新的。也可以点「现在更新并重新打开」。\n\n更新列表默认是这台 Mac 上的发布目录（\(Updater.localFeed.deletingLastPathComponent().path)），不联网。换下来的旧版本放在 \(updater.parkRoot.path)，留最近 \(Updater.keptVersions) 个，更早的移到废纸篓。\n\n别处的副本（试用版、磁盘映像里的）不会自己更新。")
       }
-      Text(updater.status).font(.system(size: 12)).foregroundStyle(updater.release == nil ? Color.secondary : Hardware.amber)
+      Text(updater.status).font(.system(size: 12)).foregroundStyle(updater.release == nil ? Color.secondary : Hardware.amberText)
         .fixedSize(horizontal: false, vertical: true)
       if let r = updater.release {
         VStack(alignment: .leading, spacing: 3) {
@@ -59,7 +59,7 @@ struct UpdateNotice: View {
           Text(updater.phase == .ready(r) ? "\(r.version) 退出时更新" : "新版本 \(r.version)").font(.system(size: 11))
         }
       }
-      .buttonStyle(.plain).foregroundStyle(Hardware.amber).help(updater.status)
+      .buttonStyle(.plain).foregroundStyle(Hardware.amberText).help(updater.status)
     }
   }
 }

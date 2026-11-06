@@ -179,13 +179,10 @@ enum LibraryTests {
     // MARK: The modules, and opening a roll
 
     let model = AppModel(libraryURL: lib)
-    try check(model.page == .capture && model.panelTab == .scan && model.libraryRoots.count == 1,
+    try check(model.page == .capture && model.libraryRoots.count == 1,
       "the window opens on ① 采集 with the scanner's panel; a library chosen elsewhere lists only itself")
     model.page = .convert
-    try check(model.panelTab == .film, "② 去色罩 opens on film and presets")
-    model.panelTab = .scan
-    try check(model.page == .capture, "and the scanner's settings (⌘,) take the window back to ① 采集")
-    model.page = .convert
+    try check(model.panelTab == .calibration, "② 去色罩's sidebar opens on calibrating the preset")
     model.tool = .neutral
     model.page = .capture
     try check(model.tool == .select, "the pickers are put down on going back to capture")

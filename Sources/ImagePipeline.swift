@@ -827,7 +827,7 @@ final class ImagePipeline {
       cg = context.createCGImage(ci, from: ci.extent, format: .RGBAf, colorSpace: CGColorSpace(name: CGColorSpace.extendedSRGB)!)
         .flatMap { converted($0, to: colorSpace.space, bitsPerComponent: format.sixteenBit ? 16 : 8) }
     } else {
-      cg = context.createCGImage(ci, from: ci.extent, format: format.sixteenBit ? .RGBA16 : .RGBA8, colorSpace: outputSpace)
+      cg = opaqueImage(ci, sixteenBit: format.sixteenBit, colorSpace: outputSpace)
     }
     guard let cg else { throw DeskError.message("无法创建导出文件。") }
     try write(cg, to: url, format: format, dpi: dpi, quality: quality, metadata: metadata)
@@ -868,6 +868,22 @@ final class ImagePipeline {
     ctx.interpolationQuality = .none
     ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
     return ctx.makeImage()
+  }
+  /// `ci` rendered straight into a bitmap whose fourth channel is padding, so the file has no
+  /// alpha and the picture is not drawn again to drop it (`opaque`): for a 61-megapixel frame that
+  /// was a second 490 MB copy and about half a second. The values are the same.
+  func opaqueImage(_ ci: CIImage, sixteenBit: Bool, colorSpace: CGColorSpace) -> CGImage? {
+    let extent = ci.extent.integral
+    let w = Int(extent.width), h = Int(extent.height)
+    guard w > 0, h > 0, let data = NSMutableData(length: w * h * (sixteenBit ? 8 : 4)) else { return nil }
+    let rowBytes = w * (sixteenBit ? 8 : 4)
+    context.render(ci, toBitmap: data.mutableBytes, rowBytes: rowBytes, bounds: extent, format: sixteenBit ? .RGBA16 : .RGBA8, colorSpace: colorSpace)
+    guard let provider = CGDataProvider(data: data) else { return nil }
+    let info = CGImageAlphaInfo.noneSkipLast.rawValue | (sixteenBit ? CGBitmapInfo.byteOrder16Little.rawValue : 0)
+    return CGImage(
+      width: w, height: h, bitsPerComponent: sixteenBit ? 16 : 8, bitsPerPixel: sixteenBit ? 64 : 32, bytesPerRow: rowBytes,
+      space: colorSpace, bitmapInfo: CGBitmapInfo(rawValue: info), provider: provider, decode: nil, shouldInterpolate: false,
+      intent: .defaultIntent)
   }
   /// `image` without its alpha channel, the values unchanged. Rendered images are opaque, so the
   /// channel only made TIFF and PNG files a third larger, and some apps took them as transparent.

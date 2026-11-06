@@ -1,9 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// The left panel. In module ① the source, the scanner (with storage), the camera or files; in
-/// module ② film and presets, and output, in two tabs. This is also where every setting lives;
-/// ⌘, comes back to ①'s.
+/// The left panel. In module ① the source and its settings, the scanner's (with storage) or the
+/// camera's; in module ② calibrating the preset and the export settings, in two tabs. ⌘, comes
+/// back to ①'s.
 extension ContentView {
   var leftPanel: some View {
     VStack(spacing: 0) {
@@ -15,7 +15,7 @@ extension ContentView {
         } else {
           // Module ②'s film and its slopes are in the inspector; here, calibrating and exporting.
           Picker("面板", selection: $m.panelTab) {
-            ForEach([AppModel.PanelTab.film, .output], id: \.self) { Text($0 == .film ? "标定" : $0.rawValue).tag($0) }
+            ForEach(AppModel.PanelTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
           }
         }
       }.pickerStyle(.segmented).labelsHidden().padding(.horizontal, 14).padding(.vertical, 10)
@@ -29,7 +29,7 @@ extension ContentView {
             }
           } else {
             switch m.panelTab {
-            case .scan, .film: filmTab
+            case .calibration: calibrationTab
             case .output: outputTab
             }
           }
@@ -81,7 +81,7 @@ extension ContentView {
       Divider()
       titled("存储", symbol: "externaldrive", info:
         "每次预览或导入会在这里新建工程文件夹：原始负片在 Originals，自动导出的正片在 Exports。更改位置只影响之后新建的工程。")
-      Text((m.libraryURL.path as NSString).abbreviatingWithTildeInPath).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
+      Text((m.libraryURL.path as NSString).abbreviatingWithTildeInPath).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
         .lineLimit(3).truncationMode(.middle).textSelection(.enabled)
       HStack {
         Button("选择…") { m.chooseLibrary() }
@@ -94,7 +94,7 @@ extension ContentView {
       }
       Divider()
       titled("画面", symbol: "rectangle.dashed", info:
-        "预览后自动识别画面。点接触表上的一张进入单张，在单张里用「画框」细调裁切：拖四角缩放，拖框内移动。漏掉的画面用「手动画框」在灯箱上拖出新的画框。「收紧现有边界」只收紧已有画面框，保留逐张调色和原始扫描。")
+        "预览后自动识别画面。点接触表上的一张进入单张，在单张里用「画框」细调裁切：拖四角缩放，拖框内移动。漏掉的画面用「手动画框」在接触表上拖出新的画框。「收紧现有边界」只收紧已有画面框，保留逐张调色和原始扫描。")
       labeled("规格") {
         Picker("", selection: $m.format) {
           ForEach(FilmFormat.allCases, id: \.self) { Text($0.rawValue).tag($0) }
@@ -122,7 +122,7 @@ extension ContentView {
           m.removeSelected()
         } label: {
           Image(systemName: "trash")
-        }.disabled(m.selected == nil)
+        }.disabled(m.selected == nil).help("删除所选画面（⌫）").accessibilityLabel("删除所选画面")
       }.disabled(m.isWorking)
       Divider()
       scannerSharpening
@@ -190,23 +190,10 @@ extension ContentView {
   // MARK: Film
 
   /// Module ②'s sidebar, first tab: calibrating the preset in use from neutral points. The film,
-  /// its preset and where the slopes come from are at the top of the inspector; the presets
-  /// themselves (use, export, delete, import) in the presets table.
-  var filmTab: some View {
-    VStack(alignment: .leading, spacing: 18) {
-      HStack {
-        sectionTitle("预设", symbol: "film")
-        Spacer()
-        Button("管理预设…") { m.showPresets = true }.font(.system(size: 11))
-          .help("所有预设、各在哪些卷里用；使用、导出、导入、删除")
-      }
-      VStack(alignment: .leading, spacing: 3) {
-        Text("在用「\(m.profile.name)」").font(.system(size: 12)).lineLimit(2)
-        Text(m.profile.publication).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
-      }
-      Divider()
-      calibrationPanel
-    }
+  /// its preset and where the slopes come from are at the top of the inspector, managing the
+  /// presets (use, export, delete, import) in the presets table its film menu opens.
+  var calibrationTab: some View {
+    calibrationPanel
   }
   /// Where this frame's channel slopes come from, in a line: the inspector's, with the whole of it
   /// (`conversionBasis`) behind its ⓘ.
@@ -232,7 +219,7 @@ extension ContentView {
       }
       Toggle("允许 AI 助手读取和调整转换", isOn: Binding(get: { m.preferences.mcpEnabled }, set: { m.preferences.mcpEnabled = $0; m.updateMCP() }))
         .toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
-      Text(m.mcpStatus).font(.system(size: 11)).foregroundStyle(m.preferences.mcpEnabled ? Hardware.amber : Color.secondary)
+      Text(m.mcpStatus).font(.system(size: 11)).foregroundStyle(m.preferences.mcpEnabled ? Hardware.amberText : Color.secondary)
         .fixedSize(horizontal: false, vertical: true)
       HStack {
         Button("Claude Desktop 配置") {
@@ -301,7 +288,7 @@ extension ContentView {
         }.buttonStyle(KeyStyle(latched: picking)).disabled(m.selected == nil)
         Text(String(format: "%d 点 · %.2f D", m.calibrationPoints.count, span)).readout()
       }
-      Text(step).font(.system(size: 11)).foregroundStyle(ready ? Hardware.amber : Color.secondary)
+      Text(step).font(.system(size: 11)).foregroundStyle(ready ? Hardware.amberText : Color.secondary)
       // Where the points are: those being picked, else those the preset in use was made from, a
       // button each to the frame it is on.
       let picked = m.calibrationPoints.map { p in (frame: p.frame, name: m.frames.first { $0.id == p.frame }?.name ?? "?") }
@@ -348,7 +335,7 @@ extension ContentView {
       if format.wrappedValue == .jpeg {
         VStack(spacing: 3) {
           HStack {
-            Text("JPEG 质量").font(.system(size: 11)).foregroundStyle(.secondary)
+            Text("JPEG 质量").font(.system(size: 12)).foregroundStyle(.secondary)
             Spacer()
             Text("\(Int((m.preferences.jpegQuality * 100).rounded()))").readout()
           }
@@ -371,7 +358,7 @@ extension ContentView {
       }
       HStack {
         Button("导出当前…") { m.exportImages(all: false) }.disabled(m.selected == nil || m.isWorking)
-        Button("导出勾选…") { m.exportImages(all: true) }.disabled(m.enabledCount == 0 || m.isWorking)
+        Button("导出勾选的 \(m.enabledCount) 张…") { m.exportImages(all: true) }.disabled(m.enabledCount == 0 || m.isWorking)
       }.font(.system(size: 11))
       Toggle("扫描后自动导出正片", isOn: Binding(get: { m.preferences.autoExport }, set: { m.preferences.autoExport = $0 }))
         .toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
@@ -421,8 +408,7 @@ extension ContentView {
     }
   }
 
-  /// A section title with its longer explanation behind an ⓘ.
-  // MARK: Camera and files
+  // MARK: Camera
 
   /// The A7R IV: what tethering will do, and until then what the camera's files need.
   var cameraTab: some View {
@@ -432,7 +418,6 @@ extension ContentView {
       CameraPanel(m: m, camera: m.camera)
     }
   }
-  /// Pictures from elsewhere, copied into a new roll.
   /// Module ①'s right panel: with the camera the last picture's focus check first, then the roll as
   /// the library files it.
   var rollPanel: some View {
@@ -461,7 +446,7 @@ extension ContentView {
           }
           if let url = m.sessionURL {
             labeled("文件夹") {
-              Text(url.lastPathComponent).font(.system(size: 10, design: .monospaced)).lineLimit(1).truncationMode(.middle)
+              Text(url.lastPathComponent).font(.system(size: 11, design: .monospaced)).lineLimit(1).truncationMode(.middle)
             }
             Button("在 Finder 中显示") { reveal(url) }.font(.system(size: 11))
           }
@@ -484,11 +469,12 @@ extension ContentView {
       .onChange(of: m.rollNotes) { m.saveProject() }
   }
 
+  /// A section title with its longer explanation behind an ⓘ.
   func titled(_ text: String, symbol: String, info: String) -> some View {
     HStack {
       sectionTitle(text, symbol: symbol)
       Spacer()
-      InfoButton(text: info)
+      InfoButton(text: info, about: text)
     }
   }
   func note(_ text: String) -> some View {
@@ -504,6 +490,8 @@ extension ContentView {
 /// reading for when it is wanted.
 struct InfoButton: View {
   let text: String
+  /// What it explains, for VoiceOver: "白平衡的说明" rather than a row of "说明".
+  var about: String? = nil
   @State private var shown = false
   var body: some View {
     Button {
@@ -511,7 +499,7 @@ struct InfoButton: View {
     } label: {
       Image(systemName: shown ? "info.circle.fill" : "info.circle").font(.system(size: 12))
         .foregroundStyle(shown ? Hardware.amberText : Hardware.adaptive(NSColor(white: 0.6, alpha: 1), NSColor(white: 0.42, alpha: 1)))
-    }.buttonStyle(.plain).help("说明").accessibilityLabel("说明")
+    }.buttonStyle(.plain).help("说明").accessibilityLabel(about.map { "\($0)的说明" } ?? "说明")
       .popover(isPresented: $shown, arrowEdge: .trailing) {
         Text(text).font(.system(size: 12)).lineSpacing(2).fixedSize(horizontal: false, vertical: true)
           .frame(width: 320, alignment: .leading).padding(14).textSelection(.enabled)
@@ -543,8 +531,8 @@ struct MTFChart: View {
           }.stroke(Hardware.lcdText.opacity(0.15), lineWidth: 0.5)
           Path { p in p.addLines(profile.horizontal.map(point)) }.stroke(Hardware.amber, lineWidth: 1.5)
           Path { p in p.addLines(profile.vertical.map(point)) }.stroke(vertical, lineWidth: 1.5)
-          Text("50%").font(.system(size: 9)).foregroundStyle(.secondary).offset(x: 2, y: 0.5 * h - 12)
-          Text("10%").font(.system(size: 9)).foregroundStyle(.secondary).offset(x: 2, y: 0.9 * h - 12)
+          Text("50%").font(.system(size: 9)).foregroundStyle(Hardware.lcdText.opacity(0.6)).offset(x: 2, y: 0.5 * h - 12)
+          Text("10%").font(.system(size: 9)).foregroundStyle(Hardware.lcdText.opacity(0.6)).offset(x: 2, y: 0.9 * h - 12)
         }
       }.padding(4).background(PlotScreen())
       HStack(spacing: 10) {

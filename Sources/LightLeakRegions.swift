@@ -96,7 +96,7 @@ struct LeakRegionsSection: View {
       Text(hint).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       if lab.tool == .protect {
         HStack {
-          Text("画笔").font(.system(size: 11)).foregroundStyle(.secondary)
+          Text("画笔").font(.system(size: 12)).foregroundStyle(.secondary)
           Fader(title: "画笔大小", value: $lab.brush, range: 0.005...0.08)
           Text("\(Int((lab.brush * 1000).rounded()))‰").readout()
         }
@@ -104,7 +104,7 @@ struct LeakRegionsSection: View {
       Toggle("在照片上显示区域", isOn: $lab.showMasks).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
       HStack {
         Button("自动检测") { lab.detect() }
-        Text("灵敏度").font(.system(size: 11)).foregroundStyle(.secondary)
+        Text("灵敏度").font(.system(size: 12)).foregroundStyle(.secondary)
         Fader(title: "检测灵敏度", value: $lab.sensitivity, range: 0.1...1, detent: 0.5)
         Text("\(Int((lab.sensitivity * 100).rounded()))%").readout()
       }
@@ -177,7 +177,7 @@ struct LeakRegionsSection: View {
         .disabled(r.shape != "ellipse" || r.gaussian == true)
       Text(r.ref.map { String(format: "干净参考点：%.3f, %.3f", $0.x, $0.y) }
         ?? (r.target != nil || r.fog != nil ? "已标定的区域，可调强度。" : "尚未选参考点：用「参考点」点同材质、没有漏光的位置。"))
-        .font(.system(size: 11)).foregroundStyle(r.ref == nil && r.target == nil && r.fog == nil ? Hardware.amber : .secondary)
+        .font(.system(size: 11)).foregroundStyle(r.ref == nil && r.target == nil && r.fog == nil ? Hardware.amberText : .secondary)
       if r.mode == "gain" {
         Text(r.cast.map { String(format: "量色偏的位置：%.3f, %.3f", $0.x, $0.y) }
           ?? "在区域中心量色偏：中心要和参考点是同一种东西（比如都是天空）。整片按同一个比例改，跨过不同物体也不染色，亮处照样校正。")
@@ -187,7 +187,7 @@ struct LeakRegionsSection: View {
   }
   func amount(_ title: String, _ value: Double, _ set: @escaping (Double) -> Void) -> some View {
     HStack {
-      Text(title).font(.system(size: 11)).foregroundStyle(.secondary)
+      Text(title).font(.system(size: 12)).foregroundStyle(.secondary)
       Fader(title: title, value: Binding(get: { value }, set: { set(($0 * 100).rounded() / 100) }), range: 0...1)
       Text("\(Int((value * 100).rounded()))%").readout()
     }
@@ -214,7 +214,7 @@ struct LeakAlignSheet: View {
           pending = nil
         }
       }.frame(height: 320)
-      Text(warning ?? info).font(.system(size: 11)).foregroundStyle(warning == nil ? .secondary : Hardware.amber)
+      Text(warning ?? info).font(.system(size: 11)).foregroundStyle(warning == nil ? .secondary : Hardware.amberText)
       HStack {
         Button("撤回一点") {
           if pending != nil { pending = nil } else if !pairs.isEmpty { pairs.removeLast() }

@@ -57,7 +57,7 @@ extension AppModel {
   func contactRect(_ f: FilmFrame) -> NormalRect {
     let page = sheetPageFrames
     guard onSheetPage, let i = page.firstIndex(where: { $0.id == f.id }) else { return f.rect }
-    let positive = contactPositive
+    let positive = !showNegative
     let layout = Self.sheetLayout(aspects: page.map { sheetAspect($0, positive: positive) }, pages: contactPages.count)
     let c = layout.cells[i]
     return NormalRect(x: c.minX / layout.size.width, y: c.minY / layout.size.height, width: c.width / layout.size.width, height: c.height / layout.size.height)

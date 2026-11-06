@@ -50,7 +50,7 @@ struct LibrarySheet: View {
         drawer
       }
       HStack {
-        Text(m.libraryURL.path).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
+        Text(m.libraryURL.path).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
           .lineLimit(1).truncationMode(.middle)
         Spacer()
         Text("双击一页打开这一卷，进入 ② 去色罩；鼠标停在一格上可以放大看；右键可以重命名").font(.system(size: 11)).foregroundStyle(.secondary)
@@ -99,7 +99,7 @@ struct LibrarySheet: View {
             .help("同一卷胶片扫了几次（张数一样、前三张一样）的几卷叠在一起，只露最新的一卷")
         } label: {
           Image(systemName: "ellipsis.circle")
-        }.menuStyle(.borderlessButton).fixedSize()
+        }.menuStyle(.borderlessButton).fixedSize().help("库的选项").accessibilityLabel("库的选项")
         Button("完成") { m.showLibrary = false }.keyboardShortcut(.cancelAction)
       }.buttonStyle(.bordered).controlSize(.regular)
   }
@@ -113,7 +113,8 @@ struct LibrarySheet: View {
             Text("预览扫描、翻拍或导入之后，每卷都会自动放进这里。").font(.system(size: 11)).foregroundStyle(.secondary)
           }.frame(maxWidth: .infinity).padding(.top, 90)
         }
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 250, maximum: 330), spacing: 26)], spacing: 32) {
+        // Top-aligned: a stack, taller with its edges, does not push the pages beside it down.
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 250, maximum: 330), spacing: 26, alignment: .top)], spacing: 32) {
           ForEach(shown) { e in
             let under = stack(of: e)
             RollSleeve(
@@ -174,6 +175,8 @@ struct RollSleeve: View {
   var rename: () -> Void = {}
   let open: () -> Void
   @State private var pictures = [UUID: (image: CGImage, positive: Bool)]()
+  /// A roll with no frames cut from its preview: the preview, small, in their place.
+  @State private var preview: CGImage?
   @State private var hover = false
   /// The pocket under the pointer, and the glass loupe over it.
   @State private var hovered: UUID?
@@ -254,7 +257,21 @@ struct RollSleeve: View {
     .padding(.top, 8).padding(.trailing, 8)
   }
   /// The strips under clear plastic, with a sheen across them.
-  var sleeve: some View {
+  @ViewBuilder var sleeve: some View {
+    if entry.frames.isEmpty {
+      HStack(spacing: 10) {
+        if let preview {
+          Image(decorative: preview, scale: 1).resizable().aspectRatio(contentMode: .fit).frame(maxWidth: 90, maxHeight: 64)
+        }
+        Text(entry.overview == nil ? "没有画面" : "只有预览，没有切出画面")
+          .font(.system(size: 11)).foregroundStyle(.secondary)
+        Spacer(minLength: 0)
+      }.padding(.vertical, 8).padding(.trailing, 8).frame(minHeight: 64)
+    } else {
+      frameStrips
+    }
+  }
+  var frameStrips: some View {
     let shownFrames = Array(entry.frames.prefix(Self.perStrip * Self.strips))
     let rows = stride(from: 0, to: max(1, shownFrames.count), by: Self.perStrip).map {
       Array(shownFrames[min($0, shownFrames.count)..<min($0 + Self.perStrip, shownFrames.count)])
@@ -323,7 +340,11 @@ struct RollSleeve: View {
     let e = entry
     DispatchQueue.global(qos: .userInitiated).async {
       let found = RollLibrary.thumbnails(for: e)
-      DispatchQueue.main.async { pictures = found }
+      let small = e.frames.isEmpty ? e.overview.flatMap { RollLibrary.thumbnail($0, maxPixels: 240) } : nil
+      DispatchQueue.main.async {
+        pictures = found
+        preview = small
+      }
     }
   }
 }

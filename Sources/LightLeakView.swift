@@ -198,7 +198,7 @@ struct LeakViewer: View {
     }
   }
   func tag(_ text: String) -> some View {
-    Text(text).font(.system(size: 10, weight: .medium)).padding(.horizontal, 7).padding(.vertical, 3)
+    Text(text).font(.system(size: 11, weight: .medium)).padding(.horizontal, 7).padding(.vertical, 3)
       .floatingPlate(Capsule(), text: Color(white: 0.92), opacity: 0.6)
   }
 }
@@ -250,14 +250,14 @@ struct LeakPanel: View {
       if let j = lab.job {
         Text(j.sourceName).font(.system(size: 12, weight: .medium))
         if let meta = j.meta {
-          Text("\(meta.width) × \(meta.height) · 预览 \(meta.previewWidth) × \(meta.previewHeight)").font(.system(size: 10, design: .monospaced))
+          Text("\(meta.width) × \(meta.height) · 预览 \(meta.previewWidth) × \(meta.previewHeight)").font(.system(size: 11, design: .monospaced))
             .foregroundStyle(.secondary)
         }
         if let origin = j.origin {
           if let f = frame {
-            if !f.hasFullResolution { note("这张尚未正式扫描，用的是预览像素；正式扫描后点「按当前调色重新载入」。", color: Hardware.amber) }
+            if !f.hasFullResolution { note("这张尚未正式扫描，用的是预览像素；正式扫描后点「按当前调色重新载入」。", color: Hardware.amberText) }
             if f.adjustments != origin.adjustments {
-              note("这张的调色在建立任务后改过；导出仍按建立任务时的调色。", color: Hardware.amber)
+              note("这张的调色在建立任务后改过；导出仍按建立任务时的调色。", color: Hardware.amberText)
               Button("按当前调色重新载入") { if let o = m.leakOrigin(f) { lab.reload(origin: o) } }.disabled(lab.busy != nil)
             }
           } else {
@@ -278,7 +278,7 @@ struct LeakPanel: View {
     VStack(alignment: .leading, spacing: 10) {
       header("去漏光", symbol: "wand.and.rays", info: "FilmLightLab 修订 9 的匹配算法：参考图只指导平滑的色彩和明暗校正，不复制 AI 生成的物体、纹理与结构；按污染程度分区减雾，夜景边缘的白色亮雾单独校正，自然亮部与局部灯光单独保护，不锁定全图亮度。\n\n场景判断按原片和参考图的亮度分布估计，是曝光启发式，不是语义识别；混合光时可手动指定。\n\n颗粒幅度及颜色会改变，不是无损恢复；已饱和或丢失的信息无法恢复，真实红色物体和灯光红晕仍需检查。")
       HStack {
-        Text("场景").font(.system(size: 11)).foregroundStyle(.secondary)
+        Text("场景").font(.system(size: 12)).foregroundStyle(.secondary)
         Spacer()
         Picker("场景", selection: Binding(get: { lab.params.sceneMode }, set: { lab.setScene($0) })) {
           Text("自动判断").tag("auto")
@@ -306,7 +306,7 @@ struct LeakPanel: View {
       ).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11)).disabled(!lab.hasBase || lab.busy != nil)
       VStack(spacing: 3) {
         HStack {
-          Text("去偏色强度").font(.system(size: 11)).foregroundStyle(.secondary)
+          Text("去偏色强度").font(.system(size: 12)).foregroundStyle(.secondary)
           Spacer()
           Text(lab.model.map { "\(Int(($0.strength * 100).rounded()))%" } ?? "未应用").readout()
         }
@@ -335,7 +335,7 @@ struct LeakPanel: View {
       // What the request was, for a bill or a question about it; out of the way otherwise.
       if let receipt {
         DisclosureGroup("生成记录") { note(receipt).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
-          .font(.system(size: 10))
+          .font(.system(size: 11))
       }
       if lab.hasReference { note(fitInfo) }
       Text("OpenAI · \(credentials.model) · " + (credentials.configured ? (credentials.remembered ? "钥匙串已连接" : "临时 Key 已配置") : "尚未配置 Key（工具栏「API 管理」）"))
@@ -370,7 +370,7 @@ struct LeakPanel: View {
       VStack(alignment: .leading, spacing: 10) {
         fader("曝光", "%+.2f EV", \.exposure, -2...2)
         fader("冷 ↔ 暖", "%+.0f", \.temperature, -100...100)
-        fader("绿 ↔ 品红", "%+.0f", \.tint, -100...100)
+        fader("绿 / 洋红", "%+.0f", \.tint, -100...100)
         fader("对比度", "%+.0f", \.contrast, -50...80)
       }
     }.disabled(!lab.hasBase || lab.busy != nil)
@@ -477,7 +477,7 @@ struct LeakAPISheet: View {
       Text(credentials.storageError ?? (credentials.configured
         ? (credentials.remembered ? "已从 macOS 钥匙串连接，重启后自动读取。Key 不会回显。" : "当前 Key 只在本次内存中；退出后清除。")
         : "当前没有 API Key。输入后保存；此操作不会联网验证，也不会消费额度。"))
-        .font(.system(size: 11)).foregroundStyle(credentials.storageError == nil ? Color.secondary : Hardware.amber)
+        .font(.system(size: 11)).foregroundStyle(credentials.storageError == nil ? Color.secondary : Hardware.amberText)
         .fixedSize(horizontal: false, vertical: true)
       Text("保存设置不会发起生成或产生费用。ChatGPT 订阅登录目前不支持图像生成，仍使用你的 API 账户计费。首次或 App 更新后 macOS 可能请求钥匙串授权。")
         .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)

@@ -325,7 +325,7 @@ struct FocusCheck: View {
       }
       if let histogram { LastHistogram(histogram: histogram) }
       if let url = m.lastCapture {
-        Text(url.lastPathComponent).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
+        Text(url.lastPathComponent).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
         Button("按对焦点重新取") { load(url) }.font(.system(size: 11))
       }
     }.onChange(of: m.lastCapture) { _, url in if let url { load(url) } }
@@ -398,7 +398,7 @@ struct CameraPanel: View {
       }
       // Where the pictures go, one choice before and while connected; never the card alone, or none would come here.
       HStack {
-        Text("保存到").font(.system(size: 11)).foregroundStyle(.secondary)
+        Text("保存到").font(.system(size: 12)).foregroundStyle(.secondary)
         Spacer()
         Picker("保存到", selection: Binding(get: { m.keepsOnCard }, set: { m.keepOnCard($0) })) {
           Text("只存电脑").tag(false)
@@ -500,7 +500,7 @@ struct CameraPanel: View {
   func setting(_ title: String, _ name: String) -> some View {
     let p = camera.properties[name]
     return HStack {
-      Text(title).font(.system(size: 11)).foregroundStyle(.secondary)
+      Text(title).font(.system(size: 12)).foregroundStyle(.secondary)
       Spacer()
       if let p, p.settable, !p.values.isEmpty {
         Menu(p.text) {

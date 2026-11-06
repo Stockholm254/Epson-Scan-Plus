@@ -146,7 +146,7 @@ struct ToneRangeView: View {
       .accessibilityElement().accessibilityLabel("直方图 · SDR 范围").accessibilityValue(lines.joined(separator: "；"))
       VStack(alignment: .leading, spacing: 1) {
         ForEach(lines, id: \.self) { Text($0) }
-      }.font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      }.font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
   }
   private func percent(_ v: Double) -> String {

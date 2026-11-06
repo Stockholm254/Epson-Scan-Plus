@@ -30,7 +30,12 @@ final class AppModel: ObservableObject {
   @Published var overview: CGImage?
   /// The light table's last picture, a page of it: shown at once on coming back to the table,
   /// while a new one is made.
-  var tablePrint: (page: Int, positive: Bool, image: CGImage)?
+  var tablePrint: (page: Int, positive: Bool, image: CGImage)? {
+    didSet { tablePrintKey = nil }
+  }
+  /// What the table's last picture was made from: the same again (another frame selected, back
+  /// from the single frame), and it is shown as it is, not made again.
+  private var tablePrintKey: String?
   @Published var displayed: CGImage?
   /// The frames' positives, as the filmstrip shows them; the library keeps a small copy of each.
   @Published var thumbnails = [UUID: CGImage]() {
@@ -39,7 +44,7 @@ final class AppModel: ObservableObject {
       if !singleView, let picture = selected.flatMap({ thumbnails[$0.id] }), picture !== selected.flatMap({ oldValue[$0.id] }) {
         (histogram, channelHistograms) = Self.histograms(picture)
       }
-      if onSheetPage && contactPositive { refresh() }
+      if onSheetPage && !showNegative { refresh() }
       guard !thumbnails.isEmpty, !readOnly, let folder = sessionURL else { return }
       // Only the positives that changed, so a slider dragged over one frame writes that one.
       let changed = thumbnails.filter { $0.value !== oldValue[$0.key] }
@@ -126,12 +131,6 @@ final class AppModel: ObservableObject {
   @Published var exportType = "tiff"
   /// Rotate and mirror act on the current frame, or on every frame while syncing.
   @Published var syncOrientation = false
-  /// The contact sheet shows positives, or the film as it was read: one choice with the single
-  /// frame's, so the window shows negatives or positives wherever it is.
-  var contactPositive: Bool {
-    get { !showNegative }
-    set { showNegative = !newValue }
-  }
   /// Neutral patches picked with the calibration tool, across frames and rolls of one film.
   @Published var calibrationPoints = [NeutralPoint]()
   /// The current preset's neutral points marked on their frames; on once a preset is made.
@@ -185,6 +184,9 @@ final class AppModel: ObservableObject {
     return wantedRevision == token
   }
   private let renderQueue = DispatchQueue(label: "epscan.render", qos: .userInitiated)
+  /// Exports, one frame after another, beside the previews: on the render queue a roll's export
+  /// held every preview back until it was done, about 1.4 s a 61-megapixel frame.
+  private let exportQueue = DispatchQueue(label: "epscan.export", qos: .userInitiated)
   /// The library's small positives are written one after another, never two to one file at once.
   private static let libraryWrites = DispatchQueue(label: "epscan.library-writes", qos: .utility)
   private var renderWork: DispatchWorkItem?
@@ -198,12 +200,10 @@ final class AppModel: ObservableObject {
   private var rollSlopesRevision = 0
   private var rollPrintRevision = 0
   private var exportsRunning = 0
-  /// The left panel's tab: scanning and storage, film and presets, or output.
-  enum PanelTab: String, CaseIterable { case scan = "扫描", film = "胶片", output = "输出" }
-  /// The scan tab belongs to capturing, the film and output tabs to taking the mask off.
-  @Published var panelTab = PanelTab.scan {
-    didSet { if panelTab == .scan, page == .convert { page = .capture } }
-  }
+  /// Module ②'s sidebar tab: calibrating the preset, or the export settings. Module ①'s sidebar
+  /// is the capture source's.
+  enum PanelTab: String, CaseIterable { case calibration = "预设标定", output = "输出" }
+  @Published var panelTab = PanelTab.calibration
   /// The main window's three modules, in the order a roll goes through them: capturing it (the
   /// scanner, the camera or files), taking the orange mask off, and repairing light leaks.
   enum Page: String, CaseIterable {
@@ -212,7 +212,6 @@ final class AppModel: ObservableObject {
   }
   @Published var page = Page.capture {
     didSet {
-      if page == .capture { panelTab = .scan } else if page == .convert, panelTab == .scan { panelTab = .film }
       // The pickers belong to taking the mask off.
       if page == .capture, [CanvasTool.base, .neutral, .highlight].contains(tool) { tool = .select }
     }
@@ -220,12 +219,6 @@ final class AppModel: ObservableObject {
   /// Where module ① takes pictures from.
   enum CaptureSource: String, CaseIterable {
     case scanner = "V850 扫描", camera = "A7R IV 翻拍"
-    var symbol: String {
-      switch self {
-      case .scanner: return "scanner"
-      case .camera: return "camera"
-      }
-    }
     /// The name on its tab where the whole one does not fit.
     var short: String {
       switch self {
@@ -354,7 +347,7 @@ final class AppModel: ObservableObject {
     case .select: return nil
     case .crop:
       if singleView && levelling { return "沿地平线、墙边或建筑竖线拖一条线，松手即按它拉直 · Esc 退出" }
-      return singleView ? "拖动四角裁切 · 方向键微调 · [ ] 拉直 0.1°（⇧ 1°） · ⌥ 拖一条线拉直 · 回车完成 · Esc 退出" : "在灯箱上拖出新的画框 · Esc 退出"
+      return singleView ? "拖动四角裁切 · 方向键微调 · [ ] 拉直 0.1°（⇧ 1°） · ⌥ 拖一条线拉直 · 回车完成 · Esc 退出" : "在接触表上拖出新的画框 · Esc 退出"
     case .base: return "点未曝光的橙色片基（片间或片边），不要点景物或片夹；琥珀色是自动找到的片基 · Esc 退出"
     case .neutral: return "点画面中应为中性灰的地方：灰卡、白墙、水泥 · Esc 退出"
     case .highlight: return "点负片上最密、正片里应为纯白的高光：阳光下的白墙、高光反射；更亮处会剪成白 · Esc 退出"
@@ -865,7 +858,7 @@ final class AppModel: ObservableObject {
   }
   func setAllEnabled(_ enabled: Bool) {
     guard !isWorking, !frames.isEmpty else { return }
-    recordEdit(enabled ? "全选" : "全不选")
+    recordEdit(enabled ? "全部勾选" : "全部不勾选")
     for i in frames.indices { frames[i].enabled = enabled }
     saveProject()
     focusCanvas()
@@ -1348,14 +1341,21 @@ final class AppModel: ObservableObject {
           completion?()
           return
         }
+        var changed = false
         for i in self.frames.indices {
-          if let slopes = result[self.frames[i].id] { self.frames[i].adjustments.rollSlopes = slopes }
+          if let slopes = result[self.frames[i].id], self.frames[i].adjustments.rollSlopes != slopes {
+            self.frames[i].adjustments.rollSlopes = slopes
+            changed = true
+          }
         }
-        self.refresh()
-        self.updateThumbnails()
-        self.saveProject()
-        // New slopes put the roll's exposures elsewhere: its print with them.
-        self.updateRollPrint()
+        // The same as saved (a roll opened again): nothing to convert, show or save again.
+        if changed {
+          self.refresh()
+          self.updateThumbnails()
+          self.saveProject()
+          // New slopes put the roll's exposures elsewhere: its print with them.
+          self.updateRollPrint()
+        }
         completion?()
       }
     }
@@ -1406,16 +1406,22 @@ final class AppModel: ObservableObject {
           completion?()
           return
         }
+        var changed = false
         for i in self.frames.indices {
-          if let print = result[self.frames[i].id] { self.frames[i].adjustments.rollPrint = print }
+          if let print = result[self.frames[i].id], self.frames[i].adjustments.rollPrint != print {
+            self.frames[i].adjustments.rollPrint = print
+            changed = true
+          }
         }
         if let s = self.selected?.adjustments, s.printsWithRoll {
           let what = [s.sharedBalance == true ? "白平衡" : nil, s.sharedLevels == true ? "黑白两端" : nil].compactMap { $0 }.joined(separator: "和")
           self.status = "整卷 \(result.count) 张共用一个\(what)"
         }
-        self.refresh()
-        self.updateThumbnails()
-        self.saveProject()
+        if changed {
+          self.refresh()
+          self.updateThumbnails()
+          self.saveProject()
+        }
         completion?()
       }
     }
@@ -1630,11 +1636,24 @@ final class AppModel: ObservableObject {
     readLock.lock()
     read.removeAll { $0.key == key }
     read.insert((key, image), at: 0)
-    // The frame shown and the two either side of it, read ahead, and one more.
-    if read.count > 4 { read.removeLast() }
+    // The frame shown and the two either side of it, read ahead, and the small copies the roll's
+    // estimates read of every frame: kept by the memory they take, the newest first. Four kept
+    // whatever their size, a copy session's 600-pixel reads pushed out the 3000-pixel frames
+    // shown, and each pass decoded the 367 MB files again.
+    var bytes = 0
+    var keep = 0
+    for entry in read {
+      bytes += entry.image.bytesPerRow * entry.image.height
+      if keep > 0 && bytes > Self.readBudget { break }
+      keep += 1
+    }
+    read.removeLast(read.count - keep)
     readLock.unlock()
     return image
   }
+  /// The memory the files read are kept in: four frames at 3000 pixels, 16 bits a channel, and
+  /// a roll's worth of 600-pixel copies beside them.
+  static let readBudget = 320 << 20
   private func uncorrectedSource(for frame: FilmFrame, full: Bool, maxDimension: Int?) throws -> CGImage {
     if let path = frame.scanPath, frame.hasFullResolution {
       let raw = try load(URL(fileURLWithPath: path), maxDimension: full ? nil : maxDimension ?? 2200)
@@ -1675,7 +1694,7 @@ final class AppModel: ObservableObject {
   /// shows it, positive or raw (its scan, or the full-resolution preview); over the single frame
   /// as that view shows it, turned and mirrored, at full resolution.
   func loupeDetail(for frame: FilmFrame, single: Bool = false, pixels: Int = 2400, completion: @escaping (CGImage?) -> Void) {
-    let positive = single ? !showNegative : contactPositive, p = profile
+    let positive = !showNegative, p = profile
     // A page laid out from files of their own shows each positive as the film strip has it,
     // turned, mirrored and straightened; the holder's preview, as the frame lies under its box.
     let asLaidOut = onSheetPage && sheetPageFrames.contains { $0.id == frame.id }
@@ -1764,7 +1783,7 @@ final class AppModel: ObservableObject {
     let encoder = JSONEncoder()
     encoder.outputFormatting = .sortedKeys
     let settings = (try? encoder.encode(frame.adjustments)).map { $0.base64EncodedString() } ?? ""
-    let shown = single ? "single \(!showNegative)" : "table \(contactPositive)"
+    let shown = (single ? "single " : "table ") + "\(!showNegative)"
     return [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", shown, profile.id, settings]
       .joined(separator: "|")
   }
@@ -1817,9 +1836,18 @@ final class AppModel: ObservableObject {
       // Frames of their own files (a camera's, imports) on a page laid out as a contact sheet:
       // positives from the film strip's, negatives read small from their files.
       if onSheetPage {
-        let page = sheetPageFrames, positive = contactPositive, positives = thumbnails, pages = contactPages.count
+        let page = sheetPageFrames, positive = !showNegative, positives = thumbnails, pages = contactPages.count
         let aspects = page.map { sheetAspect($0, positive: positive) }
         let index = contactPage
+        // Each tile as it is: the film strip's positive, else the frame's own conversion.
+        let key = "sheet \(index) \(positive) \(pages)|" + zip(page, aspects).map { f, aspect in
+          "\(f.name) \(aspect) " + (positive ? positives[f.id].map { "\(ObjectIdentifier($0).hashValue)" } ?? "-" : analysisKey(f, everything: true))
+        }.joined(separator: "|")
+        if let kept = tablePrint, kept.page == index, kept.positive == positive, tablePrintKey == key, positive {
+          displayed = kept.image
+          rendering = false
+          return
+        }
         // Back from the single frame, the page as it was until the new one is laid out.
         if let kept = tablePrint, kept.page == index, kept.positive == positive,
           displayed?.width != kept.image.width || displayed?.height != kept.image.height
@@ -1839,6 +1867,7 @@ final class AppModel: ObservableObject {
             if let sheet {
               self.displayed = sheet
               self.tablePrint = (index, positive, sheet)
+              self.tablePrintKey = key
             }
             self.rendering = false
           }
@@ -1849,8 +1878,18 @@ final class AppModel: ObservableObject {
       }
       // Frames that lie on the displayed overview; imports from other files are not on it.
       let onOverview = frames.filter { $0.sourcePath == nil || $0.sourcePath == overviewURL?.path }
-      guard contactPositive, let overview, !onOverview.isEmpty else {
+      guard !showNegative, let overview, !onOverview.isEmpty else {
         displayed = overview
+        rendering = false
+        return
+      }
+      // The same frames, preset and preview as the print shown: it stands (another frame was
+      // selected, or the single frame left), where it was printed again each time, a second for 18.
+      let key = "print \(contactPage) \(ObjectIdentifier(overview).hashValue)|" + onOverview.map { analysisKey($0, everything: true) }.joined(separator: "|")
+      if let kept = tablePrint, kept.page == contactPage, kept.positive, tablePrintKey == key,
+        kept.image.width == overview.width, kept.image.height == overview.height
+      {
+        displayed = kept.image
         rendering = false
         return
       }
@@ -1868,7 +1907,10 @@ final class AppModel: ObservableObject {
         DispatchQueue.main.async {
           guard let self, self.revision == token else { return }
           self.displayed = print ?? overview
-          if let print { self.tablePrint = (self.contactPage, true, print) }
+          if let print {
+            self.tablePrint = (self.contactPage, true, print)
+            self.tablePrintKey = key
+          }
           self.rendering = false
         }
       }
@@ -1910,17 +1952,20 @@ final class AppModel: ObservableObject {
   private var keptAnalysis: (key: String, overview: CGImage?, analysis: ToneAnalysis)?
   /// What a frame's analysis reads: its source (file, crop, corrections, the preview it is cut
   /// from), its settings without the print's own controls, the preset, and the scanner's flare.
-  private func analysisKey(_ frame: FilmFrame) -> String {
+  /// With `everything`, the print's controls too: what its whole conversion reads.
+  private func analysisKey(_ frame: FilmFrame, everything: Bool = false) -> String {
     var f = frame
     (f.name, f.enabled) = ("", true)
     // The copy light's fall-off by its size and sum, as the files read are kept by.
     let flat = f.flatField.map { "\($0.width)x\($0.height)-\($0.values.reduce(0, +))" } ?? "-"
     f.flatField = nil
-    var s = f.adjustments
-    (s.exposure, s.contrast, s.warmth, s.tint, s.shadowWarmth, s.black, s.white, s.midtone) = (0, 1, 0, 0, nil, 0, 1, 1)
-    (s.shadows, s.highlights, s.pressHighlights, s.colourNoise, s.sharpening, s.curves) = (nil, nil, nil, nil, nil, nil)
-    (s.rotation, s.flipHorizontal, s.angle) = (0, nil, nil)
-    f.adjustments = s
+    if !everything {
+      var s = f.adjustments
+      (s.exposure, s.contrast, s.warmth, s.tint, s.shadowWarmth, s.black, s.white, s.midtone) = (0, 1, 0, 0, nil, 0, 1, 1)
+      (s.shadows, s.highlights, s.pressHighlights, s.colourNoise, s.sharpening, s.curves) = (nil, nil, nil, nil, nil, nil)
+      (s.rotation, s.flipHorizontal, s.angle) = (0, nil, nil)
+      f.adjustments = s
+    }
     let encoder = JSONEncoder()
     encoder.outputFormatting = .sortedKeys
     // Unencodable, it matches nothing.
@@ -1976,6 +2021,8 @@ final class AppModel: ObservableObject {
         let measured = !self.singleWaiting
         self.step(0.9, "直方图", token, since: started)
         let hist = measured ? Self.histograms(output) : nil
+        // The film strip's copy, no larger than it is ever shown.
+        let thumbnail = measured && !edit && !negative ? ImagePipeline.shared.scaled(output, maxDimension: Self.thumbnailDimension) : nil
         var range = !measured || negative ? nil : ImagePipeline.shared.toneRange(cropped, settings: frame.adjustments, profile: p, analysis: analysis)
         // What shows white or black, counted on the picture itself where it is only the frame.
         if !edit, range != nil { (range!.atWhite, range!.atBlack) = ImagePipeline.shared.screenShares(output) }
@@ -2009,7 +2056,7 @@ final class AppModel: ObservableObject {
           self.samplingInput = input
           self.toneAnalysis = analysis
           if edit { self.editRegionLock = context?.region }
-          if !edit && !negative { self.thumbnails[frame.id] = output }
+          if let thumbnail { self.thumbnails[frame.id] = thumbnail }
           if let hist { (self.histogram, self.channelHistograms) = hist }
           if measured { self.toneRange = range }
           self.sourceSummary = summary
@@ -2039,22 +2086,78 @@ final class AppModel: ObservableObject {
       }
     }
   }
+  /// The longest side of a film strip positive: the strip, a contact sheet page and the library
+  /// show them far smaller, and a 61-megapixel copy kept whole was 24 MB a frame.
+  static let thumbnailDimension = 1600
+  /// The positives for the film strip, as they are now. Each frame is kept by what its conversion
+  /// reads, so only the frames that changed are converted again; a pass asked for while another
+  /// runs replaces it, going on from what is kept; and the passes go a frame at a time, so the
+  /// single frame's render, asked for meanwhile, comes in between.
   func updateThumbnails() {
     guard overview != nil else { return }
-    let snapshot = frames
-    let p = profile
-    renderQueue.async {
-      var result = [UUID: CGImage]()
-      for f in snapshot {
-        if let input = try? self.source(for: f),
-          let positive = try? ImagePipeline.shared.preview(
-            input, settings: f.adjustments, profile: p)
-        {
-          result[f.id] = positive
-        }
-      }
-      DispatchQueue.main.async { self.thumbnails = result }
+    thumbnailRevision += 1
+    let request = ThumbnailPass(
+      token: thumbnailRevision, frames: frames, profile: profile,
+      keys: Dictionary(frames.map { ($0.id, analysisKey($0, everything: true)) }, uniquingKeysWith: { a, _ in a }))
+    wantedLock.lock()
+    wantedThumbnails = request
+    let queued = thumbnailsQueued
+    thumbnailsQueued = true
+    wantedLock.unlock()
+    if !queued { renderQueue.async { [weak self] in self?.thumbnailPass() } }
+  }
+  private final class ThumbnailPass {
+    let token: Int, profile: FilmProfile, keys: [UUID: String]
+    var pending: ArraySlice<FilmFrame>
+    var result = [UUID: CGImage]()
+    init(token: Int, frames: [FilmFrame], profile: FilmProfile, keys: [UUID: String]) {
+      (self.token, self.profile, self.keys, pending) = (token, profile, keys, frames[...])
     }
+  }
+  private var thumbnailRevision = 0
+  /// The pass asked for last, not yet begun (`wantedLock`).
+  private var wantedThumbnails: ThumbnailPass?
+  private var thumbnailsQueued = false
+  /// Each frame's positive by what it was converted from (render queue only).
+  private var keptThumbnails = [UUID: (key: String, image: CGImage)]()
+  private var thumbnailsWaiting: Bool {
+    wantedLock.lock()
+    defer { wantedLock.unlock() }
+    return thumbnailsQueued
+  }
+  private func thumbnailPass() {
+    wantedLock.lock()
+    let wanted = wantedThumbnails
+    wantedThumbnails = nil
+    thumbnailsQueued = false
+    wantedLock.unlock()
+    guard let pass = wanted else { return }
+    thumbnailStep(pass)
+  }
+  /// One frame of `pass`, then the next on the queue's turn; a newer pass asked for takes over.
+  private func thumbnailStep(_ pass: ThumbnailPass) {
+    guard !thumbnailsWaiting else { return }
+    guard let f = pass.pending.popFirst() else {
+      keptThumbnails = keptThumbnails.filter { pass.keys[$0.key] != nil }
+      let result = pass.result
+      DispatchQueue.main.async {
+        guard pass.token == self.thumbnailRevision else { return }
+        self.thumbnails = result
+      }
+      return
+    }
+    if let key = pass.keys[f.id] {
+      if let kept = keptThumbnails[f.id], kept.key == key {
+        pass.result[f.id] = kept.image
+      } else if let input = try? source(for: f),
+        let positive = try? ImagePipeline.shared.preview(input, settings: f.adjustments, profile: pass.profile)
+      {
+        let small = ImagePipeline.shared.scaled(positive, maxDimension: Self.thumbnailDimension)
+        keptThumbnails[f.id] = (key, small)
+        pass.result[f.id] = small
+      }
+    }
+    renderQueue.async { [weak self] in self?.thumbnailStep(pass) }
   }
   func sample(_ point: CGPoint) {
     guard let i = selectedIndex, !rendering else { return }
@@ -2532,7 +2635,7 @@ final class AppModel: ObservableObject {
     let roll = sessionURL?.lastPathComponent ?? "", overviewPath = overviewURL?.path ?? ""
     let previewDPI = Int(overviewDPI)
     let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-    renderQueue.async {
+    exportQueue.async {
       do {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         // Each frame's pictures let go before the next: a 60-megapixel frame holds half a gigabyte.
@@ -2668,7 +2771,7 @@ final class AppModel: ObservableObject {
     let sheetDPI = fromPreview ? Int(previewDPI) : ContactSheet.scanDPI
     beginExport()
     status = "正在生成接触表 · \(items.count) 张…"
-    renderQueue.async {
+    exportQueue.async {
       do {
         let size = try ContactSheet.export(
           tiles, profile: p, layout: layout, title: title, filmCode: filmCode, to: url,

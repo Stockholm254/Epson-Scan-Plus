@@ -79,7 +79,7 @@ struct EpsonScanPlusApp: App {
         }
         Divider()
         Button("库…") { model.showLibrary = true }.keyboardShortcut("l", modifiers: [.command, .shift])
-        Button("预设…") { model.showPresets = true }
+        Button("管理预设…") { model.showPresets = true }
       }
       CommandMenu("画面") {
         Button("接触表 / 单张") {
