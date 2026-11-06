@@ -373,7 +373,6 @@ struct LastHistogram: View {
 struct CameraPanel: View {
   @ObservedObject var m: AppModel
   @ObservedObject var camera: CameraController
-  @State private var keepOnCard = false
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
       HStack(spacing: 8) {
@@ -391,14 +390,22 @@ struct CameraPanel: View {
           Button(camera.liveOn ? "关实时取景" : "开实时取景") { camera.setLive(!camera.liveOn) }
         } else {
           Button {
-            camera.connect(keepOnCard: keepOnCard)
+            m.connectCamera()
           } label: {
             Label("连接相机", systemImage: "cable.connector")
           }.buttonStyle(KeyStyle(prominent: true)).disabled(camera.phase == .missing || camera.phase == .connecting)
         }
       }
-      Toggle("存储卡上也留一份", isOn: $keepOnCard).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
-        .disabled(camera.connected).help("连接时设定：只存到电脑，或电脑和存储卡各一份（要插卡）")
+      // Where the pictures go, one choice before and while connected; never the card alone, or none would come here.
+      HStack {
+        Text("保存到").font(.system(size: 11)).foregroundStyle(.secondary)
+        Spacer()
+        Picker("保存到", selection: Binding(get: { m.keepsOnCard }, set: { m.keepOnCard($0) })) {
+          Text("只存电脑").tag(false)
+          Text("电脑和存储卡").tag(true)
+        }.labelsHidden().fixedSize().font(.system(size: 11))
+          .disabled(camera.connected && camera.properties["StillImageStoreDestination"]?.settable != true)
+      }.help("照片总是传到电脑；选「电脑和存储卡」时，存储卡上再留一份（要插卡）。下次连接照这里设定，连着时改也立刻生效。")
       if camera.connected {
         Divider()
         Text("曝光").font(.system(size: 12, weight: .medium))
@@ -444,7 +451,6 @@ struct CameraPanel: View {
         Divider()
         Text("文件").font(.system(size: 12, weight: .medium))
         setting("格式", "FileType")
-        setting("保存到", "StillImageStoreDestination")
         Text("RAW 请在相机菜单里设为「无压缩」，SDK 改不了这一项。")
           .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       }

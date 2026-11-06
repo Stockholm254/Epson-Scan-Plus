@@ -127,6 +127,8 @@ final class Preferences: ObservableObject {
   @Published var leftWidth: Double { didSet { defaults?.set(leftWidth, forKey: "leftWidth") } }
   @Published var rightWidth: Double { didSet { defaults?.set(rightWidth, forKey: "rightWidth") } }
   static let leftWidths = 210.0...380.0, rightWidths = 240.0...420.0
+  /// The camera keeps a copy of each picture on its memory card as well as sending it here.
+  @Published var keepOnCard: Bool { didSet { defaults?.set(keepOnCard, forKey: "cameraKeepOnCard") } }
   /// Imported and calibrated film presets, offered next to the built-in ones.
   @Published var customProfiles: [FilmProfile] {
     didSet { defaults?.set(try? JSONEncoder().encode(customProfiles), forKey: "customProfiles") }
@@ -197,6 +199,7 @@ final class Preferences: ObservableObject {
     leftWidth = left > 0 ? min(Self.leftWidths.upperBound, max(Self.leftWidths.lowerBound, left)) : 230
     scanSpeed = (defaults?.dictionary(forKey: "scanSpeed") as? [String: Double]) ?? [:]
     rowScanning = defaults?.object(forKey: "rowScanning") as? Bool ?? true
+    keepOnCard = defaults?.bool(forKey: "cameraKeepOnCard") ?? false
     mcpEnabled = defaults?.bool(forKey: "mcpEnabled") ?? false
     leakJob = defaults?.string(forKey: "leakJob")
     autoUpdate = defaults?.object(forKey: "autoUpdate") as? Bool ?? true

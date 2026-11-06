@@ -68,6 +68,27 @@ enum CameraTests {
     camera.receive(#"{"event":"props","props":[{"name":"FNumber","code":256,"type":2,"value":800,"settable":true,"readable":true,"values":[400,560,800,1100]},{"name":"FocusMode","code":265,"type":2,"value":1,"settable":true,"readable":true,"values":[1,2]}]}"#)
     try check(camera.properties["FNumber"]?.text == "f/8.0" && camera.properties["FNumber"]?.values.count == 4 && !camera.autofocusMode,
       "the settings arrive with the values the camera offers")
+    // Where the pictures go: one choice, remembered, sent as the camera connects and set at once while connected.
+    let cardSuite = "EpsonScanPlus.tests.\(UUID().uuidString)"
+    let cardDefaults = UserDefaults(suiteName: cardSuite)!
+    defer { cardDefaults.removePersistentDomain(forName: cardSuite) }
+    let carding = AppModel(libraryURL: folder.appendingPathComponent("card-library"), preferences: Preferences(defaults: cardDefaults))
+    let cardCamera = CameraController(helper: URL(fileURLWithPath: "/nonexistent"), folder: folder.appendingPathComponent("camera-card", isDirectory: true))
+    var cardSent = [String]()
+    cardCamera.transport = { cardSent.append($0) }
+    carding.camera = cardCamera
+    let cardOffAtFirst = !carding.keepsOnCard
+    carding.keepOnCard(true)
+    carding.connectCamera()
+    let cardAsked = cardSent.last?.contains("\"card\":true") == true && Preferences(defaults: cardDefaults).keepOnCard
+    cardCamera.receive(#"{"event":"connected","model":"ILCE-7RM4","cameras":1}"#)
+    cardCamera.receive(#"{"event":"props","props":[{"name":"StillImageStoreDestination","code":300,"type":2,"value":3,"settable":true,"readable":true,"values":[1,2,3]}]}"#)
+    let cardReadBack = carding.keepsOnCard
+    cardSent.removeAll()
+    carding.keepOnCard(false)
+    try check(cardOffAtFirst && cardAsked && cardReadBack && !Preferences(defaults: cardDefaults).keepOnCard
+      && cardSent.last.map { $0.contains("\"StillImageStoreDestination\"") && $0.contains("\"value\":1") } == true,
+      "where the pictures go is one choice: off at first, remembered, sent as the camera connects, read back from it, and set on it at once while connected")
     camera.receive(#"{"event":"props","props":[{"name":"WhiteBalance","code":263,"type":2,"value":0,"settable":true,"readable":true,"values":[0,17,256]},{"name":"Colortemp","code":282,"type":16386,"value":5500,"settable":true,"readable":true,"values":[2500,9900,100]}]}"#)
     sent.removeAll()
     camera.nudgeColourTemperature(by: 100)

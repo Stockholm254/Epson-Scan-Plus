@@ -78,6 +78,18 @@ final class AppModel: ObservableObject {
     c.onShotEnded = { [weak self] _ in self?.releaseShift() }
     return c
   }()
+  /// Connects the camera, the pictures coming here and, as chosen, a copy staying on its card.
+  func connectCamera() { camera.connect(keepOnCard: preferences.keepOnCard) }
+  /// Where the camera's pictures go: always here, and with `on` a copy on the memory card too.
+  /// Remembered for the next connection; while connected the camera is set at once.
+  func keepOnCard(_ on: Bool) {
+    preferences.keepOnCard = on
+    if camera.connected { camera.set("StillImageStoreDestination", on ? 3 : 1) }
+  }
+  /// Whether the pictures also stay on the card: as the camera says while connected, else as chosen.
+  var keepsOnCard: Bool {
+    camera.connected ? camera.properties["StillImageStoreDestination"]?.value == 3 : preferences.keepOnCard
+  }
   /// Pictures a pixel-shift shot takes (set on the camera, 4), or 1: the app groups them and
   /// composes the group, and the shutter waits for it.
   @Published var pixelShiftCount = 1 {
