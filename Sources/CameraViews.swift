@@ -426,10 +426,10 @@ struct CameraPanel: View {
         StatusLED(lamp: camera.connected ? .ready : camera.phase == .connecting ? .busy : .fault, size: 7)
         Text(camera.connected ? camera.model : camera.phase == .missing ? "没有 SDK" : camera.phase == .connecting ? "连接中" : "未连接").readout(10)
         Spacer()
-        if let battery = camera.properties["BatteryRemain"] { Text("电量 \(battery.text)").font(.system(size: 10)).foregroundStyle(.secondary) }
+        if let battery = camera.properties["BatteryRemain"] { Text("电量 \(battery.text)").font(.system(size: 11)).foregroundStyle(.secondary) }
       }
       if !camera.message.isEmpty {
-        Text(camera.message).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        Text(camera.message).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       }
       HStack {
         if camera.connected {
@@ -454,7 +454,7 @@ struct CameraPanel: View {
         setting("模式", "ExposureProgramMode")
         setting("曝光补偿", "ExposureBiasCompensation")
         Text("模式由相机上的转盘决定：M 档时快门、光圈都能改，A 档只改光圈，S 档只改快门。光圈要电子镜头才能远程改（比如 Sigma 70mm F2.8 DG Macro Art）；翻拍底片一般从 f/5.6–8 开始试。")
-          .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+          .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         Divider()
         Text("白平衡").font(.system(size: 12, weight: .medium))
         setting("模式", "WhiteBalance")
@@ -474,7 +474,7 @@ struct CameraPanel: View {
           Button("设为色温 5500K") { camera.setColourTemperature(5500) }.font(.system(size: 11))
         }
         Text("RAW 的数据不受白平衡影响，App 解码时整卷固定 5500K；这里只改实时取景和 JPEG 的颜色。固定一个色温，取景每张颜色一致。")
-          .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+          .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         Divider()
         Text("对焦").font(.system(size: 12, weight: .medium))
         HStack {
@@ -486,28 +486,37 @@ struct CameraPanel: View {
         setting("区域", "FocusArea")
         if let f = camera.properties["FocusIndication"] { labeled("状态", f.text) }
         Text("点取景画面移动对焦点：对焦区域要是「自由点」。")
-          .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+          .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         Divider()
         Text("文件").font(.system(size: 12, weight: .medium))
         setting("格式", "FileType")
         setting("保存到", "StillImageStoreDestination")
         Text("RAW 请在相机菜单里设为「无压缩」，SDK 改不了这一项。")
-          .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+          .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       }
       Divider()
-      Text("像素位移").font(.system(size: 12, weight: .medium))
-      Text("像素位移只能在相机上打开：拍摄菜单里选「像素位移多重拍摄」，张数选 4 或 16，间隔选最短，RAW 设为无压缩。下方取景区右侧选同样的张数。按一次快门，相机拍一组，App 把这一组放进同一个文件夹，合成一张再转换。\n\n4 张：每张传感器移一个像素，合成的每个点红、绿、蓝都是实测的，没有去马赛克的假色，颗粒和细边缘的颜色更干净；像素数不变。\n\n16 张：4 组这样的 4 张，组与组之间再移半个像素，合成长宽各两倍的画面。半像素位移由 App 从画面上实测（相机给的常差 0.1–0.2 像素），每个点取离它最近的那一组。A7R IV 一组约 19 秒、原片约 2 GB，合成图约 1.5 GB，合成时要约 3 GB 内存。能多出的细节取决于镜头：在 Vlad's 测试标靶上，16 张比 4 张只多分辨了一个元素。\n\n勾选「超采样」时，16 张合成后再缩回传感器原生尺寸（Lanczos-3）：颜色比 4 张更干净（标靶上假色少约 30%）、噪声略低（暗处低 10–15%）、文件小四分之三；解析力和 4 张相同。\n\n一组之间胶片、相机或灯不能动：两次绿色相差超过 4%（正常约 1.5%），或 16 张的半像素位移偏离超过 0.25 像素时，App 会提醒重拍。")
-        .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      // What to set on the camera in a line; the whole of it behind ⓘ.
+      HStack {
+        Text("像素位移").font(.system(size: 12, weight: .medium))
+        Spacer()
+        InfoButton(text: "像素位移只能在相机上打开：拍摄菜单里选「像素位移多重拍摄」，张数选 4 或 16，间隔选最短，RAW 设为无压缩。下方取景区右侧选同样的张数。按一次快门，相机拍一组，App 把这一组放进同一个文件夹，合成一张再转换。\n\n4 张：每张传感器移一个像素，合成的每个点红、绿、蓝都是实测的，没有去马赛克的假色，颗粒和细边缘的颜色更干净；像素数不变。\n\n16 张：4 组这样的 4 张，组与组之间再移半个像素，合成长宽各两倍的画面。半像素位移由 App 从画面上实测（相机给的常差 0.1–0.2 像素），每个点取离它最近的那一组。A7R IV 一组约 19 秒、原片约 2 GB，合成图约 1.5 GB，合成时要约 3 GB 内存。能多出的细节取决于镜头：在 Vlad's 测试标靶上，16 张比 4 张只多分辨了一个元素。\n\n勾选「超采样」时，16 张合成后再缩回传感器原生尺寸（Lanczos-3）：颜色比 4 张更干净（标靶上假色少约 30%）、噪声略低（暗处低 10–15%）、文件小四分之三；解析力和 4 张相同。\n\n一组之间胶片、相机或灯不能动：两次绿色相差超过 4%（正常约 1.5%），或 16 张的半像素位移偏离超过 0.25 像素时，App 会提醒重拍。")
+      }
+      Text("在相机菜单里打开「像素位移多重拍摄」（间隔最短、RAW 无压缩），下方取景区右侧选同样的张数。")
+        .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       Divider()
-      Text("光源标定").font(.system(size: 12, weight: .medium))
-      Text("拿走底片，灯箱上什么都不放：只开红灯拍一张、只开绿灯拍一张、只开蓝灯拍一张，每张曝光到最亮处约 70%（看上面的直方图）。拍完点下面的按钮。\n\nApp 从这三张算出这组灯的串色矩阵，和每种灯在画面上的明暗分布（平场）。之后翻拍时，读出 RAW 先去串色，再把四周偏暗的地方补平。换了灯的位置或灯箱，就再标一次；灯的亮度配比怎么调都不用重标。标定完，这三张空白帧可以在胶片条上删掉。")
-        .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      HStack {
+        Text("光源标定").font(.system(size: 12, weight: .medium))
+        Spacer()
+        InfoButton(text: "拿走底片，灯箱上什么都不放：只开红灯拍一张、只开绿灯拍一张、只开蓝灯拍一张，每张曝光到最亮处约 70%（看上面的直方图）。拍完点下面的按钮。\n\nApp 从这三张算出这组灯的串色矩阵，和每种灯在画面上的明暗分布（平场）。之后翻拍时，读出 RAW 先去串色，再把四周偏暗的地方补平。换了灯的位置或灯箱，就再标一次；灯的亮度配比怎么调都不用重标。标定完，这三张空白帧可以在胶片条上删掉。")
+      }
+      Text("拿走底片，红、绿、蓝灯各单独拍一张空白帧（最亮处约 70%），再点下面的按钮。")
+        .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       Button {
         m.calibrateLight()
       } label: {
         Label("用最近三张标定光源", systemImage: "light.panel")
       }.disabled(m.frames.filter { $0.sensorRead == true }.count < 3 || m.isWorking)
-      Text(m.lightDescription).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      Text(m.lightDescription).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       DisclosureGroup("诊断") {
         ScrollView {
           Text(camera.log.suffix(60).joined(separator: "\n")).font(.system(size: 9, design: .monospaced))
