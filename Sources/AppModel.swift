@@ -1417,10 +1417,6 @@ final class AppModel: ObservableObject {
     preferences.customProfiles.append(profile)
     profiles = FilmProfile.builtins + preferences.customProfiles
   }
-  func deleteCustomProfile(_ id: String) {
-    preferences.customProfiles.removeAll { $0.id == id }
-    profiles = FilmProfile.builtins + preferences.customProfiles
-  }
   func exportProfile(_ profile: FilmProfile) {
     let panel = NSSavePanel()
     panel.allowedContentTypes = [.json]

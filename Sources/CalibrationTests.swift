@@ -112,7 +112,7 @@ enum CalibrationTests {
     try check(model.errorText == nil && model.profile.offsets != nil && model.profile.name == "Kodak Portra 160 · V850"
       && model.profiles.contains(model.profile) && kept == [model.profile] && model.calibrationPoints.isEmpty,
       "the made preset is applied, listed and kept in settings")
-    model.deleteCustomProfile(model.profile.id)
+    model.deleteCustomProfiles([model.profile.id])
     try check(Preferences(defaults: defaults).customProfiles.isEmpty && !model.profiles.contains { $0.offsets != nil },
       "deleting a preset removes it from the list and from settings")
     // On the copy stand the same points make a preset for the camera and its light in this copy

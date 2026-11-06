@@ -782,9 +782,8 @@ struct ContentView: View {
       ).font(.system(size: 11, design: .monospaced))
       if let url = URL(string: m.profile.sourceURL) { Link("打开官方技术文档", destination: url) }
       Divider()
-      Text("输入已收录胶片名称会应用对应配置。未收录的胶片使用通用配置，也可以导入附有来源和通道斜率的 JSON 文件。").font(.system(size: 12))
+      Text("输入已收录胶片名称会应用对应配置。未收录的胶片使用通用配置，也可以在「管理…」打开的预设表格里导入附有来源和通道斜率的 JSON 文件。").font(.system(size: 12))
       HStack {
-        Button("导入配置…") { m.importProfile() }
         Spacer()
         Button("完成") { showInfo = false }.keyboardShortcut(.defaultAction)
       }

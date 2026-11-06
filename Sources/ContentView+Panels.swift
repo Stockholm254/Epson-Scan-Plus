@@ -196,8 +196,16 @@ extension ContentView {
       TextField("输入胶片类型", text: $m.filmName).textFieldStyle(.roundedBorder).onSubmit { m.matchFilm() }
       HStack {
         Button("应用") { m.matchFilm() }
-        Menu("预设") { ForEach(m.profiles) { p in Button(p.name) { m.chooseProfile(p) } } }
-        Button("管理…") { m.showPresets = true }.help("所有预设、各在哪些卷里用，删除不用的")
+        // The one in use ticked.
+        Menu("预设") {
+          ForEach(m.profiles) { p in
+            Button { m.chooseProfile(p) } label: {
+              if m.profile.id == p.id { Label(p.name, systemImage: "checkmark") } else { Text(p.name) }
+            }
+          }
+        }
+        // The presets table is the one place presets are imported, exported and deleted.
+        Button("管理…") { m.showPresets = true }.help("预设表格：所有预设、各在哪些卷里用；在这里导入、导出和删除")
       }
       Text("在用「\(m.profile.name)」").font(.system(size: 11)).lineLimit(2)
       Text(m.profile.publication).font(.system(size: 10)).foregroundStyle(.secondary)
@@ -222,8 +230,6 @@ extension ContentView {
       }
       Divider()
       calibrationPanel
-      Divider()
-      customPresets
     }
   }
   /// Letting an assistant over MCP read and adjust the conversion, and how to connect one.
@@ -336,34 +342,6 @@ extension ContentView {
       }
     }
   }
-  var customPresets: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      HStack {
-        Text("本机预设").font(.system(size: 11, weight: .medium))
-        Spacer()
-        InfoButton(text: "本机标定或导入的预设。删除只从列表中移除，已经使用它的工程保留自己的副本。")
-      }
-      if m.preferences.customProfiles.isEmpty {
-        note("还没有本机标定或导入的预设。")
-      }
-      ForEach(m.preferences.customProfiles) { p in
-        VStack(alignment: .leading, spacing: 4) {
-          Text(p.name).font(.system(size: 11))
-          Text(String(format: "R %.3f · G %.3f · B %.3f", p.slopes.r, p.slopes.g, p.slopes.b)).readout(9)
-          HStack {
-            Button(m.profile.id == p.id ? "在用" : "使用") { m.chooseProfile(p) }.disabled(m.profile == p)
-            Button("导出…") { m.exportProfile(p) }
-            Button("删除") { m.deleteCustomProfile(p.id) }
-          }.font(.system(size: 10)).controlSize(.mini)
-        }
-      }
-      HStack {
-        Button("导入 JSON…") { m.importProfile() }
-        Button("管理预设…") { m.showPresets = true }
-      }.font(.system(size: 11))
-    }
-  }
-
   // MARK: Output
 
   var outputTab: some View {
