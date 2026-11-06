@@ -99,11 +99,12 @@ struct EpsonScanPlusApp: App {
         Toggle("旋转 / 镜像同步到全部照片", isOn: $model.syncOrientation)
         Divider()
         // Which frames a batch scans and exports; on the light table's strip as well, by its menu.
+        // ③ exports on its own, so its page ticks nothing.
         Button(model.selected?.enabled == true ? "取消勾选当前画面" : "勾选当前画面") {
           if let id = model.selectedID { model.setEnabled(id, enabled: model.selected?.enabled != true) }
-        }.disabled(model.selected == nil || model.isWorking)
-        Button("全部勾选") { model.setAllEnabled(true) }.disabled(model.frames.isEmpty || model.isWorking)
-        Button("全部不勾选") { model.setAllEnabled(false) }.disabled(model.enabledCount == 0 || model.isWorking)
+        }.disabled(model.selected == nil || model.isWorking || model.page == .leak)
+        Button("全部勾选") { model.setAllEnabled(true) }.disabled(model.frames.isEmpty || model.isWorking || model.page == .leak)
+        Button("全部不勾选") { model.setAllEnabled(false) }.disabled(model.enabledCount == 0 || model.isWorking || model.page == .leak)
         Divider()
         Button("导出当前…") { model.exportImages(all: false) }.keyboardShortcut("e")
         Button("导出勾选画面…") { model.exportImages(all: true) }.keyboardShortcut(

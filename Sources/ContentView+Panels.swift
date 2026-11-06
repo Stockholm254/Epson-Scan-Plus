@@ -26,7 +26,6 @@ extension ContentView {
             switch m.captureSource {
             case .scanner: scanTab
             case .camera: cameraTab
-            case .files: filesTab
             }
           } else {
             switch m.panelTab {
@@ -134,13 +133,12 @@ extension ContentView {
   var scannerCalibration: some View {
     VStack(alignment: .leading, spacing: 10) {
       titled("扫描仪标定 · IT8", symbol: "squareshape.split.3x3", info:
-        "用 IT8.7/1 透射色卡测量扫描仪的杂散光：它会抬高底片密实处的读数，使高光发灰。测量后，本程序的线性扫描在转换前扣除它。\n\n色卡放进 4×5 片夹，预览后用「画框」框出整张色卡，以 600 dpi 正式扫描，再在单张视图中按提示点 6 个点；点到第 4 个后会标出全部色块的位置，便于检查。参考文件须与色卡批号一致（MONT45 的 2022:07 批对应 MONT45.2022.07.txt）。\n\n色块按 3×3 矩阵拟合的 ΔE 是对色卡反转片染料的评估，负片转换不用这个矩阵。")
+        "用 IT8.7/1 透射色卡测量扫描仪的杂散光：它会抬高底片密实处的读数，使高光发灰。测量后，本程序的线性扫描在转换前扣除它。\n\n色卡放进 4×5 片夹，预览后用「画框」框出整张色卡，以 600 dpi 正式扫描，再在单张视图中按提示点 6 个点；点到第 4 个后会标出全部色块的位置，便于检查。参考文件须与色卡批号一致（MONT45 的 2022:07 批对应 MONT45.2022.07.txt）。")
       if let c = m.preferences.scannerCalibration {
         Text(c.reference).font(.system(size: 11)).lineLimit(2).truncationMode(.middle)
         Text(String(format: "杂散光 R %.2f%% · G %.2f%% · B %.2f%%", c.flare.r * 100, c.flare.g * 100, c.flare.b * 100)).readout()
-        note(String(
-          format: "灰阶最大误差 %.3f D，扣除后 %.3f D · 色块 ΔE %.1f（最大 %.1f）",
-          c.grayErrorBefore, c.grayError, c.meanDeltaE, c.maxDeltaE))
+        // The patches' 3×3 fit is the slide dyes', which no negative is converted by: not shown.
+        note(String(format: "灰阶最大误差 %.3f D，扣除后 %.3f D", c.grayErrorBefore, c.grayError))
         Toggle("转换前扣除杂散光", isOn: Binding(get: { m.preferences.removeFlare }, set: { m.preferences.removeFlare = $0; m.reapplyScannerCalibration() }))
           .toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
       } else {
@@ -380,11 +378,14 @@ extension ContentView {
       Divider()
       titled("接触表", symbol: "square.grid.3x2", info:
         "把勾选的画面排成一张图片，格式同上。\n\n「预览 · 立即导出」按整幅预览的分辨率（600 dpi 预览时每张 35 mm 约 850 像素）直接生成，不扫描；已正式扫描的画面按同样的分辨率读取。\n\n「1200 dpi · 先扫描」时，尚未扫描或低于 1200 dpi 的画面先以 1200 dpi 扫描，结果保存为这些画面的原始文件，再生成 1200 dpi 的接触表。")
-      labeled("清晰度") {
-        Picker("", selection: Binding(get: { m.preferences.sheet.resolution ?? .preview }, set: { m.preferences.sheet.resolution = $0 })) {
-          Text("预览 · 立即导出").tag(ContactSheet.Resolution.preview)
-          Text("1200 dpi · 先扫描").tag(ContactSheet.Resolution.scan)
-        }.labelsHidden()
+      // Only frames on the scanner's preview are scanned for it; pictures of their own files are used as they are.
+      if m.frames.contains(where: { $0.sourcePath == nil }) {
+        labeled("清晰度") {
+          Picker("", selection: Binding(get: { m.preferences.sheet.resolution ?? .preview }, set: { m.preferences.sheet.resolution = $0 })) {
+            Text("预览 · 立即导出").tag(ContactSheet.Resolution.preview)
+            Text("1200 dpi · 先扫描").tag(ContactSheet.Resolution.scan)
+          }.labelsHidden()
+        }
       }
       Picker("排列", selection: sheet.style) {
         Text("胶片条").tag(ContactSheet.Layout.Style.strips)
@@ -432,18 +433,6 @@ extension ContentView {
     }
   }
   /// Pictures from elsewhere, copied into a new roll.
-  var filesTab: some View {
-    VStack(alignment: .leading, spacing: 14) {
-      titled("导入文件", symbol: "square.and.arrow.down", info:
-        "TIFF、PNG 或 JPEG。文件复制到库里新的一卷的 Originals 文件夹，原文件不动。编码未知的文件按 Gamma 2.2 读，可以在 ② 去色罩的「输入设置」里改。")
-      Button {
-        m.importImages()
-      } label: {
-        Label("选择文件…", systemImage: "folder").frame(maxWidth: .infinity)
-      }.buttonStyle(KeyStyle(prominent: true)).disabled(m.isWorking)
-      note("每次导入放进新的一卷，之后在 ② 去色罩里处理。")
-    }
-  }
   /// Module ①'s right panel: with the camera the last picture's focus check first, then the roll as
   /// the library files it.
   var rollPanel: some View {

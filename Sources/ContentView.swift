@@ -131,9 +131,8 @@ struct ContentView: View {
   /// status line, where it never lies across into the inspector. The system groups them
   /// on its glass and folds what does not fit into its overflow menu.
   @ToolbarContentBuilder var toolbarContent: some ToolbarContent {
-    // The scanner's lamp where the scanner is used, or while it works.
     ToolbarItem(placement: .navigation) {
-      if (m.page == .capture && m.captureSource == .scanner) || m.scanner.busy || m.scanBatch.isActive { scannerLamp }
+      if showsScannerLamp { scannerLamp }
     }
     ToolbarItemGroup(placement: .navigation) {
       if m.page == .leak {
@@ -149,7 +148,7 @@ struct ContentView: View {
             m.importImages()
           } label: {
             Label("导入", systemImage: "square.and.arrow.down")
-          }.help("导入 TIFF、PNG 或 JPEG，放进库里新的一卷")
+          }.help("导入 TIFF、PNG 或 JPEG（⌘O），复制到库里新的一卷，原文件不动；编码未知的按 Gamma 2.2 读，可以在 ② 去色罩的「输入设置」里改")
         }
         if m.page == .convert {
           Button {
@@ -236,6 +235,10 @@ struct ContentView: View {
       .accessibilityElement(children: .combine).accessibilityLabel("扫描仪状态")
       .accessibilityValue(state.text)
   }
+  /// The scanner's lamp where the scanner is used, ① with the V850 as the source, or while it works.
+  var showsScannerLamp: Bool {
+    (m.page == .capture && m.captureSource == .scanner) || m.scanner.busy || m.scanBatch.isActive
+  }
   var lampState: (lamp: StatusLED.Lamp, text: String) {
     if m.scanner.busy { return (.busy, m.scanner.cancellationHint == nil ? "工作中" : "取消中") }
     return m.scanner.ready ? (.ready, "就绪") : (.fault, "未就绪")
@@ -268,7 +271,8 @@ struct ContentView: View {
         Label("看片镜", systemImage: "circle.circle").font(.system(size: 11))
       }.buttonStyle(KeyStyle(latched: m.preferences.showLoupe)).controlSize(.small)
         .help("看片镜：点一下放到所选画面上，拖动放大细看，再点一下收起 · Z。接触表和单张都能用；右键选择型号")
-      if !m.singleView {
+      // Turning the holder: pages laid out from files of their own have none.
+      if !m.singleView && !m.onSheetPage {
         Button {
           m.preferences.contactLandscape.toggle()
           m.fitView()
@@ -349,20 +353,18 @@ struct ContentView: View {
       Text(m.sourceSummary).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
     }
   }
-  /// What is shown: the negative or the positive, and the zoom.
+  /// What is shown, the negative or the positive, one choice on the light table and for the single
+  /// frame; and the single frame's zoom.
   @ViewBuilder var displayControls: some View {
+    Picker("显示", selection: $m.showNegative) {
+      Text("负片").tag(true)
+      Text("正片").tag(false)
+    }.pickerStyle(.segmented).labelsHidden().frame(width: 100)
+      .help("负片：扫描或翻拍的原样。正片：每张按各自的调色显示，接触表上片边与片夹按本卷片基反相")
+      .onChange(of: m.showNegative) { m.refresh() }
     if m.singleView {
-      Toggle("负片", isOn: $m.showNegative).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 12))
-        .onChange(of: m.showNegative) { m.refresh() }.help("对照负片原样")
       Text(String(format: "%.1f×", m.zoom)).font(.system(size: 11, design: .monospaced))
         .foregroundStyle(.secondary).help("相对适合窗口的缩放倍率")
-    } else {
-      Picker("显示", selection: $m.contactPositive) {
-        Text("原片").tag(false)
-        Text("反相").tag(true)
-      }.pickerStyle(.segmented).labelsHidden().frame(width: 110)
-        .help("反相：每张按各自的调色显示为正片，片边与片夹按本卷片基反相")
-        .onChange(of: m.contactPositive) { m.refresh() }
     }
   }
   /// Turning and mirroring: this frame (or every one, synced) in the single view, the whole roll on
@@ -390,7 +392,7 @@ struct ContentView: View {
       } label: {
         HStack(spacing: 3) {
           Image(systemName: "link")
-          Text("同步全部")
+          Text("整卷一起转")
         }.font(.system(size: 12))
       }.buttonStyle(KeyStyle(latched: m.syncOrientation))
         .help("开启后，旋转和水平镜像同步应用到本卷全部照片")
@@ -504,8 +506,11 @@ struct ContentView: View {
         Divider()
         curvesSection
         Divider()
-        sharpeningSection
-        Divider()
+        // The scanner's measured MTF is no lens's: on the copy stand only where it was set, to be taken off.
+        if !m.copyStandRoll || (m.selected.map(Sharpening.strength(for:)) ?? 0) > 0 {
+          sharpeningSection
+          Divider()
+        }
         inputSection
         Button {
           m.applyToRoll()
@@ -949,10 +954,10 @@ struct ContentView: View {
                   m.focusCanvas()
                 }
                 .contextMenu {
-                  Button(f.enabled ? "取消勾选" : "勾选", systemImage: f.enabled ? "circle" : "checkmark.circle") {
-                    m.setEnabled(f.id, enabled: !f.enabled)
-                  }.disabled(m.isWorking)
                   if m.page != .leak {
+                    Button(f.enabled ? "取消勾选" : "勾选", systemImage: f.enabled ? "circle" : "checkmark.circle") {
+                      m.setEnabled(f.id, enabled: !f.enabled)
+                    }.disabled(m.isWorking)
                     Button("在去漏光里打开", systemImage: "wand.and.rays") { m.openInLeak(f.id) }.disabled(m.isWorking)
                     Button("删除这张", systemImage: "trash", role: .destructive) { m.remove(f.id) }.disabled(m.isWorking)
                   }

@@ -93,9 +93,10 @@ enum ContactPageTests {
     model.frames[0].adjustments.rotation = 1
     let turned = model.contactRect(model.frames[0]), next = model.contactRect(model.frames[1])
     model.contactPositive = false
-    let lying = model.contactRect(model.frames[0])
+    let lying = model.contactRect(model.frames[0]), oneChoice = model.showNegative
     model.contactPositive = true
     model.frames[0].adjustments.rotation = 0
+    try check(oneChoice && !model.showNegative, "the light table and the single frame show negatives or positives as one choice")
     try check(abs(shape(turned) - 2.0 / 3) < 0.01 && abs(shape(lying) - 1.5) < 0.01
       && abs((next.x - turned.x - turned.width) * pageSize.width - 18) < 0.01,
       "a picture turned upright lies in an upright cell on the page, the next one a gap after it; its negative lies 3:2")
