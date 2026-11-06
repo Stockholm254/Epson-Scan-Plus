@@ -1,0 +1,101 @@
+#!/bin/bash
+# Before a commit goes to the remote's main, the window shots in doc/images are taken again when
+# Sources or Tools changed since they were last taken (Tools/screenshots.sh, from that commit).
+# - Shots that come out the same: the push goes on.
+# - Shots that changed: they are committed on top of the branch being pushed, and this push stops;
+#   look at them, then push again to send them with it.
+# - A locked screen, or a failed run: the push stops. To push without the shots this once:
+#   EPSCAN_SKIP_SCREENSHOTS=1 git push
+# Installed with: git config core.hooksPath "$(pwd)/.githooks"
+set -uo pipefail
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
+lines=()
+while read -r line; do lines+=("$line"); done
+if [ "${EPSCAN_SKIP_SCREENSHOTS:-}" = 1 ]; then
+  echo "界面截图：这次跳过（EPSCAN_SKIP_SCREENSHOTS=1）。" >&2
+  exit 0
+fi
+common="$(cd "$(git rev-parse --git-common-dir)" && pwd)"
+stamp="$common/epscan-screenshots"
+tmp="${TMPDIR:-/tmp}"
+tmp="${tmp%/}"
+zero=0000000000000000000000000000000000000000
+skip_hint="这次不更新截图就推送：EPSCAN_SKIP_SCREENSHOTS=1 git push"
+
+for line in "${lines[@]+"${lines[@]}"}"; do
+  read -r lref lsha rref rsha <<<"$line"
+  [ "$rref" = refs/heads/main ] && [ "$lsha" != "$zero" ] || continue
+  tools="$(git rev-parse -q --verify "$lsha:Tools/screenshots.sh" 2>/dev/null)" || continue
+  want="$(git rev-parse "$lsha:Sources") $(git rev-parse "$lsha:Tools")"
+  [ "$(cat "$stamp" 2>/dev/null)" = "$want" ] && continue
+
+  if ioreg -n Root -d1 | grep -q '"CGSSessionScreenIsLocked"=Yes'; then
+    echo "界面截图：代码改过，要重拍，但屏幕锁着，拍不了。解锁后再推送。" >&2
+    echo "$skip_hint" >&2
+    exit 1
+  fi
+  echo "界面截图：代码改过，从 ${lsha:0:7} 重新编译并拍摄（约两分钟）…" >&2
+  work="$(mktemp -d "$tmp/epscan-pre-push.XXXXXX")"
+  git archive "$lsha" Sources Tools doc/images | tar -x -C "$work"
+  if ! EPSCAN_SHOTS_BUILD_DIR="$tmp/epscan-screenshots-build" \
+    bash "$work/Tools/screenshots.sh" "$work/doc/images" </dev/null >"$work/log" 2>&1; then
+    grep -vE 'warning:|^ *[0-9]* \||^ *\||^\[#|^$' "$work/log" | tail -5 >&2
+    echo "界面截图没拍成，推送停下了。完整记录在 $work/log" >&2
+    echo "$skip_hint" >&2
+    exit 1
+  fi
+
+  changed=()
+  for f in "$work"/doc/images/*.jpg; do
+    path="doc/images/$(basename "$f")"
+    new="$(git hash-object "$f")"
+    old="$(git rev-parse -q --verify "$lsha:$path" 2>/dev/null || true)"
+    [ "$new" = "$old" ] || changed+=("$path")
+  done
+  if [ ${#changed[@]} -eq 0 ]; then
+    echo "界面截图：和现在的一样，照常推送。" >&2
+    printf '%s\n' "$want" >"$stamp"
+    continue
+  fi
+
+  # The branch pushed must still be the commit being pushed, and the shots' paths untouched where
+  # it is checked out.
+  [ "$lref" = HEAD ] && lref="$(git symbolic-ref -q HEAD || echo HEAD)"
+  branch="${lref#refs/heads/}"
+  if [ "$branch" = "$lref" ] || [ "$(git rev-parse -q --verify "$lref")" != "$lsha" ]; then
+    echo "界面截图：新拍的图要提交到推送的分支上，但推送的不是一个分支的最新提交（${lref} ${lsha:0:7}）。" >&2
+    echo "新拍的在 $work/doc/images。推送分支本身（比如 git push origin main），或者：$skip_hint" >&2
+    exit 1
+  fi
+  checkout="$(git worktree list --porcelain | awk -v b="branch $lref" '/^worktree /{w=substr($0,10)} $0==b{print w}')"
+  if [ -n "$checkout" ] && ! { git -C "$checkout" diff --quiet -- "${changed[@]}" && git -C "$checkout" diff --cached --quiet -- "${changed[@]}"; }; then
+    echo "界面截图：$checkout 里这些图有没提交的改动，没有覆盖：${changed[*]}" >&2
+    echo "新拍的在 $work/doc/images。$skip_hint" >&2
+    exit 1
+  fi
+
+  export GIT_INDEX_FILE="$work/index"
+  git read-tree "$lsha"
+  for path in "${changed[@]}"; do
+    blob="$(git hash-object -w "$work/$path")"
+    git update-index --add --cacheinfo "100644,$blob,$path"
+  done
+  tree="$(git write-tree)"
+  unset GIT_INDEX_FILE
+  commit="$(git commit-tree "$tree" -p "$lsha" -m "Interface screenshots taken again
+
+Taken from ${lsha:0:7} by .githooks/pre-push with Tools/screenshots.sh: ${changed[*]#doc/images/}.")" || exit 1
+  git update-ref -m "pre-push: interface screenshots" "$lref" "$commit" "$lsha" || exit 1
+  if [ -n "$checkout" ]; then
+    for path in "${changed[@]}"; do
+      blob="$(git rev-parse "$commit:$path")"
+      git -C "$checkout" update-index --add --cacheinfo "100644,$blob,$path"
+      cp "$work/$path" "$checkout/$path"
+    done
+  fi
+  printf '%s\n' "$want" >"$stamp"
+  echo "界面截图：更新了 ${#changed[@]} 张（${changed[*]#doc/images/}），已提交为 ${commit:0:7}，放在 $branch 上。" >&2
+  echo "这次推送停下了；看过新图后再运行一次同样的 git push，就会连同截图一起推上去。" >&2
+  exit 1
+done
+exit 0

@@ -74,6 +74,33 @@ bash release.sh
 - **换更新列表**：用 `defaults write local.epscan.mac updateFeed <URL>`，https 地址也行，签名照样核对。
 - **签名方式**：App 是临时签名（ad-hoc），没有 Apple 公证。从网上下载到别的 Mac 时，第一次打开要在「系统设置 → 隐私与安全性」里允许。更新时系统可能再问一次权限。
 
+## 界面截图
+
+README 和[界面说明](interface.md)里窗口的截图由程序拍，推送前自动更新：
+
+```sh
+bash Tools/screenshots.sh            # 拍到 doc/images
+bash Tools/screenshots.sh <文件夹>   # 拍到别处
+```
+
+- **拍哪几张**：`main-window`、`main-annotated`（带 1–9 号区域）、`panels`、`single-view`、`library`、`leak-page`。扫描头、看片镜和裁切玻璃泡的特写不在其中，要手动截。
+- **怎么拍**：`Tools/Screenshots.swift` 和 `Sources` 一起编译（不含 `EpsonScanPlus.swift`），用 App 自己的界面开一个窗口。窗口只有 2 点露在屏幕右边，在所有窗口后面，不接鼠标；由窗口服务器画出来，再用 `screencapture -l` 拍下。界面固定为深色，窗口 1440 × 920 点。
+- **用哪些画面**：图库里的一卷海和天空，Portra 160，V850 扫描（`2026-10-29_225926_1C87`）。库那张只放同一卷胶片的六次扫描。这些照片原来就在 GitHub 上。
+- **只读**：工程以只读打开；设置复制到临时的一组里，布局相关的几项用默认值。图库、缩略图缓存和 App 的设置都不改。
+- **不改就不重写**：新拍的和原来的平均差别不到 1/255 时，原文件不动。
+- **需要**：屏幕没锁，运行它的程序（终端或 Claude）有「屏幕录制」权限。编译约一分半，拍摄约半分钟。
+
+**推送前的钩子**：`.githooks/pre-push`。启用一次：
+
+```sh
+git config core.hooksPath "$(pwd)/.githooks"
+```
+
+- **什么时候拍**：推送到远端的 `main` 时，如果 `Sources` 或 `Tools` 自上次拍摄以来改过，就从要推送的那个提交重新编译并拍摄。上次拍摄时的版本记在 `.git/epscan-screenshots`。
+- **拍出来一样**：照常推送。
+- **拍出来不一样**：新图提交在推送的分支上（提交说明 “Interface screenshots taken again”），这次推送停下。看过新图后再推送一次，截图就一起推上去。其他会话没提交的改动不受影响；图本身有没提交的改动时不覆盖，停下来说明。
+- **拍不了**：屏幕锁着，或者编译、拍摄失败时，推送停下，并说明原因。这次不更新截图就推送：`EPSCAN_SKIP_SCREENSHOTS=1 git push`。
+
 ## 早期验证记录（2026-10-25，0.1–0.3）
 
 2026-10-25，本机扫描仪实测：
