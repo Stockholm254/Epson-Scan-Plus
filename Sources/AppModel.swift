@@ -1651,9 +1651,11 @@ final class AppModel: ObservableObject {
     readLock.unlock()
     return image
   }
-  /// The memory the files read are kept in: four frames at 3000 pixels, 16 bits a channel, and
-  /// a roll's worth of 600-pixel copies beside them.
-  static let readBudget = 320 << 20
+  /// The memory the files read are kept in: a sixteenth of the Mac's, from 320 MB (four frames
+  /// at 3000 pixels, 16 bits a channel, and a roll's 600-pixel copies) to 1.5 GB. On 16 GB that is
+  /// 1 GB, about twenty copy frames: a roll's new slopes convert every frame again, and past what
+  /// is kept each one is decoded from its 367 MB file again (7 s at the ninth frame with 320 MB).
+  static let readBudget = min(max(Int(ProcessInfo.processInfo.physicalMemory / 16), 320 << 20), 1536 << 20)
   private func uncorrectedSource(for frame: FilmFrame, full: Bool, maxDimension: Int?) throws -> CGImage {
     if let path = frame.scanPath, frame.hasFullResolution {
       let raw = try load(URL(fileURLWithPath: path), maxDimension: full ? nil : maxDimension ?? 2200)
@@ -1668,6 +1670,18 @@ final class AppModel: ObservableObject {
     let crop = try ImagePipeline.shared.crop(overviewCache.image(url), rect: frame.rect)
     let limit = full ? nil : maxDimension ?? 2200
     return limit.map { ImagePipeline.shared.scaled(crop, maxDimension: $0) } ?? crop
+  }
+  /// The size `source(for: frame, full: true)` gives, from its file's header, without reading the
+  /// pixels; nil where only reading it would tell.
+  func fullSourceSize(for frame: FilmFrame) -> CGSize? {
+    let pipe = ImagePipeline.shared
+    if let path = frame.scanPath, frame.hasFullResolution {
+      return pipe.headerSize(URL(fileURLWithPath: path)).map { frame.rect.relative(to: frame.captureRect).pixels($0).size }
+    }
+    if let path = frame.sourcePath {
+      return pipe.headerSize(URL(fileURLWithPath: path)).map { frame.rect.pixels($0).size }
+    }
+    return overviewURL.flatMap(pipe.headerSize).map { frame.rect.pixels($0).size }
   }
   func contextSource(for frame: FilmFrame) throws -> (image: CGImage, region: NormalRect) {
     let pipe = ImagePipeline.shared
@@ -2766,7 +2780,8 @@ final class AppModel: ObservableObject {
         name: f.name, settings: f.adjustments,
         dpi: f.hasFullResolution ? Double(f.scanDPI ?? Int(previewDPI)) : previewDPI,
         source: { try self.source(for: f, full: true) },
-        sharpener: Sharpening.sharpener(sharpening, frame: f, maxDimension: nil))
+        sharpener: Sharpening.sharpener(sharpening, frame: f, maxDimension: nil),
+        size: { self.fullSourceSize(for: f) })
     }
     let sheetDPI = fromPreview ? Int(previewDPI) : ContactSheet.scanDPI
     beginExport()

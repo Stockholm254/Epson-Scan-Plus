@@ -81,12 +81,32 @@ final class LeakLab: ObservableObject {
   /// A roll frame's positive at full resolution, from the app, as the origin converts it.
   var renderFrame: ((LeakJob.Origin) throws -> CGImage)?
   private let preferences: Preferences?
-  private var base: LeakImage?
+  private var base: LeakImage? {
+    didSet { baseRevision += 1 }
+  }
+  /// Counted up with each new base, so a preview of the one before is never shown on this one.
+  private var baseRevision = 0
   /// The reference, 640 px across, as the fit reads it.
   private var guide: LeakImage?
   private let queue = DispatchQueue(label: "epscan.leak", qos: .userInitiated)
   private var generation = 0
-  private var pending: DispatchWorkItem?
+  /// The preview asked for last, not yet begun (`previewLock`): a fader dragged asks for one each
+  /// step, and the queue takes the newest when its turn comes.
+  private var wantedPreview: (id: Int, base: LeakImage, baseRevision: Int, params: LeakParams)?
+  private var previewQueued = false
+  private let previewLock = NSLock()
+  /// The newest preview shown, and the oldest that may be: a fit or a generation sets it past the
+  /// previews it replaces.
+  private var shownPreview = 0
+  private var previewFloor = 0
+  /// Previews asked for before now are not shown: what replaces them is under way.
+  private func dropPreviews() {
+    generation += 1
+    previewFloor = generation
+    previewLock.lock()
+    wantedPreview = nil
+    previewLock.unlock()
+  }
   private var persisted = false
 
   static var defaultRoot: URL {
@@ -662,8 +682,7 @@ final class LeakLab: ObservableObject {
   func fit(recorded: Bool = true) {
     guard let base, let guide, let j = job, let baseID = j.base else { return }
     let input = params
-    pending?.cancel()
-    generation += 1
+    dropPreviews()
     // The preview this replaces would have cleared it.
     updating = false
     run("拟合原片引导的边缘感知匹配") {
@@ -836,8 +855,7 @@ final class LeakLab: ObservableObject {
     }
     let out = try LeakEngine.result(base, base: base, params: params)
     DispatchQueue.main.async {
-      self.pending?.cancel()
-      self.generation += 1
+      self.dropPreviews()
       self.updating = false
       self.guide = guide
       self.reference = shown
@@ -871,24 +889,38 @@ final class LeakLab: ObservableObject {
   // MARK: Preview and export
 
   /// The repair on the base; `soon` waits for a slider to settle.
+  /// The repair as the parameters are now, on the queue. Throttled rather than put off: while a
+  /// fader moves, each preview begins as the one before ends, with the parameters asked for last,
+  /// and every one newer than the picture shown is shown. Put off 0.3 s, a drag showed nothing
+  /// until the hand stopped.
   func preview(soon: Bool = false) {
-    pending?.cancel()
     guard let base else { return }
     generation += 1
-    let id = generation, input = params
     updating = true
-    let work = DispatchWorkItem {
-      var out: LeakImage?, failure: String?
-      do { out = try LeakEngine.result(base, base: base, params: input) } catch { failure = error.localizedDescription }
-      DispatchQueue.main.async {
-        guard id == self.generation else { return }
-        self.updating = false
-        self.after = out.map { $0.cgImage() }
-        if let failure { self.errorText = failure }
-      }
+    previewLock.lock()
+    wantedPreview = (generation, base, baseRevision, params)
+    let queued = previewQueued
+    previewQueued = true
+    previewLock.unlock()
+    if !queued { queue.asyncAfter(deadline: .now() + (soon ? 0.015 : 0)) { [weak self] in self?.runPreview() } }
+  }
+  private func runPreview() {
+    previewLock.lock()
+    let wanted = wantedPreview
+    wantedPreview = nil
+    previewQueued = false
+    previewLock.unlock()
+    guard let w = wanted else { return }
+    var out: LeakImage?, failure: String?
+    do { out = try LeakEngine.result(w.base, base: w.base, params: w.params) } catch { failure = error.localizedDescription }
+    let picture = out.map { $0.cgImage() }
+    DispatchQueue.main.async {
+      guard w.id >= self.previewFloor, w.id > self.shownPreview, w.baseRevision == self.baseRevision else { return }
+      self.shownPreview = w.id
+      self.after = picture
+      if let failure { self.errorText = failure }
+      if w.id == self.generation { self.updating = false }
     }
-    pending = work
-    queue.asyncAfter(deadline: .now() + (soon ? 0.3 : 0), execute: work)
   }
   func chooseExport() {
     guard let j = job, repaired, busy == nil else { return }

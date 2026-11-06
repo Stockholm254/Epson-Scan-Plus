@@ -327,17 +327,15 @@ final class FilmCanvasView: NSView {
     let rect = imageRect
     let sheet = model.onSheetPage
     if !sheet {
-      NSGraphicsContext.saveGraphicsState()
-      if !lightTable {
-        let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(0.55)
-        shadow.shadowBlurRadius = 18
-        shadow.shadowOffset = CGSize(width: 0, height: 5)
-        shadow.set()
+      if lightTable {
+        NSColor.black.setFill()
+        rect.insetBy(dx: -1, dy: -1).fill()
+      } else {
+        let plate = shadowPlate(for: rect.size)
+        plate.draw(
+          in: CGRect(x: rect.minX - Self.plateMargin, y: rect.minY - Self.plateMargin, width: plate.size.width, height: plate.size.height),
+          from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
       }
-      NSColor.black.setFill()
-      rect.insetBy(dx: -1, dy: -1).fill()
-      NSGraphicsContext.restoreGraphicsState()
     }
     let image = NSImage(cgImage: cg, size: CGSize(width: cg.width, height: cg.height))
     // A laid-out page's strips lie on the table, its perforations open to the light.
@@ -557,6 +555,31 @@ final class FilmCanvasView: NSView {
       let look = CropLens.appearance(shownFor: 1, released: now - fading.since)
       if look.opacity > 0 { paintLens(fading.image, in: fading.frame, look) }
     }
+  }
+  /// The single frame's black plate and its drop shadow, drawn once for its size. Blurred afresh
+  /// at every draw, the shadow was a good part of the main thread's time for each picture shown,
+  /// and the picture's size stays while a slider moves.
+  private var keptPlate: (size: CGSize, image: NSImage)?
+  static let plateMargin: CGFloat = 48
+  func shadowPlate(for size: CGSize) -> NSImage {
+    if let kept = keptPlate, kept.size == size { return kept.image }
+    let m = Self.plateMargin
+    let image = NSImage(size: CGSize(width: size.width + 2 * m, height: size.height + 2 * m), flipped: isFlipped) { _ in
+      NSGraphicsContext.saveGraphicsState()
+      let shadow = NSShadow()
+      shadow.shadowColor = NSColor.black.withAlphaComponent(0.55)
+      shadow.shadowBlurRadius = 18
+      // Drawn into the image the other way up from the view: 5 points up on the screen, as the
+      // view drew it, is down here.
+      shadow.shadowOffset = CGSize(width: 0, height: -5)
+      shadow.set()
+      NSColor.black.setFill()
+      CGRect(x: m, y: m, width: size.width, height: size.height).insetBy(dx: -1, dy: -1).fill()
+      NSGraphicsContext.restoreGraphicsState()
+      return true
+    }
+    keptPlate = (size, image)
+    return image
   }
   private func paintLens(_ image: CGImage, in frame: CGRect, _ look: (scale: CGFloat, opacity: CGFloat)) {
     let size = CGSize(width: frame.width * look.scale, height: frame.height * look.scale)

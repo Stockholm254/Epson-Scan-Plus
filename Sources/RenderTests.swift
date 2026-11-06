@@ -1,7 +1,10 @@
+import AppKit
 import Combine
 import CoreGraphics
 import CoreImage
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 
 /// The single frame's render while a slider moves: pictures as it moves, the analysis it keeps
 /// over the print's own controls and redoes for the rest; and the statistics' sums, written for
@@ -177,5 +180,60 @@ enum RenderTests {
     table.change("曝光") { $0.exposure = -0.3 }
     for _ in 0..<80 where table.rendering { settle(0.05) }
     try check(table.displayed !== printed, "and a frame changed prints it again")
+
+    // A full-resolution contact sheet's tiles sized from their files' headers, as reading them gives.
+    let turned = strip.appendingPathComponent("turned.tif")
+    let tall = CGContext(data: nil, width: 300, height: 200, bitsPerComponent: 8, bytesPerRow: 0,
+      space: pipe.outputSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    tall.setFillColor(red: 0.8, green: 0.5, blue: 0.3, alpha: 1)
+    tall.fill(CGRect(x: 0, y: 0, width: 300, height: 200))
+    let destination = CGImageDestinationCreateWithURL(turned as CFURL, UTType.tiff.identifier as CFString, 1, nil)!
+    CGImageDestinationAddImage(destination, tall.makeImage()!, [kCGImagePropertyOrientation: 6] as CFDictionary)
+    CGImageDestinationFinalize(destination)
+    var own = FilmFrame(name: "09", rect: NormalRect(x: 0.1, y: 0.05, width: 0.7, height: 0.8), format: "135")
+    own.sourcePath = turned.path
+    let sized = (table.frames + [own]).map { f -> Bool in
+      guard let known = table.fullSourceSize(for: f), let read = try? table.source(for: f, full: true) else { return false }
+      return known == CGSize(width: read.width, height: read.height)
+    }
+    try check(sized.allSatisfy { $0 }, "a full-resolution sheet sizes each frame from its file's header, turned as the file says, as reading it gives")
+
+    // The single frame's shadowed plate, drawn once and kept, against drawing it each time.
+    func painted(_ draw: (CGRect) -> Void) -> [UInt8] {
+      let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 640, pixelsHigh: 400, bitsPerSample: 8, samplesPerPixel: 4,
+        hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 640 * 4, bitsPerPixel: 32)!
+      rep.size = CGSize(width: 320, height: 200)
+      NSGraphicsContext.saveGraphicsState()
+      let ctx = NSGraphicsContext(bitmapImageRep: rep)!
+      NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx.cgContext, flipped: true)
+      ctx.cgContext.translateBy(x: 0, y: 200)
+      ctx.cgContext.scaleBy(x: 1, y: -1)
+      NSColor.gray.setFill()
+      CGRect(x: 0, y: 0, width: 320, height: 200).fill()
+      draw(CGRect(x: 60, y: 40, width: 200, height: 120))
+      NSGraphicsContext.restoreGraphicsState()
+      return Array(UnsafeBufferPointer(start: rep.bitmapData!, count: 640 * 400 * 4))
+    }
+    let canvas = FilmCanvasView(frame: NSRect(x: 0, y: 0, width: 320, height: 200))
+    let each = painted { rect in
+      NSGraphicsContext.saveGraphicsState()
+      let shadow = NSShadow()
+      shadow.shadowColor = NSColor.black.withAlphaComponent(0.55)
+      shadow.shadowBlurRadius = 18
+      shadow.shadowOffset = CGSize(width: 0, height: 5)
+      shadow.set()
+      NSColor.black.setFill()
+      rect.insetBy(dx: -1, dy: -1).fill()
+      NSGraphicsContext.restoreGraphicsState()
+    }
+    let kept = painted { rect in
+      let plate = canvas.shadowPlate(for: rect.size)
+      let m = FilmCanvasView.plateMargin
+      plate.draw(in: CGRect(x: rect.minX - m, y: rect.minY - m, width: plate.size.width, height: plate.size.height),
+        from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+    }
+    let worst = zip(each, kept).map { abs(Int($0) - Int($1)) }.max() ?? 255
+    try check(worst <= 1 && canvas.shadowPlate(for: CGSize(width: 200, height: 120)) === canvas.shadowPlate(for: CGSize(width: 200, height: 120)),
+      "the single frame's plate and shadow, drawn once for its size, look as drawn each time (within \(worst) of 255)")
   }
 }

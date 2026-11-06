@@ -37,6 +37,8 @@ enum ContactSheet {
     var dpi: Double
     var source: () throws -> CGImage
     var sharpener: Sharpener? = nil
+    /// The size `source` gives, where it is known without reading the pixels.
+    var size: (() -> CGSize?)? = nil
   }
 
   static func columns(count: Int, layout: Layout) -> Int {
@@ -120,11 +122,15 @@ enum ContactSheet {
       return s
     }
     // First pass: each frame's printed size at the sheet's resolution, without rendering pixels.
+    // A frame's size from its file's header where that tells it: the frames were decoded here
+    // once just for it, a second for a 61-megapixel copy, and again to be drawn.
     let sizes = try tiles.map { t -> CGSize in
-      let image = try t.source()
+      let known = t.size?()
+      let image = known == nil ? try t.source() : nil
+      let pixels = known ?? CGSize(width: image!.width, height: image!.height)
       let scale = Double(dpi) / max(1, t.dpi)
       let sideways = ((settings(t).rotation % 4) + 4) % 2 == 1
-      let w = Double(image.width) * scale, h = Double(image.height) * scale
+      let w = Double(pixels.width) * scale, h = Double(pixels.height) * scale
       return sideways ? CGSize(width: h, height: w) : CGSize(width: w, height: h)
     }
     let cell = Self.cell(for: sizes)

@@ -167,6 +167,19 @@ final class ImagePipeline {
       (p[kCGImagePropertyDepth] as? Int) ?? 0, (p[kCGImagePropertyDPIWidth] as? Double) ?? 0
     )
   }
+  /// The size `load(url)` gives the picture in a TIFF, PNG or JPEG, turned by its orientation,
+  /// read from the file's header: no pixels. Nil for other files (a camera's raw, whose decoded
+  /// size the header does not promise) or one that cannot be read.
+  func headerSize(_ url: URL) -> CGSize? {
+    guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+      let type = CGImageSourceGetType(src) as String?,
+      [UTType.tiff.identifier, UTType.png.identifier, UTType.jpeg.identifier].contains(type),
+      let p = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
+      let w = p[kCGImagePropertyPixelWidth] as? Int, let h = p[kCGImagePropertyPixelHeight] as? Int, w > 0, h > 0
+    else { return nil }
+    let orientation = p[kCGImagePropertyOrientation] as? Int ?? 1
+    return (5...8).contains(orientation) ? CGSize(width: h, height: w) : CGSize(width: w, height: h)
+  }
   func crop(_ image: CGImage, rect: NormalRect) throws -> CGImage {
     let r = rect.pixels(CGSize(width: image.width, height: image.height))
     guard r.width >= 2, r.height >= 2, let result = image.cropping(to: r) else {
