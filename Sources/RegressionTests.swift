@@ -40,6 +40,7 @@ enum RegressionTests {
     try MCPTests.run(folder: folder)
     try LightLeakTests.run(folder: folder)
     try UpdaterTests.run(folder: folder)
+    try RenderTests.run(folder: folder)
     try AppIconTests.run()
     let pipe = ImagePipeline.shared
     func check(_ value: Bool, _ label: String) throws {

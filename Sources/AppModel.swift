@@ -41,8 +41,11 @@ final class AppModel: ObservableObject {
       }
       if onSheetPage && contactPositive { refresh() }
       guard !thumbnails.isEmpty, !readOnly, let folder = sessionURL else { return }
-      let images = thumbnails
-      DispatchQueue.global(qos: .utility).async { RollLibrary.storePositives(images, folder: folder) }
+      // Only the positives that changed, so a slider dragged over one frame writes that one.
+      let changed = thumbnails.filter { $0.value !== oldValue[$0.key] }
+      let keep = Set(thumbnails.keys)
+      guard !changed.isEmpty || keep != Set(oldValue.keys) else { return }
+      Self.libraryWrites.async { RollLibrary.storePositives(changed, keeping: keep, folder: folder) }
     }
   }
   /// Only the single frame zooms: back on the light table the whole roll shows again.
@@ -182,6 +185,8 @@ final class AppModel: ObservableObject {
     return wantedRevision == token
   }
   private let renderQueue = DispatchQueue(label: "epscan.render", qos: .userInitiated)
+  /// The library's small positives are written one after another, never two to one file at once.
+  private static let libraryWrites = DispatchQueue(label: "epscan.library-writes", qos: .utility)
   private var renderWork: DispatchWorkItem?
   private var cancellables = Set<AnyCancellable>()
   private var quitAfterScan = false
@@ -234,6 +239,8 @@ final class AppModel: ObservableObject {
   @Published var showLibrary = false
   /// The presets table is open.
   @Published var showPresets = false
+  /// Counted up by 设置…: the window opens module ①'s left panel, where the settings are.
+  @Published var settingsRequests = 0
   /// The window about updates is open.
   @Published var showUpdates = false
   /// Keeps a copy in Applications up to date; started with the app.
@@ -1763,8 +1770,11 @@ final class AppModel: ObservableObject {
   }
   /// How far the picture's render has got, while it runs: the share done and the step under way.
   @Published private(set) var renderStep: (done: Double, label: String)?
-  /// From the render queue, for the render still wanted.
-  private func step(_ done: Double, _ label: String, _ token: Int) {
+  /// From the render queue, for the render still wanted. Given when the render began, a step that
+  /// comes within a quarter of a second of it is left out: the progress plate shows only for a
+  /// render that takes a while, and each step published redraws the window.
+  private func step(_ done: Double, _ label: String, _ token: Int, since started: Date? = nil) {
+    if let started, Date().timeIntervalSince(started) < 0.25 { return }
     DispatchQueue.main.async {
       guard self.revision == token, self.rendering else { return }
       self.renderStep = (done, label)
@@ -1793,6 +1803,7 @@ final class AppModel: ObservableObject {
     let token = revision
     wantedLock.lock()
     wantedRevision = token
+    wantedSingle = nil
     wantedLock.unlock()
     renderWork?.cancel()
     renderStep = nil
@@ -1865,22 +1876,89 @@ final class AppModel: ObservableObject {
       renderQueue.asyncAfter(deadline: .now() + 0.07, execute: work)
       return
     }
-    let p = profile
     let edit = editingSingle
     if !edit { editRegionLock = nil }
-    let negative = showNegative || tool == .base
-    let sharpening = preferences.sharpening
-    let previewDPI = Int(overviewDPI)
     rendering = true
-    let work = DispatchWorkItem { [weak self] in
-      guard let self else { return }
+    let request = SingleRender(
+      token: token, frame: frame, profile: profile, edit: edit, negative: showNegative || tool == .base,
+      sharpening: preferences.sharpening, previewDPI: Int(overviewDPI), analysisKey: analysisKey(frame),
+      overview: overview)
+    wantedLock.lock()
+    wantedSingle = request
+    let queued = singleQueued
+    singleQueued = true
+    wantedLock.unlock()
+    // At most one waits: it takes whatever was asked for last when its turn comes.
+    if !queued { renderQueue.asyncAfter(deadline: .now() + 0.015) { [weak self] in self?.renderSingle() } }
+  }
+  /// The single frame's render, as asked for (`wantedSingle`, under `wantedLock`).
+  private struct SingleRender {
+    let token: Int, frame: FilmFrame, profile: FilmProfile, edit: Bool, negative: Bool
+    let sharpening: SharpeningProfile?, previewDPI: Int, analysisKey: String
+    /// The preview it may be cut from, kept with its analysis so the key's identity of it holds.
+    let overview: CGImage?
+  }
+  /// The single render asked for last, not yet begun; a newer request, or another view, replaces it.
+  private var wantedSingle: SingleRender?
+  /// A single render is waiting on the render queue.
+  private var singleQueued = false
+  /// The newest single render on screen: one finishing after a newer one is not shown.
+  private var shownSingle = 0
+  /// The last single frame's analysis, by what it reads (render queue only). The print's own
+  /// controls (exposure, contrast, colour, levels, curves, the turn) leave it as it was, so a
+  /// slider dragged over them renders without analysing again.
+  private var keptAnalysis: (key: String, overview: CGImage?, analysis: ToneAnalysis)?
+  /// What a frame's analysis reads: its source (file, crop, corrections, the preview it is cut
+  /// from), its settings without the print's own controls, the preset, and the scanner's flare.
+  private func analysisKey(_ frame: FilmFrame) -> String {
+    var f = frame
+    (f.name, f.enabled) = ("", true)
+    // The copy light's fall-off by its size and sum, as the files read are kept by.
+    let flat = f.flatField.map { "\($0.width)x\($0.height)-\($0.values.reduce(0, +))" } ?? "-"
+    f.flatField = nil
+    var s = f.adjustments
+    (s.exposure, s.contrast, s.warmth, s.tint, s.shadowWarmth, s.black, s.white, s.midtone) = (0, 1, 0, 0, nil, 0, 1, 1)
+    (s.shadows, s.highlights, s.pressHighlights, s.colourNoise, s.sharpening, s.curves) = (nil, nil, nil, nil, nil, nil)
+    (s.rotation, s.flipHorizontal, s.angle) = (0, nil, nil)
+    f.adjustments = s
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = .sortedKeys
+    // Unencodable, it matches nothing.
+    let frameKey = (try? encoder.encode(f)).map { String(decoding: $0, as: UTF8.self) } ?? UUID().uuidString
+    let profileKey = (try? encoder.encode(profile)).map { String(decoding: $0, as: UTF8.self) } ?? UUID().uuidString
+    let flare = flareOffset(frame).map { "\($0.values)" } ?? "-"
+    let preview = overview.map { "\(ObjectIdentifier($0).hashValue)" } ?? "-"
+    return [frameKey, flat, profileKey, flare, overviewURL?.path ?? "-", preview].joined(separator: "|")
+  }
+  private var singleWaiting: Bool {
+    wantedLock.lock()
+    defer { wantedLock.unlock() }
+    return singleQueued
+  }
+  /// On the render queue: the single frame's picture, its histograms and range, for the request
+  /// asked for last. Throttled rather than put off: while a slider moves, each render begins as the
+  /// one before ends, and every one newer than the picture shown is shown, so it follows the hand.
+  private func renderSingle() {
+    wantedLock.lock()
+    let wanted = wantedSingle
+    wantedSingle = nil
+    singleQueued = false
+    wantedLock.unlock()
+    guard let r = wanted else { return }
+    let frame = r.frame, p = r.profile, edit = r.edit, negative = r.negative, token = r.token
+    let started = Date()
       do {
-        self.step(0.05, frame.sourcePath != nil || Self.readsScan(frame) ? "读取原图" : "读取预览", token)
+        self.step(0.05, frame.sourcePath != nil || Self.readsScan(frame) ? "读取原图" : "读取预览", token, since: started)
         let cropped = try self.source(for: frame)
-        self.step(0.4, "分析片基、白平衡和色阶", token)
-        let analysis = ImagePipeline.shared.analyze(
-          cropped, settings: frame.adjustments, profile: p)
-        self.step(0.6, negative ? "显示负片" : "冲印正片", token)
+        self.step(0.4, "分析片基、白平衡和色阶", token, since: started)
+        let analysis: ToneAnalysis
+        if let kept = keptAnalysis, kept.key == r.analysisKey, kept.overview === r.overview {
+          analysis = kept.analysis
+        } else {
+          analysis = ImagePipeline.shared.analyze(cropped, settings: frame.adjustments, profile: p)
+          keptAnalysis = (r.analysisKey, r.overview, analysis)
+        }
+        self.step(0.6, negative ? "显示负片" : "冲印正片", token, since: started)
         let context = edit ? try self.contextSource(for: frame) : nil
         let input = context?.image ?? cropped
         // Its surroundings as they lie while the crop or base is edited, with the kept part outlined.
@@ -1888,15 +1966,17 @@ final class AppModel: ObservableObject {
         if edit { shownSettings.angle = nil }
         // The kernel follows the size the source was loaded at, as in source(for:) and contextSource(for:).
         let loaded = edit ? 3000 : (frame.sourcePath != nil ? 3000 : 2200)
-        let sharpener = negative ? nil : Sharpening.sharpener(sharpening, frame: frame, maxDimension: loaded)
+        let sharpener = negative ? nil : Sharpening.sharpener(r.sharpening, frame: frame, maxDimension: loaded)
         guard
           let output = ImagePipeline.shared.render(
             input, settings: shownSettings, profile: p, analysis: analysis, negative: negative,
             sharpener: sharpener)
         else { throw DeskError.message("无法生成预览") }
-        self.step(0.9, "直方图", token)
-        let (hist, channels) = Self.histograms(output)
-        var range = negative ? nil : ImagePipeline.shared.toneRange(cropped, settings: frame.adjustments, profile: p, analysis: analysis)
+        // A newer request already waiting: this picture now, histograms and range with that one.
+        let measured = !self.singleWaiting
+        self.step(0.9, "直方图", token, since: started)
+        let hist = measured ? Self.histograms(output) : nil
+        var range = !measured || negative ? nil : ImagePipeline.shared.toneRange(cropped, settings: frame.adjustments, profile: p, analysis: analysis)
         // What shows white or black, counted on the picture itself where it is only the frame.
         if !edit, range != nil { (range!.atWhite, range!.atBlack) = ImagePipeline.shared.screenShares(output) }
         var pixels = CGSize(width: input.width, height: input.height)
@@ -1910,22 +1990,33 @@ final class AppModel: ObservableObject {
             : frame.rect.pixels(CGSize(width: info.width, height: info.height)).size
         }
         let summary =
-          "\(Int(pixels.width)) × \(Int(pixels.height)) · \(frame.hasFullResolution ? (frame.scanDPI.map{String($0)+" dpi"} ?? "源图") : previewDPI >= 600 ? "\(previewDPI) dpi 预览" : "低清预览")"
+          "\(Int(pixels.width)) × \(Int(pixels.height)) · \(frame.hasFullResolution ? (frame.scanDPI.map{String($0)+" dpi"} ?? "源图") : r.previewDPI >= 600 ? "\(r.previewDPI) dpi 预览" : "低清预览")"
           + (Self.readsScan(frame) && frame.levels?.usable == true ? " · 已对齐预览" : "")
         DispatchQueue.main.async {
-          guard self.revision == token else { return }
+          // The newest asked for ends the render, shown or not.
+          let newest = self.revision == token
+          // Newer than the picture shown, and of what is still shown: the frame, alone, as it is
+          // looked at (edited or not, negative or not).
+          guard token > self.shownSingle, self.singleView, self.selectedID == frame.id, edit == self.editingSingle,
+            negative == (self.showNegative || self.tool == .base)
+          else {
+            if newest { self.rendering = false }
+            return
+          }
+          self.shownSingle = token
           self.displayed = output
           self.canvasRegion = context?.region
           self.samplingInput = input
           self.toneAnalysis = analysis
           if edit { self.editRegionLock = context?.region }
           if !edit && !negative { self.thumbnails[frame.id] = output }
-          self.histogram = hist
-          self.channelHistograms = channels
-          self.toneRange = range
-          self.rendering = false
+          if let hist { (self.histogram, self.channelHistograms) = hist }
+          if measured { self.toneRange = range }
           self.sourceSummary = summary
-          self.readAhead(around: frame, token: token)
+          if newest {
+            self.rendering = false
+            self.readAhead(around: frame, token: token)
+          }
         }
       } catch {
         DispatchQueue.main.async {
@@ -1934,9 +2025,6 @@ final class AppModel: ObservableObject {
           self.rendering = false
         }
       }
-    }
-    renderWork = work
-    renderQueue.asyncAfter(deadline: .now() + 0.07, execute: work)
   }
   /// The frames either side of the one shown, read from their files while it is looked at, so that
   /// → and ← show them as soon as they are drawn: after the frame's own render, on the same queue,
@@ -2300,7 +2388,7 @@ final class AppModel: ObservableObject {
     }
     let names = pass.map { frames[$0].name }
     status = (names.count == 1 ? "第 \(names[0]) 张" : "第 \(names.joined(separator: "、")) 张（一次扫完）") + "扫描完成 · \(info.bits*3)-bit 原始负片已存入 Originals"
-      + (preferences.autoExport && pendingSheet == nil ? " · 整批扫完后正片导出到 Exports" : " · 正片请在「输出」导出")
+      + (preferences.autoExport && pendingSheet == nil ? " · 整批扫完后正片导出到 Exports" : " · 正片在 ② 去色罩用「导出」导出")
     saveProject()
     if let selectedID, ids.contains(selectedID) { refresh() }
     updateThumbnails()

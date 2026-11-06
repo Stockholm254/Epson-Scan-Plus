@@ -164,6 +164,12 @@ enum FilmCalibration {
     return (p.name.replacingOccurrences(of: "( · (翻拍( · [^·]+)?|V850))+$", with: "", options: .regularExpression),
       p.id.replacingOccurrences(of: "(-(copy|v850)-[0-9a-f]{6})+$", with: "", options: .regularExpression))
   }
+  /// A roll's film as people call it: its name past what calibrating added to the preset it was
+  /// named after ("Kodak Portra 160 · 翻拍 · 2026-10-30 19:41" is Kodak Portra 160).
+  static func film(_ name: String) -> String {
+    let film = name.replacingOccurrences(of: "( · (翻拍( · [^·]+)?|V850))+$", with: "", options: .regularExpression)
+    return film.isEmpty ? name : film
+  }
   /// What a preset calibrated from `base` is called: "Kodak Portra 160 · V850", or on the copy stand
   /// "Kodak Portra 160 · 翻拍 · 2026-10-30 19:41", after the copy session (`batch`) it holds for.
   static func name(basedOn base: FilmProfile, copyStand: Bool, batch: String? = nil) -> String {
@@ -186,7 +192,7 @@ enum FilmCalibration {
     let reading = unmixed.map { $0 ? "标定时去串色是开着的，用时也要开着" : "标定时没有去串色，用时也要关着" }
       ?? "标定的点里有的去了串色、有的没有，斜率可能不准"
     let applies = copyStand
-      ? "只适用于这一次翻拍：这台相机、这次架好的灯和同一种胶片；新开的卷不会自动用它，同一次翻拍的其他卷在「预设」里选它。\(reading)"
+      ? "只适用于这一次翻拍：这台相机、这次架好的灯和同一种胶片；新开的卷不会自动用它，同一次翻拍的其他卷在胶片菜单里选它。\(reading)"
       : "只适用于这台扫描仪和同一种胶片"
     return FilmProfile(
       id: "\(root.id == "generic" ? "film" : root.id)-\(copyStand ? "copy" : "v850")-\(UUID().uuidString.prefix(6).lowercased())",

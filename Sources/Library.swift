@@ -106,7 +106,7 @@ enum RollLibrary {
     let exported = ((try? files.contentsOfDirectory(at: exports, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []).count
     return RollEntry(
       folder: folder, project: projectURL, title: name.isEmpty ? Self.title(date) : name, named: !name.isEmpty,
-      film: p.filmName, date: date, source: source, frames: frames,
+      film: FilmCalibration.film(p.filmName), date: date, source: source, frames: frames,
       fullResolution: p.frames.filter(\.hasFullResolution).count, exported: exported,
       overview: files.fileExists(atPath: overview) ? URL(fileURLWithPath: overview) : nil,
       notes: p.notes ?? "", profile: p.profile, legacy: legacy)
@@ -136,12 +136,15 @@ enum RollLibrary {
   }
   /// Keeps the positives the app has rendered of the roll in `folder`, small, for the library to
   /// show; frames no longer in the roll are dropped.
-  static func storePositives(_ images: [UUID: CGImage], folder: URL) {
-    guard !images.isEmpty else { return }
+  /// Writes `images` small; with `keeping`, the frames whose copies stay (the rest are removed),
+  /// else just `images`'.
+  static func storePositives(_ images: [UUID: CGImage], keeping frames: Set<UUID>? = nil, folder: URL) {
+    let kept = frames ?? Set(images.keys)
+    guard !kept.isEmpty else { return }
     let dir = cacheFolder(for: folder)
     let files = FileManager.default
     try? files.createDirectory(at: dir, withIntermediateDirectories: true)
-    let keep = Set(images.keys.map { $0.uuidString + ".jpg" })
+    let keep = Set(kept.map { $0.uuidString + ".jpg" })
     for name in (try? files.contentsOfDirectory(atPath: dir.path)) ?? [] where !keep.contains(name) {
       try? files.removeItem(at: dir.appendingPathComponent(name))
     }

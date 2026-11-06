@@ -40,10 +40,10 @@ struct EpsonScanPlusApp: App {
       }
     }.defaultSize(width: 1320, height: 900).commands {
       CommandGroup(replacing: .appSettings) {
-        // Every setting is in the main window's left panel.
+        // The scanner's and the camera's settings, in module ①'s left panel, opened if put away.
         Button("设置…") {
           model.page = .capture
-          model.panelTab = .scan
+          model.settingsRequests += 1
         }.keyboardShortcut(",")
       }
       CommandGroup(after: .appInfo) {
@@ -53,17 +53,24 @@ struct EpsonScanPlusApp: App {
         }
       }
       CommandGroup(replacing: .newItem) {
-        Button("导入图像…") { model.importImages() }.keyboardShortcut("o")
+        // On ③, the positive to repair, as its own key has it.
+        Button(model.page == .leak ? "导入正片…" : "导入图像…") {
+          if model.page == .leak { model.leak.chooseFile() } else { model.importImages() }
+        }.keyboardShortcut("o")
         Button("打开工程…") { model.openProject() }.keyboardShortcut(
           "o", modifiers: [.command, .shift])
       }
       CommandMenu("扫描") {
+        // Only what the scanner can do now: ready, idle, and frames of the preview to scan.
         Button("预览") { model.requestPreview() }.keyboardShortcut(
-          "p", modifiers: [.command, .shift])
+          "p", modifiers: [.command, .shift]).disabled(!model.scanner.ready || model.isWorking)
         Button("扫描当前画面") { model.requestScanSelected() }.keyboardShortcut(
           "s", modifiers: [.command, .shift])
+          .disabled(!model.scanner.ready || model.isWorking || model.selected == nil || model.selected?.sourcePath != nil)
         Button("扫描勾选画面") { model.requestScanEnabled() }
+          .disabled(!model.scanner.ready || model.isWorking || !model.hasScanTargets)
         Button("取消扫描") { model.cancel() }.keyboardShortcut(".")
+          .disabled(!model.scanner.busy && !model.scanBatch.isActive && model.scanQueue.isEmpty)
       }
       CommandMenu("模块") {
         ForEach(AppModel.Page.allCases, id: \.self) { page in
@@ -90,13 +97,17 @@ struct EpsonScanPlusApp: App {
         ) {
           ForEach(LoupeField.allCases, id: \.self) { Text($0.title).tag($0) }
         }
-        Button("顺时针旋转") { model.turn(clockwise: true) }.keyboardShortcut("r")
-        Button("逆时针旋转") { model.turn(clockwise: false) }.keyboardShortcut(
-          "r", modifiers: [.command, .shift])
-        Button("水平镜像") { model.toggleMirror() }
+        // As the keys under the picture: the frame (or with it the roll, synced) in the single view,
+        // the whole roll on the light table. ③ turns its own picture.
+        Button("顺时针旋转") { model.singleView ? model.turn(clockwise: true) : model.turnRoll(clockwise: true) }
+          .keyboardShortcut("r").disabled(model.frames.isEmpty || model.page == .leak)
+        Button("逆时针旋转") { model.singleView ? model.turn(clockwise: false) : model.turnRoll(clockwise: false) }
+          .keyboardShortcut("r", modifiers: [.command, .shift]).disabled(model.frames.isEmpty || model.page == .leak)
+        Button("水平镜像") { model.singleView ? model.toggleMirror() : model.mirrorRoll() }
+          .disabled(model.frames.isEmpty || model.page == .leak)
         Button("在去漏光里打开") { if let id = model.selectedID { model.openInLeak(id) } }
           .keyboardShortcut("l", modifiers: [.command, .option]).disabled(model.selected == nil || model.page == .leak)
-        Toggle("旋转 / 镜像同步到全部照片", isOn: $model.syncOrientation)
+        Toggle("整卷一起转", isOn: $model.syncOrientation)
         Divider()
         // Which frames a batch scans and exports; on the light table's strip as well, by its menu.
         // ③ exports on its own, so its page ticks nothing.
@@ -106,11 +117,13 @@ struct EpsonScanPlusApp: App {
         Button("全部勾选") { model.setAllEnabled(true) }.disabled(model.frames.isEmpty || model.isWorking || model.page == .leak)
         Button("全部不勾选") { model.setAllEnabled(false) }.disabled(model.enabledCount == 0 || model.isWorking || model.page == .leak)
         Divider()
+        // ②'s conversion; ③ exports its repair from its own bar.
         Button("导出当前…") { model.exportImages(all: false) }.keyboardShortcut("e")
-        Button("导出勾选画面…") { model.exportImages(all: true) }.keyboardShortcut(
-          "e", modifiers: [.command, .shift])
+          .disabled(model.selected == nil || model.isWorking || model.page == .leak)
+        Button("导出勾选的 \(model.enabledCount) 张…") { model.exportImages(all: true) }.keyboardShortcut(
+          "e", modifiers: [.command, .shift]).disabled(model.enabledCount == 0 || model.isWorking || model.page == .leak)
         Button("导出接触表…") { model.exportContactSheet() }.keyboardShortcut(
-          "e", modifiers: [.command, .option])
+          "e", modifiers: [.command, .option]).disabled(model.enabledCount == 0 || model.isWorking || model.page == .leak)
       }
     }
   }

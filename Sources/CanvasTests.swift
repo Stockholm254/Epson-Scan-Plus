@@ -170,6 +170,12 @@ enum CanvasTests {
         windowNumber: window.windowNumber, context: nil, characters: characters, charactersIgnoringModifiers: characters,
         isARepeat: false, keyCode: code)!)
     }
+    // Capturing has only the frame tools; the pickers belong to taking the mask off.
+    model.page = .capture
+    key("b", code: 11)
+    key("n", code: 45)
+    try check(model.tool == .select, "in ① capturing, B and N pick nothing, as its tool bar has no pickers")
+    model.page = .convert
     key("b", code: 11)
     try check(model.tool == .base, "B picks the film base sampler")
     key("z", code: 6, flags: .command)
@@ -182,6 +188,7 @@ enum CanvasTests {
       "W the highlight (Dmax) sampler, on the single frame, with its own eyedropper")
     key("v", code: 9)
     try check(model.tool == .select && canvas.samplingCursor == nil, "V goes back to selecting, and to the arrow")
+    model.page = .capture
     model.singleView = false
     key("c", code: 8)
     try check(model.tool == .crop && CanvasTool.allCases.compactMap(\.shortcut).count == 5 && CanvasTool.base.help.hasSuffix("· B"),

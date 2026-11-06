@@ -60,7 +60,7 @@ struct ContentView: View {
   }
   var windowSubtitle: String {
     guard m.sessionURL != nil || !m.frames.isEmpty else { return "" }
-    return [m.filmName, "\(m.frames.count) 张"].filter { !$0.isEmpty }.joined(separator: " · ")
+    return [FilmCalibration.film(m.filmName), "\(m.frames.count) 张"].filter { !$0.isEmpty }.joined(separator: " · ")
   }
   var body: some View {
     // The system's window: a sidebar for the module's settings, the workspace with the film strip
@@ -124,6 +124,7 @@ struct ContentView: View {
     .onChange(of: m.page) { _, page in
       if page == .leak { m.leak.undoManager = undoManager } else { m.leak.save() }
     }
+    .onChange(of: m.settingsRequests) { withAnimation(Liquid.flow) { captureSidebar = .all } }
   }
   /// The window's toolbar, the system's: the scanner's lamp by the title, the modules in the
   /// middle with the assistant, the module's keys after the title, and the module's leading
@@ -191,9 +192,8 @@ struct ContentView: View {
         } label: {
           Label("导出", systemImage: "square.and.arrow.up")
         } primaryAction: {
-          m.exportImages(all: false)
+          if m.selected != nil && !m.isWorking { m.exportImages(all: false) }
         }
-        .disabled(m.frames.isEmpty)
         .help("导出当前这张（⌘E）；点箭头导出勾选的画面、接触表，或改格式和文件名")
       }
     }
@@ -487,8 +487,11 @@ struct ContentView: View {
           Spacer()
           Button("重置") { m.resetAdjustments() }.font(.system(size: 11))
             .help("把这一张的调整恢复默认；输入 Gamma、方向和整卷估计保留")
+            .disabled(frameControlsOff)
         }
+        // The roll's film stays at hand while exporting, which works from the preset it began with.
         filmSection
+        Group {
         Divider()
         baseSection
         if m.singleView {
@@ -518,10 +521,13 @@ struct ContentView: View {
           Label("同步到本卷", systemImage: "square.on.square")
         }.frame(maxWidth: .infinity).padding(.top, 4)
           .help("把这一张的调整用到本卷每一张")
-      }.padding(18).disabled(m.selected == nil || m.exporting)
+        }.disabled(frameControlsOff)
+      }.padding(18)
         .buttonStyle(.bordered).controlSize(.small)
     }
   }
+  /// The frame's own controls wait for a frame, and for an export to finish.
+  private var frameControlsOff: Bool { m.selected == nil || m.exporting }
   /// The film: its preset, where the channel slopes come from in a line (the whole of it behind
   /// ⓘ), and the roll's switches that change how it is read.
   var filmSection: some View {

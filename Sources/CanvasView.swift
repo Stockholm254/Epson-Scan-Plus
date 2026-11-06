@@ -1579,7 +1579,9 @@ final class FilmCanvasView: NSView {
       model?.toggleLoupe()
     } else if event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
       let key = event.charactersIgnoringModifiers?.lowercased(),
-      let tool = CanvasTool.allCases.first(where: { $0.shortcut == key })
+      let tool = CanvasTool.allCases.first(where: { $0.shortcut == key }),
+      // The pickers belong to taking the mask off; capturing has only the frame tools.
+      model?.page != .capture || ![CanvasTool.base, .neutral, .highlight].contains(tool)
     {
       model?.useTool(tool)
     } else {

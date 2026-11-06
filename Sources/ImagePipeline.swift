@@ -433,10 +433,22 @@ final class ImagePipeline {
   /// How far highlights run: where the brightest 0.1% of `e` lie through `gain` and `balance`, in
   /// their brightest channel once saturated, as the kernel saturates them ahead of the shoulder.
   func reach(_ e: [[Double]], gain: RGB, balance: RGB, weight: [Double]?, saturation: Double) -> Double {
-    let peaks = (0..<e[0].count).map { (i: Int) -> Double in
-      let x: [Double] = (0..<3).map { (c: Int) -> Double in e[c][i] * gain.values[c] + balance.values[c] * (weight?[i] ?? 1) }
-      let l = 0.2126 * x[0] + 0.7152 * x[1] + 0.0722 * x[2]
-      return x.map { (v: Double) -> Double in l + saturation * (v - l) }.max()!
+    // The same sums as channel by channel, without an array for every sample.
+    let n = e[0].count
+    let (g0, g1, g2) = (gain.values[0], gain.values[1], gain.values[2])
+    let (b0, b1, b2) = (balance.values[0], balance.values[1], balance.values[2])
+    var peaks = [Double](repeating: 0, count: n)
+    e[0].withUnsafeBufferPointer { r in
+      e[1].withUnsafeBufferPointer { g in
+        e[2].withUnsafeBufferPointer { b in
+          for i in 0..<n {
+            let w = weight?[i] ?? 1
+            let x0 = r[i] * g0 + b0 * w, x1 = g[i] * g1 + b1 * w, x2 = b[i] * g2 + b2 * w
+            let l = 0.2126 * x0 + 0.7152 * x1 + 0.0722 * x2
+            peaks[i] = max(l + saturation * (x0 - l), l + saturation * (x1 - l), l + saturation * (x2 - l))
+          }
+        }
+      }
     }
     return quantile(peaks, 0.999)
   }
@@ -483,8 +495,11 @@ final class ImagePipeline {
     let e = exposures(density, settings: settings, profile: profile)
     // Independent robust endpoints correct color crossover, not just a single median offset.
     // They are scene statistics, not an ICC calibration; manual neutral/temperature remain available.
-    let channelLow = e.map { quantile($0, 0.01) }
-    let channelHigh = e.map { quantile($0, 0.99) }
+    // Each channel sorted once; every quantile of it below is read from that one sort.
+    let sorted = e.map { $0.sorted() }
+    func at(_ v: [Double], _ p: Double) -> Double { v.isEmpty ? 0 : v[min(v.count - 1, Int(Double(v.count - 1) * p))] }
+    let channelLow = sorted.map { at($0, 0.01) }
+    let channelHigh = sorted.map { at($0, 0.99) }
     let spans = (0..<3).map { max(0.05, channelHigh[$0] - channelLow[$0]) }
     let commonSpan = quantile(spans, 0.5)
     var gain = RGB.one
@@ -555,7 +570,7 @@ final class ImagePipeline {
         lows.append(q[0])
         highs.append(q[1])
       } else {
-        let q = quantiles(e[c], [0.005, 0.995]).map { $0 * gain.values[c] + balance.values[c] }
+        let q = [at(sorted[c], 0.005), at(sorted[c], 0.995)].map { $0 * gain.values[c] + balance.values[c] }
         lows.append(q[0])
         highs.append(q[1])
       }
