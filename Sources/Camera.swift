@@ -158,6 +158,14 @@ final class CameraController: ObservableObject {
   /// The focus box's side against the live view's width.
   static let boxSize = 0.12
   var onCapture: ((URL) -> Void)?
+  /// Pictures one press brings: 4 for a pixel-shift shot, set on the camera. The shutter waits for
+  /// them all, so the next press's pictures never join this one's group.
+  var picturesPerShot = 1
+  /// A press whose pictures stopped coming before `picturesPerShot`: how many came.
+  var onShotEnded: ((Int) -> Void)?
+  /// How long after a press's last picture the rest may still come: the A7R IV sends a pixel-shift
+  /// shot's 120 MB RAWs about a second apart.
+  static var groupWait: TimeInterval = 8
   /// Lines the controller sends, instead of to the process: for tests.
   var transport: ((String) -> Void)?
   let helper: URL
@@ -540,7 +548,19 @@ final class CameraController: ObservableObject {
       }
     case "downloaded":
       received += 1
-      awaitingPicture = false
+      let got = received - receivedAtPress
+      if got >= picturesPerShot || !awaitingPicture {
+        awaitingPicture = false
+      } else {
+        // More of this press to come: if they stop, the shutter is free again and the group is let go.
+        let press = presses, count = received
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.groupWait) { [weak self] in
+          guard let self, self.presses == press, self.received == count, self.awaitingPicture else { return }
+          self.awaitingPicture = false
+          self.message = "这一下只收到 \(got) / \(self.picturesPerShot) 张：相机可能没有打开像素位移，或张数不是 \(self.picturesPerShot)。请在相机菜单里设好，或在取景区选「单张」"
+          self.onShotEnded?(got)
+        }
+      }
       if let ms = event["afterShotMs"] as? Int { log.append("照片在按下快门 \(ms) ms 后到达") }
       if let path = event["path"] as? String, !path.isEmpty { onCapture?(URL(fileURLWithPath: path)) }
     default: break

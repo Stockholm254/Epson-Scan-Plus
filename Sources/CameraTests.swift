@@ -164,6 +164,30 @@ enum CameraTests {
       == ["Lightroom Classic", "照片", "图像捕捉", "Imaging Edge Remote"],
       "the programs that take the camera are told from the ones that only look at pictures")
 
+    // A pixel-shift shot: the shutter waits for the whole group, and a press that brings less lets
+    // the shutter go again after a while and says so.
+    camera.receive("{\"event\":\"downloaded\",\"path\":\"\(camFolder.path)/EPS00089.ARW\",\"type\":1}")
+    camera.picturesPerShot = 4
+    var came = [String](), ended = [Int]()
+    camera.onCapture = { came.append($0.lastPathComponent) }
+    camera.onShotEnded = { ended.append($0) }
+    camera.shoot()
+    for n in 90...92 { camera.receive("{\"event\":\"downloaded\",\"path\":\"\(camFolder.path)/EPS000\(n).ARW\",\"type\":1}") }
+    let waiting = camera.awaitingPicture
+    camera.receive("{\"event\":\"downloaded\",\"path\":\"\(camFolder.path)/EPS00093.ARW\",\"type\":1}")
+    try check(waiting && !camera.awaitingPicture && came.count == 4 && ended.isEmpty,
+      "with pixel shift the shutter waits for all four pictures of a press, and is free once they are in")
+    let wait = CameraController.groupWait
+    CameraController.groupWait = 0.2
+    camera.shoot()
+    camera.receive("{\"event\":\"downloaded\",\"path\":\"\(camFolder.path)/EPS00094.ARW\",\"type\":1}")
+    let held = camera.awaitingPicture
+    settle(0.5)
+    try check(held && !camera.awaitingPicture && ended == [1] && camera.message.contains("1 / 4"),
+      "a press that brings one picture of four frees the shutter after a while and says the camera may not be shifting: \(camera.message)")
+    CameraController.groupWait = wait
+    camera.picturesPerShot = 1
+
     // Pictures arriving in a camera roll.
     let lib = folder.appendingPathComponent("camera-library", isDirectory: true)
     try? FileManager.default.removeItem(at: lib)
@@ -204,6 +228,31 @@ enum CameraTests {
     try check(model.frames.count == 3 && grouped.count == 4 && model.pendingShift.isEmpty
       && model.frames[2].sourcePath?.hasSuffix("EPS00003.JPG") == true,
       "a whole group goes into a folder of its own, and its first picture becomes the roll's next frame")
+    // Four uncompressed ARWs of one pixel-shift shot: composed into the roll's next frame.
+    for (k, data) in PixelShiftTests.shots(width: 12, height: 10).enumerated() {
+      let url = incoming.appendingPathComponent(String(format: "EPS%05d.ARW", 7 + k))
+      try data.write(to: url)
+      model.receiveCapture(url)
+    }
+    for _ in 0..<120 where model.frames.count == 3 { settle(0.05) }
+    let shifted = model.frames.count == 4 ? model.frames[3] : nil
+    let composite = shifted?.sourcePath.map { ImagePipeline.shared.info(URL(fileURLWithPath: $0)) }
+    let second = (try? FileManager.default.contentsOfDirectory(atPath: root?.appendingPathComponent("Captures/PixelShift-002").path ?? "")) ?? []
+    try check(shifted?.sourcePath?.hasSuffix("Decoded/PixelShift-002.tif") == true && shifted?.sensorRead == true
+      && composite?.width == 12 && composite?.height == 10 && second.count == 4 && model.status.contains("已合成：4 张对齐"),
+      "four uncompressed ARWs of a pixel-shift shot are kept together and composed into one frame read from the sensor: \(model.status)")
+    // A press that brought one picture of a group: that one alone becomes the next frame, and the
+    // next press starts a group of its own.
+    let lone = incoming.appendingPathComponent("EPS00011.ARW")
+    try PixelShiftTests.shots(width: 12, height: 10)[0].write(to: lone)
+    model.receiveCapture(lone)
+    let waitingOne = model.pendingShift.count
+    model.releaseShift()
+    for _ in 0..<120 where model.frames.count == 4 { settle(0.05) }
+    try check(waitingOne == 1 && model.pendingShift.isEmpty && model.frames.count == 5
+      && model.frames[4].sourcePath?.hasSuffix("Decoded/EPS00011.tif") == true,
+      "a group that will not be completed gives its picture as one shot, and the next press starts afresh")
+    model.pixelShiftCount = 1
 
     // An uncompressed ARW laid out as the A7R IV writes one, small: IFD0 pointing to the sensor's
     // SubIFD, 14-bit RGGB, black 512, white 16383. Its cells read as they are, no matrix.

@@ -1,0 +1,87 @@
+import Foundation
+
+/// Sony pixel shift without a camera: four mosaics sampled from a known colour scene the way the
+/// A7R IV's sensor walks round a square compose back into that scene, every point's red, green and
+/// blue as it was; four out of order or of different kinds are told.
+enum PixelShiftTests {
+  /// An uncompressed ARW laid out as the A7R IV writes one: IFD0 pointing to the sensor's SubIFD,
+  /// 14-bit RGGB, black 512, white 16383, each photosite `value(x, y)` (black included).
+  static func sensorARW(width w: Int, height h: Int, orientation: Int = 1, compression: Int = 1, value: (Int, Int) -> Int) -> Data {
+    var d = Data()
+    func u16(_ v: Int) { d.append(UInt8(v & 0xFF)); d.append(UInt8(v >> 8 & 0xFF)) }
+    func u32(_ v: Int) { u16(v & 0xFFFF); u16(v >> 16) }
+    func entry(_ tag: Int, _ type: Int, _ count: Int, _ value: Int) { u16(tag); u16(type); u32(count); u32(value) }
+    let sub = 38, black = 176, strip = 184
+    d.append(contentsOf: Array("II".utf8)); u16(42); u32(8)
+    u16(2); entry(0x112, 3, 1, orientation); entry(0x14A, 4, 1, sub); u32(0)
+    u16(11)
+    entry(0x100, 3, 1, w); entry(0x101, 3, 1, h); entry(0x102, 3, 1, 14); entry(0x103, 3, 1, compression)
+    entry(0x106, 3, 1, 32803); entry(0x111, 4, 1, strip); entry(0x117, 4, 1, w * h * 2)
+    entry(0x828D, 3, 2, 2 | 2 << 16); entry(0x828E, 1, 4, 0 | 1 << 8 | 1 << 16 | 2 << 24)
+    entry(0x7310, 3, 4, black); entry(0xC61D, 3, 1, 16383); u32(0)
+    for _ in 0..<4 { u16(512) }
+    for y in 0..<h { for x in 0..<w { u16(min(16383, max(0, value(x, y)))) } }
+    return d
+  }
+  /// The colour at scene point (x, y), above black: every point different in each channel, and
+  /// well above the level the greens' agreement is measured from.
+  static func scene(_ x: Int, _ y: Int) -> [Int] {
+    [2600 + 310 * x + 47 * y, 3000 + 230 * ((x * 7 + y * 3) % 11) + 13 * y, 2400 + 410 * ((x + 2 * y) % 5) + 29 * x]
+  }
+  /// The four shots of a group of `scene`: shot k's photosite (x, y) saw the scene point the
+  /// sensor's walk put there, in its own colour (RGGB).
+  static func shots(width w: Int, height h: Int, orientation: Int = 1) -> [Data] {
+    SensorRaw.shiftOrder.map { d in
+      sensorARW(width: w, height: h, orientation: orientation) { x, y in
+        let colour = [0, 1, 1, 2][(y & 1) << 1 | (x & 1)]
+        return 512 + scene(x - d.x, y - d.y)[colour]
+      }
+    }
+  }
+
+  static func run(folder: URL) throws {
+    func check(_ value: Bool, _ label: String) throws {
+      guard value else { throw DeskError.message("FAIL: " + label) }; print("PASS: " + label)
+    }
+    let root = folder.appendingPathComponent("pixel-shift", isDirectory: true)
+    try? FileManager.default.removeItem(at: root)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    func write(_ files: [Data], _ name: String) throws -> [URL] {
+      try files.enumerated().map { k, data in
+        let url = root.appendingPathComponent("\(name)-\(k + 1).ARW")
+        try data.write(to: url)
+        return url
+      }
+    }
+    let w = 12, h = 10, scale = 65535.0 / Double(16383 - 512)
+    let urls = try write(shots(width: w, height: h), "group")
+    let composed = try SensorRaw.pixelShiftRGB(urls)
+    let bytes = composed.flatMap { $0.image.dataProvider?.data as Data? }
+    func at(_ x: Int, _ y: Int, width: Int = w) -> [Int] {
+      bytes.map { b in (0..<3).map { c in let i = 2 * (3 * (y * width + x) + c); return Int(b[i]) | Int(b[i + 1]) << 8 } } ?? []
+    }
+    // Inside the edge each point has all four shots' photosites; at the edge the nearest of the same colour stands in.
+    var worst = 0
+    for y in 1..<h { for x in 0..<(w - 1) {
+      let want = scene(x, y).map { Int((Double($0) * scale).rounded()) }
+      worst = max(worst, zip(at(x, y), want).map { abs($0 - $1) }.max() ?? 99)
+    } }
+    try check(composed?.image.width == w && composed?.image.height == h && composed?.image.bitsPerComponent == 16 && worst <= 1
+      && composed?.greens == 0,
+      "four shots walked round a square compose back into the scene, each point's red, green and blue as measured (off by \(worst) at most), the two greens the same")
+    // Two of them swapped: each point's colours from the wrong places, and the greens tell.
+    let swapped = try SensorRaw.pixelShiftRGB([urls[0], urls[3], urls[2], urls[1]])
+    try check((swapped?.greens ?? 0) > AppModel.shiftGreensLimit,
+      String(format: "four out of order are told by their greens: they differ by %.1f%%, the limit is %.0f%%", (swapped?.greens ?? 0) * 100, AppModel.shiftGreensLimit * 100))
+    let turned = try SensorRaw.pixelShiftRGB(try write(shots(width: w, height: h, orientation: 6), "turned"))
+    var others = try write(shots(width: w, height: h), "mixed")
+    try sensorARW(width: w, height: h, compression: 32767) { _, _ in 1000 }.write(to: others[3])
+    let compressed = try SensorRaw.pixelShiftRGB(others)
+    try sensorARW(width: w + 2, height: h) { _, _ in 1000 }.write(to: others[3])
+    let sizes = try SensorRaw.pixelShiftRGB(others)
+    others.removeLast()
+    let three = try SensorRaw.pixelShiftRGB(others)
+    try check(turned?.image.width == h && turned?.image.height == w && compressed == nil && sizes == nil && three == nil,
+      "a group is turned as the camera was held; a compressed ARW among them, one of another size or three of four compose nothing")
+  }
+}

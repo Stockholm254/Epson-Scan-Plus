@@ -159,4 +159,99 @@ struct SensorRaw {
     let turns = [6: 1, 3: 2, 8: 3][raw.orientation] ?? 0
     return turns == 0 ? image : ImagePipeline.shared.turned(image, quarterTurns: turns)
   }
+
+  /// Where the scene at (x, y) of the first of a 4-shot pixel-shift group lies in each shot: the
+  /// sensor walks one photosite round a square, so every point is measured once in red, once in
+  /// blue and twice in green. Measured on the A7R IV (2026-11-05, Vlad's test target): each shot's
+  /// offset against the first matched this within 0.2 px, the diagonal one within 0.05 px. A
+  /// 16-shot group is four of these squares, a half photosite apart.
+  static let shiftOrder: [(x: Int, y: Int)] = [(0, 0), (0, -1), (1, -1), (1, 0)]
+
+  /// The four shots of a pixel-shift group, in the order taken, composed at the sensor's full
+  /// resolution: each point takes red, green and blue from the photosites the four shots put there,
+  /// the two greens averaged, so no colour is interpolated from neighbours. Same scale and
+  /// orientation as `nativeRGB`, so the rest of the conversion takes it as it takes one shot.
+  /// `greens` is how far the two greens of a point differ, against their level, where it is bright
+  /// enough for noise not to decide it: about 1 % when the four lie as they should, several times
+  /// that when something moved between them. Nil when the four are not uncompressed ARWs of one
+  /// size, pattern and levels.
+  static func pixelShiftRGB(_ urls: [URL]) throws -> (image: CGImage, greens: Double)? {
+    guard urls.count == shiftOrder.count else { return nil }
+    // Mapped, and kept as NSData, whose bytes stay where they are while it lives.
+    let files = try urls.map { try NSData(contentsOf: $0, options: .alwaysMapped) }
+    let raws = files.compactMap { SensorRaw($0 as Data) }
+    guard raws.count == files.count, let first = raws.first,
+      raws.allSatisfy({ $0.width == first.width && $0.height == first.height && $0.pattern == first.pattern
+        && $0.black == first.black && $0.white == first.white && $0.orientation == first.orientation })
+    else { return nil }
+    let w = first.width, h = first.height
+    let range = Float(first.white - first.black.reduce(0, +) / 4), scale = Float(65535) / range
+    let mosaic = Mosaic(bases: zip(files, raws).map { UInt(bitPattern: $0.0.bytes) + UInt($0.1.offset) },
+      width: w, height: h, pattern: first.pattern, black: first.black)
+    var out = Data(count: w * h * 6)
+    var rows = [(difference: Double, level: Double)](repeating: (0, 0), count: h)
+    // The greens are compared only where all four shots measured the point, not at the edge.
+    let xs = (-(shiftOrder.map(\.x).min() ?? 0))...(w - 1 - (shiftOrder.map(\.x).max() ?? 0))
+    let ys = (-(shiftOrder.map(\.y).min() ?? 0))...(h - 1 - (shiftOrder.map(\.y).max() ?? 0))
+    withExtendedLifetime(files) {
+      out.withUnsafeMutableBytes { (target: UnsafeMutableRawBufferPointer) in
+        nonisolated(unsafe) let dst = target.baseAddress!.assumingMemoryBound(to: UInt16.self)
+        rows.withUnsafeMutableBufferPointer { sums in
+          nonisolated(unsafe) let row = sums.baseAddress!
+          DispatchQueue.concurrentPerform(iterations: h) { y in
+            var difference = 0.0, level = 0.0
+            for x in 0..<w {
+              let p = mosaic.composed(x, y)
+              let g = (p.g1 + p.g2) / 2
+              if g > 0.1 * range, xs.contains(x), ys.contains(y) { difference += Double(abs(p.g1 - p.g2)); level += Double(g) }
+              let i = 3 * (y * w + x)
+              dst[i] = UInt16(min(65535, (p.rgb.x * scale).rounded()))
+              dst[i + 1] = UInt16(min(65535, (p.rgb.y * scale).rounded()))
+              dst[i + 2] = UInt16(min(65535, (p.rgb.z * scale).rounded()))
+            }
+            row[y] = (difference, level)
+          }
+        }
+      }
+    }
+    guard let provider = CGDataProvider(data: out as CFData),
+      let image = CGImage(
+        width: w, height: h, bitsPerComponent: 16, bitsPerPixel: 48, bytesPerRow: w * 6,
+        space: CGColorSpace(name: CGColorSpace.linearSRGB)!,
+        bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue | CGBitmapInfo.byteOrder16Little.rawValue),
+        provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
+    else { return nil }
+    let level = rows.reduce(0) { $0 + $1.level }, difference = rows.reduce(0) { $0 + $1.difference }
+    let turns = [6: 1, 3: 2, 8: 3][first.orientation] ?? 0
+    guard let upright = turns == 0 ? image : ImagePipeline.shared.turned(image, quarterTurns: turns) else { return nil }
+    return (upright, level > 0 ? difference / level : 0)
+  }
+
+  /// The photosites of the four shots of a pixel-shift group, read where they lie in the files.
+  struct Mosaic: Sendable {
+    /// Where each shot's photosites begin in memory.
+    let bases: [UInt]
+    let width: Int, height: Int, pattern: [Int], black: [Int]
+    /// The photosite (x, y) of shot `k`, less its black level, and its colour; past the edge, the
+    /// nearest one of the same colour.
+    @inline(__always) func at(_ k: Int, _ x: Int, _ y: Int) -> (colour: Int, value: Float) {
+      let X = x < 0 ? x + 2 : x >= width ? x - 2 : x, Y = y < 0 ? y + 2 : y >= height ? y - 2 : y
+      let s = Int(UnsafeRawPointer(bitPattern: bases[k])!.loadUnaligned(fromByteOffset: 2 * (Y * width + X), as: UInt16.self).littleEndian)
+      let site = (Y & 1) << 1 | (X & 1)
+      return (pattern[site], Float(max(0, s - black[site])))
+    }
+    /// Red, green and blue at (x, y) of the first shot, and the two greens it came from.
+    @inline(__always) func composed(_ x: Int, _ y: Int) -> (rgb: SIMD3<Float>, g1: Float, g2: Float) {
+      var sum = SIMD3<Float>(repeating: 0), seen = SIMD3<Float>(repeating: 0)
+      var g1: Float = -1, g2: Float = -1
+      for k in 0..<4 {
+        let d = SensorRaw.shiftOrder[k], p = at(k, x + d.x, y + d.y)
+        sum[p.colour] += p.value
+        seen[p.colour] += 1
+        if p.colour == 1 { if g1 < 0 { g1 = p.value } else { g2 = p.value } }
+      }
+      let rgb = sum / SIMD3(max(seen.x, 1), max(seen.y, 1), max(seen.z, 1))
+      return (rgb, g1 < 0 ? rgb.y : g1, g2 < 0 ? rgb.y : g2)
+    }
+  }
 }

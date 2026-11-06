@@ -227,9 +227,8 @@ struct CameraStage: View {
             Picker("像素位移", selection: $m.pixelShiftCount) {
               Text("单张").tag(1)
               Text("位移 4").tag(4)
-              Text("位移 16").tag(16)
-            }.pickerStyle(.segmented).labelsHidden().frame(width: 190)
-              .help("像素位移要先在相机上设好；这里只决定几张文件归成一组")
+            }.pickerStyle(.segmented).labelsHidden().frame(width: 130)
+              .help("像素位移要先在相机菜单里打开（4 张、最短间隔）。选「位移 4」时，一次快门收到的 4 张归成一组，合成一张：每个点的红、绿、蓝都是实测的，没有去马赛克的假色")
             if m.pixelShiftCount > 1 { ShiftBeads(count: m.pixelShiftCount, got: m.pendingShift.count) }
           }
           if liquid { drop(shifting) } else { shifting }
@@ -492,7 +491,7 @@ struct CameraPanel: View {
       }
       Divider()
       Text("像素位移").font(.system(size: 12, weight: .medium))
-      Text("像素位移只能在相机上设：拍摄菜单里选「像素位移多重拍摄」，张数选 4 或 16，间隔选最短。下方取景区右侧选同样的张数，App 会按快门、把这一组文件放进同一个文件夹。合成还没做，先用每组第一张转换。")
+      Text("像素位移只能在相机上打开：拍摄菜单里选「像素位移多重拍摄」，张数选 4，间隔选最短，RAW 设为无压缩。下方取景区右侧选「位移 4」。按一次快门，相机拍 4 张，每张传感器移一个像素；App 把这 4 张放进同一个文件夹，合成一张再转换。合成的每个点，红、绿、蓝都是实测的，没有去马赛克的假色，颗粒和细边缘的颜色更干净；清晰度不会变高。4 张之间胶片、相机或灯不能动：两次绿色相差超过 4%（正常约 1.5%）时，App 会提醒重拍。16 张不提供：在这套翻拍上它没有多出细节，却要 4 倍的时间和空间。")
         .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       Divider()
       Text("光源标定").font(.system(size: 12, weight: .medium))

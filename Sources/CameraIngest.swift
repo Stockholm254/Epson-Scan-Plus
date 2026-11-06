@@ -33,14 +33,21 @@ extension AppModel {
           toast("像素位移 \(pendingShift.count) / \(pixelShiftCount)")
           return
         }
-        let first = pendingShift.sorted { $0.lastPathComponent < $1.lastPathComponent }[0]
+        // In the order they came, which is the order the camera took them.
+        let group = pendingShift
         pendingShift = []
-        status = "像素位移 \(pixelShiftCount) 张已收齐；合成还没做，先用这组的第一张"
-        decodeCapture(first, root: root)
+        decodeShift(group, root: root)
       } else {
         decodeCapture(dest, root: root)
       }
     } catch { errorText = "收不下相机拍的照片：\(error.localizedDescription)" }
+  }
+  /// A pixel-shift group that will not be completed (the press brought fewer pictures): its first
+  /// picture as one shot, so the next press starts a group of its own.
+  func releaseShift() {
+    guard let first = pendingShift.first, let root = sessionURL else { return }
+    pendingShift = []
+    decodeCapture(first, root: root)
   }
   /// A new roll for the camera, measured as one roll and sharing a picked base.
   func startCameraRoll() throws {
@@ -83,6 +90,50 @@ extension AppModel {
         switch result {
         case .success(let picture): self.addCapturedFrame(picture, original: file, linear: raw, sensor: sensor)
         case .failure(let error): self.errorText = "解码 \(file.lastPathComponent) 失败：\(error.localizedDescription)"
+        }
+      }
+    }
+  }
+  /// How far the two greens of a pixel-shift composite may differ, against their level, before the
+  /// group is taken to have moved: about 1.4 % when the four lie as they should (Vlad's test target
+  /// on the copy stand), 7.9 % with two of them swapped, a photosite out.
+  static let shiftGreensLimit = 0.04
+  /// A whole pixel-shift group: the four shots composed into one frame, each point's red, green and
+  /// blue as measured, instead of one shot's colours filled in from its neighbours. When they are
+  /// not four uncompressed ARWs of one kind (JPEGs, a compressed RAW), the first is used as one shot.
+  private func decodeShift(_ group: [URL], root: URL) {
+    guard group.count == SensorRaw.shiftOrder.count, let first = group.first else {
+      status = "像素位移 \(group.count) 张已收齐；只有 4 张一组能合成，先用这组的第一张"
+      if let first = group.first { decodeCapture(first, root: root) }
+      return
+    }
+    let name = first.deletingLastPathComponent().lastPathComponent
+    status = "正在合成像素位移 \(name)…"
+    Self.captureQueue.async {
+      let decoded = root.appendingPathComponent("Decoded", isDirectory: true)
+      let out = Self.unused(decoded.appendingPathComponent(name + ".tif"))
+      let result = Result { () -> Double? in
+        guard let composed = try SensorRaw.pixelShiftRGB(group) else { return nil }
+        try FileManager.default.createDirectory(at: decoded, withIntermediateDirectories: true)
+        try ImagePipeline.shared.saveTIFF(composed.image, to: out, dpi: 300)
+        return composed.greens
+      }
+      DispatchQueue.main.async {
+        switch result {
+        case .success(nil):
+          self.status = "像素位移 4 张不是同一种无压缩 ARW，合成不了，先用这组的第一张"
+          self.decodeCapture(first, root: root)
+        case .success(let greens?):
+          self.addCapturedFrame(out, original: first, linear: true, sensor: true)
+          let said = String(format: "%.1f%%", greens * 100)
+          if greens > Self.shiftGreensLimit {
+            self.status = "像素位移 \(name) 已合成，但两次绿色相差 \(said)（正常约 1.5%）：4 张之间有东西动了（胶片、相机或灯），细节会有重影，这一组最好重拍"
+            self.toast("4 张没对齐：重拍这一组")
+          } else {
+            self.status = "像素位移 \(name) 已合成：4 张对齐，两次绿色相差 \(said)"
+          }
+        case .failure(let error):
+          self.errorText = "合成像素位移 \(name) 失败：\(error.localizedDescription)"
         }
       }
     }

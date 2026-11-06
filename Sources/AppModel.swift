@@ -75,10 +75,14 @@ final class AppModel: ObservableObject {
   lazy var camera: CameraController = {
     let c = CameraController()
     c.onCapture = { [weak self] url in self?.receiveCapture(url) }
+    c.onShotEnded = { [weak self] _ in self?.releaseShift() }
     return c
   }()
-  /// Pictures a pixel-shift shot takes (set on the camera, 4 or 16), or 1: the app groups them.
-  @Published var pixelShiftCount = 1
+  /// Pictures a pixel-shift shot takes (set on the camera, 4), or 1: the app groups them and
+  /// composes the group, and the shutter waits for it.
+  @Published var pixelShiftCount = 1 {
+    didSet { camera.picturesPerShot = pixelShiftCount }
+  }
   /// The channel the picture and the camera's live view are looked at through: all, or one alone.
   @Published var channelView = ChannelView.all {
     didSet { canvasFocusRevision += 0 }
