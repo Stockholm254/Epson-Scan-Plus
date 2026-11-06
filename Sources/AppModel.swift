@@ -83,6 +83,9 @@ final class AppModel: ObservableObject {
   @Published var pixelShiftCount = 1 {
     didSet { camera.picturesPerShot = pixelShiftCount }
   }
+  /// A 16-shot group brought back to the sensor's size from its doubled grid: cleaner colours and a
+  /// little less noise than 4 shots, a quarter of the size, the same resolution as 4 shots.
+  @Published var shiftSupersample = false
   /// The channel the picture and the camera's live view are looked at through: all, or one alone.
   @Published var channelView = ChannelView.all {
     didSet { canvasFocusRevision += 0 }

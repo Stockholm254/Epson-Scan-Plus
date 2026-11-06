@@ -202,6 +202,8 @@ struct SensorRaw {
     var image: CGImage
     var greens: Double
     var squares: [(x: Double, y: Double)]
+    /// Brought back to the sensor's size from the doubled grid.
+    var supersampled = false
     /// False when the picture had too little detail to find the squares, which were then taken to
     /// lie where the camera means them.
     var measured: Bool
@@ -216,8 +218,10 @@ struct SensorRaw {
   /// measured; the second to fourth are found against the first to a hundredth of a photosite on
   /// their greens; then each point of the doubled grid takes its colour from the squares'
   /// nearest points, weighted by how near (σ 0.15 photosite), which with the squares a half apart
-  /// is the one square that measured there. Nil as for `pixelShiftRGB`.
-  static func pixelShift16(_ urls: [URL]) throws -> Shift16? {
+  /// is the one square that measured there. `supersample` brings the doubled grid back to the
+  /// sensor's size (`supersampled(_:width:height:)`): the colours cleaner and the noise a little lower
+  /// than 4 shots', a quarter of the size, the resolution as 4 shots'. Nil as for `pixelShiftRGB`.
+  static func pixelShift16(_ urls: [URL], supersample: Bool = false) throws -> Shift16? {
     let n = shiftOrder.count
     guard urls.count == n * shiftGroups.count else { return nil }
     let groups = try (0..<shiftGroups.count).map { try ShiftFiles(Array(urls[$0 * n..<($0 + 1) * n])) }
@@ -267,8 +271,50 @@ struct SensorRaw {
         }
       }
     }
+    if supersample {
+      let native = out.withUnsafeBytes { supersampled($0.baseAddress!.assumingMemoryBound(to: UInt16.self), width: W, height: H) }
+      guard let image = first.upright(rgb48(native, width: w, height: h)) else { return nil }
+      return Shift16(image: image, greens: greens, squares: found, supersampled: true, measured: measured)
+    }
     guard let image = first.upright(rgb48(out, width: W, height: H)) else { return nil }
     return Shift16(image: image, greens: greens, squares: found, measured: measured)
+  }
+
+  /// A doubled grid, 16-bit RGB of `width` × `height`, brought back to half each way by a
+  /// separable Lanczos-3: output point x lies on grid point 2x (which is the first shot's
+  /// photosite x), taking the grid points 2x − 5 … 2x + 5, weighted L3(d / 2), L3(t) =
+  /// 3 sin(πt) sin(πt / 3) / (πt)², the weights summing to 1, the edge repeated. A box over 2 × 2
+  /// loses a little contrast at the finest bars (about 0.03 on Vlad's target) and is not used.
+  static func supersampled(_ src: UnsafePointer<UInt16>, width W: Int, height H: Int) -> Data {
+    let w = W / 2, h = H / 2
+    func l3(_ t: Double) -> Double { t == 0 ? 1 : abs(t) >= 3 ? 0 : 3 * sin(.pi * t) * sin(.pi * t / 3) / (.pi * .pi * t * t) }
+    let taps = Array(-5...5), raw = taps.map { l3(Double($0) / 2) }, total = raw.reduce(0, +)
+    let weights = raw.map { Float($0 / total) }
+    var out = Data(count: w * h * 6)
+    out.withUnsafeMutableBytes { (target: UnsafeMutableRawBufferPointer) in
+      nonisolated(unsafe) let dst = target.baseAddress!.assumingMemoryBound(to: UInt16.self)
+      nonisolated(unsafe) let source = src
+      DispatchQueue.concurrentPerform(iterations: h) { y in
+        // Down the column first, into one row of the grid's width; then along it.
+        var column = [Float](repeating: 0, count: 3 * W)
+        for (k, d) in taps.enumerated() {
+          let row = min(max(2 * y + d, 0), H - 1), weight = weights[k]
+          for i in 0..<(3 * W) { column[i] += Float(source[3 * row * W + i]) * weight }
+        }
+        for x in 0..<w {
+          var v = SIMD3<Float>(repeating: 0)
+          for (k, d) in taps.enumerated() {
+            let c = 3 * min(max(2 * x + d, 0), W - 1)
+            v += SIMD3(column[c], column[c + 1], column[c + 2]) * weights[k]
+          }
+          let o = 3 * (y * w + x)
+          dst[o] = UInt16(min(65535, max(0, v.x.rounded())))
+          dst[o + 1] = UInt16(min(65535, max(0, v.y.rounded())))
+          dst[o + 2] = UInt16(min(65535, max(0, v.z.rounded())))
+        }
+      }
+    }
+    return out
   }
 
   /// Where composite `b` lies against `a`, both 16-bit RGB of `width` × `height`: the scene at

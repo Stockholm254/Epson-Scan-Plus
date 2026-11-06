@@ -122,6 +122,21 @@ enum PixelShiftTests {
     try check(sixteen?.image.width == 2 * w16 && sixteen?.image.height == 2 * h16 && sixteen?.measured == true
       && (sixteen?.astray ?? 1) < 0.06 && off < 0.015,
       String(format: "sixteen shots compose at twice the resolution, the squares found where the camera put them (%@), every point within %.1f%% of the scene there", found, off * 100))
+    // Supersampled: the doubled grid back at the sensor's size, point x on the first shot's photosite x.
+    let native = try SensorRaw.pixelShift16(try write(shots16(width: w16, height: h16), "supersample"), supersample: true)
+    let small = native.flatMap { $0.image.dataProvider?.data as Data? }
+    var offNative = 0.0
+    if let small {
+      for y in stride(from: 6, to: h16 - 6, by: 2) { for x in stride(from: 6, to: w16 - 6, by: 2) {
+        let want = smooth(Double(x), Double(y))
+        for c in 0..<3 {
+          let i = 2 * (3 * (y * w16 + x) + c), got = Double(Int(small[i]) | Int(small[i + 1]) << 8)
+          offNative = max(offNative, abs(got / scale - want[c]) / want[c])
+        }
+      } }
+    }
+    try check(native?.image.width == w16 && native?.image.height == h16 && native?.supersampled == true && offNative < 0.02,
+      String(format: "sixteen shots supersampled come back at the sensor's size, each point within %.1f%% of the scene at the first shot's photosite", offNative * 100))
     var astray = SensorRaw.shiftGroups
     astray[2] = (0, -0.15)
     let moved = try SensorRaw.pixelShift16(try write(shots16(width: w16, height: h16, squares: astray), "astray"))

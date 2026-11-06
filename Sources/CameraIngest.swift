@@ -122,6 +122,7 @@ extension AppModel {
       return
     }
     let name = first.deletingLastPathComponent().lastPathComponent
+    let supersample = shiftSupersample
     status = "正在合成像素位移 \(name)（\(group.count) 张）…"
     Self.captureQueue.async {
       let decoded = root.appendingPathComponent("Decoded", isDirectory: true)
@@ -130,11 +131,12 @@ extension AppModel {
         try FileManager.default.createDirectory(at: decoded, withIntermediateDirectories: true)
         if group.count == all {
           // Twice the sensor each way, 16-bit RGB: about 1.5 GB for the A7R IV, written beside the
-          // 2 GB of shots. Without room for it twice over, the first square alone.
+          // 2 GB of shots (supersampled, a quarter of it). Without room for it twice over, the first
+          // square alone.
           let raw = (try? NSData(contentsOf: first, options: .alwaysMapped)).flatMap { SensorRaw($0 as Data) }
-          let needed = Int64((raw?.width ?? 0) * (raw?.height ?? 0) * 24 * 2)
+          let needed = Int64((raw?.width ?? 0) * (raw?.height ?? 0) * (supersample ? 6 : 24) * 2)
           let free = (try? decoded.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?.volumeAvailableCapacityForImportantUsage ?? .max
-          if free >= needed, let composed = try SensorRaw.pixelShift16(group) {
+          if free >= needed, let composed = try SensorRaw.pixelShift16(group, supersample: supersample) {
             try ImagePipeline.shared.saveTIFF(composed.image, to: out, dpi: 300)
             return Composed(greens: composed.greens, shift16: composed)
           }
@@ -161,7 +163,7 @@ extension AppModel {
           }
           var head = "像素位移 \(name) 已合成"
           if let s = composed.shift16 {
-            head = "像素位移 \(name)（16 张，\(s.image.width)×\(s.image.height)）已合成"
+            head = "像素位移 \(name)（16 张，\(s.supersampled ? "超采样到 " : "")\(s.image.width)×\(s.image.height)）已合成"
             if !s.measured {
               facts.append("画面细节太少，量不出 4 组之间的位移，按相机标称的半像素合成")
             } else if s.astray > Self.shiftSquaresLimit {
@@ -170,7 +172,7 @@ extension AppModel {
               facts.append(String(format: "4 组对齐，半像素位移最多偏 %.2f 像素", s.astray))
             }
           }
-          if composed.squareOnly { facts.append("磁盘空间不够放 16 张的合成图（约 1.5 GB），先用第一组 4 张合成") }
+          if composed.squareOnly { facts.append("磁盘空间不够放 16 张的合成图（\(supersample ? "约 0.4 GB" : "约 1.5 GB")），先用第一组 4 张合成") }
           if problems.isEmpty {
             self.status = head + "：" + (facts + [(composed.shift16 == nil ? "4 张对齐，" : "") + "两次绿色相差 \(said)"]).joined(separator: "；")
           } else {
