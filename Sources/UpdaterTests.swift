@@ -125,6 +125,23 @@ enum UpdaterTests {
       && later.phase == .available(next),
       "when the copy cannot be moved it stays as it was; the next launch says so and leaves that version until asked again")
 
+    // Reopened after the swap even when the system first refuses, as it did right after the app
+    // ended (-600): a stand-in for `open` that fails twice, then opens.
+    let reopen = made("Reopen")
+    let swapped = try app(in: reopen, version: "0.7.0", build: 25)
+    let tries = reopen.appendingPathComponent("tries"), opened = reopen.appendingPathComponent("opened")
+    let opener = reopen.appendingPathComponent("open.sh")
+    try "#!/bin/bash\necho x >> \"\(tries.path)\"\n[ $(wc -l < \"\(tries.path)\") -ge 3 ] || exit 1\necho \"$1\" > \"\(opened.path)\"\n"
+      .write(to: opener, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: opener.path)
+    try updater.launchInstaller(new: try updater.stage(next), build: 26, over: swapped,
+      parked: updater.parkedURL(version: "0.7.0", build: 25), relaunch: true, pid: ended.processIdentifier, opener: opener.path)
+    for _ in 0..<80 where !FileManager.default.fileExists(atPath: opened.path) { Thread.sleep(forTimeInterval: 0.1) }
+    let openedPath = (try? String(contentsOf: opened, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let attempts = ((try? String(contentsOf: tries, encoding: .utf8)) ?? "").split(separator: "\n").count
+    try check(openedPath == swapped.path && attempts == 3,
+      "after the swap the new version is opened even if the first tries are refused (opened on try \(attempts))")
+
     // Only copies in Applications update; old kept copies past five go.
     let home = FileManager.default.homeDirectoryForCurrentUser
     try check(!Updater.updatesItself(home.appendingPathComponent("Documents/Epson-Scan-plus-试用/Epson Scan plus.app"))

@@ -141,12 +141,14 @@ enum LoupeTests {
       "looking into the eyecup the lens fills a \(Int(lensOnScreen)) pt circle, still 5.5× (stripe \(stripe) pt), inside a thin black rim of the eyecup (\(rim.prefix(3))), the table beyond")
     try check(firstRed > 0 && firstBlue > firstRed + 0.4,
       "near the rim red and blue part a little: an edge shows in red \(firstBlue - firstRed) pt before blue")
-    // The glass rim over black film: lit on the side facing the softbox, up and to the left.
+    // Over black film nothing is mirrored on the lens: no coating sheen in the middle, no glint on
+    // the glass rim on the side facing the softbox (up and to the left) or opposite.
     func luma(_ v: [Int]) -> Int { v[0] + v[1] + v[2] }
     let d = lensOnScreen * 0.97 / 2.squareRoot()
     let toward = px(centre.x - d, centre.y - d), away = px(centre.x - d, centre.y + d)
-    try check(luma(toward) > luma(away) + 40,
-      "the lens's glass rim catches the light on the side facing it: \(luma(toward)) against \(luma(away))")
+    let middle = px(centre.x - 50, centre.y - 50)
+    try check(max(luma(toward), luma(away), luma(middle)) < 12,
+      "the lens mirrors nothing over the film: rim facing the light \(luma(toward)), opposite \(luma(away)), middle \(luma(middle))")
     // An eye almost at the eyecup sees the rim at a grazing angle: the coating and the eyecup's
     // inside must still mirror the room and the loupe's dark inside, never the bright table.
     var black = scene
@@ -161,7 +163,8 @@ enum LoupeTests {
     var brightestRim = 0, greenestRim = 0
     for k in 0..<16 {
       let a = Double(k) * .pi / 8
-      // Away from the side that faces the light, where the bevel's own glint is allowed.
+      // Away from the side that faces the light, where the eyecup's rubber may catch the softbox
+      // (the lens itself mirrors nothing on any side; the check above covers it).
       if cos(a) * -0.28 + sin(a) * -0.40 > 0.1 { continue }
       for f in [0.86, 0.92, 0.97, 1.05] {
         let x = Int(rimLens * 1.2 + CGFloat(cos(a) * f) * rimLens), y = Int(rimLens * 1.2 + CGFloat(sin(a) * f) * rimLens)
@@ -175,12 +178,15 @@ enum LoupeTests {
       "even with the eye almost at the eyecup the rim mirrors no table: brightest \(brightestRim), green cast \(greenestRim)")
     // Seen from the left, the top leans right: the stripe moves right of the base's centre.
     let oblique = Picture(renderer.render(frame: view, scale: 2, pose: pose(.pentax, eye: SIMD3(-500, 150, 3000)), scene: scene)!)
-    var brightest = (x: CGFloat(0), v: 0)
-    for x in stride(from: 180.0, to: 260.0, by: 0.5) {
+    // Where the lens's axis is seen: the middle of the white stripe through it (the lens is evenly
+    // bright, so not its brightest point), looked for inside the eyecup, short of the clear skirt.
+    var white = [CGFloat]()
+    for x in stride(from: 180.0, to: 240.0, by: 0.5) {
       let v = oblique.at(CGFloat(x), 150)
-      if v[2] > 150 && v[0] > 150 && v[1] > brightest.v { brightest = (CGFloat(x), v[1]) }
+      if v[0] > 200 && v[1] > 200 && v[2] > 200 { white.append(CGFloat(x)) }
     }
-    try check(brightest.x > centre.x + 3, "perspective: seen from the left, the lens sits right of the base (\(brightest.x) pt)")
+    let seen = white.isEmpty ? 0 : (white.first! + white.last!) / 2
+    try check(seen > centre.x + 3, "perspective: seen from the left, the lens sits right of the base (the stripe's middle at \(seen) pt)")
     var detailed = scene
     detailed.detail = image(40, 40) { fill($0, CGRect(x: 0, y: 0, width: 40, height: 40), (0.1, 0.8, 0.2)) }
     detailed.detailRect = CGRect(x: 183, y: 130, width: 40, height: 40)

@@ -123,8 +123,9 @@ enum LoupeField: String, CaseIterable {
 
 /// Ray-marches a loupe standing on the light table: a clear acrylic skirt that lets the table's
 /// light through, a black body (knurled focusing grip and rubber eyecup, or a cone with a
-/// chrome trim), and a coated eye lens showing the film beneath, magnified. The room has a
-/// softbox up to the left; the lit table below shows in the glossy surfaces and the skirt.
+/// chrome trim), and an eye lens showing the film beneath, magnified, with nothing mirrored over
+/// it. The room has a softbox up to the left; the lit table below shows in the glossy surfaces
+/// and the skirt.
 /// Compiled from source on first use, like the light table.
 final class LoupeRenderer {
   static let shared = LoupeRenderer()
@@ -470,7 +471,7 @@ final class LoupeRenderer {
         return float4((albedo * irradiance(n, glow) + spec) * occlusion(p, n, t.style), 1);
       }
       if (lens) {
-        float3 p = ro + rd * tLens, world = base + p * R;
+        float3 p = ro + rd * tLens;
         float rho = length(p.xy) / lensR;
         // The film under the axis, magnified as the loupe magnifies it: a little more towards the
         // rim, as much as the real one, so straight lines bow outwards there (pincushion), and red
@@ -492,24 +493,10 @@ final class LoupeRenderer {
                           filmAt(table, film, detail, t, t.center + offset, lod).g,
                           filmAt(table, film, detail, t, t.center + offset / spread, lod).b);
         c *= 0.95 * (1.0 - 0.2 * smoothstep(0.55, 1.0, rho));
-        // The bevel catches the softbox on the side facing it, and a fainter glint opposite.
-        float2 outward = p.xy / max(length(p.xy), 1e-4);
-        float facing = dot(outward, normalize(kLight.xy));
-        float glint = bevel * bevel * (1.0 - smoothstep(0.975, 1.0, rho));
-        c += float3(1.0, 0.99, 0.97) * glint * (0.05 + 0.55 * pow(saturate(facing), 3.0) + 0.18 * pow(saturate(-facing), 4.0));
         c = mix(c, float3(0.004), smoothstep(0.975, 1.0, rho));
-        // A domed, coated eye lens.
-        float3 n = normalize(float3(p.xy / lensR * 0.32, 1.0));
-        float F = 0.012 + 0.988 * pow(1.0 - saturate(dot(n, V)), 5.0);
-        // Multicoating: violet face-on, turning green towards the rim.
-        float3 coat = mix(float3(0.75, 0.45, 1.0), float3(0.5, 1.0, 0.6), smoothstep(0.4, 1.0, rho));
-        // The lens lies at the bottom of the eyecup: it mirrors the room above, never the table under
-        // the loupe, and what it would mirror low down is the eyecup's black inside.
-        float3 up = reflect(rd, n);
-        float cup = smoothstep(0.2, 0.6, up.z);
-        up.z = max(up.z, 0.05);
-        float3 reflection = environment(table, t, normalize(up), world, 0.01) * F * coat * 1.5 * cup;
-        return float4(c * (1.0 - F) + reflection, 1);
+        // Nothing mirrored over the picture: no coating sheen, and no glint on the bevel, so the
+        // lens shows only the film.
+        return float4(c, 1);
       }
       return float4(0, 0, 0, shadow(P, t, top));
     }

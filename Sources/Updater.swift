@@ -235,9 +235,10 @@ final class Updater: ObservableObject {
   }
   /// Waits, outside this process, for `pid` to end; moves `current` (if there is one) to
   /// `parked` and `new` (at `build`) to where it was, putting `current` back if that fails; opens
-  /// it if `relaunch`. Writes what it did to `install.log` in `workRoot`, and how it ended to
-  /// `install-result` (`lastInstall`).
-  func launchInstaller(new: URL, build: Int, over current: URL, parked: URL, relaunch: Bool, pid: Int32 = getpid()) throws {
+  /// it with `opener` if `relaunch`. Writes what it did to `install.log` in `workRoot`, and how it
+  /// ended to `install-result` (`lastInstall`).
+  func launchInstaller(new: URL, build: Int, over current: URL, parked: URL, relaunch: Bool, pid: Int32 = getpid(),
+                       opener: String = "/usr/bin/open") throws {
     try FileManager.default.createDirectory(at: workRoot, withIntermediateDirectories: true)
     let script = workRoot.appendingPathComponent("install.sh")
     try Self.installScript.write(to: script, atomically: true, encoding: .utf8)
@@ -246,14 +247,14 @@ final class Updater: ObservableObject {
     // Started in the background and left, so it outlives this process.
     p.arguments = ["-c", "nohup /bin/bash \"$0\" \"$@\" >/dev/null 2>&1 &", script.path, String(pid), current.path, new.path,
       parked.path, relaunch ? "1" : "0", workRoot.appendingPathComponent("install.log").path,
-      workRoot.appendingPathComponent("install-result").path, String(build)]
+      workRoot.appendingPathComponent("install-result").path, String(build), opener]
     try p.run()
     p.waitUntilExit()
     guard p.terminationStatus == 0 else { throw DeskError.message("没能启动安装") }
   }
   static let installScript = """
     #!/bin/bash
-    pid="$1" current="$2" new="$3" parked="$4" relaunch="$5" log="$6" result="$7" build="$8"
+    pid="$1" current="$2" new="$3" parked="$4" relaunch="$5" log="$6" result="$7" build="$8" opener="$9"
     exec >>"$log" 2>&1
     failed() { echo "$1"; echo "$build $1" > "$result"; exit 1; }
     while kill -0 "$pid" 2>/dev/null; do sleep 0.3; done
@@ -270,7 +271,15 @@ final class Updater: ObservableObject {
     xattr -dr com.apple.quarantine "$current" 2>/dev/null
     echo "installed"
     echo "$build installed" > "$result"
-    if [ "$relaunch" = 1 ]; then open "$current"; fi
+    # Just after the app has ended, Launch Services can still count it as running and refuse to
+    # open it (-600): try again for a few seconds.
+    if [ "$relaunch" = 1 ]; then
+      for try in 1 2 3 4 5 6 7 8 9 10; do
+        "$opener" "$current" && { echo "opened"; exit 0; }
+        sleep 1
+      done
+      echo "could not open $current"
+    fi
     """
   /// Opened from the disk image: offers to copy the app into Applications and open it there. A
   /// copy already there is kept in `parkRoot`, as an update keeps it.
