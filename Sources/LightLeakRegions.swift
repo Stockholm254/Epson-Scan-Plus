@@ -83,19 +83,17 @@ struct LeakMasks: View {
 struct LeakRegionsSection: View {
   @ObservedObject var lab: LeakLab
   var body: some View {
+    // Folded until wanted; open while one of its tools is in use on the photo.
+    PanelSection("局部区域与保护", key: "leakRegions", open: false, info: "在参考校正之外，手动处理局部漏光，或保护不该改动的地方。\n\n「画区域」在照片上拖出椭圆，再用「参考点」点同材质、没有漏光的干净位置：区域按它去色偏（保留亮度）或减雾（恢复暗部）。「保护」用画笔涂出真实的红色物体、灯光等，保护区里不做任何校正，手绘保护始终优先。\n\n「自动检测」找出候选区域（默认不启用，勾选后才生效）和灯光保护区；结果只是建议，不是漏光定论。\n\n「对应点」在自动对齐不确定时，手动标出原片和参考图上的同一位置（至少 4 对）。预设保存参数、区域和对应点，与 FilmLightLab 的预设文件通用；区域位置按画幅比例保存，换了照片需检查。", symbol: "circle.dashed",
+      forced: lab.tool != .inspect) {
     VStack(alignment: .leading, spacing: 10) {
-      HStack {
-        SectionTitle(text: "局部区域与保护", symbol: "circle.dashed")
-        Spacer()
-        InfoButton(text: "在参考校正之外，手动处理局部漏光，或保护不该改动的地方。\n\n「画区域」在照片上拖出椭圆，再用「参考点」点同材质、没有漏光的干净位置：区域按它去色偏（保留亮度）或减雾（恢复暗部）。「保护」用画笔涂出真实的红色物体、灯光等，保护区里不做任何校正，手绘保护始终优先。\n\n「自动检测」找出候选区域（默认不启用，勾选后才生效）和灯光保护区；结果只是建议，不是漏光定论。\n\n「对应点」在自动对齐不确定时，手动标出原片和参考图上的同一位置（至少 4 对）。预设保存参数、区域和对应点，与 FilmLightLab 的预设文件通用；区域位置按画幅比例保存，换了照片需检查。")
-      }
       Picker("工具", selection: $lab.tool) {
         Text("查看").tag(LeakLab.Tool.inspect)
         Text("画区域").tag(LeakLab.Tool.ellipse)
         Text("参考点").tag(LeakLab.Tool.reference)
         Text("保护").tag(LeakLab.Tool.protect)
       }.pickerStyle(.segmented).labelsHidden()
-      Text(hint).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      Text(hint).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       if lab.tool == .protect {
         HStack {
           Text("画笔").font(.system(size: 11)).foregroundStyle(.secondary)
@@ -112,7 +110,7 @@ struct LeakRegionsSection: View {
       }
       Text("漏光区域 \(lab.params.regions.count)").font(.system(size: 11, weight: .medium))
       if lab.params.regions.isEmpty {
-        Text("自动检测，或用「画区域」在照片上拖出椭圆。").font(.system(size: 10)).foregroundStyle(.secondary)
+        Text("自动检测，或用「画区域」在照片上拖出椭圆。").font(.system(size: 11)).foregroundStyle(.secondary)
       } else {
         rows(lab.params.regions, protection: false)
       }
@@ -122,7 +120,7 @@ struct LeakRegionsSection: View {
         rows(lab.params.protect, protection: true)
         if lab.params.protect.contains(where: { $0.detected == true }) {
           Text("自动检测的保护区（灯光、红色小物体）每次「开始去漏光」都会重新检测，取消勾选只到下次拟合为止；手绘保护一直保留。")
-            .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
       }
       HStack {
@@ -134,6 +132,7 @@ struct LeakRegionsSection: View {
         Button("保存预设…") { lab.chooseSavePreset() }
         Button("载入预设…") { lab.chooseLoadPreset() }
       }
+    }
     }.disabled(!lab.hasBase || lab.busy != nil)
   }
   var hint: String {
@@ -178,11 +177,11 @@ struct LeakRegionsSection: View {
         .disabled(r.shape != "ellipse" || r.gaussian == true)
       Text(r.ref.map { String(format: "干净参考点：%.3f, %.3f", $0.x, $0.y) }
         ?? (r.target != nil || r.fog != nil ? "已标定的区域，可调强度。" : "尚未选参考点：用「参考点」点同材质、没有漏光的位置。"))
-        .font(.system(size: 10)).foregroundStyle(r.ref == nil && r.target == nil && r.fog == nil ? Hardware.amber : .secondary)
+        .font(.system(size: 11)).foregroundStyle(r.ref == nil && r.target == nil && r.fog == nil ? Hardware.amber : .secondary)
       if r.mode == "gain" {
         Text(r.cast.map { String(format: "量色偏的位置：%.3f, %.3f", $0.x, $0.y) }
           ?? "在区域中心量色偏：中心要和参考点是同一种东西（比如都是天空）。整片按同一个比例改，跨过不同物体也不染色，亮处照样校正。")
-          .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+          .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       }
     }.padding(8).background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.05)))
   }

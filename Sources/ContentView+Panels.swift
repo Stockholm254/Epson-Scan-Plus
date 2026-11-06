@@ -13,8 +13,9 @@ extension ContentView {
             ForEach(AppModel.CaptureSource.allCases, id: \.self) { Text($0.short).tag($0).help($0.rawValue) }
           }
         } else {
+          // Module ②'s film and its slopes are in the inspector; here, calibrating and exporting.
           Picker("面板", selection: $m.panelTab) {
-            ForEach([AppModel.PanelTab.film, .output], id: \.self) { Text($0.rawValue).tag($0) }
+            ForEach([AppModel.PanelTab.film, .output], id: \.self) { Text($0 == .film ? "标定" : $0.rawValue).tag($0) }
           }
         }
       }.pickerStyle(.segmented).labelsHidden().padding(.horizontal, 14).padding(.vertical, 10)
@@ -182,7 +183,7 @@ extension ContentView {
         if m.measuringTarget { ProgressView().controlSize(.small) }
       }.font(.system(size: 11))
       if let message = m.sharpeningMessage {
-        Text(message).font(.system(size: 10)).foregroundStyle(m.measuringTarget ? Color.secondary : Color.orange)
+        Text(message).font(.system(size: 11)).foregroundStyle(m.measuringTarget ? Color.secondary : Color.orange)
           .fixedSize(horizontal: false, vertical: true)
       }
     }
@@ -190,41 +191,38 @@ extension ContentView {
 
   // MARK: Film
 
+  /// Module ②'s sidebar, first tab: calibrating the preset in use from neutral points. The film,
+  /// its preset and where the slopes come from are at the top of the inspector; the presets
+  /// themselves (use, export, delete, import) in the presets table.
   var filmTab: some View {
     VStack(alignment: .leading, spacing: 18) {
-      sectionTitle("胶片", symbol: "film")
-      TextField("输入胶片类型", text: $m.filmName).textFieldStyle(.roundedBorder).onSubmit { m.matchFilm() }
       HStack {
-        Button("应用") { m.matchFilm() }
-        Menu("预设") { ForEach(m.profiles) { p in Button(p.name) { m.chooseProfile(p) } } }
-        Button("管理…") { m.showPresets = true }.help("所有预设、各在哪些卷里用，删除不用的")
+        sectionTitle("预设", symbol: "film")
+        Spacer()
+        Button("管理预设…") { m.showPresets = true }.font(.system(size: 11))
+          .help("所有预设、各在哪些卷里用；使用、导出、导入、删除")
       }
-      Text("在用「\(m.profile.name)」").font(.system(size: 11)).lineLimit(2)
-      Text(m.profile.publication).font(.system(size: 10)).foregroundStyle(.secondary)
-      Button("配置与技术文档…") { showInfo = true }.font(.system(size: 11))
-      VStack(alignment: .leading, spacing: 4) {
-        Text("转换依据").font(.system(size: 11, weight: .medium))
-        Text(conversionBasis).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-      }
-      if m.hasSensorPictures {
-        HStack {
-          Toggle(m.preferences.lightCalibration == nil ? "去串色 · RGB 光源" : "去串色和平场 · RGB 光源",
-            isOn: Binding(get: { m.crosstalkRemoved }, set: { m.removeCrosstalk($0) }))
-            .toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11)).disabled(m.isWorking)
-          Spacer()
-          InfoButton(text: "翻拍时相机的红、绿、蓝滤色片和光源的三种灯光谱有重叠：蓝灯有 34% 读进绿通道，绿灯约 12% 和 11% 读进红、蓝。每个通道掺了别的灯的光，转出来颜色发灰，要把饱和度拉到 1.8 左右才像 Capture One。\n\n打开后，从传感器读出的 RAW（无压缩 ARW）在算片基和密度之前，先在线性读数上把串色去掉；在翻拍页做过「光源标定」的话，再除以平场，把灯照在四周偏暗的地方补平。没有标定时，矩阵用 2026-10-29 用 IT8 色卡测的，没有平场。矩阵属于这台 A7R IV 和这组 RGB 灯；换了相机或灯就要重新标定。白光翻拍时关掉。\n\n整卷一起开关，可以 ⌘Z 撤销；取过的片基、中性灰和高光跟着换算。下一卷沿用这里的选择。")
-        }
-      }
-      if m.hasSinglePictures {
-        Toggle("导入的单张一起做整卷估计", isOn: Binding(get: { m.poolPictures }, set: { m.setPoolPictures($0) }))
-          .toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
-        note("一张一个文件的画面（翻拍，或一张张导入的扫描），只在它们是同一卷、用同样的设备和设置拍或扫时打开。读法不同（Gamma、位深）的文件不会混在一起。")
+      VStack(alignment: .leading, spacing: 3) {
+        Text("在用「\(m.profile.name)」").font(.system(size: 12)).lineLimit(2)
+        Text(m.profile.publication).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
       }
       Divider()
       calibrationPanel
-      Divider()
-      customPresets
     }
+  }
+  /// Where this frame's channel slopes come from, in a line: the inspector's, with the whole of it
+  /// (`conversionBasis`) behind its ⓘ.
+  var conversionBasisShort: String {
+    let p = m.profile.slopes
+    if m.profile.offsets != nil {
+      return String(format: "%@ · R %.3f · G %.3f · B %.3f", m.profile.id.contains("-copy-") ? "翻拍标定" : "本机标定", p.r, p.g, p.b)
+    }
+    if let s = m.settings.rollSlopes { return String(format: "整卷估计 · R %.3f · G %.3f · B %.3f", s.r, s.g, s.b) }
+    if m.profile.setsChannelContrast {
+      return String(format: "数据表 · R %.3f · G %.3f · B %.3f", p.r, p.g, p.b)
+        + (m.hasSinglePictures && !m.poolPictures ? "（单张各自估计不了）" : "")
+    }
+    return "通用 · 每张按自己的画面拉伸各通道"
   }
   /// Letting an assistant over MCP read and adjust the conversion, and how to connect one.
   var assistantPanel: some View {
@@ -236,7 +234,7 @@ extension ContentView {
       }
       Toggle("允许 AI 助手读取和调整转换", isOn: Binding(get: { m.preferences.mcpEnabled }, set: { m.preferences.mcpEnabled = $0; m.updateMCP() }))
         .toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
-      Text(m.mcpStatus).font(.system(size: 10)).foregroundStyle(m.preferences.mcpEnabled ? Hardware.amber : Color.secondary)
+      Text(m.mcpStatus).font(.system(size: 11)).foregroundStyle(m.preferences.mcpEnabled ? Hardware.amber : Color.secondary)
         .fixedSize(horizontal: false, vertical: true)
       HStack {
         Button("Claude Desktop 配置") {
@@ -245,7 +243,7 @@ extension ContentView {
         .help("把 Claude Desktop 的配置复制到剪贴板")
         Button("Claude Code 命令") { copy("claude mcp add epscan -- \"\(m.mcpCommand)\" --mcp") }
           .help("把添加到 Claude Code 的命令复制到剪贴板")
-      }.font(.system(size: 10)).controlSize(.mini)
+      }.font(.system(size: 11)).controlSize(.mini)
     }
   }
   func copy(_ text: String) {
@@ -312,10 +310,10 @@ extension ContentView {
       let spots = picked.isEmpty ? (m.profile.spots ?? []).map { (frame: $0.frame, name: $0.name) } : picked
       if !spots.isEmpty {
         HStack {
-          Text(picked.isEmpty ? "「\(m.profile.name)」的中性点" : "中性点在").font(.system(size: 10)).foregroundStyle(.secondary)
+          Text(picked.isEmpty ? "「\(m.profile.name)」的中性点" : "中性点在").font(.system(size: 11)).foregroundStyle(.secondary)
           Spacer()
           if picked.isEmpty {
-            Toggle("标出", isOn: $m.showCalibrationPoints).toggleStyle(.switch).controlSize(.mini).font(.system(size: 10))
+            Toggle("标出", isOn: $m.showCalibrationPoints).toggleStyle(.switch).controlSize(.mini).font(.system(size: 11))
               .help("在单张画面上标出这个预设的中性点")
           }
         }
@@ -325,7 +323,7 @@ extension ContentView {
               m.showCalibrationPoints = true
               m.open(s.frame)
             }
-            .font(.system(size: 10)).disabled(!m.frames.contains { $0.id == s.frame })
+            .font(.system(size: 11)).disabled(!m.frames.contains { $0.id == s.frame })
             .help(m.frames.contains { $0.id == s.frame } ? "打开第 \(s.name) 张，看中性 \(i + 1) 在哪里" : "第 \(s.name) 张不在这一卷")
           }
         }
@@ -336,34 +334,6 @@ extension ContentView {
       }
     }
   }
-  var customPresets: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      HStack {
-        Text("本机预设").font(.system(size: 11, weight: .medium))
-        Spacer()
-        InfoButton(text: "本机标定或导入的预设。删除只从列表中移除，已经使用它的工程保留自己的副本。")
-      }
-      if m.preferences.customProfiles.isEmpty {
-        note("还没有本机标定或导入的预设。")
-      }
-      ForEach(m.preferences.customProfiles) { p in
-        VStack(alignment: .leading, spacing: 4) {
-          Text(p.name).font(.system(size: 11))
-          Text(String(format: "R %.3f · G %.3f · B %.3f", p.slopes.r, p.slopes.g, p.slopes.b)).readout(9)
-          HStack {
-            Button(m.profile.id == p.id ? "在用" : "使用") { m.chooseProfile(p) }.disabled(m.profile == p)
-            Button("导出…") { m.exportProfile(p) }
-            Button("删除") { m.deleteCustomProfile(p.id) }
-          }.font(.system(size: 10)).controlSize(.mini)
-        }
-      }
-      HStack {
-        Button("导入 JSON…") { m.importProfile() }
-        Button("管理预设…") { m.showPresets = true }
-      }.font(.system(size: 11))
-    }
-  }
-
   // MARK: Output
 
   var outputTab: some View {
@@ -394,7 +364,7 @@ extension ContentView {
         }.labelsHidden()
       }
       if m.preferences.exportColorSpace == .proPhoto && !format.wrappedValue.sixteenBit {
-        Text("ProPhoto 请配合 16-bit 格式，8-bit 容易出现色阶断层。").font(.system(size: 10)).foregroundStyle(.orange)
+        Text("ProPhoto 请配合 16-bit 格式，8-bit 容易出现色阶断层。").font(.system(size: 11)).foregroundStyle(.orange)
           .fixedSize(horizontal: false, vertical: true)
       }
       labeled("文件名") {
@@ -533,7 +503,7 @@ extension ContentView {
     }
   }
   func note(_ text: String) -> some View {
-    Text(text).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+    Text(text).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
   }
   func reveal(_ url: URL) {
     try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
@@ -554,8 +524,8 @@ struct InfoButton: View {
         .foregroundStyle(shown ? Hardware.amberText : Hardware.adaptive(NSColor(white: 0.6, alpha: 1), NSColor(white: 0.42, alpha: 1)))
     }.buttonStyle(.plain).help("说明").accessibilityLabel("说明")
       .popover(isPresented: $shown, arrowEdge: .trailing) {
-        Text(text).font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)
-          .frame(width: 300, alignment: .leading).padding(14).textSelection(.enabled)
+        Text(text).font(.system(size: 12)).lineSpacing(2).fixedSize(horizontal: false, vertical: true)
+          .frame(width: 320, alignment: .leading).padding(14).textSelection(.enabled)
       }
   }
 }

@@ -26,8 +26,8 @@ struct CurveEditor: View {
       .aspectRatio(1, contentMode: .fit)
       .padding(4).background(PlotScreen())
       .accessibilityElement().accessibilityLabel("色调曲线 · \(Self.names[channel])")
-      Text("拖动控制点调整；点空白处添加，双击控制点删除。各通道曲线在 RGB 曲线之后生效。背后是正片的红、绿、蓝直方图。")
-        .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      // How to use it is in the section's ⓘ and the plot's tooltip.
+      .help("拖动控制点调整；点空白处添加，双击控制点删除")
     }
   }
   private var keys: some View {

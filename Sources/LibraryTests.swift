@@ -248,5 +248,40 @@ enum LibraryTests {
     try check(canvas.lens == nil, "moving a whole crop brings no bubble")
     canvas.mouseUp(with: event(.leftMouseUp, CGPoint(x: grab.x + 10, y: grab.y)))
     window.contentView = nil
+
+    // The same film scanned again lies in one stack: frames alike in their difference hashes,
+    // a negative against its positive too, joined through one another; another film apart.
+    func stackPattern(_ seed: Int, inverted: Bool = false) -> CGImage {
+      let w = 90, h = 60
+      var px = [UInt8](repeating: 0, count: w * h)
+      for y in 0..<h {
+        for x in 0..<w {
+          let v = (sin(Double(x * (seed + 2)) / 9) + cos(Double(y * (seed * 3 + 1)) / 7) + Double((x * 7 + y * 13 * seed) % 17) / 17) * 60 + 128
+          px[y * w + x] = UInt8(max(0, min(255, inverted ? 255 - v : v)))
+        }
+      }
+      let ctx = CGContext(data: &px, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w, space: CGColorSpaceCreateDeviceGray(),
+        bitmapInfo: CGImageAlphaInfo.none.rawValue)!
+      return ctx.makeImage()!
+    }
+    let hashA = RollLibrary.differenceHash(stackPattern(1)), hashNegative = RollLibrary.differenceHash(stackPattern(1, inverted: true))
+    let hashOther = RollLibrary.differenceHash(stackPattern(5))
+    // Cells of equal brightness hash the same either way round, so a negative may differ by a few.
+    try check(RollLibrary.unlikeness(hashA, hashNegative) <= 4 && RollLibrary.unlikeness(hashA, hashOther) > RollLibrary.sameFrameBits,
+      "a frame's negative hashes as its positive does; another picture is far from it")
+    func stackRoll(_ name: String, _ days: Double, frames: Int = 18) -> RollEntry {
+      RollEntry(folder: folder.appendingPathComponent(name), project: folder.appendingPathComponent(name + "/Session.epscan"), title: name,
+        named: false, film: "", date: Date(timeIntervalSince1970: days * 86400), source: .scanner,
+        frames: (0..<frames).map { RollEntry.Frame(id: UUID(), name: String(format: "%02d", $0 + 1), rect: NormalRect(x: 0, y: 0, width: 1, height: 1), file: nil) },
+        fullResolution: 0, exported: 0, overview: nil, notes: "", profile: FilmProfile.builtins[0], legacy: false)
+    }
+    let stackRolls = [stackRoll("c", 3), stackRoll("b", 2), stackRoll("a", 1), stackRoll("d", 0), stackRoll("e", 0, frames: 12)]
+    let nearBits: UInt64 = 0b111111, nearerBits: UInt64 = 0b111111 << 7
+    let stackGroups = RollLibrary.sameFilmGroups(stackRolls, prints: [
+      stackRolls[0].id: [0, 0, 0], stackRolls[1].id: [nearBits, 0, 0], stackRolls[2].id: [nearBits | nearerBits, 0, 0],
+      stackRolls[3].id: [hashA, hashOther, hashA], stackRolls[4].id: [0, 0, 0],
+    ])
+    try check(stackGroups == [[stackRolls[0].id, stackRolls[1].id, stackRolls[2].id]],
+      "rolls of the same film stack, newest first, joined through one another; another film or another length lies apart")
   }
 }

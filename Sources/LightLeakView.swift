@@ -225,8 +225,6 @@ struct LeakPanel: View {
         LeakRegionsSection(lab: lab)
         Divider()
         adjustments
-        Divider()
-        export
       }.padding(18).buttonStyle(.bordered).controlSize(.small)
     }
   }
@@ -238,7 +236,7 @@ struct LeakPanel: View {
     }
   }
   func note(_ text: String, color: Color = .secondary) -> some View {
-    Text(text).font(.system(size: 10)).foregroundStyle(color).fixedSize(horizontal: false, vertical: true)
+    Text(text).font(.system(size: 11)).foregroundStyle(color).fixedSize(horizontal: false, vertical: true)
   }
   /// The frame the job came from, while it is in the open roll.
   var frame: FilmFrame? {
@@ -267,13 +265,8 @@ struct LeakPanel: View {
           }
         }
       } else {
-        note("尚未选择照片")
+        note("在胶片条点一张本卷的照片，或用工具栏的「导入正片」。")
       }
-      Button {
-        lab.chooseFile()
-      } label: {
-        Label("导入正片…", systemImage: "square.and.arrow.down")
-      }.disabled(lab.busy != nil)
     }
   }
 
@@ -298,14 +291,15 @@ struct LeakPanel: View {
         Text(!lab.hasBase ? "等待照片" : lab.repaired ? "已应用去漏光" : "尚未去漏光").readout(11)
         Spacer()
       }
+      if lab.repaired { note("可以用工具栏的「导出 16 位 TIFF」导出；先检查灯光红晕、红色物体和边缘。") }
       Button {
         lab.start()
       } label: {
         Label("开始去漏光", systemImage: "wand.and.stars").frame(maxWidth: .infinity)
       }.buttonStyle(KeyStyle(prominent: true)).disabled(!lab.hasBase || lab.busy != nil)
-      note(lab.hasReference ? "已有参考图，点击即在本地去漏光，不产生 API 费用。"
-        : lab.regionsAct ? "没有参考图：点击只校正启用的局部区域，区域外不变，不调用 API。"
-        : "首次点击会通过 API 生成参考图；确认上传与费用后自动去漏光。也可以先标出局部区域（「找漏光」或画区域，或请 MCP 助手标），只修这些地方，不花钱。")
+      note(lab.hasReference ? "已有参考图：在本地去漏光，不产生费用。"
+        : lab.regionsAct ? "没有参考图：只校正启用的局部区域，不调用 API。"
+        : "首次会用 API 生成参考图（先确认上传和费用）；不想用 API，先在「局部区域与保护」里标出漏光。")
       Toggle(
         "保留灯光红晕和真实红色物体",
         isOn: Binding(get: { lab.params.protectHighlights }, set: { v in lab.change("保留灯光红晕") { $0.protectHighlights = v } })
@@ -340,8 +334,8 @@ struct LeakPanel: View {
       Text(lab.job?.guideName ?? "尚无参考图").font(.system(size: 11, weight: .medium))
       if let receipt { note(receipt).textSelection(.enabled) }
       if lab.hasReference { note(fitInfo) }
-      Text("OpenAI · \(credentials.model) · " + (credentials.configured ? (credentials.remembered ? "钥匙串已连接" : "临时 Key 已配置") : "尚未配置 Key"))
-        .font(.system(size: 10)).foregroundStyle(.secondary)
+      Text("OpenAI · \(credentials.model) · " + (credentials.configured ? (credentials.remembered ? "钥匙串已连接" : "临时 Key 已配置") : "尚未配置 Key（工具栏「API 管理」）"))
+        .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       Button {
         if credentials.configured { lab.showGenerate = true } else { lab.showAPI = true }
       } label: {
@@ -352,34 +346,35 @@ struct LeakPanel: View {
       } label: {
         Label("导入已有参考图…", systemImage: "square.and.arrow.down.on.square")
       }.disabled(!lab.hasBase || lab.busy != nil)
-      VStack(alignment: .leading, spacing: 6) {
-        Text("或用自己订阅的图像模型做").font(.system(size: 11, weight: .medium))
+      PanelSection("用自己订阅的图像模型做", key: "leakOwnModel", open: false,
+        info: "缩图和提示词与 API 用的一样，导出缩图时提示词一起复制。在 ChatGPT 等能改图的应用里上传缩图、粘贴提示词，下载生成的图，再用「导入已有参考图…」导回来。这样不用 API Key。",
+        level: .sub
+      ) {
         HStack {
           Button("导出缩图…") { lab.chooseReferenceUpload() }
           Button("复制提示词") { lab.copyReferencePrompt() }
         }.disabled(!lab.hasBase || lab.busy != nil)
-        note("缩图和提示词与 API 用的一样，导出缩图时提示词一起复制。在 ChatGPT 等能改图的应用里上传缩图、粘贴提示词，下载生成的图，再用「导入已有参考图…」导回来。这样不用 API Key。")
       }
-      HStack {
-        Button("停用参考校正") { lab.clearReferenceCorrection() }.disabled(lab.model == nil || lab.busy != nil)
-        Button("API 管理…") { lab.showAPI = true }
+      if lab.model != nil {
+        Button("停用参考校正") { lab.clearReferenceCorrection() }.disabled(lab.busy != nil)
       }
     }
   }
 
   var adjustments: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      header("基础调整", symbol: "slider.horizontal.3", info: "在去漏光之前作用于原片：曝光按线性光的 EV 调整，冷暖与绿 / 品红按通道调整，对比度为 S 形曲线。手动调整不受去漏光的限制。")
-      fader("曝光", "%+.2f EV", \.exposure, -2...2)
-      fader("冷 ↔ 暖", "%+.0f", \.temperature, -100...100)
-      fader("绿 ↔ 品红", "%+.0f", \.tint, -100...100)
-      fader("对比度", "%+.0f", \.contrast, -50...80)
+    PanelSection("基础调整", key: "leakAdjust", info: "在去漏光之前作用于原片：曝光按线性光的 EV 调整，冷暖与绿 / 品红按通道调整，对比度为 S 形曲线。手动调整不受去漏光的限制。", symbol: "slider.horizontal.3") {
+      VStack(alignment: .leading, spacing: 10) {
+        fader("曝光", "%+.2f EV", \.exposure, -2...2)
+        fader("冷 ↔ 暖", "%+.0f", \.temperature, -100...100)
+        fader("绿 ↔ 品红", "%+.0f", \.tint, -100...100)
+        fader("对比度", "%+.0f", \.contrast, -50...80)
+      }
     }.disabled(!lab.hasBase || lab.busy != nil)
   }
   func fader(_ title: String, _ format: String, _ key: WritableKeyPath<LeakParams, Double>, _ range: ClosedRange<Double>) -> some View {
     VStack(spacing: 3) {
       HStack {
-        Text(title).font(.system(size: 11)).foregroundStyle(.secondary)
+        Text(title).font(.system(size: 12)).foregroundStyle(.secondary)
         Spacer()
         Text(String(format: format, lab.params[keyPath: key])).readout()
       }
@@ -387,18 +382,6 @@ struct LeakPanel: View {
         let step = range.upperBound - range.lowerBound > 10 ? 1.0 : 0.05
         lab.change(title) { $0[keyPath: key] = (v / step).rounded() * step }
       }), range: range, detent: 0)
-    }
-  }
-
-  var export: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      header("导出", symbol: "square.and.arrow.up", info: "导出原图裁切尺寸的 RGB 16 位 Adobe RGB TIFF，旁边附同一像素的 sRGB JPEG 预览和参数记录（.tif.json）。参考图只提供平滑校正参数，所有输出结构来自原片。只写入你选择的文件，不覆盖其他文件。")
-      Button {
-        lab.chooseExport()
-      } label: {
-        Label("导出 16 位 TIFF…", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity)
-      }.leadingAction().disabled(!lab.repaired || lab.busy != nil)
-      note(lab.repaired ? "可以导出。请先检查灯光红晕、红色物体及边缘。" : "完成去漏光后可导出。")
     }
   }
 }
@@ -448,6 +431,9 @@ struct LeakExportKey: View {
     } label: {
       Label("导出 16 位 TIFF", systemImage: "square.and.arrow.up")
     }.leadingAction().disabled(!lab.repaired || lab.busy != nil)
+      .help(lab.repaired
+        ? "导出原图裁切尺寸的 RGB 16 位 Adobe RGB TIFF，旁边附同一像素的 sRGB JPEG 预览和参数记录（.tif.json）。所有输出结构来自原片；只写入你选择的文件"
+        : "完成去漏光后可导出")
   }
 }
 

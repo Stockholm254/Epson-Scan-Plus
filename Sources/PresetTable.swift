@@ -92,16 +92,17 @@ struct PresetManagerSheet: View {
                 .padding(.horizontal, 5).padding(.vertical, 1).background(Capsule().fill(Hardware.accent))
             }
           }
-        }.width(min: 180, ideal: 240)
-        TableColumn("类型") { r in Text(r.kind.rawValue).foregroundStyle(r.kind == .rollOnly ? .orange : .primary) }.width(76)
+        }.width(min: 200, ideal: 260)
+        TableColumn("类型") { r in Text(r.kind.rawValue).foregroundStyle(r.kind == .rollOnly ? .orange : .primary) }.width(min: 76, ideal: 84)
         TableColumn("斜率 R · G · B") { r in
           Text(String(format: "%.3f · %.3f · %.3f", r.profile.slopes.r, r.profile.slopes.g, r.profile.slopes.b)).monospacedDigit()
-        }.width(150)
-        TableColumn("来源") { r in Text(r.profile.publication).lineLimit(1).help(r.profile.notes) }.width(min: 160, ideal: 260)
+        }.width(min: 150, ideal: 160)
+        TableColumn("来源") { r in Text(r.profile.publication).lineLimit(1).truncationMode(.middle).help(r.profile.publication + "\n\n" + r.profile.notes) }
+          .width(min: 160, ideal: 300)
         TableColumn("在用的卷") { r in
           Text(r.rolls.isEmpty ? (r.current ? "这一卷" : "—") : "\(r.rolls.count) 卷").monospacedDigit()
             .help(r.rolls.map { "\($0.title) · \($0.source.rawValue)" }.joined(separator: "\n"))
-        }.width(70)
+        }.width(min: 72, ideal: 80)
       }
       .frame(minHeight: 260)
       detail(single)
@@ -121,7 +122,7 @@ struct PresetManagerSheet: View {
       }
     }
     .padding(18)
-    .frame(minWidth: 860, minHeight: 500)
+    .frame(minWidth: 1040, idealWidth: 1080, minHeight: 520)
     .onAppear(perform: reload)
     .confirmationDialog(deleting.map { "删除 \($0.count) 个预设？" } ?? "", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
       Button("删除", role: .destructive) {

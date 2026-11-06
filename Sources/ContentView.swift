@@ -16,28 +16,88 @@ struct ContentView: View {
   @State var showInfo = false
   /// The window's, which the Edit menu's Undo and Redo use.
   @Environment(\.undoManager) private var undoManager
-  /// The sidebar shown or hidden by the toolbar's key; the 去漏光 page has none.
-  @State private var sidebar = NavigationSplitViewVisibility.all
+  /// The sidebar shown or hidden by the toolbar's key: in module ① it holds the source's settings
+  /// and stays out; in module ② only calibration and the export settings, so it is put away until
+  /// wanted and the picture has the room. The 去漏光 page has none.
+  @State private var captureSidebar = NavigationSplitViewVisibility.all
+  @AppStorage("convertSidebarShown") private var convertSidebarShown = false
   @State private var inspector = true
+  /// The status line shows a while after it changes, and stays while something is under way.
+  @State private var statusShown = true
+  @State private var statusChange = 0
+  var sidebarVisibility: Binding<NavigationSplitViewVisibility> {
+    Binding(
+      get: {
+        switch m.page {
+        case .leak: return .detailOnly
+        case .convert: return convertSidebarShown ? .all : .detailOnly
+        case .capture: return captureSidebar
+        }
+      },
+      set: { v in
+        switch m.page {
+        case .leak: break
+        case .convert: convertSidebarShown = v != .detailOnly
+        case .capture: captureSidebar = v
+        }
+      })
+  }
+  /// Module ②'s sidebar, opened on calibrating the preset.
+  func openCalibration() {
+    m.panelTab = .film
+    withAnimation(Liquid.flow) { convertSidebarShown = true }
+  }
+  /// Module ②'s sidebar, opened on the export settings.
+  func openExportSettings() {
+    m.panelTab = .output
+    withAnimation(Liquid.flow) { convertSidebarShown = true }
+  }
+  /// The roll open, as the library names it, else the app's name.
+  var windowTitle: String {
+    guard let url = m.sessionURL else { return "Epson Scan plus" }
+    if !m.rollName.isEmpty { return m.rollName }
+    return RollLibrary.started(url.lastPathComponent).map(RollLibrary.title) ?? url.lastPathComponent
+  }
+  var windowSubtitle: String {
+    guard m.sessionURL != nil || !m.frames.isEmpty else { return "" }
+    return [m.filmName, "\(m.frames.count) 张"].filter { !$0.isEmpty }.joined(separator: " · ")
+  }
   var body: some View {
     // The system's window: a sidebar for the module's settings, the workspace with the film strip
     // under it, and an inspector for the frame, all under the system's toolbar.
-    NavigationSplitView(columnVisibility: Binding(get: { m.page == .leak ? .detailOnly : sidebar }, set: { if m.page != .leak { sidebar = $0 } })) {
+    NavigationSplitView(columnVisibility: sidebarVisibility) {
       leftPanel
         .navigationSplitViewColumnWidth(min: Preferences.leftWidths.lowerBound, ideal: m.preferences.leftWidth, max: Preferences.leftWidths.upperBound)
     } detail: {
       VStack(spacing: 0) {
         if m.page == .leak { LeakPage(m: m, lab: m.leak) } else { workspace }
         filmstrip
-        if m.page == .leak { LeakStatus(lab: m.leak) } else { footer }
+        if m.page == .leak {
+          if m.leak.busy != nil { LeakStatus(lab: m.leak) }
+        } else if footerShown {
+          footer.transition(.move(edge: .bottom).combined(with: .opacity))
+        }
       }
+      .animation(Liquid.flow, value: footerShown)
       .inspector(isPresented: $inspector) {
         Group { if m.page == .leak { LeakPanel(m: m, lab: m.leak) } else { rightPanel } }
           .inspectorColumnWidth(min: Preferences.rightWidths.lowerBound, ideal: m.preferences.rightWidth, max: Preferences.rightWidths.upperBound + 40)
       }
     }
-    .navigationTitle("Epson Scan plus")
+    .navigationTitle(windowTitle)
+    .navigationSubtitle(windowSubtitle)
     .toolbar { toolbarContent }
+    .onChange(of: m.activityStatus) {
+      // A new status shows for a few seconds, then the line folds away unless work is under way.
+      statusShown = true
+      statusChange += 1
+      let change = statusChange
+      DispatchQueue.main.asyncAfter(deadline: .now() + 6) { if statusChange == change { statusShown = false } }
+    }
+    .onChange(of: m.tool) { _, tool in
+      // Picking neutral points calibrates the preset, whose list is in module ②'s sidebar.
+      if tool == .calibrate, m.page == .convert, !convertSidebarShown { openCalibration() }
+    }
     .copyStandGlass(cameraStage, camera: m.camera)
     .frame(minWidth: 1120, minHeight: 760)
     .alert(
@@ -71,7 +131,10 @@ struct ContentView: View {
   /// status line, where it never lies across into the inspector. The system groups them
   /// on its glass and folds what does not fit into its overflow menu.
   @ToolbarContentBuilder var toolbarContent: some ToolbarContent {
-    ToolbarItem(placement: .navigation) { scannerLamp }
+    // The scanner's lamp where the scanner is used, or while it works.
+    ToolbarItem(placement: .navigation) {
+      if (m.page == .capture && m.captureSource == .scanner) || m.scanner.busy || m.scanBatch.isActive { scannerLamp }
+    }
     ToolbarItemGroup(placement: .navigation) {
       if m.page == .leak {
         LeakToolbar(lab: m.leak)
@@ -118,6 +181,21 @@ struct ContentView: View {
         } label: {
           Label("扫描所选 \(m.enabledCount)", systemImage: "scanner")
         }.leadingAction().disabled(!m.scanner.ready || !m.hasScanTargets || m.isWorking)
+      } else if m.page == .convert {
+        // Exporting, with its settings behind it in the sidebar.
+        Menu {
+          Button("导出当前…") { m.exportImages(all: false) }.disabled(m.selected == nil || m.isWorking)
+          Button("导出勾选的 \(m.enabledCount) 张…") { m.exportImages(all: true) }.disabled(m.enabledCount == 0 || m.isWorking)
+          Button("导出接触表…") { m.exportContactSheet() }.disabled(m.enabledCount == 0 || m.isWorking)
+          Divider()
+          Button("导出设置…") { openExportSettings() }
+        } label: {
+          Label("导出", systemImage: "square.and.arrow.up")
+        } primaryAction: {
+          m.exportImages(all: false)
+        }
+        .disabled(m.frames.isEmpty)
+        .help("导出当前这张（⌘E）；点箭头导出勾选的画面、接触表，或改格式和文件名")
       }
     }
     ToolbarItem(placement: .primaryAction) {
@@ -236,80 +314,103 @@ struct ContentView: View {
         .disabled(m.contactPage >= pages - 1).accessibilityLabel("下一页")
     }.buttonStyle(.borderless).help("接触表排满后翻到下一页；也可以在灯箱上左右滑动，或按 ← →")
   }
-  @ViewBuilder var placeLabel: some View {
-      Text(m.singleView ? "第 \(m.selected?.name ?? "—") 张" : "\(m.frames.count) 个画面").font(
-        .system(size: 11, design: .monospaced))
+  /// The bars under the picture: where you are on the left, how it is shown and how it is turned
+  /// on the right, each its own group. Narrow, the source's size is left out.
+  func bottomBars(compact: Bool) -> some View {
+    HStack(spacing: 10) {
+      HStack(spacing: 8) { placeControls(compact: compact) }.glassBar()
+      // The pages' control grows out of the count beside it; the bars change as the view does.
+      if !m.singleView && m.contactPages.count > 1 {
+        pageControl.glassBar().transition(.scale(scale: 0.4, anchor: .leading).combined(with: .opacity))
+      }
+      Spacer(minLength: 8)
+      HStack(spacing: 8) { displayControls }.glassBar()
+      HStack(spacing: 8) { orientationControls }.glassBar()
+    }
   }
-  /// Zoom, turning, mirroring and what is shown.
-  @ViewBuilder var viewingControls: some View {
-      if m.singleView {
-        Text(String(format: "%.1f×", m.zoom)).font(.system(size: 10, design: .monospaced))
-          .foregroundStyle(.secondary).help("相对适合窗口的缩放倍率")
-      }
-      if !m.singleView {
-        Button {
-          m.turnRoll(clockwise: false)
-        } label: {
-          Image(systemName: "rotate.left")
-        }.help("全卷逆时针旋转 90°：改变每张在单张视图和导出中的方向；转过 90° 的画面在横排的灯箱上也正立").disabled(m.frames.isEmpty)
-        Button {
-          m.turnRoll(clockwise: true)
-        } label: {
-          Image(systemName: "rotate.right")
-        }.help("全卷顺时针旋转 90°：改变每张在单张视图和导出中的方向；转过 90° 的画面在横排的灯箱上也正立").disabled(m.frames.isEmpty)
-        Button {
-          m.mirrorRoll()
-        } label: {
-          Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
-        }.buttonStyle(KeyStyle(latched: m.contactMirrored)).help("全卷水平镜像：修正胶片正反面放反").disabled(m.frames.isEmpty)
-        Picker("显示", selection: $m.contactPositive) {
-          Text("原片").tag(false)
-          Text("反相").tag(true)
-        }.pickerStyle(.segmented).labelsHidden().frame(width: 110)
-          .help("反相：每张按各自的调色显示为正片，片边与片夹按本卷片基反相")
-          .onChange(of: m.contactPositive) { m.refresh() }
-      }
-      if m.singleView {
-        Button {
-          m.navigate(-1)
-        } label: {
-          Image(systemName: "chevron.left")
-        }.disabled(!m.canNavigate(-1)).help("上一张 · ←")
-        Button {
-          m.navigate(1)
-        } label: {
-          Image(systemName: "chevron.right")
-        }.disabled(!m.canNavigate(1)).help("下一张 · →")
-        Toggle("负片", isOn: $m.showNegative).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
-          .onChange(of: m.showNegative) { m.refresh() }
-        Button {
-          m.turn(clockwise: false)
-        } label: {
-          Image(systemName: "rotate.left")
-        }.help(m.syncOrientation ? "全部逆时针旋转 90° · ⇧⌘R" : "逆时针旋转 90° · ⇧⌘R")
-        Button {
-          m.turn(clockwise: true)
-        } label: {
-          Image(systemName: "rotate.right")
-        }.help(m.syncOrientation ? "全部顺时针旋转 90° · ⌘R" : "顺时针旋转 90° · ⌘R")
-        Button {
-          m.toggleMirror()
-        } label: {
-          Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
-        }.buttonStyle(KeyStyle(latched: m.settings.flipHorizontal == true)).help(
-          m.syncOrientation ? "全部水平镜像：修正整卷胶片正反面方向" : "水平镜像：修正胶片正反面方向")
-        Button {
-          m.syncOrientation.toggle()
-        } label: {
-          HStack(spacing: 3) {
-            Image(systemName: "link")
-            Text("同步全部")
-          }.font(.system(size: 11))
-        }.buttonStyle(KeyStyle(latched: m.syncOrientation))
-          .help("开启后，旋转和水平镜像同步应用到本卷全部照片")
-      }
-      Text(m.sourceSummary).font(.system(size: 10, design: .monospaced)).foregroundStyle(
-        .secondary)
+  /// Which frame is shown, with the keys to the ones beside it; or how many there are.
+  @ViewBuilder func placeControls(compact: Bool) -> some View {
+    if m.singleView {
+      Button {
+        m.navigate(-1)
+      } label: {
+        Image(systemName: "chevron.left")
+      }.buttonStyle(.borderless).disabled(!m.canNavigate(-1)).help("上一张 · ←").accessibilityLabel("上一张")
+      Text("第 \(m.selected?.name ?? "—") 张").font(.system(size: 12, weight: .medium, design: .monospaced))
+      Button {
+        m.navigate(1)
+      } label: {
+        Image(systemName: "chevron.right")
+      }.buttonStyle(.borderless).disabled(!m.canNavigate(1)).help("下一张 · →").accessibilityLabel("下一张")
+    } else {
+      Text("\(m.frames.count) 个画面").font(.system(size: 12, weight: .medium, design: .monospaced))
+    }
+    if !compact && !m.sourceSummary.isEmpty {
+      Text(m.sourceSummary).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
+    }
+  }
+  /// What is shown: the negative or the positive, and the zoom.
+  @ViewBuilder var displayControls: some View {
+    if m.singleView {
+      Toggle("负片", isOn: $m.showNegative).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 12))
+        .onChange(of: m.showNegative) { m.refresh() }.help("对照负片原样")
+      Text(String(format: "%.1f×", m.zoom)).font(.system(size: 11, design: .monospaced))
+        .foregroundStyle(.secondary).help("相对适合窗口的缩放倍率")
+    } else {
+      Picker("显示", selection: $m.contactPositive) {
+        Text("原片").tag(false)
+        Text("反相").tag(true)
+      }.pickerStyle(.segmented).labelsHidden().frame(width: 110)
+        .help("反相：每张按各自的调色显示为正片，片边与片夹按本卷片基反相")
+        .onChange(of: m.contactPositive) { m.refresh() }
+    }
+  }
+  /// Turning and mirroring: this frame (or every one, synced) in the single view, the whole roll on
+  /// the light table.
+  @ViewBuilder var orientationControls: some View {
+    if m.singleView {
+      Button {
+        m.turn(clockwise: false)
+      } label: {
+        Image(systemName: "rotate.left")
+      }.help(m.syncOrientation ? "全部逆时针旋转 90° · ⇧⌘R" : "逆时针旋转 90° · ⇧⌘R")
+      Button {
+        m.turn(clockwise: true)
+      } label: {
+        Image(systemName: "rotate.right")
+      }.help(m.syncOrientation ? "全部顺时针旋转 90° · ⌘R" : "顺时针旋转 90° · ⌘R")
+      Button {
+        m.toggleMirror()
+      } label: {
+        Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
+      }.buttonStyle(KeyStyle(latched: m.settings.flipHorizontal == true)).help(
+        m.syncOrientation ? "全部水平镜像：修正整卷胶片正反面方向" : "水平镜像：修正胶片正反面方向")
+      Button {
+        m.syncOrientation.toggle()
+      } label: {
+        HStack(spacing: 3) {
+          Image(systemName: "link")
+          Text("同步全部")
+        }.font(.system(size: 12))
+      }.buttonStyle(KeyStyle(latched: m.syncOrientation))
+        .help("开启后，旋转和水平镜像同步应用到本卷全部照片")
+    } else {
+      Button {
+        m.turnRoll(clockwise: false)
+      } label: {
+        Image(systemName: "rotate.left")
+      }.help("全卷逆时针旋转 90°：改变每张在单张视图和导出中的方向；转过 90° 的画面在横排的灯箱上也正立").disabled(m.frames.isEmpty)
+      Button {
+        m.turnRoll(clockwise: true)
+      } label: {
+        Image(systemName: "rotate.right")
+      }.help("全卷顺时针旋转 90°：改变每张在单张视图和导出中的方向；转过 90° 的画面在横排的灯箱上也正立").disabled(m.frames.isEmpty)
+      Button {
+        m.mirrorRoll()
+      } label: {
+        Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
+      }.buttonStyle(KeyStyle(latched: m.contactMirrored)).help("全卷水平镜像：修正胶片正反面放反").disabled(m.frames.isEmpty)
+    }
   }
   /// What floats over the picture: the render in progress, the frame's resolution, the tool's hint.
   @ViewBuilder var canvasOverlays: some View {
@@ -359,15 +460,10 @@ struct ContentView: View {
           Color.clear
           canvasOverlays
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
-        HStack(spacing: 10) {
-          placeLabel.glassBar()
-          // The pages' control grows out of the count beside it; the bars change as the view does.
-          if !m.singleView && m.contactPages.count > 1 {
-            pageControl.glassBar().transition(.scale(scale: 0.4, anchor: .leading).combined(with: .opacity))
-          }
-          Spacer()
-          HStack(spacing: 8) { viewingControls }.glassBar()
-        }.buttonStyle(.bordered).controlSize(.small).padding(.horizontal, inset).padding(.bottom, inset)
+        ViewThatFits(in: .horizontal) {
+          bottomBars(compact: false)
+          bottomBars(compact: true)
+        }.lineLimit(1).buttonStyle(.bordered).controlSize(.small).padding(.horizontal, inset).padding(.bottom, inset)
           .animation(Liquid.flow, value: m.singleView)
           .animation(Liquid.flow, value: m.contactPages.count)
       }
@@ -377,6 +473,10 @@ struct ContentView: View {
   @ViewBuilder var rightPanel: some View {
     if m.page == .capture { rollPanel } else { adjustPanel }
   }
+  /// Module ②'s inspector, in the order a frame is worked on: the film and where its slopes come
+  /// from, the film base, the frame's extent, white balance, tone, levels and colour; then what is
+  /// reached for less (curves, sharpening, input) folded away. Every section folds, and opens as it
+  /// was left.
   var adjustPanel: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 16) {
@@ -384,32 +484,129 @@ struct ContentView: View {
           sectionTitle("调整", symbol: "slider.horizontal.3")
           Spacer()
           Button("重置") { m.resetAdjustments() }.font(.system(size: 11))
+            .help("把这一张的调整恢复默认；输入 Gamma、方向和整卷估计保留")
         }
-        // The curves first, over the picture's histograms channel by channel.
-        CurveEditor(
-          curves: Binding(
-            get: { m.settings.curves ?? ToneCurves() },
-            set: { value in m.change("曲线") { $0.curves = value.isIdentity ? nil : value } }),
-          histogram: m.histogram, channels: m.channelHistograms)
-        Toggle("负片去色罩 / 反相", isOn: bool(\.inputIsNegative)).toggleStyle(.switch).tint(Hardware.accent)
-          .font(.system(size: 11))
-        HStack {
-          Button {
-            m.useTool(.base)
-          } label: {
-            Label("取片基", systemImage: CanvasTool.base.symbol)
-          }
-          Button("自动片基") {
-            m.change("自动片基") {
-              $0.base = nil
-              $0.basePicked = nil
-              $0.baseFine = nil
+        filmSection
+        Divider()
+        baseSection
+        if m.singleView {
+          Divider()
+          frameSection
+        }
+        Divider()
+        balanceSection
+        Divider()
+        toneSection
+        Divider()
+        levelsSection
+        Divider()
+        colourSection
+        Divider()
+        curvesSection
+        Divider()
+        sharpeningSection
+        Divider()
+        inputSection
+        Button {
+          m.applyToRoll()
+        } label: {
+          Label("同步到本卷", systemImage: "square.on.square")
+        }.frame(maxWidth: .infinity).padding(.top, 4)
+          .help("把这一张的调整用到本卷每一张")
+      }.padding(18).disabled(m.selected == nil || m.exporting)
+        .buttonStyle(.bordered).controlSize(.small)
+    }
+  }
+  /// The film: its preset, where the channel slopes come from in a line (the whole of it behind
+  /// ⓘ), and the roll's switches that change how it is read.
+  var filmSection: some View {
+    PanelSection("胶片", key: "film", info: conversionBasis) {
+      VStack(alignment: .leading, spacing: 8) {
+        Menu {
+          ForEach(m.profiles) { p in
+            Button {
+              m.chooseProfile(p)
+            } label: {
+              if p.id == m.profile.id { Label(p.name, systemImage: "checkmark") } else { Text(p.name) }
             }
           }
-        }.font(.system(size: 11))
+          Divider()
+          Button("管理预设…") { m.showPresets = true }
+          Button("配置与技术文档…") { showInfo = true }
+          Button(m.copyStandRoll ? "翻拍预设标定…" : "本机预设标定…") { openCalibration() }
+        } label: {
+          Text(m.profile.name).lineLimit(1)
+        }
+        .menuStyle(.button).frame(maxWidth: .infinity, alignment: .leading)
+        .help("这一卷用的预设：通道斜率和标定的中性。也可以在下面输入胶片名")
+        labeled("胶片名") {
+          TextField("胶片名", text: $m.filmName).textFieldStyle(.roundedBorder).font(.system(size: 12))
+            .onSubmit { m.matchFilm() }
+            .help("这一卷的胶片名，库里也显示；回车后，收录的胶片换成对应的预设")
+        }
+        Text(conversionBasisShort).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+          .fixedSize(horizontal: false, vertical: true)
+        if m.hasSensorPictures {
+          HStack {
+            Toggle(m.preferences.lightCalibration == nil ? "去串色 · RGB 光源" : "去串色和平场 · RGB 光源",
+              isOn: Binding(get: { m.crosstalkRemoved }, set: { m.removeCrosstalk($0) }))
+              .toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 12)).disabled(m.isWorking)
+            Spacer()
+            InfoButton(text: Self.crosstalkInfo)
+          }
+        }
+        if m.hasSinglePictures {
+          HStack {
+            Toggle("单张一起做整卷估计", isOn: Binding(get: { m.poolPictures }, set: { m.setPoolPictures($0) }))
+              .toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 12))
+            Spacer()
+            InfoButton(text: "一张一个文件的画面（翻拍，或一张张导入的扫描）一起估计通道斜率。只在它们是同一卷、用同样的设备和设置拍或扫时打开；读法不同（Gamma、位深）的文件不会混在一起。")
+          }
+        }
+      }
+    }
+  }
+  static let crosstalkInfo = "翻拍时相机的红、绿、蓝滤色片和光源的三种灯光谱有重叠：蓝灯有 34% 读进绿通道，绿灯约 12% 和 11% 读进红、蓝。每个通道掺了别的灯的光，转出来颜色发灰，要把饱和度拉到 1.8 左右才像 Capture One。\n\n打开后，从传感器读出的 RAW（无压缩 ARW）在算片基和密度之前，先在线性读数上把串色去掉；在翻拍页做过「光源标定」的话，再除以平场，把灯照在四周偏暗的地方补平。没有标定时，矩阵用 2026-10-29 用 IT8 色卡测的，没有平场。矩阵属于这台 A7R IV 和这组 RGB 灯；换了相机或灯就要重新标定。白光翻拍时关掉。\n\n整卷一起开关，可以 ⌘Z 撤销；取过的片基、中性灰和高光跟着换算。下一卷沿用这里的选择。"
+  /// The film base: where it was read in a line, picking it or going back to the automatic one,
+  /// and the fine adjustment folded under it.
+  var baseSection: some View {
+    PanelSection("片基", key: "base", info: "「取片基」只点未曝光的橙色片基（片间或片边），不点景物或片夹；「自动」：扫描的卷按整卷片间的未曝光区；翻拍和一张一个文件导入的照片，按这一张片边的未曝光片基（片边看不到时用最近一张看得到的），都没有时按本张最薄处估计。打开「标出」在单张上看取的是哪里。片边也不准时，在片头或片边取一次片基，点「整卷共用这个片基」，整卷都用它。\n\n微调按 EV 逐通道改变片基，不会被自动白平衡抵消。") {
+      HStack(spacing: 6) {
+        Button {
+          m.useTool(.base)
+        } label: {
+          Label("取", systemImage: CanvasTool.base.symbol)
+        }.buttonStyle(KeyStyle(latched: m.tool == .base)).help("取片基：点未曝光的橙色片基 · B")
+        Button("自动") {
+          m.change("自动片基") {
+            $0.base = nil
+            $0.basePicked = nil
+            $0.baseFine = nil
+          }
+        }.help("回到自动片基：片间或片边测到的")
+      }.font(.system(size: 11))
+    } content: {
+      VStack(alignment: .leading, spacing: 8) {
+        if let f = m.selected {
+          HStack(alignment: .firstTextBaseline) {
+            Text(m.baseSource(f)).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            // Where it was read: picked by hand on this frame, or at the edges of the frame its
+            // base came from.
+            if f.adjustments.base != nil, f.adjustments.basePicked != nil {
+              Toggle("标出", isOn: $m.showBaseAreas).toggleStyle(.switch).controlSize(.mini).font(.system(size: 11))
+                .help("在单张上标出手动取片基的地方")
+            } else if f.adjustments.base == nil, f.adjustments.rollBasePicked != true,
+              let i = m.frames.firstIndex(where: { $0.id == f.id }), let from = m.edgeBaseSource(i)
+            {
+              Toggle("标出", isOn: $m.showBaseAreas).toggleStyle(.switch).controlSize(.mini).font(.system(size: 11))
+                .help(from == i ? "在单张上标出这一张片边里取作片基的地方" : "片基取自第 \(m.frames[from].name) 张的片边；切到那一张能看到标出的地方")
+            }
+          }
+        }
         if m.settings.rollBasePicked == true {
           HStack {
-            Text("整卷共用手动取的片基").font(.system(size: 10)).foregroundStyle(.secondary)
+            Text("整卷共用手动取的片基").font(.system(size: 11)).foregroundStyle(.secondary)
             Spacer()
             Button("取消整卷片基") { m.unshareFilmBase() }.font(.system(size: 11))
           }
@@ -417,144 +614,141 @@ struct ContentView: View {
           Button("整卷共用这个片基") { m.shareFilmBase() }.font(.system(size: 11))
             .help("把这一张取的片基用于整卷：拍一张片头或片边取片基，整卷共用。片间测不到片基的卷用得着，比如翻拍或一张一个文件导入的卷")
         }
-        VStack(alignment: .leading, spacing: 7) {
+        PanelSection("微调 · EV", key: "baseFine", open: false, level: .sub) {
+          if m.settings.baseFine != nil {
+            Button("归零") { m.change("片基微调") { $0.baseFine = nil } }.font(.system(size: 11))
+          }
+        } content: {
+          VStack(alignment: .leading, spacing: 7) {
+            ForEach(0..<3, id: \.self) { channel in baseSlider(channel) }
+            if let base = m.toneAnalysis?.base ?? m.settings.base ?? m.settings.rollBase {
+              Text(String(format: "基准 RGB  %.3f  %.3f  %.3f", base.r, base.g, base.b)).font(
+                .system(size: 10, design: .monospaced)
+              ).foregroundStyle(.secondary)
+            }
+          }
+        }
+      }
+    }
+  }
+  /// The frame's extent and straightening, in the single view; open while the crop tool is.
+  var frameSection: some View {
+    PanelSection("画面范围", key: "frame", open: false, info: m.selected?.scanPath != nil
+      ? "在原扫描范围内无损裁切。要扩大扫描区域，请回接触表调整画框并重扫。\n\n「拉直」让画面绕中心转动（正数顺时针，⌥ 拖动更细），裁去转出的空角，拖动时显示网格线；裁切时按 [ ] 每次 0.1°，加 ⇧ 每次 1°。「画线」后沿地平线、墙边或建筑竖线拖一条线，松手就按它拉直（裁切时按住 ⌥ 拖也一样）。接触表上的画框仍按胶片原样显示，拉直后保留的部分用虚线框标出。"
+      : "画框周围保留了片基，可在单张中细调裁切，不会跳回接触表。\n\n翻拍的照片可以「自动裁切」：找出片框的四条边（片边或片间的片基转入画面的地方），裁到画面以内一点，并按边拉直；点旁边的箭头整卷一起裁。同一卷翻拍时放大倍率不变，每张的画面大小差不多：哪张的一条边找错了（比如画面底部有一大片和片基一样淡的阴影，它的直边被当成了片框），就按其他张的画面大小改正。片框的边伸出照片的那一侧，裁在照片的边上。\n\n「拉直」让画面绕中心转动（正数顺时针，⌥ 拖动更细），裁去转出的空角，拖动时显示网格线；裁切时按 [ ] 每次 0.1°，加 ⇧ 每次 1°。「画线」后沿地平线、墙边或建筑竖线拖一条线，松手就按它拉直（裁切时按住 ⌥ 拖也一样）。接触表上的画框仍按胶片原样显示，拉直后保留的部分用虚线框标出。",
+      forced: m.tool == .crop
+    ) {
+      // One key in the title: automatic cropping for a picture of its own, fine cropping for a scan.
+      if let f = m.selected, m.isSinglePicture(f) {
+        Menu("自动裁切") {
+          Button("整卷自动裁切") { m.autoCrop(roll: true) }
+        } primaryAction: {
+          m.autoCrop(roll: false)
+        }
+        .menuStyle(.button).fixedSize().font(.system(size: 11))
+        .help("按片框的四条边裁到画面以内，并按边拉直；点箭头整卷一起裁。⌘Z 撤销，原文件不改")
+      } else {
+        cropKey
+      }
+    } content: {
+      VStack(alignment: .leading, spacing: 8) {
+        if let f = m.selected, m.isSinglePicture(f) {
           HStack {
-            Text("片基微调 · EV").font(.system(size: 11, weight: .medium))
+            Text("裁切").font(.system(size: 11)).foregroundStyle(.secondary)
             Spacer()
-            Button("归零") { m.change("片基微调") { $0.baseFine = nil } }.font(.system(size: 10))
-            InfoButton(text: "「取片基」只点未曝光的橙色片基（片间或片边），不点景物或片夹；「自动片基」：扫描的卷按整卷片间的未曝光区；翻拍和一张一个文件导入的照片，按这一张片边的未曝光片基（片边看不到时用最近一张看得到的），都没有时按本张最薄处估计。打开「标出」在单张上看取的是哪里。片边也不准时，在片头或片边取一次片基，点「整卷共用这个片基」，整卷都用它。\n\n微调按 EV 逐通道改变片基，不会被自动白平衡抵消。")
-          }
-          ForEach(0..<3, id: \.self) { channel in baseSlider(channel) }
-          if let base = m.toneAnalysis?.base ?? m.settings.base ?? m.settings.rollBase {
-            Text(String(format: "基准 RGB  %.3f  %.3f  %.3f", base.r, base.g, base.b)).font(
-              .system(size: 9, design: .monospaced)
-            ).foregroundStyle(.secondary)
-            if let f = m.selected {
-              HStack(alignment: .firstTextBaseline) {
-                Text(m.baseSource(f)).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 4)
-                // Where it was read: picked by hand on this frame, or at the edges of the frame its
-                // base came from.
-                if f.adjustments.base != nil, f.adjustments.basePicked != nil {
-                  Toggle("标出", isOn: $m.showBaseAreas).toggleStyle(.switch).controlSize(.mini).font(.system(size: 10))
-                    .help("在单张上标出手动取片基的地方")
-                } else if f.adjustments.base == nil, f.adjustments.rollBasePicked != true,
-                  let i = m.frames.firstIndex(where: { $0.id == f.id }), let from = m.edgeBaseSource(i)
-                {
-                  Toggle("标出", isOn: $m.showBaseAreas).toggleStyle(.switch).controlSize(.mini).font(.system(size: 10))
-                    .help(from == i ? "在单张上标出这一张片边里取作片基的地方" : "片基取自第 \(m.frames[from].name) 张的片边；切到那一张能看到标出的地方")
-                }
-              }
-            }
+            cropKey
           }
         }
-        if m.singleView {
-          Divider()
+        VStack(spacing: 3) {
           HStack {
-            Text("画面范围").font(.system(size: 12, weight: .medium))
+            Text("拉直").font(.system(size: 11)).foregroundStyle(.secondary)
             Spacer()
-            if let f = m.selected, m.isSinglePicture(f) {
-              Menu("自动裁切") {
-                Button("整卷自动裁切") { m.autoCrop(roll: true) }
-              } primaryAction: {
-                m.autoCrop(roll: false)
-              }
-              .menuStyle(.button).fixedSize().font(.system(size: 11))
-              .help("按片框的四条边裁到画面以内，并按边拉直；点箭头整卷一起裁。⌘Z 撤销，原文件不改")
+            Text(String(format: "%+.2f°", m.screenAngle)).readout()
+            Button("画线") {
+              m.useTool(.crop)
+              m.levelling = true
             }
-            Button(m.tool == .crop ? "完成" : "微调") { m.useTool(m.tool == .crop ? .select : .crop) }
-              .font(.system(size: 11))
-            InfoButton(text: m.selected?.scanPath != nil
-              ? "在原扫描范围内无损裁切。要扩大扫描区域，请回接触表调整画框并重扫。\n\n「拉直」让画面绕中心转动（正数顺时针，⌥ 拖动更细），裁去转出的空角，拖动时显示网格线；裁切时按 [ ] 每次 0.1°，加 ⇧ 每次 1°。「画线」后沿地平线、墙边或建筑竖线拖一条线，松手就按它拉直（裁切时按住 ⌥ 拖也一样）。接触表上的画框仍按胶片原样显示，拉直后保留的部分用虚线框标出。"
-              : "画框周围保留了片基，可在单张中细调裁切，不会跳回接触表。\n\n翻拍的照片可以「自动裁切」：找出片框的四条边（片边或片间的片基转入画面的地方），裁到画面以内一点，并按边拉直；点旁边的箭头整卷一起裁。同一卷翻拍时放大倍率不变，每张的画面大小差不多：哪张的一条边找错了（比如画面底部有一大片和片基一样淡的阴影，它的直边被当成了片框），就按其他张的画面大小改正。片框的边伸出照片的那一侧，裁在照片的边上。\n\n「拉直」让画面绕中心转动（正数顺时针，⌥ 拖动更细），裁去转出的空角，拖动时显示网格线；裁切时按 [ ] 每次 0.1°，加 ⇧ 每次 1°。「画线」后沿地平线、墙边或建筑竖线拖一条线，松手就按它拉直（裁切时按住 ⌥ 拖也一样）。接触表上的画框仍按胶片原样显示，拉直后保留的部分用虚线框标出。")
+            .font(.system(size: 11)).help("沿地平线、墙边或建筑竖线拖一条线，按它拉直（裁切时也可以按住 ⌥ 拖）")
+            Button("归零") { m.straighten(0) }.font(.system(size: 11)).disabled(m.settings.angle == nil)
           }
-          VStack(spacing: 3) {
-            HStack {
-              Text("拉直").font(.system(size: 11)).foregroundStyle(.secondary)
-              Spacer()
-              Text(String(format: "%+.2f°", m.screenAngle)).readout()
-              Button("画线") {
-                m.useTool(.crop)
-                m.levelling = true
-              }
-              .font(.system(size: 10)).help("沿地平线、墙边或建筑竖线拖一条线，按它拉直（裁切时也可以按住 ⌥ 拖）")
-              Button("归零") { m.straighten(0) }.font(.system(size: 10)).disabled(m.settings.angle == nil)
+          Fader(title: "拉直", value: Binding(get: { m.screenAngle }, set: { m.straighten($0) }), range: -15...15, detent: 0)
+        }
+        if m.tool == .crop, let crop = m.canvasCrop {
+          ForEach(0..<4, id: \.self) { edge in cropStepper(edge, crop: crop) }
+          Button("还原范围") { m.resetCrop() }.font(.system(size: 11))
+        }
+      }
+    }
+  }
+  /// Fine cropping on the picture, or done with it.
+  var cropKey: some View {
+    Button(m.tool == .crop ? "完成" : "微调") { m.useTool(m.tool == .crop ? .select : .crop) }
+      .font(.system(size: 11)).help(m.tool == .crop ? "结束裁切" : "在画面上细调裁切 · C")
+  }
+  /// White balance: automatic or by hand, the roll as one, and the points picked on the frame.
+  var balanceSection: some View {
+    PanelSection("白平衡", key: "balance", info: "自动白平衡按画面估计，忽略外缘 5%（不改变导出范围）。用本机或翻拍标定的预设时不按画面估计，按标定时记下的中性配平，开不开「自动」都一样；这个中性是在标定时的光下定的（比如阳光），阴天、树荫、室内的照片会带上光的颜色，用「中性灰」或冷暖、绿 / 洋红调。\n\n「中性灰」用滴管点画面中应为灰色的地方，按这一点自动白平衡（「自动」保持开着）。「高光」（Dmax）点负片上最密、正片里应为纯白的地方，比如阳光下的白墙或高光反射：各通道从暗部（标定预设从标定的中性，取过中性灰时从那一点）拉到这一点，它在正片里是白色。两个滴管也在画面上方的工具条里（N、W）。「重算」放弃取样点，按画面重新估计，标定预设回到标定的中性。") {
+      Toggle(
+        "自动",
+        isOn: Binding(
+          get: { m.settings.autoWhiteBalance },
+          set: { v in
+            m.change("自动白平衡") {
+              $0.autoWhiteBalance = v
+              $0.manualBalance = nil
+              $0.neutralSample = nil
             }
-            Fader(title: "拉直", value: Binding(get: { m.screenAngle }, set: { m.straighten($0) }), range: -15...15, detent: 0)
-          }
-          if m.tool == .crop, let crop = m.canvasCrop {
-            ForEach(0..<4, id: \.self) { edge in cropStepper(edge, crop: crop) }
-            Button("还原范围") { m.resetCrop() }.font(.system(size: 11))
-          }
-        }
-        Divider()
-        HStack {
-          Text("白平衡").font(.system(size: 12, weight: .medium))
-          Spacer()
-          Toggle(
-            "自动",
-            isOn: Binding(
-              get: { m.settings.autoWhiteBalance },
-              set: { v in
-                m.change("自动白平衡") {
-                  $0.autoWhiteBalance = v
-                  $0.manualBalance = nil
-                  $0.neutralSample = nil
-                }
-              })
-          ).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
-          InfoButton(text: "自动白平衡按画面估计，忽略外缘 5%（不改变导出范围）。用本机或翻拍标定的预设时不按画面估计，按标定时记下的中性配平，开不开「自动」都一样；这个中性是在标定时的光下定的（比如阳光），阴天、树荫、室内的照片会带上光的颜色，用「取中性灰」或冷暖、绿 / 洋红调。「取中性灰」用滴管点画面中应为灰色的地方，按这一点自动白平衡（「自动」保持开着）。「取高光」（Dmax）点负片上最密、正片里应为纯白的地方，比如阳光下的白墙或高光反射：各通道从暗部（标定预设从标定的中性，取过中性灰时从那一点）拉到这一点，它在正片里是白色。「重算白平衡」放弃取样点，按画面重新估计，标定预设回到标定的中性。")
-        }
+          })
+      ).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
+    } content: {
+      VStack(alignment: .leading, spacing: 10) {
         HStack {
           Toggle("整卷同一白平衡", isOn: Binding(get: { m.settings.sharedBalance == true }, set: { m.setSharedBalance($0) }))
-            .toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11)).disabled(m.selected == nil || m.isWorking)
+            .toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 12)).disabled(m.selected == nil || m.isWorking)
           Spacer()
           InfoButton(text: "像冲印店印一卷那样，整卷用同一个配光：白平衡按整卷所有画面一起统计，卷里每张的颜色一致，不再各自按自己的暗部去配平（比如阴影里的天光不会把一张整体拉偏）。每张的明暗照旧。\n\n只替换交给软件的部分：哪一张取了中性灰或高光，或关了自动白平衡，那一张按你的来。用标定预设时，白平衡本来就按标定的中性，整卷一致。")
         }
         slider("冷暖", key: \.warmth, range: -1...1)
         slider("绿 / 洋红", key: \.tint, range: -1...1)
-        Button {
-          m.useTool(.neutral)
-        } label: {
-          Label("取中性灰", systemImage: CanvasTool.neutral.symbol)
-        }.font(.system(size: 11))
-        HStack {
+        // The two pickers, latched while one is in use and marked once a point is picked; the
+        // same pickers lie over the picture.
+        HStack(spacing: 6) {
+          Text("取样").font(.system(size: 11)).foregroundStyle(.secondary)
+          Button {
+            m.useTool(.neutral)
+          } label: {
+            Label(m.settings.neutralSample != nil ? "中性灰 ✓" : "中性灰", systemImage: CanvasTool.neutral.symbol)
+          }.buttonStyle(KeyStyle(latched: m.tool == .neutral)).help("取中性灰：点画面中应为灰色的地方 · N")
           Button {
             m.useTool(.highlight)
           } label: {
-            Label("取高光（Dmax）", systemImage: CanvasTool.highlight.symbol)
-          }.font(.system(size: 11))
+            Label(m.settings.highlightSample != nil ? "高光 ✓" : "高光", systemImage: CanvasTool.highlight.symbol)
+          }.buttonStyle(KeyStyle(latched: m.tool == .highlight)).help("取高光（Dmax）：点正片里应为纯白的地方 · W")
           if m.settings.highlightSample != nil {
-            Button("清除高光点") { m.change("清除高光点") { $0.highlightSample = nil } }.font(.system(size: 11))
+            Button {
+              m.change("清除高光点") { $0.highlightSample = nil }
+            } label: {
+              Image(systemName: "xmark")
+            }.help("清除高光点").accessibilityLabel("清除高光点")
           }
-        }
-        Button("重算白平衡") { m.recalculateWhiteBalance() }.font(.system(size: 11))
+          Spacer(minLength: 4)
+          Button("重算") { m.recalculateWhiteBalance() }.help("放弃取样点，按画面重新估计白平衡")
+        }.font(.system(size: 11)).lineLimit(1)
         if m.settings.manualBalance != nil {
-          Text("保留了旧版中性点；可点「重算白平衡」使用新版校正。").font(.system(size: 10)).foregroundStyle(accent)
+          Text("保留了旧版中性点；可点「重算」使用新版校正。").font(.system(size: 11)).foregroundStyle(accent)
             .fixedSize(horizontal: false, vertical: true)
         }
-        Divider()
-        HStack {
-          Text("色阶").font(.system(size: 12, weight: .medium))
-          Spacer()
-          Toggle("自动", isOn: bool(\.autoLevels)).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
-          InfoButton(text: "自动：按画面的密度范围设定黑白两端。关闭后用黑点、白点和中间调手动设定。\n\n「整卷同一色阶」：整卷用同一组黑白两端，按整卷所有画面一起统计，像冲印店一卷用一个印放曝光：暗的场景就是暗的，亮的就是亮的。每张仍可以用「曝光」微调。取了高光（Dmax）或关了自动色阶的那一张按你的来。")
-        }
-        Toggle("整卷同一色阶", isOn: Binding(get: { m.settings.sharedLevels == true }, set: { m.setSharedLevels($0) }))
-          .toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11)).disabled(m.selected == nil || m.isWorking)
-        slider("黑点", key: \.black, range: 0...0.4)
-        slider("白点", key: \.white, range: 0.6...1)
-        slider("中间调", key: \.midtone, range: 0.4...2)
-        Divider()
-        HStack {
-          Text("影调").font(.system(size: 12, weight: .medium))
-          Spacer()
-          InfoButton(text: "曝光像放大时的印放曝光一样调整密度，在裁切前生效；−EV 可以找回高光。\n\n高光、阴影只动亮部或暗部：阴影往右提亮暗部、往左压暗；高光往左压暗亮部、找回层次，往右提亮。黑和白两端不动，明暗顺序也不会颠倒。")
-        }
+      }
+    }
+  }
+  /// Exposure and the tones, over the frame's histogram against what a screen shows.
+  var toneSection: some View {
+    PanelSection("影调", key: "tone", info: "曝光像放大时的印放曝光一样调整密度，在裁切前生效；−EV 可以找回高光。\n\n高光、阴影只动亮部或暗部：阴影往右提亮暗部、往左压暗；高光往左压暗亮部、找回层次，往右提亮。黑和白两端不动，明暗顺序也不会颠倒。") {
+      VStack(alignment: .leading, spacing: 10) {
         // In the single view, the frame's tones against what an ordinary screen shows of them.
         if let range = m.toneRange {
           HStack {
-            Text("直方图 · SDR 范围").font(.system(size: 11, weight: .medium))
+            Text("直方图 · SDR 范围").font(.system(size: 11)).foregroundStyle(.secondary)
             Spacer()
             InfoButton(text: "按印放曝光画的直方图，比屏幕能显示的范围宽：标着「黑」「白」的竖线是色阶的黑点和白点，「+1」「+2」是白点以上一档、两档。\n\n亮的一段是普通（SDR）屏幕上有层次的范围，从屏幕上的黑到屏幕上的白；两边暗下去的部分在屏幕上已是纯黑或纯白。柔和的高光把白点以上的一段收进这个范围，亮的一段因此伸过「白」。高光落在暗下去的部分时，可以把「曝光」往负调，或把「高光」往负调让肩部伸得更远。\n\n下面的「纯白」「纯黑」按屏幕上这张实际的像素数，有一个通道到顶或到底就算，色彩降噪等两端之后的处理也算在内。\n\n纵向按平方根画，少量的高光也看得见。按整张的每个像素计数，只算裁切以内；曲线算在屏幕范围里。")
           }
@@ -564,62 +758,78 @@ struct ContentView: View {
         slider("对比度", key: \.contrast, range: 0.5...1.6)
         slider("高光", key: \.highlightsAmount, range: -1...1, format: "%+.2f")
         slider("阴影", key: \.shadowsAmount, range: -1...1, format: "%+.2f")
-        Divider()
-        HStack {
-          Text("色彩").font(.system(size: 12, weight: .medium))
-          Spacer()
-          InfoButton(text: "色彩降噪只平滑颜色、不动明度：传感器和去串色带来的彩色噪点（尤其是蓝黄）会去掉，胶片颗粒的明暗结构保留。翻拍的照片默认 1。\n\n柔和的暗部和高光：最暗的地方不硬切成纯黑，而是平滑地压下去，暗部的颜色和层次因此保留下来，并略微补一点暗部的饱和度；最亮的地方用柔和的肩部收向白，不硬顶到白。高光超出白点较多的画面，肩部按这张最亮的 0.1% 伸长（最多两档），阳光下的白边、亮云在普通屏幕上也留着层次；加了饱和度的亮颜色也一起收向白，不截掉一个通道。「高光」往负调时肩部伸得更远。像相纸那样，中间段不变。")
-        }
+      }
+    }
+  }
+  /// The ends: automatic, the roll as one, or set by hand.
+  var levelsSection: some View {
+    PanelSection("色阶", key: "levels", info: "自动：按画面的密度范围设定黑白两端。关闭后用黑点、白点和中间调手动设定。\n\n「整卷同一色阶」：整卷用同一组黑白两端，按整卷所有画面一起统计，像冲印店一卷用一个印放曝光：暗的场景就是暗的，亮的就是亮的。每张仍可以用「曝光」微调。取了高光（Dmax）或关了自动色阶的那一张按你的来。") {
+      Toggle("自动", isOn: bool(\.autoLevels)).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
+    } content: {
+      VStack(alignment: .leading, spacing: 10) {
+        Toggle("整卷同一色阶", isOn: Binding(get: { m.settings.sharedLevels == true }, set: { m.setSharedLevels($0) }))
+          .toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 12)).disabled(m.selected == nil || m.isWorking)
+        slider("黑点", key: \.black, range: 0...0.4)
+        slider("白点", key: \.white, range: 0.6...1)
+        slider("中间调", key: \.midtone, range: 0.4...2)
+      }
+    }
+  }
+  var colourSection: some View {
+    PanelSection("色彩", key: "colour", info: "色彩降噪只平滑颜色、不动明度：传感器和去串色带来的彩色噪点（尤其是蓝黄）会去掉，胶片颗粒的明暗结构保留。翻拍的照片默认 1。\n\n柔和的暗部和高光：最暗的地方不硬切成纯黑，而是平滑地压下去，暗部的颜色和层次因此保留下来，并略微补一点暗部的饱和度；最亮的地方用柔和的肩部收向白，不硬顶到白。高光超出白点较多的画面，肩部按这张最亮的 0.1% 伸长（最多两档），阳光下的白边、亮云在普通屏幕上也留着层次；加了饱和度的亮颜色也一起收向白，不截掉一个通道。「高光」往负调时肩部伸得更远。像相纸那样，中间段不变。") {
+      VStack(alignment: .leading, spacing: 10) {
         slider("饱和度", key: \.saturation, range: 0...1.8)
         slider("色彩降噪", key: \.colourNoiseAmount, range: 0...2)
-        Toggle("柔和的暗部和高光", isOn: bool(\.softEndsOn)).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
-        Divider()
-        sharpeningControl
-        DisclosureGroup {
-          slider("输入 Gamma", key: \.inputGamma, range: 1...3)
-        } label: {
-          HStack {
-            Text("输入设置")
-            Spacer()
-            InfoButton(text: "本程序的 48-bit 扫描是线性的，输入 Gamma 为 1.0；编码未知的导入文件默认 2.2。已经反相的文件请关闭「负片去色罩 / 反相」。")
-          }
-        }.font(.system(size: 11))
-        Button {
-          m.applyToRoll()
-        } label: {
-          Label("同步到本卷", systemImage: "square.on.square")
-        }.frame(maxWidth: .infinity)
-      }.padding(18).disabled(m.selected == nil || m.exporting)
-        .buttonStyle(.bordered).controlSize(.small)
+        Toggle("柔和的暗部和高光", isOn: bool(\.softEndsOn)).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 12))
+      }
+    }
+  }
+  /// The curves, over the picture's histograms channel by channel; folded until wanted, and marked
+  /// when they change the picture.
+  var curvesSection: some View {
+    PanelSection("曲线", key: "curves", open: false, info: "拖动控制点调整；点空白处添加，双击控制点删除。各通道曲线在 RGB 曲线之后生效。背后是正片的红、绿、蓝直方图。") {
+      if m.settings.curves != nil {
+        Text("已调整").font(.system(size: 11)).foregroundStyle(Hardware.amberText)
+      }
+    } content: {
+      CurveEditor(
+        curves: Binding(
+          get: { m.settings.curves ?? ToneCurves() },
+          set: { value in m.change("曲线") { $0.curves = value.isIdentity ? nil : value } }),
+        histogram: m.histogram, channels: m.channelHistograms)
     }
   }
   /// Per-frame deconvolution strength, once the scanner has a measured profile.
-  var sharpeningControl: some View {
+  var sharpeningSection: some View {
     let imported = m.selected?.sourcePath != nil
     let strength = m.selected.map(Sharpening.strength(for:)) ?? 0
-    return VStack(alignment: .leading, spacing: 6) {
-      HStack {
-        Text("锐化").font(.system(size: 12, weight: .medium))
-        Spacer()
-        if m.preferences.sharpening == nil {
-          Text("未配置").font(.system(size: 10)).foregroundStyle(.secondary)
-        }
-        InfoButton(text: m.preferences.sharpening == nil
-          ? "在「扫描」页的「扫描仪锐化」导入一张分辨率标靶的扫描，测出这台扫描仪的 MTF 后可用。"
-          : "按扫描仪实测的 MTF 在线性扫描数据上反卷积；默认温和，推到 0 关闭。导入的图像默认不锐化，它们可能来自其他扫描仪或相机。")
-      }
+    return PanelSection("锐化", key: "sharpening", open: false, info: m.preferences.sharpening == nil
+      ? "在 ① 采集 · V850 的「扫描仪锐化」导入一张分辨率标靶的扫描，测出这台扫描仪的 MTF 后可用。"
+      : "按扫描仪实测的 MTF 在线性扫描数据上反卷积；默认温和，推到 0 关闭。导入的图像默认不锐化，它们可能来自其他扫描仪或相机。"
+    ) {
+      Text(m.preferences.sharpening == nil ? "未配置" : strength == 0 ? "关" : "\(Int((strength * 100).rounded()))%").readout()
+    } content: {
       if m.preferences.sharpening != nil {
-        VStack(spacing: 3) {
-          HStack {
-            Text("强度").font(.system(size: 11)).foregroundStyle(.secondary)
-            Spacer()
-            Text(strength == 0 ? "关" : "\(Int((strength * 100).rounded()))%").readout()
-          }
-          Fader(
-            title: "锐化强度",
-            value: Binding(get: { strength }, set: { v in m.change("锐化") { $0.sharpening = v } }),
-            range: 0...1, detent: imported ? 0 : Sharpening.defaultStrength)
-        }
+        Fader(
+          title: "锐化强度",
+          value: Binding(get: { strength }, set: { v in m.change("锐化") { $0.sharpening = v } }),
+          range: 0...1, detent: imported ? 0 : Sharpening.defaultStrength)
+      } else {
+        Text("还没有这台扫描仪的锐化配置。").font(.system(size: 11)).foregroundStyle(.secondary)
+      }
+    }
+  }
+  /// How the file is read: as a negative or already positive, and its encoding.
+  var inputSection: some View {
+    PanelSection("输入设置", key: "input", open: false, info: "本程序的 48-bit 扫描是线性的，输入 Gamma 为 1.0；编码未知的导入文件默认 2.2。已经反相的文件请关闭「负片去色罩 / 反相」。") {
+      if !m.settings.inputIsNegative {
+        Text("不反相").font(.system(size: 11)).foregroundStyle(Hardware.amberText)
+      }
+    } content: {
+      VStack(alignment: .leading, spacing: 10) {
+        Toggle("负片去色罩 / 反相", isOn: bool(\.inputIsNegative)).toggleStyle(.switch).tint(Hardware.accent)
+          .font(.system(size: 12))
+        slider("输入 Gamma", key: \.inputGamma, range: 1...3)
       }
     }
   }
@@ -627,7 +837,7 @@ struct ContentView: View {
     let names = ["R · 红", "G · 绿", "B · 蓝"]
     return VStack(spacing: 2) {
       HStack {
-        Text(names[channel]).font(.system(size: 10)).foregroundStyle(.secondary)
+        Text(names[channel]).font(.system(size: 12)).foregroundStyle(.secondary)
         Spacer()
         Text(String(format: "%+.3f", (m.settings.baseFine ?? .zero).values[channel])).readout()
       }
@@ -658,8 +868,19 @@ struct ContentView: View {
       }
     }.controlSize(.mini).disabled(m.isWorking || m.rendering)
   }
+  /// The status line: while something is under way, an update waits, or a while after it changed.
+  var footerShown: Bool {
+    statusShown || m.exporting || m.scanBatch.isActive || m.scanner.busy || m.updater.release != nil
+  }
   var filmstrip: some View {
     VStack(spacing: 0) {
+      // Ticking frames for a batch belongs to capturing; elsewhere the strip's menu and the 画面
+      // menu tick them, and unticked frames lie dimmed.
+      if m.page == .capture { tickRow }
+      stripScroller
+    }
+  }
+  var tickRow: some View {
       HStack(spacing: 12) {
         Toggle(
           "勾选当前",
@@ -691,6 +912,8 @@ struct ContentView: View {
         }
       }.font(.system(size: 11)).controlSize(.mini).buttonStyle(.bordered)
         .padding(.horizontal, 18).padding(.top, 7).padding(.bottom, 2)
+  }
+  var stripScroller: some View {
       ScrollViewReader { proxy in
         ScrollView(.horizontal) {
           HStack(spacing: 12) {
@@ -755,7 +978,6 @@ struct ContentView: View {
             proxy.scrollTo(id, anchor: .center)
           }
       }
-    }
   }
   /// The workspace's status line, and a scan's progress at its end with the key to cancel it.
   var footer: some View {
@@ -793,7 +1015,7 @@ struct ContentView: View {
   func sectionTitle(_ text: String, symbol: String) -> some View { SectionTitle(text: text, symbol: symbol) }
   func labeled<V: View>(_ name: String, @ViewBuilder content: () -> V) -> some View {
     HStack {
-      Text(name).font(.system(size: 11)).foregroundStyle(.secondary)
+      Text(name).font(.system(size: 12)).foregroundStyle(.secondary)
       Spacer()
       content()
     }
@@ -807,7 +1029,7 @@ struct ContentView: View {
   ) -> some View {
     VStack(spacing: 3) {
       HStack {
-        Text(title).font(.system(size: 11)).foregroundStyle(.secondary)
+        Text(title).font(.system(size: 12)).foregroundStyle(.secondary)
         Spacer()
         Text(String(format: format, m.settings[keyPath: key])).readout()
       }
@@ -835,7 +1057,7 @@ struct RenderProgress: View {
       if let step {
         ProgressView(value: step.done).progressViewStyle(.linear).tint(Hardware.amber).frame(width: 170)
           .animation(.easeOut(duration: 0.25), value: step.done)
-        Text(step.label).font(.system(size: 10)).foregroundStyle(Color(white: 0.85))
+        Text(step.label).font(.system(size: 11)).foregroundStyle(Color(white: 0.85))
       } else {
         ProgressView().controlSize(.small)
       }

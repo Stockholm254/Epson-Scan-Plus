@@ -104,13 +104,16 @@ extension AppModel {
   /// A page's layout in pixels, top-left origin: frames in strips of film with their rebates, each
   /// cell the shape of its frame (`aspects`, width over height), so none leaves black beside it: one
   /// narrower than 3:2 as tall as a 3:2 frame, one wider as wide and lower. Every page of a roll
-  /// with more than one has room for six strips of six 3:2 frames, so turning keeps the scale.
+  /// with more than one has room for six strips of six 3:2 frames, so turning keeps the scale; a
+  /// roll of one page is as tall as its strips, and one of fewer than six frames as wide as they
+  /// are, so the light table shows it as large as it holds rather than in a corner of an empty page.
   static func sheetLayout(aspects: [CGFloat], pages: Int) -> (size: CGSize, cells: [CGRect], strips: [CGRect]) {
     let cell = sheetCell, gap: CGFloat = 18, rebate: CGFloat = 40, side: CGFloat = 28
     let stripGap: CGFloat = 40, margin: CGFloat = 48
     let count = aspects.count
     let strips = pages > 1 ? sheetStrips : max(1, (count + sheetPerStrip - 1) / sheetPerStrip)
-    let stripWidth = side * 2 + cell.width * CGFloat(sheetPerStrip) + gap * CGFloat(sheetPerStrip - 1)
+    let across = pages > 1 ? sheetPerStrip : min(sheetPerStrip, max(1, count))
+    let stripWidth = side * 2 + cell.width * CGFloat(across) + gap * CGFloat(across - 1)
     let stripHeight = cell.height + rebate * 2
     let size = CGSize(width: margin * 2 + stripWidth, height: margin * 2 + stripHeight * CGFloat(strips) + stripGap * CGFloat(strips - 1))
     var cells = [CGRect](), stripRects = [CGRect]()

@@ -18,6 +18,9 @@ enum ContactPageTests {
       "a contact sheet page holds six strips of six frames, 3:2, in reading order")
     try check(short.size == full.size && short.cells.count == 4 && alone.size.height < full.size.height,
       "every page of a longer roll keeps the full page's size, so turning keeps the scale; a roll of one page is as tall as its strips")
+    let three = AppModel.sheetLayout(count: 3, pages: 1), six = AppModel.sheetLayout(count: 6, pages: 1)
+    try check(three.size.width < six.size.width && abs(three.strips[0].maxX + 48 - three.size.width) < 0.5 && six.size.width == full.size.width,
+      "a roll of fewer than six frames is as wide as its frames, so the light table shows it large, not in a corner of an empty page")
     // A frame turned upright among 3:2 ones, and a wide one: each cell its frame's shape.
     let mixed = AppModel.sheetLayout(aspects: [1.5, 2.0 / 3, 1.5, 3], pages: 1), band = mixed.cells[0]
     try check(mixed.cells[1].size == CGSize(width: 160, height: 240) && mixed.cells[1].minY == band.minY
