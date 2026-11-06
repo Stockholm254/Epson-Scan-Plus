@@ -227,8 +227,9 @@ struct CameraStage: View {
             Picker("像素位移", selection: $m.pixelShiftCount) {
               Text("单张").tag(1)
               Text("位移 4").tag(4)
-            }.pickerStyle(.segmented).labelsHidden().frame(width: 130)
-              .help("像素位移要先在相机菜单里打开（4 张、最短间隔）。选「位移 4」时，一次快门收到的 4 张归成一组，合成一张：每个点的红、绿、蓝都是实测的，没有去马赛克的假色")
+              Text("位移 16").tag(16)
+            }.pickerStyle(.segmented).labelsHidden().frame(width: 190)
+              .help("像素位移要先在相机菜单里打开，张数和这里一样，间隔选最短。一次快门收到的一组合成一张：4 张时每个点的红、绿、蓝都是实测的，没有去马赛克的假色；16 张再加上半像素的位移，合成长宽各两倍的画面（A7R IV 约 2.45 亿像素，每组约 2 GB 原片加 1.5 GB 合成图）")
             if m.pixelShiftCount > 1 { ShiftBeads(count: m.pixelShiftCount, got: m.pendingShift.count) }
           }
           if liquid { drop(shifting) } else { shifting }
@@ -491,7 +492,7 @@ struct CameraPanel: View {
       }
       Divider()
       Text("像素位移").font(.system(size: 12, weight: .medium))
-      Text("像素位移只能在相机上打开：拍摄菜单里选「像素位移多重拍摄」，张数选 4，间隔选最短，RAW 设为无压缩。下方取景区右侧选「位移 4」。按一次快门，相机拍 4 张，每张传感器移一个像素；App 把这 4 张放进同一个文件夹，合成一张再转换。合成的每个点，红、绿、蓝都是实测的，没有去马赛克的假色，颗粒和细边缘的颜色更干净；清晰度不会变高。4 张之间胶片、相机或灯不能动：两次绿色相差超过 4%（正常约 1.5%）时，App 会提醒重拍。16 张不提供：在这套翻拍上它没有多出细节，却要 4 倍的时间和空间。")
+      Text("像素位移只能在相机上打开：拍摄菜单里选「像素位移多重拍摄」，张数选 4 或 16，间隔选最短，RAW 设为无压缩。下方取景区右侧选同样的张数。按一次快门，相机拍一组，App 把这一组放进同一个文件夹，合成一张再转换。\n\n4 张：每张传感器移一个像素，合成的每个点红、绿、蓝都是实测的，没有去马赛克的假色，颗粒和细边缘的颜色更干净；像素数不变。\n\n16 张：4 组这样的 4 张，组与组之间再移半个像素，合成长宽各两倍的画面。半像素位移由 App 从画面上实测（相机给的常差 0.1–0.2 像素），每个点取离它最近的那一组。A7R IV 一组约 19 秒、原片约 2 GB，合成图约 1.5 GB，合成时要约 3 GB 内存。能多出的细节取决于镜头：在 Vlad's 测试标靶上，16 张比 4 张只多分辨了一个元素。\n\n一组之间胶片、相机或灯不能动：两次绿色相差超过 4%（正常约 1.5%），或 16 张的半像素位移偏离超过 0.25 像素时，App 会提醒重拍。")
         .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       Divider()
       Text("光源标定").font(.system(size: 12, weight: .medium))

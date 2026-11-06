@@ -252,6 +252,18 @@ enum CameraTests {
     try check(waitingOne == 1 && model.pendingShift.isEmpty && model.frames.count == 5
       && model.frames[4].sourcePath?.hasSuffix("Decoded/EPS00011.tif") == true,
       "a group that will not be completed gives its picture as one shot, and the next press starts afresh")
+    // Sixteen: composed at twice the resolution each way.
+    model.pixelShiftCount = 16
+    for (k, data) in PixelShiftTests.shots16(width: 160, height: 120).enumerated() {
+      let url = incoming.appendingPathComponent(String(format: "EPS%05d.ARW", 20 + k))
+      try data.write(to: url)
+      model.receiveCapture(url)
+    }
+    for _ in 0..<200 where model.frames.count == 5 { settle(0.05) }
+    let big = model.frames.count == 6 ? model.frames[5].sourcePath.map { ImagePipeline.shared.info(URL(fileURLWithPath: $0)) } : nil
+    try check(big?.width == 320 && big?.height == 240 && model.frames[5].sourcePath?.contains("Decoded/PixelShift-") == true
+      && model.status.contains("16 张") && model.status.contains("4 组对齐"),
+      "sixteen uncompressed ARWs of a pixel-shift shot compose into one frame twice the sensor's size each way: \(model.status)")
     model.pixelShiftCount = 1
 
     // An uncompressed ARW laid out as the A7R IV writes one, small: IFD0 pointing to the sensor's
