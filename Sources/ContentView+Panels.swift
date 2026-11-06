@@ -25,7 +25,6 @@ extension ContentView {
             switch m.captureSource {
             case .scanner: scanTab
             case .camera: cameraTab
-            case .files: filesTab
             }
           } else {
             switch m.panelTab {
@@ -388,11 +387,14 @@ extension ContentView {
       Divider()
       titled("接触表", symbol: "square.grid.3x2", info:
         "把勾选的画面排成一张图片，格式同上。\n\n「预览 · 立即导出」按整幅预览的分辨率（600 dpi 预览时每张 35 mm 约 850 像素）直接生成，不扫描；已正式扫描的画面按同样的分辨率读取。\n\n「1200 dpi · 先扫描」时，尚未扫描或低于 1200 dpi 的画面先以 1200 dpi 扫描，结果保存为这些画面的原始文件，再生成 1200 dpi 的接触表。")
-      labeled("清晰度") {
-        Picker("", selection: Binding(get: { m.preferences.sheet.resolution ?? .preview }, set: { m.preferences.sheet.resolution = $0 })) {
-          Text("预览 · 立即导出").tag(ContactSheet.Resolution.preview)
-          Text("1200 dpi · 先扫描").tag(ContactSheet.Resolution.scan)
-        }.labelsHidden()
+      // Only frames on the scanner's preview are scanned for it; pictures of their own files are used as they are.
+      if m.frames.contains(where: { $0.sourcePath == nil }) {
+        labeled("清晰度") {
+          Picker("", selection: Binding(get: { m.preferences.sheet.resolution ?? .preview }, set: { m.preferences.sheet.resolution = $0 })) {
+            Text("预览 · 立即导出").tag(ContactSheet.Resolution.preview)
+            Text("1200 dpi · 先扫描").tag(ContactSheet.Resolution.scan)
+          }.labelsHidden()
+        }
       }
       Picker("排列", selection: sheet.style) {
         Text("胶片条").tag(ContactSheet.Layout.Style.strips)
@@ -440,18 +442,6 @@ extension ContentView {
     }
   }
   /// Pictures from elsewhere, copied into a new roll.
-  var filesTab: some View {
-    VStack(alignment: .leading, spacing: 14) {
-      titled("导入文件", symbol: "square.and.arrow.down", info:
-        "TIFF、PNG 或 JPEG。文件复制到库里新的一卷的 Originals 文件夹，原文件不动。编码未知的文件按 Gamma 2.2 读，可以在 ② 去色罩的「输入设置」里改。")
-      Button {
-        m.importImages()
-      } label: {
-        Label("选择文件…", systemImage: "folder").frame(maxWidth: .infinity)
-      }.buttonStyle(KeyStyle(prominent: true)).disabled(m.isWorking)
-      note("每次导入放进新的一卷，之后在 ② 去色罩里处理。")
-    }
-  }
   /// Module ①'s right panel: with the camera the last picture's focus check first, then the roll as
   /// the library files it.
   var rollPanel: some View {

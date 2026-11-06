@@ -71,7 +71,7 @@ struct ContentView: View {
   /// status line, where it never lies across into the inspector. The system groups them
   /// on its glass and folds what does not fit into its overflow menu.
   @ToolbarContentBuilder var toolbarContent: some ToolbarContent {
-    ToolbarItem(placement: .navigation) { scannerLamp }
+    if showsScannerLamp { ToolbarItem(placement: .navigation) { scannerLamp } }
     ToolbarItemGroup(placement: .navigation) {
       if m.page == .leak {
         LeakToolbar(lab: m.leak)
@@ -86,7 +86,7 @@ struct ContentView: View {
             m.importImages()
           } label: {
             Label("导入", systemImage: "square.and.arrow.down")
-          }.help("导入 TIFF、PNG 或 JPEG，放进库里新的一卷")
+          }.help("导入 TIFF、PNG 或 JPEG（⌘O），复制到库里新的一卷，原文件不动；编码未知的按 Gamma 2.2 读，可以在 ② 去色罩的「输入设置」里改")
         }
         if m.page == .convert {
           Button {
@@ -158,6 +158,10 @@ struct ContentView: View {
       .accessibilityElement(children: .combine).accessibilityLabel("扫描仪状态")
       .accessibilityValue(state.text)
   }
+  /// The scanner's lamp where the scanner is in use: its own source, a roll it scanned, or a scan running.
+  var showsScannerLamp: Bool {
+    m.scanner.busy || (m.page == .capture ? m.captureSource == .scanner : m.page == .convert && !m.copyStandRoll)
+  }
   var lampState: (lamp: StatusLED.Lamp, text: String) {
     if m.scanner.busy { return (.busy, m.scanner.cancellationHint == nil ? "工作中" : "取消中") }
     return m.scanner.ready ? (.ready, "就绪") : (.fault, "未就绪")
@@ -190,7 +194,8 @@ struct ContentView: View {
         Label("看片镜", systemImage: "circle.circle").font(.system(size: 11))
       }.buttonStyle(KeyStyle(latched: m.preferences.showLoupe)).controlSize(.small)
         .help("看片镜：点一下放到所选画面上，拖动放大细看，再点一下收起 · Z。接触表和单张都能用；右键选择型号")
-      if !m.singleView {
+      // Turning the holder: pages laid out from files of their own have none.
+      if !m.singleView && !m.onSheetPage {
         Button {
           m.preferences.contactLandscape.toggle()
           m.fitView()
@@ -240,6 +245,16 @@ struct ContentView: View {
       Text(m.singleView ? "第 \(m.selected?.name ?? "—") 张" : "\(m.frames.count) 个画面").font(
         .system(size: 11, design: .monospaced))
   }
+  /// What the window shows, the same choice on the light table and for the single frame: the film
+  /// as it was read, or positives, each by its own settings.
+  var negativePicker: some View {
+    Picker("显示", selection: $m.showNegative) {
+      Text("负片").tag(true)
+      Text("正片").tag(false)
+    }.pickerStyle(.segmented).labelsHidden().frame(width: 100)
+      .help("负片：扫描或翻拍的原样。正片：每张按各自的调色显示，接触表上片边与片夹按本卷片基反相")
+      .onChange(of: m.showNegative) { m.refresh() }
+  }
   /// Zoom, turning, mirroring and what is shown.
   @ViewBuilder var viewingControls: some View {
       if m.singleView {
@@ -262,12 +277,7 @@ struct ContentView: View {
         } label: {
           Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
         }.buttonStyle(KeyStyle(latched: m.rollMirrored)).help(m.rollMirrored ? "取消全卷水平镜像" : "全卷水平镜像：修正胶片正反面放反").disabled(m.frames.isEmpty)
-        Picker("显示", selection: $m.contactPositive) {
-          Text("原片").tag(false)
-          Text("反相").tag(true)
-        }.pickerStyle(.segmented).labelsHidden().frame(width: 110)
-          .help("反相：每张按各自的调色显示为正片，片边与片夹按本卷片基反相")
-          .onChange(of: m.contactPositive) { m.refresh() }
+        negativePicker
       }
       if m.singleView {
         Button {
@@ -280,8 +290,7 @@ struct ContentView: View {
         } label: {
           Image(systemName: "chevron.right")
         }.disabled(!m.canNavigate(1)).help("下一张 · →")
-        Toggle("负片", isOn: $m.showNegative).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
-          .onChange(of: m.showNegative) { m.refresh() }
+        negativePicker
         Button {
           m.turn(clockwise: false)
         } label: {
@@ -303,7 +312,7 @@ struct ContentView: View {
         } label: {
           HStack(spacing: 3) {
             Image(systemName: "link")
-            Text("同步全部")
+            Text("整卷一起转")
           }.font(.system(size: 11))
         }.buttonStyle(KeyStyle(latched: m.syncOrientation))
           .help("开启后，旋转和水平镜像同步应用到本卷全部照片")
@@ -597,28 +606,31 @@ struct ContentView: View {
   var sharpeningControl: some View {
     let imported = m.selected?.sourcePath != nil
     let strength = m.selected.map(Sharpening.strength(for:)) ?? 0
+    // The scanner's measured MTF is no lens's: on the copy stand it shows only where it was set, to be taken off.
     return VStack(alignment: .leading, spacing: 6) {
-      HStack {
-        Text("锐化").font(.system(size: 12, weight: .medium))
-        Spacer()
-        if m.preferences.sharpening == nil {
-          Text("未配置").font(.system(size: 10)).foregroundStyle(.secondary)
-        }
-        InfoButton(text: m.preferences.sharpening == nil
-          ? "在「扫描」页的「扫描仪锐化」导入一张分辨率标靶的扫描，测出这台扫描仪的 MTF 后可用。"
-          : "按扫描仪实测的 MTF 在线性扫描数据上反卷积；默认温和，推到 0 关闭。导入的图像默认不锐化，它们可能来自其他扫描仪或相机。")
-      }
-      if m.preferences.sharpening != nil {
-        VStack(spacing: 3) {
-          HStack {
-            Text("强度").font(.system(size: 11)).foregroundStyle(.secondary)
-            Spacer()
-            Text(strength == 0 ? "关" : "\(Int((strength * 100).rounded()))%").readout()
+      if !m.copyStandRoll || strength > 0 {
+        HStack {
+          Text("锐化").font(.system(size: 12, weight: .medium))
+          Spacer()
+          if m.preferences.sharpening == nil {
+            Text("未配置").font(.system(size: 10)).foregroundStyle(.secondary)
           }
-          Fader(
-            title: "锐化强度",
-            value: Binding(get: { strength }, set: { v in m.change("锐化") { $0.sharpening = v } }),
-            range: 0...1, detent: imported ? 0 : Sharpening.defaultStrength)
+          InfoButton(text: m.preferences.sharpening == nil
+            ? "在「扫描」页的「扫描仪锐化」导入一张分辨率标靶的扫描，测出这台扫描仪的 MTF 后可用。"
+            : "按扫描仪实测的 MTF 在线性扫描数据上反卷积；默认温和，推到 0 关闭。导入的图像默认不锐化，它们可能来自其他扫描仪或相机。")
+        }
+        if m.preferences.sharpening != nil {
+          VStack(spacing: 3) {
+            HStack {
+              Text("强度").font(.system(size: 11)).foregroundStyle(.secondary)
+              Spacer()
+              Text(strength == 0 ? "关" : "\(Int((strength * 100).rounded()))%").readout()
+            }
+            Fader(
+              title: "锐化强度",
+              value: Binding(get: { strength }, set: { v in m.change("锐化") { $0.sharpening = v } }),
+              range: 0...1, detent: imported ? 0 : Sharpening.defaultStrength)
+          }
         }
       }
     }
@@ -661,24 +673,26 @@ struct ContentView: View {
   var filmstrip: some View {
     VStack(spacing: 0) {
       HStack(spacing: 12) {
-        Toggle(
-          "勾选当前",
-          isOn: Binding(
-            get: { m.selected?.enabled ?? false },
-            set: { value in
-              if let id = m.selectedID { m.setEnabled(id, enabled: value) }
-            })
-        )
-        .toggleStyle(.switch).tint(Hardware.accent).disabled(m.selected == nil || m.isWorking)
-        .help("勾选这一张用于扫描和导出。胶片条上没勾选的变暗；也可以在胶片条上右键勾选")
-        Divider().frame(height: 14)
-        Button("全选") { m.setAllEnabled(true) }
-          .disabled(m.frames.isEmpty || m.enabledCount == m.frames.count || m.isWorking)
-          .help("勾选当前工程中的全部照片，用于批量扫描和导出")
-        Button("全不选") { m.setAllEnabled(false) }
-          .disabled(m.enabledCount == 0 || m.isWorking)
-          .help("取消全部扫描和导出勾选；不删除照片、不切换当前画面")
-        Text("已选 \(m.enabledCount) / \(m.frames.count)").readout()
+        if m.page != .leak {
+          Toggle(
+            "勾选当前",
+            isOn: Binding(
+              get: { m.selected?.enabled ?? false },
+              set: { value in
+                if let id = m.selectedID { m.setEnabled(id, enabled: value) }
+              })
+          )
+          .toggleStyle(.switch).tint(Hardware.accent).disabled(m.selected == nil || m.isWorking)
+          .help("勾选这一张用于扫描和导出。胶片条上没勾选的变暗；也可以在胶片条上右键勾选")
+          Divider().frame(height: 14)
+          Button("全选") { m.setAllEnabled(true) }
+            .disabled(m.frames.isEmpty || m.enabledCount == m.frames.count || m.isWorking)
+            .help("勾选当前工程中的全部照片，用于批量扫描和导出")
+          Button("全不选") { m.setAllEnabled(false) }
+            .disabled(m.enabledCount == 0 || m.isWorking)
+            .help("取消全部扫描和导出勾选；不删除照片、不切换当前画面")
+          Text("已选 \(m.enabledCount) / \(m.frames.count)").readout()
+        }
         Spacer()
         // On the copy stand, with no canvas to take the delete key, the strip deletes the pictures.
         if cameraStage {
@@ -723,10 +737,10 @@ struct ContentView: View {
                   m.focusCanvas()
                 }
                 .contextMenu {
-                  Button(f.enabled ? "取消勾选" : "勾选", systemImage: f.enabled ? "circle" : "checkmark.circle") {
-                    m.setEnabled(f.id, enabled: !f.enabled)
-                  }.disabled(m.isWorking)
                   if m.page != .leak {
+                    Button(f.enabled ? "取消勾选" : "勾选", systemImage: f.enabled ? "circle" : "checkmark.circle") {
+                      m.setEnabled(f.id, enabled: !f.enabled)
+                    }.disabled(m.isWorking)
                     Button("在去漏光里打开", systemImage: "wand.and.rays") { m.openInLeak(f.id) }.disabled(m.isWorking)
                     Button("删除这张", systemImage: "trash", role: .destructive) { m.remove(f.id) }.disabled(m.isWorking)
                   }

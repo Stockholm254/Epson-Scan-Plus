@@ -123,8 +123,12 @@ final class AppModel: ObservableObject {
   @Published var exportType = "tiff"
   /// Rotate and mirror act on the current frame, or on every frame while syncing.
   @Published var syncOrientation = false
-  /// The contact sheet view shows a positive print of the overview, or the raw scan.
-  @Published var contactPositive = true
+  /// The contact sheet shows positives, or the film as it was read: one choice with the single
+  /// frame's, so the window shows negatives or positives wherever it is.
+  var contactPositive: Bool {
+    get { !showNegative }
+    set { showNegative = !newValue }
+  }
   /// Neutral patches picked with the calibration tool, across frames and rolls of one film.
   @Published var calibrationPoints = [NeutralPoint]()
   /// The current preset's neutral points marked on their frames; on once a preset is made.
@@ -210,12 +214,11 @@ final class AppModel: ObservableObject {
   }
   /// Where module ① takes pictures from.
   enum CaptureSource: String, CaseIterable {
-    case scanner = "V850 扫描", camera = "A7R IV 翻拍", files = "导入文件"
+    case scanner = "V850 扫描", camera = "A7R IV 翻拍"
     var symbol: String {
       switch self {
       case .scanner: return "scanner"
       case .camera: return "camera"
-      case .files: return "square.and.arrow.down"
       }
     }
     /// The name on its tab where the whole one does not fit.
@@ -223,7 +226,6 @@ final class AppModel: ObservableObject {
       switch self {
       case .scanner: return "V850"
       case .camera: return "A7R IV"
-      case .files: return "导入"
       }
     }
   }
