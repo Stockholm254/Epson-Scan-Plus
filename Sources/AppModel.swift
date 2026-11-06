@@ -1523,9 +1523,8 @@ final class AppModel: ObservableObject {
       useTool(.select)
       reapplyScannerCalibration()
       status = String(
-        format: "已标定扫描仪 · 杂散光 R %.2f%% · G %.2f%% · B %.2f%% · 灰阶误差 %.3f → %.3f D · 色块 ΔE 平均 %.1f",
-        result.flare.r * 100, result.flare.g * 100, result.flare.b * 100, result.grayErrorBefore, result.grayError,
-        result.meanDeltaE)
+        format: "已标定扫描仪 · 杂散光 R %.2f%% · G %.2f%% · B %.2f%% · 灰阶误差 %.3f → %.3f D",
+        result.flare.r * 100, result.flare.g * 100, result.flare.b * 100, result.grayErrorBefore, result.grayError)
     } catch { errorText = error.localizedDescription }
   }
   func removeScannerCalibration() {

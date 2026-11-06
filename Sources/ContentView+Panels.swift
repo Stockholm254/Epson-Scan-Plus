@@ -132,13 +132,12 @@ extension ContentView {
   var scannerCalibration: some View {
     VStack(alignment: .leading, spacing: 10) {
       titled("扫描仪标定 · IT8", symbol: "squareshape.split.3x3", info:
-        "用 IT8.7/1 透射色卡测量扫描仪的杂散光：它会抬高底片密实处的读数，使高光发灰。测量后，本程序的线性扫描在转换前扣除它。\n\n色卡放进 4×5 片夹，预览后用「画框」框出整张色卡，以 600 dpi 正式扫描，再在单张视图中按提示点 6 个点；点到第 4 个后会标出全部色块的位置，便于检查。参考文件须与色卡批号一致（MONT45 的 2022:07 批对应 MONT45.2022.07.txt）。\n\n色块按 3×3 矩阵拟合的 ΔE 是对色卡反转片染料的评估，负片转换不用这个矩阵。")
+        "用 IT8.7/1 透射色卡测量扫描仪的杂散光：它会抬高底片密实处的读数，使高光发灰。测量后，本程序的线性扫描在转换前扣除它。\n\n色卡放进 4×5 片夹，预览后用「画框」框出整张色卡，以 600 dpi 正式扫描，再在单张视图中按提示点 6 个点；点到第 4 个后会标出全部色块的位置，便于检查。参考文件须与色卡批号一致（MONT45 的 2022:07 批对应 MONT45.2022.07.txt）。")
       if let c = m.preferences.scannerCalibration {
         Text(c.reference).font(.system(size: 11)).lineLimit(2).truncationMode(.middle)
         Text(String(format: "杂散光 R %.2f%% · G %.2f%% · B %.2f%%", c.flare.r * 100, c.flare.g * 100, c.flare.b * 100)).readout()
-        note(String(
-          format: "灰阶最大误差 %.3f D，扣除后 %.3f D · 色块 ΔE %.1f（最大 %.1f）",
-          c.grayErrorBefore, c.grayError, c.meanDeltaE, c.maxDeltaE))
+        // The patches' 3×3 fit is the slide dyes', which no negative is converted by: not shown.
+        note(String(format: "灰阶最大误差 %.3f D，扣除后 %.3f D", c.grayErrorBefore, c.grayError))
         Toggle("转换前扣除杂散光", isOn: Binding(get: { m.preferences.removeFlare }, set: { m.preferences.removeFlare = $0; m.reapplyScannerCalibration() }))
           .toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
       } else {

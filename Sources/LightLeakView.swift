@@ -338,7 +338,11 @@ struct LeakPanel: View {
     VStack(alignment: .leading, spacing: 10) {
       header("参考图", symbol: "photo.on.rectangle", info: "参考图由 OpenAI 图像模型生成：只在你确认后上传最长边 1536 px、无 EXIF 的正片 JPEG 缩图及附加要求，原尺寸照片留在本机。每次 1 张，不自动重试；失败或超时仍可能已计费。\n\n已有参考图后，重新应用、换场景、旋转都在本地免费重算，不再调用 API。也可以导入在别处得到的同一张照片的干净参考图，比如用你自己订阅的图像模型（ChatGPT 等）按「导出缩图…」和「复制提示词」做的。\n\n没有参考图时，标出的局部区域也能单独去漏光，不调用 API。")
       Text(lab.job?.guideName ?? "尚无参考图").font(.system(size: 11, weight: .medium))
-      if let receipt { note(receipt).textSelection(.enabled) }
+      // What the request was, for a bill or a question about it; out of the way otherwise.
+      if let receipt {
+        DisclosureGroup("生成记录") { note(receipt).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
+          .font(.system(size: 10))
+      }
       if lab.hasReference { note(fitInfo) }
       Text("OpenAI · \(credentials.model) · " + (credentials.configured ? (credentials.remembered ? "钥匙串已连接" : "临时 Key 已配置") : "尚未配置 Key"))
         .font(.system(size: 10)).foregroundStyle(.secondary)
@@ -369,7 +373,7 @@ struct LeakPanel: View {
 
   var adjustments: some View {
     VStack(alignment: .leading, spacing: 10) {
-      header("基础调整", symbol: "slider.horizontal.3", info: "在去漏光之前作用于原片：曝光按线性光的 EV 调整，冷暖与绿 / 品红按通道调整，对比度为 S 形曲线。手动调整不受去漏光的限制。")
+      header("基础调整", symbol: "slider.horizontal.3", info: "在去漏光之前作用于原片，只在这一页：本卷的照片已经按 ② 去色罩的调色进来，这里再叠一层，不改 ② 的设置。所以同一张的颜色先在 ② 调好，这里只为去漏光微调；导入的文件没有 ② 的调色，就在这里调。\n\n曝光按线性光的 EV 调整，冷暖与绿 / 品红按通道调整，对比度为 S 形曲线。手动调整不受去漏光的限制。")
       fader("曝光", "%+.2f EV", \.exposure, -2...2)
       fader("冷 ↔ 暖", "%+.0f", \.temperature, -100...100)
       fader("绿 ↔ 品红", "%+.0f", \.tint, -100...100)
