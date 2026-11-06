@@ -75,7 +75,7 @@ enum Kernels {
   /// The conversion the `negative` kernels share, up to its final clip: the tones (`graded`) and the
   /// saturation, in one order or the other.
   private static let conversion = """
-    #define NEGATIVE_ARGS float3 base, float3 slope, float3 toe, float3 gain, float3 balance, float4 levels, float4 tone, float4 color, float4 ends, float inverted, float2 fade, float2 lights, float4 shoulder
+    #define NEGATIVE_ARGS float3 base, float3 slope, float3 toe, float3 gain, float3 balance, float4 levels, float4 tone, float4 color, float4 ends, float inverted, float2 fade, float4 lights, float4 shoulder
     #define NEGATIVE_PASS base, slope, toe, gain, balance, levels, tone, color, ends, inverted, fade, lights, shoulder
 
     // Saturation (tone.w) about each pixel's lightness, more in the shadows (ends.z).
@@ -98,10 +98,31 @@ enum Kernels {
       float3 q = (e * gain + b + float3(tone.x * 0.30103) - float3(levels.x)) / max(levels.y - levels.x, 0.001);
       if (inverted < 0.5) { q = v * pow(2.0, tone.x / max(color.w, 0.1)); }
       q = (q - float3(levels.z)) / max(levels.w - levels.z, 0.01);
+      // Shadow warmth (color.z): red up and blue down by up to 0.2 in the dark tones, all of it at a
+      // lightness of 0.2 and none over 0.55, so the sunlit greys keep their balance; none at black
+      // either, which took no light to colour and would only turn red.
+      float l = dot(q, float3(0.2126, 0.7152, 0.0722));
+      float dark = smoothstep(0.03, 0.2, l) * (1.0 - smoothstep(0.2, 0.55, l));
+      q += float3(color.z * 0.2 * dark, 0.0, -color.z * 0.2 * dark);
       q += float3(color.x * 0.12 + color.y * 0.05, -color.y * 0.10, -color.x * 0.12 + color.y * 0.05);
       q = (q - float3(0.5)) * tone.z + float3(0.5);
       if (first) { q = saturated(q, tone, ends); }
       return q;
+    }
+    // The shoulder each value takes: from ends.y it rolls off towards white. Highlights running
+    // further past white than that holds (`ImagePipeline.shoulder`) go from shoulder.x along a log
+    // curve to 0.98 at the frame's brightest, then out to white, that curve taking over by shoulder.w.
+    static float3 shouldered(float3 q, float4 ends, float4 shoulder) {
+      float r = 1.0 - ends.y; float3 o = max(q, float3(ends.y)) - float3(ends.y);
+      float3 rolled = mix(q, float3(ends.y) + r * (float3(1.0) - exp(-o / r)), step(float3(ends.y), q));
+      if (shoulder.w > 0.0) {
+        float k = shoulder.x, span = shoulder.y, c = shoulder.z;
+        float3 x = max(q - float3(k), float3(0.0));
+        float3 eased = float3(k) + (0.98 - k) * log(float3(1.0) + c * min(x, float3(span))) / log(1.0 + c * span);
+        float3 past = float3(0.98) + 0.02 * (float3(1.0) - exp(-max(x - float3(span), float3(0.0)) / (0.02 * (1.0 + c * span))));
+        rolled = mix(rolled, mix(q, mix(eased, past, step(float3(span), x)), step(float3(k), q)), shoulder.w);
+      }
+      return rolled;
     }
     // The ends, the clip, shadows and highlights, and the midtone.
     static float3 ended(float3 q, NEGATIVE_ARGS) {
@@ -109,21 +130,36 @@ enum Kernels {
       // overflow the other's exp into infinity and come out as nothing.
       if (ends.x > 0.0) { float3 t = float3(ends.x); q = mix(t * exp(min(q, t) / t - float3(1.0)), q, step(t, q)); }
       if (ends.y < 1.0) {
-        float r = 1.0 - ends.y; float3 o = max(q, float3(ends.y)) - float3(ends.y);
-        float3 rolled = mix(q, float3(ends.y) + r * (float3(1.0) - exp(-o / r)), step(float3(ends.y), q));
-        // Highlights running further past white than that holds (`ImagePipeline.shoulder`): from
-        // shoulder.x along a log curve to 0.98 at the frame's brightest, then out to white, taking
-        // over by shoulder.w.
-        if (shoulder.w > 0.0) {
-          float k = shoulder.x, span = shoulder.y, c = shoulder.z;
-          float3 x = max(q - float3(k), float3(0.0));
-          float3 eased = float3(k) + (0.98 - k) * log(float3(1.0) + c * min(x, float3(span))) / log(1.0 + c * span);
-          float3 past = float3(0.98) + 0.02 * (float3(1.0) - exp(-max(x - float3(span), float3(0.0)) / (0.02 * (1.0 + c * span))));
-          rolled = mix(rolled, mix(q, mix(eased, past, step(float3(span), x)), step(float3(k), q)), shoulder.w);
+        // Rolled off each by itself, a bright colour's channels close up towards white: a white lit
+        // by the sky and one lit by the sun come out one white, and a blue sky past white in its
+        // blue alone turns cyan. With ends.w the brightest channel takes the shoulder and the others
+        // keep their distance below it, so the colour and its hue stay as the shoulder brings it
+        // down; a sky that far past white comes out a deeper blue. Past the frame's brightest (a
+        // little past white without the longer shoulder) everything closes up, as a print's
+        // highlights wash out.
+        float3 each = shouldered(q, ends, shoulder);
+        float m = max(q.r, max(q.g, q.b));
+        float top = shouldered(float3(m), ends, shoulder).x;
+        float3 kept = q + (top - m);
+        // Every channel brought down as far as the brightest, a colour well past white comes out
+        // darker than rolled off each by itself. lights.w (0-1) lifts it that far back towards the
+        // lightness it would have had, the others' distances below the brightest made smaller
+        // together, so the hue stays, the colour a little paler.
+        if (lights.w > 0.0) {
+          float3 luma = float3(0.2126, 0.7152, 0.0722);
+          float now = dot(kept, luma);
+          float aim = now + lights.w * max(dot(each, luma) - now, 0.0);
+          kept = float3(top) - (float3(top) - kept) * clamp((top - aim) / max(top - now, 0.00001), 0.0, 1.0);
         }
-        q = rolled;
+        float far = shoulder.w > 0.0 ? shoulder.x + shoulder.y : 1.1;
+        q = mix(each, kept, ends.w * (1.0 - smoothstep(far, far + 0.3, m)));
       }
       q = clamp(q, float3(0.0), float3(1.0));
+      // Highlights pressed down (lights.z, 0–1): every channel lowered by the same, up to 0.15, so
+      // the colour stays; how much goes by lightness, so a blue sky or a red, bright in one channel
+      // but not light, is left as it is. Nothing under 0.45, white at 0.85 at 1, and the gradation
+      // at the top kept, the lowering levelling off there.
+      if (lights.z > 0.0) { q -= float3(lights.z * 0.15 * smoothstep(0.45, 1.0, dot(q, float3(0.2126, 0.7152, 0.0722)))); }
       // Shadows and highlights: the dark tones (most at a third) and the light ones (most at two
       // thirds) moved by up to 0.12, black and white held, every tone still in order.
       float3 r = float3(1.0) - q;

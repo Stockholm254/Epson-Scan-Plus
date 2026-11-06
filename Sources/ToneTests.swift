@@ -78,6 +78,35 @@ enum ToneTests {
     try check(shouldered.last! < 254 && shouldered.last! > shouldered.first! + 2 && shouldered.first! > even.first! - 12,
       String(format: "with soft ends the same highlights roll off short of white, graded, at 0 EV: %.0f…%.0f",
         shouldered.first!, shouldered.last!))
+    // The shoulder keeps a bright colour: the red-tinted band's red rolls off as before, and green
+    // and blue stay as far below it instead of closing up towards white; the neutral band is the
+    // same either way.
+    func redOverGreen(_ r: Raster) -> Double { (w - 12..<w).map { (r.pixel($0, h * 3 / 8).r - r.pixel($0, h * 3 / 8).g) * 255 }.reduce(0, +) / 12 }
+    let keeping = ImagePipeline.highlightColour
+    ImagePipeline.highlightColour = 0
+    let closed = try render(defaults, portra)
+    ImagePipeline.highlightColour = keeping
+    let neutralShift = (w - 12..<w).map { abs(matching.pixel($0, 4).g - closed.pixel($0, 4).g) * 255 }.max()!
+    try check(redOverGreen(matching) > redOverGreen(closed) + 4 && abs(highlights(closed).last! - shouldered.last!) < 1.5 && neutralShift < 1.5,
+      String(format: "the shoulder keeps a bright red's distance from white: red over green %.0f, channel by channel %.0f; the neutral band moves %.1f",
+        redOverGreen(matching), redOverGreen(closed), neutralShift))
+    // Lifted back part of the way towards the lightness it has rolled off channel by channel, the
+    // blue band (a sky's colour, far past white in its blue) keeps its hue: blue stays brightest,
+    // and green and red stay in the same proportion below it; the neutral band is as it was.
+    func skyEnd(_ r: Raster) -> (luma: Double, ratio: Double, blueTop: Bool) {
+      let px = (w - 12..<w).map { r.pixel($0, h * 5 / 8) }
+      let red = px.map { $0.r }.reduce(0, +) / 12, green = px.map { $0.g }.reduce(0, +) / 12, blue = px.map { $0.b }.reduce(0, +) / 12
+      return ((0.2126 * red + 0.7152 * green + 0.0722 * blue) * 255, (blue - green) / max(blue - red, 0.001), blue > green && blue > red)
+    }
+    let lifting = ImagePipeline.highlightLightness
+    ImagePipeline.highlightLightness = 0
+    let deep = try render(defaults, portra)
+    ImagePipeline.highlightLightness = lifting
+    let liftedSky = skyEnd(matching), deepSky = skyEnd(deep)
+    let liftNeutral = (w - 12..<w).map { abs(matching.pixel($0, 4).g - deep.pixel($0, 4).g) * 255 }.max()!
+    try check(liftedSky.luma > deepSky.luma + 2 && liftedSky.blueTop && abs(liftedSky.ratio - deepSky.ratio) < 0.08 && liftNeutral < 1,
+      String(format: "a blue far past white is lifted %.1f levels towards its rolled-off lightness, blue still brightest, green over red below it %.2f (was %.2f); the neutral band moves %.1f",
+        liftedSky.luma - deepSky.luma, liftedSky.ratio, deepSky.ratio, liftNeutral))
     var brighter = defaults
     brighter.exposure = 1
     let mid = matching.pixel(w / 2, 4).g * 255, lifted = try render(brighter, portra).pixel(w / 2, 4).g * 255
@@ -107,6 +136,33 @@ enum ToneTests {
       && abs(up[0] - plain[0]) < 2 && plain[0] < 1 && highlights(try render(held, portra)).last! > 254.5 && rising(up) && rising(down) && rising(crossed),
       String(format: "shadows +1 lifts the dark tones (%.0f → %.0f) more than the light, highlights −1 lowers the light (%.0f → %.0f) more than the dark; black and white stay, and the ramp keeps rising",
         at(plain, dark), at(up, dark), at(plain, light), at(down, light)))
+    // Shadow warmth warms the dark greys and leaves the light ones and black: red over blue on the
+    // neutral ramp where it is a quarter of the way up, nothing where it is three quarters or black.
+    func warmer(_ s: Adjustments, _ share: Double) throws -> Double {
+      let p = try render(s, portra).pixel(Int(Double(w - 1) * share), 4)
+      return (p.r - p.b) * 255
+    }
+    var warmed = straight
+    warmed.shadowWarmth = 1
+    var none = straight
+    none.shadowWarmthAmount = 0
+    let warmDark = try warmer(warmed, dark) - warmer(straight, dark), warmLight = try warmer(warmed, light) - warmer(straight, light)
+    let warmBlack = try warmer(warmed, 0) - warmer(straight, 0)
+    try check(warmDark > 25 && abs(warmLight) < 1.5 && abs(warmBlack) < 1.5 && none.shadowWarmth == nil
+      && meanDifference(try render(none, portra), try render(straight, portra)) == 0,
+      String(format: "shadow warmth +1 warms the dark greys (red over blue +%.0f levels) and leaves the light ones (%+.1f) and black (%+.1f); at 0 it changes nothing",
+        warmDark, warmLight, warmBlack))
+    // Pressing the highlights lowers the light greys and white with them, leaves the dark ones, and
+    // keeps a bright red as far from green as it was.
+    var pressed = defaults
+    pressed.pressHighlights = 1
+    let press = try render(pressed, portra)
+    let pressedLight = matching.pixel(Int(Double(w - 1) * light), 4).g * 255 - press.pixel(Int(Double(w - 1) * light), 4).g * 255
+    let pressedDark = matching.pixel(Int(Double(w - 1) * dark), 4).g * 255 - press.pixel(Int(Double(w - 1) * dark), 4).g * 255
+    let pressedWhite = (0..<w).map { press.pixel($0, 4).g * 255 }.max()!
+    try check(pressedLight > 8 && abs(pressedDark) < 1 && pressedWhite < 0.87 * 255 && abs(redOverGreen(press) - redOverGreen(matching)) < 2,
+      String(format: "pressing the highlights lowers the light greys by %.0f levels and white to %.0f, the dark greys by %.1f, and a bright red keeps its colour (red over green %.0f, was %.0f)",
+        pressedLight, pressedWhite, pressedDark, redOverGreen(press), redOverGreen(matching)))
     // Positive input scales the linear value: one stop at input gamma 2.2 multiplies by 2^(1/2.2).
     let grey = CGImage(
       width: 8, height: 8, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: 32,

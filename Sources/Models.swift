@@ -239,6 +239,13 @@ struct Adjustments: Codable, Equatable {
   var exposure = 0.0
   var warmth = 0.0
   var tint = 0.0
+  /// The dark tones made warmer (positive) or cooler, the light ones as they are: shade lit by a
+  /// blue sky warmed without warming the sunlit greys. −1 to 1, nil as it is.
+  var shadowWarmth: Double? = nil
+  var shadowWarmthAmount: Double {
+    get { shadowWarmth ?? 0 }
+    set { shadowWarmth = newValue == 0 ? nil : newValue }
+  }
   var black = 0.0
   var white = 1.0
   var midtone = 1.0
@@ -257,6 +264,13 @@ struct Adjustments: Codable, Equatable {
   var shadowsAmount: Double {
     get { shadows ?? 0 }
     set { shadows = newValue == 0 ? nil : newValue }
+  }
+  /// The light tones pressed down, white with them, the darker half and the colours as they are:
+  /// 0 to 1, nil none.
+  var pressHighlights: Double? = nil
+  var pressHighlightsAmount: Double {
+    get { pressHighlights ?? 0 }
+    set { pressHighlights = newValue == 0 ? nil : newValue }
   }
   var highlights: Double? = nil
   var highlightsAmount: Double {

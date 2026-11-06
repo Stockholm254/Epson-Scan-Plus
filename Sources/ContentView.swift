@@ -695,7 +695,7 @@ struct ContentView: View {
   }
   /// White balance: automatic or by hand, the roll as one, and the points picked on the frame.
   var balanceSection: some View {
-    PanelSection("白平衡", key: "balance", info: "自动白平衡按画面估计，忽略外缘 5%（不改变导出范围）。用本机或翻拍标定的预设时不按画面估计，按标定时记下的中性配平，开不开「自动」都一样；这个中性是在标定时的光下定的（比如阳光），阴天、树荫、室内的照片会带上光的颜色，用「中性灰」或冷暖、绿 / 洋红调。\n\n「中性灰」用滴管点画面中应为灰色的地方，按这一点自动白平衡（「自动」保持开着）。「高光」（Dmax）点负片上最密、正片里应为纯白的地方，比如阳光下的白墙或高光反射：各通道从暗部（标定预设从标定的中性，取过中性灰时从那一点）拉到这一点，它在正片里是白色。两个滴管也在画面上方的工具条里（N、W）。「重算」放弃取样点，按画面重新估计，标定预设回到标定的中性。") {
+    PanelSection("白平衡", key: "balance", info: "自动白平衡按画面估计，忽略外缘 5%（不改变导出范围）。用本机或翻拍标定的预设时不按画面估计，按标定时记下的中性配平，开不开「自动」都一样；这个中性是在标定时的光下定的（比如阳光），阴天、树荫、室内的照片会带上光的颜色，用「中性灰」或冷暖、绿 / 洋红调。\n\n「阴影冷暖」只动暗部，越亮作用越小，阳光下的灰不变：晴天的阴影由蓝天照亮，本来就偏蓝，往右拨把它暖回来。\n\n「中性灰」用滴管点画面中应为灰色的地方，按这一点自动白平衡（「自动」保持开着）。「高光」（Dmax）点负片上最密、正片里应为纯白的地方，比如阳光下的白墙或高光反射：各通道从暗部（标定预设从标定的中性，取过中性灰时从那一点）拉到这一点，它在正片里是白色。两个滴管也在画面上方的工具条里（N、W）。「重算」放弃取样点，按画面重新估计，标定预设回到标定的中性。") {
       Toggle(
         "自动",
         isOn: Binding(
@@ -718,6 +718,7 @@ struct ContentView: View {
         }
         slider("冷暖", key: \.warmth, range: -1...1)
         slider("绿 / 洋红", key: \.tint, range: -1...1)
+        slider("阴影冷暖", key: \.shadowWarmthAmount, range: -1...1)
         // The two pickers, latched while one is in use and marked once a point is picked; the
         // same pickers lie over the picture.
         HStack(spacing: 6) {
@@ -751,7 +752,7 @@ struct ContentView: View {
   }
   /// Exposure and the tones, over the frame's histogram against what a screen shows.
   var toneSection: some View {
-    PanelSection("影调", key: "tone", info: "曝光像放大时的印放曝光一样调整密度，在裁切前生效；−EV 可以找回高光。\n\n高光、阴影只动亮部或暗部：阴影往右提亮暗部、往左压暗；高光往左压暗亮部、找回层次，往右提亮。黑和白两端不动，明暗顺序也不会颠倒。") {
+    PanelSection("影调", key: "tone", info: "曝光像放大时的印放曝光一样调整密度，在裁切前生效；−EV 可以找回高光。\n\n高光、阴影只动亮部或暗部：阴影往右提亮暗部、往左压暗；高光往左压暗亮部、找回层次，往右提亮。黑和白两端不动，明暗顺序也不会颠倒。\n\n压高光只把亮部往下压，白也跟着下来，到 1 时白在 0.85，像 C1 那样不顶满；亮度 0.45 以下不动，三个通道压一样多，颜色不变，最亮处的层次也留着。") {
       VStack(alignment: .leading, spacing: 10) {
         // In the single view, the frame's tones against what an ordinary screen shows of them.
         if let range = m.toneRange {
@@ -765,6 +766,7 @@ struct ContentView: View {
         slider("曝光 · EV", key: \.exposure, range: -2...2, format: "%+.2f")
         slider("对比度", key: \.contrast, range: 0.5...1.6)
         slider("高光", key: \.highlightsAmount, range: -1...1, format: "%+.2f")
+        slider("压高光", key: \.pressHighlightsAmount, range: 0...1)
         slider("阴影", key: \.shadowsAmount, range: -1...1, format: "%+.2f")
       }
     }
@@ -784,7 +786,7 @@ struct ContentView: View {
     }
   }
   var colourSection: some View {
-    PanelSection("色彩", key: "colour", info: "色彩降噪只平滑颜色、不动明度：传感器和去串色带来的彩色噪点（尤其是蓝黄）会去掉，胶片颗粒的明暗结构保留。翻拍的照片默认 1。\n\n柔和的暗部和高光：最暗的地方不硬切成纯黑，而是平滑地压下去，暗部的颜色和层次因此保留下来，并略微补一点暗部的饱和度；最亮的地方用柔和的肩部收向白，不硬顶到白。高光超出白点较多的画面，肩部按这张最亮的 0.1% 伸长（最多两档），阳光下的白边、亮云在普通屏幕上也留着层次；加了饱和度的亮颜色也一起收向白，不截掉一个通道。「高光」往负调时肩部伸得更远。像相纸那样，中间段不变。") {
+    PanelSection("色彩", key: "colour", info: "色彩降噪只平滑颜色、不动明度：传感器和去串色带来的彩色噪点（尤其是蓝黄）会去掉，胶片颗粒的明暗结构保留。翻拍的照片默认 1。\n\n柔和的暗部和高光：最暗的地方不硬切成纯黑，而是平滑地压下去，暗部的颜色和层次因此保留下来，并略微补一点暗部的饱和度；最亮的地方用柔和的肩部收向白，不硬顶到白。高光超出白点较多的画面，肩部按这张最亮的 0.1% 伸长（最多两档），阳光下的白边、亮云在普通屏幕上也留着层次；亮颜色收下来时颜色不变：最亮的通道走肩部，另外两个保持原来的距离，所以朝天空和朝太阳的两面白墙仍分得出冷暖，也不截掉一个通道；只有比这张最亮的 0.1% 还亮的地方才褪成白。「高光」往负调时肩部伸得更远。像相纸那样，中间段不变。") {
       VStack(alignment: .leading, spacing: 10) {
         slider("饱和度", key: \.saturation, range: 0...1.8)
         slider("色彩降噪", key: \.colourNoiseAmount, range: 0...2)

@@ -54,13 +54,22 @@ final class ImagePipeline {
   /// black (t/e), so their channels still differ and keep their colour; over `softShoulder` the
   /// highlights roll off towards white, never quite reaching it; and the shadows get up to
   /// `shadowColour` more saturation, less as they lighten, as colour runs out there on a screen.
+  /// `highlightColour` is how much of a bright colour the shoulder keeps: at 1 the brightest channel
+  /// rolls off and the others stay as far below it, so a white lit by the sky and one lit by the sun
+  /// still differ near white; at 0 each channel rolls off by itself and they close up into one white.
   /// In the kernel's output values (encoded, 0-1).
-  static var softToe = 0.05, softShoulder = 0.9, shadowColour = 0.3
+  /// Keeping the colour brings every channel down as far as the brightest, so a sky far past white
+  /// in its blue comes out darker than the per-channel roll-off had it; `highlightLightness` lifts
+  /// it that share of the way back, its hue kept, its colour a little paler.
+  static var softToe = 0.05, softShoulder = 0.9, shadowColour = 0.3, highlightColour = 1.0, highlightLightness = 0.5
   /// That shoulder holds what lies up to about half a stop past white; a frame's highlights often
   /// run further, and the negative still has them. So the shoulder reaches as far as the frame's
   /// brightest 0.1% (`ToneAnalysis.reach`), up to `reachStops` past its white, as a print's paper
   /// eases its highlights into white (`shoulder`); highlights −1 takes it `highlightsReach` further.
-  static var reachStops = 2.0, highlightsReach = 2.0
+  /// That brightest 0.1% is counted with the frame `reachDimension` pixels across (`pixelReach`),
+  /// not on the analysis' 300-pixel samples, which average a white sign or a lit edge away with
+  /// what lies round it; 0 counts it on those samples only.
+  static var reachStops = 2.0, highlightsReach = 2.0, reachDimension = 1500
   /// The longer shoulder for `s` and `a`, as the kernel takes it: from `x` up along a log curve
   /// that leaves the straight line at slope 1 and brings `x + y` to 0.98, `z` its bend, then out
   /// to white; `w` how far it replaces the short one, nothing for highlights within its reach.
@@ -368,6 +377,9 @@ final class ImagePipeline {
   func analyze(_ image: CGImage, settings: Adjustments, profile: FilmProfile) -> ToneAnalysis {
     let (base, density) = densities(image, settings: settings)
     var a = analyze(base: base, density: density, settings: settings, profile: profile)
+    if let sampled = a.reach, let counted = pixelReach(image, settings: settings, profile: profile, analysis: a) {
+      a.reach = max(sampled, counted)
+    }
     // The roll's print: its balance, or its ends, in place of this frame's own, where they are left
     // to the app (no grey, white or balance of the frame's own, no calibrated neutral).
     if let print = settings.rollPrint, settings.highlightSample == nil {
@@ -393,8 +405,10 @@ final class ImagePipeline {
   /// brightest frame's: the roll's shoulder holds every frame's.
   func rollPrint(_ frames: [(image: CGImage, settings: Adjustments)], profile: FilmProfile) -> RollPrint? {
     guard let first = frames.first else { return nil }
-    let each = frames.map { (density: densities($0.image, settings: $0.settings).density, settings: $0.settings) }
-      .filter { !$0.density[0].isEmpty }
+    let each = frames.map { f -> (image: CGImage, base: RGB, density: [[Double]], settings: Adjustments) in
+      let d = densities(f.image, settings: f.settings)
+      return (f.image, d.base, d.density, f.settings)
+    }.filter { !$0.density[0].isEmpty }
     var pooled = [[Double](), [Double](), [Double]()]
     for f in each { for c in 0..<3 { pooled[c] += f.density[c] } }
     guard !pooled[0].isEmpty else { return nil }
@@ -402,8 +416,11 @@ final class ImagePipeline {
     (s.neutralSample, s.manualBalance, s.highlightSample) = (nil, nil, nil)
     (s.autoWhiteBalance, s.autoLevels) = (true, true)
     let a = analyze(base: .one, density: pooled, settings: s, profile: profile)
-    let reach = each.map {
-      self.reach(exposures($0.density, settings: s, profile: profile), gain: a.gain, balance: a.balance, weight: nil, saturation: $0.settings.saturation)
+    let reach = each.map { f -> Double in
+      let sampled = self.reach(exposures(f.density, settings: s, profile: profile), gain: a.gain, balance: a.balance, weight: nil, saturation: f.settings.saturation)
+      var own = a
+      (own.base, own.fade, own.fadeAtGrey) = (f.base, 0, 1)
+      return max(sampled, pixelReach(f.image, settings: f.settings, profile: profile, analysis: own) ?? sampled)
     }.max()
     return RollPrint(balance: a.balance, gain: a.gain, low: a.low, high: a.high, reach: reach)
   }
@@ -422,6 +439,41 @@ final class ImagePipeline {
       return x.map { (v: Double) -> Double in l + saturation * (v - l) }.max()!
     }
     return quantile(peaks, 0.999)
+  }
+  /// The same, counted on the GPU over `image` brought to `reachDimension` pixels across, through
+  /// the frame's conversion up to its saturation and with none of the user's print exposure,
+  /// contrast, colour or levels, as `reach` has it. At 300 pixels a white sign or a lit edge is a
+  /// sample or two wide and averaged with what lies round it: a sunlit copy read 0.4 stop past
+  /// white there and 1.4 per pixel, so its shoulder stayed short and crushed the sign. At 1500
+  /// they keep their light while the grain is still averaged away, and a preview and a full export,
+  /// both brought to that size, read alike. Nil for a positive.
+  func pixelReach(_ image: CGImage, settings s: Adjustments, profile: FilmProfile, analysis a: ToneAnalysis) -> Double? {
+    guard Self.reachDimension > 0, s.inputIsNegative, let toned = Kernels.negativeRange else { return nil }
+    let scale = min(1, Double(Self.reachDimension) / Double(max(image.width, image.height)))
+    let ci = CIImage(cgImage: image, options: [.colorSpace: NSNull()]).transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+    var plain = s
+    (plain.exposure, plain.contrast, plain.warmth, plain.tint, plain.shadowWarmth, plain.black, plain.white) = (0, 1, 0, 0, nil, 0, 1)
+    guard let tones = toned.apply(extent: ci.extent, arguments: Self.arguments(ci, plain, profile, a)) else { return nil }
+    // Each pixel's brightest channel, counted in `n` steps from `lo` to `lo + span`, past them in the end steps.
+    let n = 2048, lo = -1.0, span = 4.0
+    let peaks = tones.applyingFilter("CIMaximumComponent").applyingFilter("CIColorMatrix", parameters: [
+      "inputRVector": CIVector(x: 1 / span, y: 0, z: 0, w: 0), "inputBiasVector": CIVector(x: -lo / span, y: 0, z: 0, w: 0),
+    ])
+    let counts = peaks.applyingFilter("CIAreaHistogram", parameters: [
+      kCIInputExtentKey: CIVector(cgRect: peaks.extent), "inputCount": n, kCIInputScaleKey: 1,
+    ])
+    var out = [Float](repeating: 0, count: n * 4)
+    out.withUnsafeMutableBytes {
+      context.render(counts, toBitmap: $0.baseAddress!, rowBytes: n * 16, bounds: CGRect(x: 0, y: 0, width: n, height: 1), format: .RGBAf, colorSpace: nil)
+    }
+    let steps = (0..<n).map { Double(out[$0 * 4]) }, total = steps.reduce(0, +)
+    guard total > 0 else { return nil }
+    var run = 0.0
+    for (i, v) in steps.enumerated() {
+      run += v
+      if run >= total * 0.999 { return a.low + (lo + (Double(i) + 0.5) * span / Double(n)) * (a.high - a.low) }
+    }
+    return nil
   }
   /// A frame's balance and ends from its densities above `base`.
   func analyze(base: RGB, density: [[Double]], settings: Adjustments, profile: FilmProfile) -> ToneAnalysis {
@@ -553,12 +605,12 @@ final class ImagePipeline {
       ci, v(effectiveBase), v(Self.slopes(s, profile).slopes), v(Self.toe(s, profile)), v(a.gain), v(a.balance),
       CIVector(x: a.low, y: a.high, z: s.black, w: s.white),
       CIVector(x: s.exposure, y: s.midtone, z: s.contrast, w: s.saturation),
-      CIVector(x: s.warmth, y: s.tint, z: 0, w: s.inputGamma),
+      CIVector(x: s.warmth, y: s.tint, z: s.shadowWarmthAmount, w: s.inputGamma),
       s.softEndsOn && s.inputIsNegative
-        ? CIVector(x: Self.softToe, y: Self.softShoulder, z: Self.shadowColour, w: 0) : CIVector(x: 0, y: 2, z: 0, w: 0),
+        ? CIVector(x: Self.softToe, y: Self.softShoulder, z: Self.shadowColour, w: Self.highlightColour) : CIVector(x: 0, y: 2, z: 0, w: 0),
       s.inputIsNegative ? 1.0 : 0.0,
       CIVector(x: a.fade, y: a.fadeAtGrey),
-      CIVector(x: s.shadowsAmount, y: s.highlightsAmount),
+      CIVector(x: s.shadowsAmount, y: s.highlightsAmount, z: s.pressHighlightsAmount, w: Self.highlightLightness),
       Self.shoulder(s, a),
     ]
   }
