@@ -44,11 +44,13 @@ enum MCPTools {
     ], required: ["points"]),
     Tool(name: "adjust", description: "调整选中画面的转换参数，只改给出的项；可用 ⌘Z 撤销。", properties: [
       "warmth": number("冷暖，-1 到 1", -1...1), "tint": number("绿 / 洋红，-1 到 1", -1...1),
+      "shadow_warmth": number("阴影冷暖：只动暗部，越亮作用越小，阳光下的灰不变；正数暖，-1 到 1", -1...1),
       "exposure": number("曝光 EV", -2...2), "contrast": number("对比度", 0.5...1.6), "saturation": number("饱和度", 0...1.8),
       "black": number("黑点（关闭自动色阶时生效）", 0...0.4), "white": number("白点（关闭自动色阶时生效）", 0.6...1),
       "midtone": number("中间调", 0.4...2),
       "highlights": number("高光：亮部压暗（负）或提亮（正），黑白两端不动，-1 到 1", -1...1),
       "shadows": number("阴影：暗部提亮（正）或压暗（负），黑白两端不动，-1 到 1", -1...1),
+      "press_highlights": number("压高光：亮部连同白一起往下压（1 时白在 0.85），0.45 以下不动，颜色不变，0 到 1", 0...1),
       "angle": number("拉直角度（度）：画面绕中心转动，正数顺时针，裁去转出的空角，-45 到 45", -45...45),
       "auto_white_balance": ["type": "boolean", "description": "自动白平衡"], "auto_levels": ["type": "boolean", "description": "自动色阶"],
       "shared_balance": ["type": "boolean", "description": "整卷同一白平衡：整卷共用一个按所有画面统计的白平衡，每张颜色一致；作用于选中画面所在的整卷"],
@@ -84,7 +86,7 @@ enum MCPTools {
   static let instructions = """
     Epson Scan plus 是彩色负片扫描与转换程序。转换的顺序：负片的线性读数除以片基（橙色色罩），换算成各通道高于片基的密度；按胶片预设或整卷估计的各通道斜率把三层的反差拉齐；再做白平衡、色阶和影调。
     - 先用 get_state 和 preview 看当前结果，用 sample 在可能是中性灰的地方取点：中性灰在正片里 R、G、B 应接近，在负片里三个通道高于片基的密度之比应接近通道斜率之比。
-    - 偏色先查片基（get_state 里的 film_base 和来源）；片基可疑时用 pick_film_base 点未曝光的片间，或 base_fine_ev 微调。再用 pick_neutral 或 warmth / tint。
+    - 偏色先查片基（get_state 里的 film_base 和来源）；片基可疑时用 pick_film_base 点未曝光的片间，或 base_fine_ev 微调。再用 pick_neutral 或 warmth / tint。晴天的阴影由蓝天照亮，本来就比阳光下蓝；阳光下的灰已经是灰、只有暗部偏蓝时，用 shadow_warmth，不要动整体的 warmth。
     - 坐标是单张视图里画面的相对位置，0–1，左上为原点。
     - 翻拍的照片四周带着片基、漏光或片夹时，先用 auto_crop 裁到画面（whole_roll 整卷一起），再看和取样：自动白平衡和色阶只看裁切以内。
     - 每次调整都能在 App 里用 ⌘Z 撤销，也可以调用 undo。转换的工具不会扫描、删除或导出文件。
@@ -319,13 +321,13 @@ enum MCPTools {
         if model.hasSinglePictures { roll["pool_single_pictures"] = model.poolPictures }
         return roll
       }
-      var balance: [String: Any] = ["auto": s.autoWhiteBalance, "warmth": s.warmth, "tint": s.tint]
+      var balance: [String: Any] = ["auto": s.autoWhiteBalance, "warmth": s.warmth, "tint": s.tint, "shadow_warmth": s.shadowWarmthAmount]
       if let neutral = s.neutralSample { balance["neutral_sample"] = rgb(neutral) }
       if let highlight = s.highlightSample { balance["highlight_sample_dmax"] = rgb(highlight) }
       state["white_balance"] = balance
       state["levels"] = ["auto": s.autoLevels, "black": s.black, "white": s.white, "midtone": s.midtone]
       state["tone"] = ["exposure": s.exposure, "contrast": s.contrast, "saturation": s.saturation, "curves": s.curves != nil,
-        "highlights": s.highlightsAmount, "shadows": s.shadowsAmount, "colour_noise": s.colourNoiseAmount, "soft_ends": s.softEndsOn]
+        "highlights": s.highlightsAmount, "press_highlights": s.pressHighlightsAmount, "shadows": s.shadowsAmount, "colour_noise": s.colourNoiseAmount, "soft_ends": s.softEndsOn]
       state["input"] = ["negative": s.inputIsNegative, "gamma": s.inputGamma]
       state["negative_density_above_base"] = ["r": percentiles(densities[0]), "g": percentiles(densities[1]), "b": percentiles(densities[2])]
       state["positive_srgb"] = ["r": percentiles(outputs[0]), "g": percentiles(outputs[1]), "b": percentiles(outputs[2]),
@@ -419,7 +421,7 @@ enum MCPTools {
         return ["x": p.x, "y": p.y, "negative_linear": rgb(v), "density_above_base": rgb(d), "positive_srgb": rgb(out)]
       })
     case "adjust":
-      let known: Set = ["warmth", "tint", "exposure", "contrast", "saturation", "black", "white", "midtone", "highlights", "shadows", "auto_white_balance", "auto_levels", "base_fine_ev", "angle", "shared_balance", "shared_levels"]
+      let known: Set = ["warmth", "tint", "shadow_warmth", "exposure", "contrast", "saturation", "black", "white", "midtone", "highlights", "shadows", "press_highlights", "auto_white_balance", "auto_levels", "base_fine_ev", "angle", "shared_balance", "shared_levels"]
       let unknown = Set(arguments.keys).subtracting(known)
       guard unknown.isEmpty else { throw DeskError.message("不认识的参数：\(unknown.sorted().joined(separator: ", "))") }
       guard !arguments.isEmpty else { throw DeskError.message("没有要改的参数。") }
@@ -429,9 +431,9 @@ enum MCPTools {
         return min(range.upperBound, max(range.lowerBound, v))
       }
       let numbers: [(WritableKeyPath<Adjustments, Double>, String, ClosedRange<Double>)] = [
-        (\.warmth, "warmth", -1...1), (\.tint, "tint", -1...1), (\.exposure, "exposure", -2...2), (\.contrast, "contrast", 0.5...1.6),
+        (\.warmth, "warmth", -1...1), (\.tint, "tint", -1...1), (\.shadowWarmthAmount, "shadow_warmth", -1...1), (\.exposure, "exposure", -2...2), (\.contrast, "contrast", 0.5...1.6),
         (\.saturation, "saturation", 0...1.8), (\.black, "black", 0...0.4), (\.white, "white", 0.6...1), (\.midtone, "midtone", 0.4...2),
-        (\.highlightsAmount, "highlights", -1...1), (\.shadowsAmount, "shadows", -1...1),
+        (\.highlightsAmount, "highlights", -1...1), (\.shadowsAmount, "shadows", -1...1), (\.pressHighlightsAmount, "press_highlights", 0...1),
       ]
       let values = try numbers.compactMap { n in try value(n.1, n.2).map { (n.0, $0) } }
       let angle = try value("angle", -45...45)

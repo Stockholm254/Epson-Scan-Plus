@@ -42,7 +42,7 @@ enum SmokeTests {
         let one = CIVector(x: 1, y: 1, z: 1), none = CIVector(x: 0, y: 0, z: 0)
         let args: [Any] = [
           red, one, one, none, one, none, CIVector(x: 0, y: 1, z: 0, w: 1), CIVector(x: 0, y: 1, z: 1, w: 2),
-          CIVector(x: 0, y: 0, z: 0, w: 1), CIVector(x: 0, y: 2, z: 0, w: 0), 0.0, CIVector(x: 0, y: 1), CIVector(x: 0, y: 0),
+          CIVector(x: 0, y: 0, z: 0, w: 1), CIVector(x: 0, y: 2, z: 0, w: 0), 0.0, CIVector(x: 0, y: 1), CIVector(x: 0, y: 0, z: 0, w: 0),
           CIVector(x: 0, y: 0, z: 0, w: 0),
         ]
         guard let out = kernel?.apply(extent: red.extent, arguments: args) else { return .nan }

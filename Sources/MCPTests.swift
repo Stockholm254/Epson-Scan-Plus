@@ -60,6 +60,8 @@ enum MCPTests {
     try check(!call("adjust", ["warmth": 0.3, "exposure": 0.25]).isError && model.settings.warmth == 0.3 && model.settings.exposure == 0.25,
       "adjust changes only what it is given")
     try check(!call("undo").isError && model.settings.warmth == 0 && model.settings.exposure == 0, "and undo takes it back, as ⌘Z does")
+    try check(!call("adjust", ["shadow_warmth": 0.4]).isError && model.settings.shadowWarmth == 0.4 && model.settings.warmth == 0
+      && !call("undo").isError && model.settings.shadowWarmth == nil, "adjust warms the shadows alone, and undo takes it back")
     try check(call("adjust", ["warmth": 0.3, "rotation": 1]).isError && model.settings.warmth == 0, "an unknown setting is refused, and nothing changes")
     try check(!call("adjust", ["angle": 3]).isError && model.settings.angle == 3 && !call("undo").isError && model.settings.angle == nil,
       "adjust straightens the frame by an angle, and undo takes it back")

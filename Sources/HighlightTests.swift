@@ -95,7 +95,7 @@ enum HighlightTests {
       let one = CIVector(x: 1, y: 1, z: 1), none = CIVector(x: 0, y: 0, z: 0)
       let args: [Any] = [
         image, one, one, none, one, none, CIVector(x: 0, y: 1, z: 0, w: 1), CIVector(x: 0, y: 1, z: 1, w: 1.6),
-        CIVector(x: 0, y: 0, z: 0, w: 1), CIVector(x: 0, y: 0.9, z: 0, w: 0), 0.0, CIVector(x: 0, y: 1), CIVector(x: 0, y: 0),
+        CIVector(x: 0, y: 0, z: 0, w: 1), CIVector(x: 0, y: 0.9, z: 0, w: 0), 0.0, CIVector(x: 0, y: 1), CIVector(x: 0, y: 0, z: 0, w: 0),
         CIVector(x: 0, y: 0, z: 0, w: 0),
       ]
       guard let result = kernel?.apply(extent: image.extent, arguments: args) else { return [] }
@@ -122,6 +122,35 @@ enum HighlightTests {
         String(format: "a roll printed as one reaches as far as its brightest frame: %.2f, that frame alone %.2f, the others %.2f", r, o, d))
     } else {
       try check(false, "a roll printed as one has a reach")
+    }
+    // Thin bright lines, as a sign's white between its letters, two stops past white over 0.3% of a
+    // frame 3000 across: the 300-pixel samples average them into the ramp; counted 1500 across they
+    // keep their light, and the shoulder reaches them.
+    let across = 3000, tall = 1200
+    var lines = [UInt16](repeating: 65535, count: across * tall * 4)
+    for y in 0..<tall {
+      for x in 0..<across {
+        let exposure = (500..<700).contains(y) && (1000..<1600).contains(x) && x % 40 < 4 ? 1.9 : 0.15 + 1.15 * Double(x) / Double(across - 1)
+        for c in 0..<3 { lines[(y * across + x) * 4 + c] = UInt16(base.values[c] * pow(10, -portra.slopes.values[c] * exposure / 2.2) * 65535) }
+      }
+    }
+    let lined = CGImage(
+      width: across, height: tall, bitsPerComponent: 16, bitsPerPixel: 64, bytesPerRow: across * 8,
+      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+      bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder16Little.rawValue),
+      provider: CGDataProvider(data: Data(bytes: lines, count: lines.count * 2) as CFData)!, decode: nil,
+      shouldInterpolate: false, intent: .defaultIntent)!
+    let measured = pipe.analyze(lined, settings: Adjustments(), profile: portra)
+    let counting = ImagePipeline.reachDimension
+    ImagePipeline.reachDimension = 0
+    let sampled = pipe.analyze(lined, settings: Adjustments(), profile: portra)
+    ImagePipeline.reachDimension = counting
+    if let c = measured.reach, let s = sampled.reach {
+      try check(c > s + 0.3 && ImagePipeline.shoulder(Adjustments(), measured).w > 0 && ImagePipeline.shoulder(Adjustments(), sampled).w == 0,
+        String(format: "thin bright lines are counted at 1500 across: they reach %.2f past the white there, %.2f on the 300-pixel samples, and the shoulder reaches them",
+          c - measured.high, s - sampled.high))
+    } else {
+      try check(false, "a frame with thin bright lines has a reach")
     }
     let old = try JSONDecoder().decode(RollPrint.self, from: Data(#"{"balance":{"r":0,"g":0,"b":0},"gain":{"r":1,"g":1,"b":1},"low":0.1,"high":1.5}"#.utf8))
     try check(old.reach == nil && old.high == 1.5, "a roll print kept before it had a reach still reads, without one")
