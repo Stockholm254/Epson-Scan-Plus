@@ -98,39 +98,86 @@ extension AppModel {
   /// group is taken to have moved: about 1.4 % when the four lie as they should (Vlad's test target
   /// on the copy stand), 7.9 % with two of them swapped, a photosite out.
   static let shiftGreensLimit = 0.04
-  /// A whole pixel-shift group: the four shots composed into one frame, each point's red, green and
-  /// blue as measured, instead of one shot's colours filled in from its neighbours. When they are
-  /// not four uncompressed ARWs of one kind (JPEGs, a compressed RAW), the first is used as one shot.
+  /// How far, in photosites, a 16-shot group's squares may lie from the half photosite the camera
+  /// means before the group is taken to have moved: 0.14 and 0.21 on the two sets of Vlad's test
+  /// target; a third of a half step is where the doubled grid stops gaining much.
+  static let shiftSquaresLimit = 0.25
+  /// What a pixel-shift group composed into, for the status: the picture written, the two greens'
+  /// disagreement, and for 16 shots the squares as found.
+  private struct Composed {
+    var greens: Double
+    var shift16: SensorRaw.Shift16?
+    /// 16 shots composed as their first four, for want of room.
+    var squareOnly = false
+  }
+  /// A whole pixel-shift group composed into one frame, each point's red, green and blue as
+  /// measured, instead of one shot's colours filled in from its neighbours: 4 shots at the sensor's
+  /// resolution, 16 at twice it each way. When they are not uncompressed ARWs of one kind (JPEGs, a
+  /// compressed RAW), the first is used as one shot.
   private func decodeShift(_ group: [URL], root: URL) {
-    guard group.count == SensorRaw.shiftOrder.count, let first = group.first else {
-      status = "像素位移 \(group.count) 张已收齐；只有 4 张一组能合成，先用这组的第一张"
+    let square = SensorRaw.shiftOrder.count, all = square * SensorRaw.shiftGroups.count
+    guard group.count == square || group.count == all, let first = group.first else {
+      status = "像素位移 \(group.count) 张已收齐；只有 4 张或 16 张一组能合成，先用这组的第一张"
       if let first = group.first { decodeCapture(first, root: root) }
       return
     }
     let name = first.deletingLastPathComponent().lastPathComponent
-    status = "正在合成像素位移 \(name)…"
+    let supersample = shiftSupersample
+    status = "正在合成像素位移 \(name)（\(group.count) 张）…"
     Self.captureQueue.async {
       let decoded = root.appendingPathComponent("Decoded", isDirectory: true)
       let out = Self.unused(decoded.appendingPathComponent(name + ".tif"))
-      let result = Result { () -> Double? in
-        guard let composed = try SensorRaw.pixelShiftRGB(group) else { return nil }
+      let result = Result { () -> Composed? in
         try FileManager.default.createDirectory(at: decoded, withIntermediateDirectories: true)
+        if group.count == all {
+          // Twice the sensor each way, 16-bit RGB: about 1.5 GB for the A7R IV, written beside the
+          // 2 GB of shots (supersampled, a quarter of it). Without room for it twice over, the first
+          // square alone.
+          let raw = (try? NSData(contentsOf: first, options: .alwaysMapped)).flatMap { SensorRaw($0 as Data) }
+          let needed = Int64((raw?.width ?? 0) * (raw?.height ?? 0) * (supersample ? 6 : 24) * 2)
+          let free = (try? decoded.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?.volumeAvailableCapacityForImportantUsage ?? .max
+          if free >= needed, let composed = try SensorRaw.pixelShift16(group, supersample: supersample) {
+            try ImagePipeline.shared.saveTIFF(composed.image, to: out, dpi: 300)
+            return Composed(greens: composed.greens, shift16: composed)
+          }
+          guard free < needed, let composed = try SensorRaw.pixelShiftRGB(Array(group.prefix(square))) else { return nil }
+          try ImagePipeline.shared.saveTIFF(composed.image, to: out, dpi: 300)
+          return Composed(greens: composed.greens, squareOnly: true)
+        }
+        guard let composed = try SensorRaw.pixelShiftRGB(group) else { return nil }
         try ImagePipeline.shared.saveTIFF(composed.image, to: out, dpi: 300)
-        return composed.greens
+        return Composed(greens: composed.greens)
       }
       DispatchQueue.main.async {
         switch result {
         case .success(nil):
-          self.status = "像素位移 4 张不是同一种无压缩 ARW，合成不了，先用这组的第一张"
+          self.status = "像素位移 \(group.count) 张不是同一种无压缩 ARW，合成不了，先用这组的第一张"
           self.decodeCapture(first, root: root)
-        case .success(let greens?):
+        case .success(let composed?):
           self.addCapturedFrame(out, original: first, linear: true, sensor: true)
-          let said = String(format: "%.1f%%", greens * 100)
-          if greens > Self.shiftGreensLimit {
-            self.status = "像素位移 \(name) 已合成，但两次绿色相差 \(said)（正常约 1.5%）：4 张之间有东西动了（胶片、相机或灯），细节会有重影，这一组最好重拍"
-            self.toast("4 张没对齐：重拍这一组")
+          let said = String(format: "%.1f%%", composed.greens * 100)
+          // What went wrong, which asks for the group again, and what is only so.
+          var problems = [String](), facts = [String]()
+          if composed.greens > Self.shiftGreensLimit {
+            problems.append("两次绿色相差 \(said)（正常约 1.5%）：4 张之间有东西动了（胶片、相机或灯），细节会有重影")
+          }
+          var head = "像素位移 \(name) 已合成"
+          if let s = composed.shift16 {
+            head = "像素位移 \(name)（16 张，\(s.supersampled ? "超采样到 " : "")\(s.image.width)×\(s.image.height)）已合成"
+            if !s.measured {
+              facts.append("画面细节太少，量不出 4 组之间的位移，按相机标称的半像素合成")
+            } else if s.astray > Self.shiftSquaresLimit {
+              problems.append(String(format: "4 组之间的半像素位移偏了 %.2f 像素（应为 0.5）：比 4 张合成多不出多少细节", s.astray))
+            } else {
+              facts.append(String(format: "4 组对齐，半像素位移最多偏 %.2f 像素", s.astray))
+            }
+          }
+          if composed.squareOnly { facts.append("磁盘空间不够放 16 张的合成图（\(supersample ? "约 0.4 GB" : "约 1.5 GB")），先用第一组 4 张合成") }
+          if problems.isEmpty {
+            self.status = head + "：" + (facts + [(composed.shift16 == nil ? "4 张对齐，" : "") + "两次绿色相差 \(said)"]).joined(separator: "；")
           } else {
-            self.status = "像素位移 \(name) 已合成：4 张对齐，两次绿色相差 \(said)"
+            self.status = head + "，但" + (problems + facts).joined(separator: "；") + "。这一组最好重拍"
+            self.toast("没对齐：重拍这一组")
           }
         case .failure(let error):
           self.errorText = "合成像素位移 \(name) 失败：\(error.localizedDescription)"

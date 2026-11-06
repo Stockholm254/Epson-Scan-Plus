@@ -160,12 +160,21 @@ struct SensorRaw {
     return turns == 0 ? image : ImagePipeline.shared.turned(image, quarterTurns: turns)
   }
 
+  /// Whether `other` is a mosaic of the same kind: size, depth, pattern, levels and orientation.
+  func sameKind(as other: SensorRaw) -> Bool {
+    width == other.width && height == other.height && bits == other.bits && pattern == other.pattern
+      && black == other.black && white == other.white && orientation == other.orientation
+  }
+
   /// Where the scene at (x, y) of the first of a 4-shot pixel-shift group lies in each shot: the
   /// sensor walks one photosite round a square, so every point is measured once in red, once in
   /// blue and twice in green. Measured on the A7R IV (2026-11-05, Vlad's test target): each shot's
-  /// offset against the first matched this within 0.2 px, the diagonal one within 0.05 px. A
-  /// 16-shot group is four of these squares, a half photosite apart.
+  /// offset against the first matched this within 0.2 px, the diagonal one within 0.05 px.
   static let shiftOrder: [(x: Int, y: Int)] = [(0, 0), (0, -1), (1, -1), (1, 0)]
+  /// A 16-shot group is four of those squares, shots 1–4, 5–8, 9–12 and 13–16, lying these far from
+  /// the first, as the camera means them: a half photosite right, up, and both. On the target the
+  /// halves came out 0.15–0.35 px from these, so a 16-shot group's are measured, not assumed.
+  static let shiftGroups: [(x: Double, y: Double)] = [(0, 0), (0.5, 0), (0, -0.5), (0.5, -0.5)]
 
   /// The four shots of a pixel-shift group, in the order taken, composed at the sensor's full
   /// resolution: each point takes red, green and blue from the photosites the four shots put there,
@@ -176,58 +185,249 @@ struct SensorRaw {
   /// that when something moved between them. Nil when the four are not uncompressed ARWs of one
   /// size, pattern and levels.
   static func pixelShiftRGB(_ urls: [URL]) throws -> (image: CGImage, greens: Double)? {
-    guard urls.count == shiftOrder.count else { return nil }
-    // Mapped, and kept as NSData, whose bytes stay where they are while it lives.
-    let files = try urls.map { try NSData(contentsOf: $0, options: .alwaysMapped) }
-    let raws = files.compactMap { SensorRaw($0 as Data) }
-    guard raws.count == files.count, let first = raws.first,
-      raws.allSatisfy({ $0.width == first.width && $0.height == first.height && $0.pattern == first.pattern
-        && $0.black == first.black && $0.white == first.white && $0.orientation == first.orientation })
+    guard urls.count == shiftOrder.count, let group = try ShiftFiles(urls) else { return nil }
+    let w = group.width, h = group.height
+    var out = Data(count: w * h * 6)
+    var greens = 0.0
+    withExtendedLifetime(group) {
+      out.withUnsafeMutableBytes { greens = group.compose(into: $0.baseAddress!.assumingMemoryBound(to: UInt16.self)) }
+    }
+    guard let image = group.upright(rgb48(out, width: w, height: h)) else { return nil }
+    return (image, greens)
+  }
+
+  /// What a 16-shot group composed into: twice the sensor's resolution each way, how far the two
+  /// greens of the worst square differ, and where each square was found against the first.
+  struct Shift16 {
+    var image: CGImage
+    var greens: Double
+    var squares: [(x: Double, y: Double)]
+    /// Brought back to the sensor's size from the doubled grid.
+    var supersampled = false
+    /// False when the picture had too little detail to find the squares, which were then taken to
+    /// lie where the camera means them.
+    var measured: Bool
+    /// The furthest any square lay from where the camera means it, in photosites.
+    var astray: Double {
+      zip(squares, SensorRaw.shiftGroups).map { (($0.x - $1.x) * ($0.x - $1.x) + ($0.y - $1.y) * ($0.y - $1.y)).squareRoot() }.max() ?? 0
+    }
+  }
+
+  /// The sixteen shots of a pixel-shift group, in the order taken, composed at twice the sensor's
+  /// resolution each way. Each square of four is composed as a 4-shot group is, every colour as
+  /// measured; the second to fourth are found against the first to a hundredth of a photosite on
+  /// their greens; then each point of the doubled grid takes its colour from the squares'
+  /// nearest points, weighted by how near (σ 0.15 photosite), which with the squares a half apart
+  /// is the one square that measured there. `supersample` brings the doubled grid back to the
+  /// sensor's size (`supersampled(_:width:height:)`): the colours cleaner and the noise a little lower
+  /// than 4 shots', a quarter of the size, the resolution as 4 shots'. Nil as for `pixelShiftRGB`.
+  static func pixelShift16(_ urls: [URL], supersample: Bool = false) throws -> Shift16? {
+    let n = shiftOrder.count
+    guard urls.count == n * shiftGroups.count else { return nil }
+    let groups = try (0..<shiftGroups.count).map { try ShiftFiles(Array(urls[$0 * n..<($0 + 1) * n])) }
+    guard let first = groups.first ?? nil, groups.allSatisfy({ $0.map { $0.raw.sameKind(as: first.raw) } ?? false })
     else { return nil }
     let w = first.width, h = first.height
-    let range = Float(first.white - first.black.reduce(0, +) / 4), scale = Float(65535) / range
-    let mosaic = Mosaic(bases: zip(files, raws).map { UInt(bitPattern: $0.0.bytes) + UInt($0.1.offset) },
-      width: w, height: h, pattern: first.pattern, black: first.black)
-    var out = Data(count: w * h * 6)
-    var rows = [(difference: Double, level: Double)](repeating: (0, 0), count: h)
-    // The greens are compared only where all four shots measured the point, not at the edge.
-    let xs = (-(shiftOrder.map(\.x).min() ?? 0))...(w - 1 - (shiftOrder.map(\.x).max() ?? 0))
-    let ys = (-(shiftOrder.map(\.y).min() ?? 0))...(h - 1 - (shiftOrder.map(\.y).max() ?? 0))
-    withExtendedLifetime(files) {
-      out.withUnsafeMutableBytes { (target: UnsafeMutableRawBufferPointer) in
-        nonisolated(unsafe) let dst = target.baseAddress!.assumingMemoryBound(to: UInt16.self)
-        rows.withUnsafeMutableBufferPointer { sums in
-          nonisolated(unsafe) let row = sums.baseAddress!
-          DispatchQueue.concurrentPerform(iterations: h) { y in
-            var difference = 0.0, level = 0.0
-            for x in 0..<w {
-              let p = mosaic.composed(x, y)
-              let g = (p.g1 + p.g2) / 2
-              if g > 0.1 * range, xs.contains(x), ys.contains(y) { difference += Double(abs(p.g1 - p.g2)); level += Double(g) }
-              let i = 3 * (y * w + x)
-              dst[i] = UInt16(min(65535, (p.rgb.x * scale).rounded()))
-              dst[i + 1] = UInt16(min(65535, (p.rgb.y * scale).rounded()))
-              dst[i + 2] = UInt16(min(65535, (p.rgb.z * scale).rounded()))
-            }
-            row[y] = (difference, level)
+    let squares = (0..<groups.count).map { _ in UnsafeMutablePointer<UInt16>.allocate(capacity: w * h * 3) }
+    defer { squares.forEach { $0.deallocate() } }
+    var greens = 0.0
+    withExtendedLifetime(groups) {
+      for (k, group) in groups.enumerated() { greens = max(greens, group!.compose(into: squares[k])) }
+    }
+    // Where squares 2–4 lie against the first.
+    var found = shiftGroups, measured = true
+    for k in 1..<squares.count {
+      if let at = Self.offset(of: squares[k], against: squares[0], width: w, height: h, near: shiftGroups[k]) { found[k] = at } else { measured = false }
+    }
+    if !measured { found = shiftGroups }
+    // The doubled grid: point (X, Y) is (X / 2, Y / 2) of the first square. Each square's nearest
+    // point and its weight, apart in x and y, so a point costs four lookups and no exponentials.
+    let W = 2 * w, H = 2 * h, inverse = 1 / (2 * 0.15 * 0.15)
+    func nearest(_ count: Int, _ size: Int, _ shift: Double) -> (index: [Int], weight: [Float]) {
+      var index = [Int](repeating: 0, count: count), weight = [Float](repeating: 0, count: count)
+      for i in 0..<count {
+        let p = Double(i) / 2 + shift, r = min(max(p.rounded(), 0), Double(size - 1))
+        index[i] = Int(r)
+        weight[i] = Float(exp(-(p - r) * (p - r) * inverse))
+      }
+      return (index, weight)
+    }
+    let xs = found.map { nearest(W, w, $0.x) }, ys = found.map { nearest(H, h, $0.y) }
+    var out = Data(count: W * H * 6)
+    out.withUnsafeMutableBytes { (target: UnsafeMutableRawBufferPointer) in
+      nonisolated(unsafe) let dst = target.baseAddress!.assumingMemoryBound(to: UInt16.self)
+      nonisolated(unsafe) let sources = squares
+      DispatchQueue.concurrentPerform(iterations: H) { Y in
+        for X in 0..<W {
+          var sum = SIMD3<Float>(repeating: 0), total: Float = 0
+          for k in 0..<sources.count {
+            let weight = xs[k].weight[X] * ys[k].weight[Y]
+            let i = 3 * (ys[k].index[Y] * w + xs[k].index[X]), s = sources[k]
+            sum += SIMD3(Float(s[i]), Float(s[i + 1]), Float(s[i + 2])) * weight
+            total += weight
           }
+          let v = sum / max(total, 1e-12), o = 3 * (Y * W + X)
+          dst[o] = UInt16(min(65535, v.x.rounded())); dst[o + 1] = UInt16(min(65535, v.y.rounded())); dst[o + 2] = UInt16(min(65535, v.z.rounded()))
         }
       }
     }
-    guard let provider = CGDataProvider(data: out as CFData),
-      let image = CGImage(
-        width: w, height: h, bitsPerComponent: 16, bitsPerPixel: 48, bytesPerRow: w * 6,
-        space: CGColorSpace(name: CGColorSpace.linearSRGB)!,
-        bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue | CGBitmapInfo.byteOrder16Little.rawValue),
-        provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
-    else { return nil }
-    let level = rows.reduce(0) { $0 + $1.level }, difference = rows.reduce(0) { $0 + $1.difference }
-    let turns = [6: 1, 3: 2, 8: 3][first.orientation] ?? 0
-    guard let upright = turns == 0 ? image : ImagePipeline.shared.turned(image, quarterTurns: turns) else { return nil }
-    return (upright, level > 0 ? difference / level : 0)
+    if supersample {
+      let native = out.withUnsafeBytes { supersampled($0.baseAddress!.assumingMemoryBound(to: UInt16.self), width: W, height: H) }
+      guard let image = first.upright(rgb48(native, width: w, height: h)) else { return nil }
+      return Shift16(image: image, greens: greens, squares: found, supersampled: true, measured: measured)
+    }
+    guard let image = first.upright(rgb48(out, width: W, height: H)) else { return nil }
+    return Shift16(image: image, greens: greens, squares: found, measured: measured)
   }
 
-  /// The photosites of the four shots of a pixel-shift group, read where they lie in the files.
+  /// A doubled grid, 16-bit RGB of `width` × `height`, brought back to half each way by a
+  /// separable Lanczos-3: output point x lies on grid point 2x (which is the first shot's
+  /// photosite x), taking the grid points 2x − 5 … 2x + 5, weighted L3(d / 2), L3(t) =
+  /// 3 sin(πt) sin(πt / 3) / (πt)², the weights summing to 1, the edge repeated. A box over 2 × 2
+  /// loses a little contrast at the finest bars (about 0.03 on Vlad's target) and is not used.
+  static func supersampled(_ src: UnsafePointer<UInt16>, width W: Int, height H: Int) -> Data {
+    let w = W / 2, h = H / 2
+    func l3(_ t: Double) -> Double { t == 0 ? 1 : abs(t) >= 3 ? 0 : 3 * sin(.pi * t) * sin(.pi * t / 3) / (.pi * .pi * t * t) }
+    let taps = Array(-5...5), raw = taps.map { l3(Double($0) / 2) }, total = raw.reduce(0, +)
+    let weights = raw.map { Float($0 / total) }
+    var out = Data(count: w * h * 6)
+    out.withUnsafeMutableBytes { (target: UnsafeMutableRawBufferPointer) in
+      nonisolated(unsafe) let dst = target.baseAddress!.assumingMemoryBound(to: UInt16.self)
+      nonisolated(unsafe) let source = src
+      DispatchQueue.concurrentPerform(iterations: h) { y in
+        // Down the column first, into one row of the grid's width; then along it.
+        var column = [Float](repeating: 0, count: 3 * W)
+        for (k, d) in taps.enumerated() {
+          let row = min(max(2 * y + d, 0), H - 1), weight = weights[k]
+          for i in 0..<(3 * W) { column[i] += Float(source[3 * row * W + i]) * weight }
+        }
+        for x in 0..<w {
+          var v = SIMD3<Float>(repeating: 0)
+          for (k, d) in taps.enumerated() {
+            let c = 3 * min(max(2 * x + d, 0), W - 1)
+            v += SIMD3(column[c], column[c + 1], column[c + 2]) * weights[k]
+          }
+          let o = 3 * (y * w + x)
+          dst[o] = UInt16(min(65535, max(0, v.x.rounded())))
+          dst[o + 1] = UInt16(min(65535, max(0, v.y.rounded())))
+          dst[o + 2] = UInt16(min(65535, max(0, v.z.rounded())))
+        }
+      }
+    }
+    return out
+  }
+
+  /// Where composite `b` lies against `a`, both 16-bit RGB of `width` × `height`: the scene at
+  /// (x, y) of `a` at (x + dx, y + dy) in `b`, to 0.01 px, looked for within half a photosite of
+  /// `near` on green, read between points linearly. Measured on the most detailed of nine places;
+  /// nil when the picture has too little detail anywhere to tell.
+  static func offset(of b: UnsafePointer<UInt16>, against a: UnsafePointer<UInt16>, width w: Int, height h: Int,
+                     near: (x: Double, y: Double)) -> (x: Double, y: Double)? {
+    @inline(__always) func green(_ p: UnsafePointer<UInt16>, _ x: Int, _ y: Int) -> Float { Float(p[3 * (y * w + x) + 1]) }
+    let side = max(16, min(512, w / 4, h / 4) & ~1)
+    var best = (detail: Float(0), x: 0, y: 0)
+    for j in 1...3 { for i in 1...3 {
+      let cx = w * i / 4, cy = h * j / 4
+      var change: Float = 0, level: Float = 0
+      for y in stride(from: cy - side / 2, to: cy + side / 2, by: 2) { for x in stride(from: cx - side / 2, to: cx + side / 2, by: 2) {
+        let g = green(a, x, y)
+        change += abs(green(a, x + 1, y) - g) + abs(green(a, x, y + 1) - g)
+        level += g
+      } }
+      let detail = level > 0 ? change / level : 0
+      if detail > best.detail { best = (detail, cx - side / 2, cy - side / 2) }
+    } }
+    guard best.detail > 0.005 else { return nil }
+    let x0 = best.x, y0 = best.y
+    func cost(_ dx: Double, _ dy: Double) -> Double {
+      var e: Float = 0
+      for y in stride(from: y0, to: y0 + side, by: 2) { for x in stride(from: x0, to: x0 + side, by: 2) {
+        let fx = Double(x) + dx, fy = Double(y) + dy
+        let ix = min(max(Int(fx.rounded(.down)), 0), w - 2), iy = min(max(Int(fy.rounded(.down)), 0), h - 2)
+        let tx = Float(fx - Double(ix)), ty = Float(fy - Double(iy))
+        let v = (green(b, ix, iy) * (1 - tx) + green(b, ix + 1, iy) * tx) * (1 - ty) + (green(b, ix, iy + 1) * (1 - tx) + green(b, ix + 1, iy + 1) * tx) * ty
+        e += abs(v - green(a, x, y))
+      } }
+      return Double(e)
+    }
+    var at = (x: near.x, y: near.y, e: Double.infinity)
+    for (step, reach) in [(0.05, 10), (0.01, 5)] {
+      let centre = at
+      for j in -reach...reach { for i in -reach...reach {
+        let dx = centre.x + Double(i) * step, dy = centre.y + Double(j) * step
+        let e = cost(dx, dy)
+        if e < at.e { at = (dx, dy, e) }
+      } }
+    }
+    return (at.x, at.y)
+  }
+
+  /// 16-bit linear RGB, `width` × `height`, as a picture.
+  static func rgb48(_ data: Data, width w: Int, height h: Int) -> CGImage? {
+    guard let provider = CGDataProvider(data: data as CFData) else { return nil }
+    return CGImage(
+      width: w, height: h, bitsPerComponent: 16, bitsPerPixel: 48, bytesPerRow: w * 6,
+      space: CGColorSpace(name: CGColorSpace.linearSRGB)!,
+      bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue | CGBitmapInfo.byteOrder16Little.rawValue),
+      provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
+  }
+
+  /// The four shots of one square, mapped, checked to be uncompressed ARWs of one size, pattern
+  /// and levels.
+  final class ShiftFiles {
+    /// Kept as NSData, whose bytes stay where they are while it lives.
+    let files: [NSData]
+    let raw: SensorRaw
+    let mosaic: Mosaic
+    var width: Int { raw.width }
+    var height: Int { raw.height }
+    init?(_ urls: [URL]) throws {
+      files = try urls.map { try NSData(contentsOf: $0, options: .alwaysMapped) }
+      let raws = files.compactMap { SensorRaw($0 as Data) }
+      guard raws.count == files.count, let first = raws.first, raws.allSatisfy({ $0.sameKind(as: first) }) else { return nil }
+      raw = first
+      mosaic = Mosaic(bases: zip(files, raws).map { UInt(bitPattern: $0.0.bytes) + UInt($0.1.offset) },
+        width: first.width, height: first.height, pattern: first.pattern, black: first.black)
+    }
+    /// Composes the square into `dst`, 16-bit RGB at the sensor's size; returns how far the two
+    /// greens differ, against their level, where all four measured the point and it is bright
+    /// enough for noise not to decide it.
+    func compose(into dst: UnsafeMutablePointer<UInt16>) -> Double {
+      let w = width, h = height, mosaic = mosaic
+      let range = Float(raw.white - raw.black.reduce(0, +) / 4), scale = Float(65535) / range
+      let order = SensorRaw.shiftOrder
+      let xs = (-(order.map(\.x).min() ?? 0))...(w - 1 - (order.map(\.x).max() ?? 0))
+      let ys = (-(order.map(\.y).min() ?? 0))...(h - 1 - (order.map(\.y).max() ?? 0))
+      var rows = [(difference: Double, level: Double)](repeating: (0, 0), count: h)
+      nonisolated(unsafe) let out = dst
+      rows.withUnsafeMutableBufferPointer { sums in
+        nonisolated(unsafe) let row = sums.baseAddress!
+        DispatchQueue.concurrentPerform(iterations: h) { y in
+          var difference = 0.0, level = 0.0
+          for x in 0..<w {
+            let p = mosaic.composed(x, y)
+            let g = (p.g1 + p.g2) / 2
+            if g > 0.1 * range, xs.contains(x), ys.contains(y) { difference += Double(abs(p.g1 - p.g2)); level += Double(g) }
+            let i = 3 * (y * w + x)
+            out[i] = UInt16(min(65535, (p.rgb.x * scale).rounded()))
+            out[i + 1] = UInt16(min(65535, (p.rgb.y * scale).rounded()))
+            out[i + 2] = UInt16(min(65535, (p.rgb.z * scale).rounded()))
+          }
+          row[y] = (difference, level)
+        }
+      }
+      let level = rows.reduce(0) { $0 + $1.level }, difference = rows.reduce(0) { $0 + $1.difference }
+      return level > 0 ? difference / level : 0
+    }
+    /// `image` turned as the camera was held.
+    func upright(_ image: CGImage?) -> CGImage? {
+      guard let image else { return nil }
+      let turns = [6: 1, 3: 2, 8: 3][raw.orientation] ?? 0
+      return turns == 0 ? image : ImagePipeline.shared.turned(image, quarterTurns: turns)
+    }
+  }
+
+  /// The photosites of the four shots of a pixel-shift square, read where they lie in the files.
   struct Mosaic: Sendable {
     /// Where each shot's photosites begin in memory.
     let bases: [UInt]
