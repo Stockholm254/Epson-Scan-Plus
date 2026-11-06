@@ -10,6 +10,8 @@ bash "$project_dir/ScannerHelper/build-scanner.sh" "$build_dir" "$app_dir"
 bash "$project_dir/CameraHelper/build-camera.sh" "$build_dir" "$app_dir"
 xcrun swiftc -swift-version 5 -O -module-cache-path "$build_dir/module-cache" -target arm64-apple-macos26.0 "$project_dir"/Sources/*.swift -o "$app_dir/Contents/MacOS/EpsonScanPlus"
 cp "$project_dir/Info.plist" "$app_dir/Contents/Info.plist"
+# The icon, compiled from Icon/AppIcon.icon by Icon/build-icon.sh.
+cp "$project_dir/Icon/Assets.car" "$project_dir/Icon/AppIcon.icns" "$app_dir/Contents/Resources/"
 xattr -d com.apple.FinderInfo "$app_dir" 2>/dev/null || true
 codesign --force --sign - "$app_dir"
 printf '%s\n' "$app_dir"

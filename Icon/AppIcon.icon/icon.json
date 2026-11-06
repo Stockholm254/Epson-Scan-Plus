@@ -1,0 +1,70 @@
+{
+  "fill": {
+    "linear-gradient": [
+      "display-p3:0.12000,0.42000,0.70000,1.00000",
+      "display-p3:0.03000,0.15000,0.38000,1.00000"
+    ]
+  },
+  "groups": [
+    {
+      "name": "Canister",
+      "layers": [
+        {
+          "name": "label",
+          "image-name": "label.svg",
+          "glass": true
+        },
+        {
+          "name": "lip",
+          "image-name": "lip.svg",
+          "glass": true
+        },
+        {
+          "name": "caps",
+          "image-name": "caps.svg",
+          "glass": true
+        },
+        {
+          "name": "body",
+          "image-name": "body.svg",
+          "glass": true
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.25
+      },
+      "specular": true,
+      "lighting": "individual"
+    },
+    {
+      "name": "Film",
+      "layers": [
+        {
+          "name": "film",
+          "image-name": "film.svg",
+          "glass": true
+        }
+      ],
+      "shadow": {
+        "kind": "layer-color",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.5
+      },
+      "blur-material": 0.5,
+      "specular": true
+    }
+  ],
+  "supported-platforms": {
+    "squares": [
+      "macOS"
+    ]
+  }
+}

@@ -2,7 +2,7 @@
 
 在 macOS 上扫描和转换彩色负片的工具，为 Epson Perfection V800 / V850 设计：48-bit 线性采集、去色罩、整卷自动估计通道反差、在这台扫描仪上标定的胶片预设、接触表、灯箱上的 3D 看片镜，以及用参考图修复漏光。全部在本机处理；只有去漏光生成参考图时，在你确认后上传一张缩图。
 
-> 个人开发的实验工具，不是 Epson 官方产品。当前版本 0.7.0，各版本的改动见[版本记录](doc/CHANGELOG.md)。
+> 个人开发的实验工具，不是 Epson 官方产品。当前版本 0.7.1，各版本的改动见[版本记录](doc/CHANGELOG.md)。
 
 ![主界面：接触表放在灯箱上，看片镜放在所选的第 07 张上](doc/images/main-window.jpg)
 
@@ -341,7 +341,7 @@ bash build.sh
 "../Epson Scan plus.app/Contents/MacOS/EpsonScanPlus" --self-test --test-output /tmp/EpsonScanPlus-tests
 ```
 
-只需 Xcode Command Line Tools，不需要 Metal 工具链（图像内核在 App 运行时编译），也不依赖第三方 Swift 包。用 Xcode（macOS 26 SDK）构建时，还会用到 SwiftUI 的液态玻璃：会流动、会融合、按下会回弹；用 Command Line Tools 构建的是运行时取用的静态玻璃。翻拍要用 Sony Camera Remote SDK：它不在这个仓库里，受 Sony 的许可约束。把它的头文件放在 `../Sony-CrSDK/include`，`libCr_Core.dylib` 和 `CrAdapter/` 放在 `../Sony-CrSDK/lib`（或者用 `EPSON_SCAN_PLUS_CRSDK` 指定位置），构建时就会编进相机进程，并把 SDK 的库放进 App 的 `Contents/Frameworks`。没有 SDK 时照常构建，只是翻拍面板会提示缺少 SDK。自检、扫描仪实测和命令行导出见[构建与测试](doc/building-and-testing.md)。
+只需 Xcode Command Line Tools，不需要 Metal 工具链（图像内核在 App 运行时编译），也不依赖第三方 Swift 包。用 Xcode（macOS 26 SDK）构建时，还会用到 SwiftUI 的液态玻璃：会流动、会融合、按下会回弹；用 Command Line Tools 构建的是运行时取用的静态玻璃。翻拍要用 Sony Camera Remote SDK：它不在这个仓库里，受 Sony 的许可约束。把它的头文件放在 `../Sony-CrSDK/include`，`libCr_Core.dylib` 和 `CrAdapter/` 放在 `../Sony-CrSDK/lib`（或者用 `EPSON_SCAN_PLUS_CRSDK` 指定位置），构建时就会编进相机进程，并把 SDK 的库放进 App 的 `Contents/Frameworks`。没有 SDK 时照常构建，只是翻拍面板会提示缺少 SDK。App 图标的源文件是 `Icon/AppIcon.icon`，编译好的图标已经提交，所以构建时不需要 Xcode；改图标见[构建与测试](doc/building-and-testing.md#图标)。自检、扫描仪实测和命令行导出见[构建与测试](doc/building-and-testing.md)。
 
 ## 文档
 

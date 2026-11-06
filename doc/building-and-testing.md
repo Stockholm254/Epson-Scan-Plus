@@ -25,6 +25,19 @@ bash build.sh
 
 `--rotation 0|1|2|3` 可在离线导出时覆盖方向，`--mirror` 启用水平镜像（均不改工程）。正常启动支持 `--library PATH`、`--project FILE` 或 `--image FILE`。
 
+## 图标
+
+App 图标是 Icon Composer 文档 `Icon/AppIcon.icon`：`icon.json` 加 `Assets/` 里的几层 SVG（暗盒的标签、片口、上下盖、筒身，和胶片片头）。
+
+- **修改**：用 Xcode 附带的 Icon Composer（`/Applications/Xcode.app/Contents/Applications/Icon Composer.app`）打开它，或者直接改 SVG 和 `icon.json`。
+- **预览**：`ictool` 可以不开 Icon Composer 就画出各种外观，例如：
+  ```sh
+  "/Applications/Xcode.app/Contents/Applications/Icon Composer.app/Contents/Executables/ictool" Icon/AppIcon.icon --export-image --output-file /tmp/icon.png --platform macOS --rendition Dark --width 512 --height 512 --scale 2
+  ```
+  `--rendition` 可以是 `Default`、`Dark`、`ClearLight`、`ClearDark`、`TintedLight`、`TintedDark`。
+- **编译**：改完运行 `bash Icon/build-icon.sh`。它需要 Xcode，用 actool 编译出 `Icon/Assets.car`（分层图标，系统用它画液态玻璃）和 `Icon/AppIcon.icns`（扁平的备用图），然后把这两个文件和源文件一起提交。actool 每次的输出不完全相同，所以没改图标时不要运行它。
+- **构建**：`build.sh` 只把这两个文件拷进 `Contents/Resources`，`Info.plist` 里的 `CFBundleIconFile` 和 `CFBundleIconName` 都是 `AppIcon`。
+
 ## 发布和更新
 
 发布前先把 `Info.plist` 的 `CFBundleShortVersionString` 和 `CFBundleVersion` 改成新版本（版本号每次加一），`doc/CHANGELOG.md` 写好 `## <版本> …` 一节，然后提交。之后执行：

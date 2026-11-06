@@ -4,9 +4,11 @@
 <key>CFBundleName</key><string>Epson Scan plus</string>
 <key>CFBundleDisplayName</key><string>Epson Scan plus</string>
 <key>CFBundleExecutable</key><string>EpsonScanPlus</string>
+<key>CFBundleIconFile</key><string>AppIcon</string>
+<key>CFBundleIconName</key><string>AppIcon</string>
 <key>CFBundleIdentifier</key><string>local.epscan.mac</string>
-<key>CFBundleVersion</key><string>25</string>
-<key>CFBundleShortVersionString</key><string>0.7.0</string>
+<key>CFBundleVersion</key><string>26</string>
+<key>CFBundleShortVersionString</key><string>0.7.1</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>LSMinimumSystemVersion</key><string>26.0</string>
 <key>NSHighResolutionCapable</key><true/>
