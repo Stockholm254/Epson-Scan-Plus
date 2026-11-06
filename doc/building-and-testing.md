@@ -11,7 +11,7 @@ bash build.sh
 
 可指定 `EPSON_SCAN_PLUS_BUILD_DIR` 与 `EPSON_SCAN_PLUS_APP_DIR`。当前构建目标为 arm64；无 npm、Python 或第三方 Swift 包依赖。图像转换用的 Core Image 内核用 Metal 写（`Sources/Kernels.swift`），App 运行时才编译，所以构建不需要 Metal 工具链。系统会缓存编译结果，只有内核改过以后第一次运行时，每个内核多等约 0.3 秒。每个内核单独编译：同一个库里放两个内核时，Core Image 会在同一个渲染环境里把先渲染的那个也用在另一个上（macOS 27.2 上见到）。
 
-自测可追加 `--overview /absolute/path/overview.png` 验证本次 18 格。下面的硬件测试会**实际驱动扫描仪**，以 48-bit 读取预览并扫描第 9 格（不足 9 格时取末格），检查采集精度、导出和整批结束后自动导出的正片，并报告整卷估计。它使用独立的临时设置，结束后删除。`--hardware-test` 是旧的 ICA 版本：
+自测可追加 `--overview /absolute/path/overview.png` 验证本次 18 格。下面的硬件测试会**实际驱动扫描仪**，以 48-bit 读取预览并扫描第 9 格（不足 9 格时取末格），检查采集精度、导出和整批结束后自动导出的正片，并报告整卷估计。它使用独立的临时设置，结束后删除：
 
 ```sh
 "../Epson Scan plus.app/Contents/MacOS/EpsonScanPlus" --sane-hardware-test --library /absolute/output/directory

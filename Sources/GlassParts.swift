@@ -8,14 +8,6 @@ extension View {
   func glassPane(radius: CGFloat = 16, darken: CGFloat = 0.28) -> some View {
     modifier(GlassPane(radius: radius, darken: darken))
   }
-  /// Tinted glass, as a coloured gel is: the system's glass in `tint`, without glass a plate.
-  @ViewBuilder func tintedGlass(_ tint: Color, strength: Double, radius: CGFloat) -> some View {
-    if Hardware.glass {
-      background(SystemGlassBackground(capsule: false, radius: radius, tint: NSColor(tint).withAlphaComponent(strength)))
-    } else {
-      background(RoundedRectangle(cornerRadius: radius).fill(tint.opacity(strength)))
-    }
-  }
 }
 
 private struct GlassPane: ViewModifier {

@@ -339,7 +339,7 @@ extension FilmCanvasView {
   /// contact sheet for another pushes in.
   func transitionPicture(_ picture: CGImage, play: Bool) {
     guard let model, let layer else { return }
-    let look = [model.contactPositive ? 1 : 0, model.showNegative ? 1 : 0, ChannelView.allCases.firstIndex(of: model.channelView) ?? 0]
+    let look = [model.contactPositive ? 1 : 0, model.showNegative ? 1 : 0]
     let now = (id: model.singleView ? model.selectedID : nil, look: look, size: CGSize(width: picture.width, height: picture.height))
     defer { drawnSingle = now }
     guard play, let last = drawnSingle, opening == nil, change == nil else { return }

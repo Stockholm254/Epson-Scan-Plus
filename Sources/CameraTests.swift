@@ -13,14 +13,9 @@ enum CameraTests {
     func settle(_ seconds: Double = 0.3) { RunLoop.current.run(until: Date().addingTimeInterval(seconds)) }
     let pipe = ImagePipeline.shared
     let space = pipe.outputSpace
-    func picture(_ w: Int, _ h: Int, blur: Bool = false, colour: (CGFloat, CGFloat, CGFloat)? = nil) -> CGImage {
+    func picture(_ w: Int, _ h: Int, blur: Bool = false) -> CGImage {
       let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: space,
         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-      if let colour {
-        ctx.setFillColor(red: colour.0, green: colour.1, blue: colour.2, alpha: 1)
-        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
-        return ctx.makeImage()!
-      }
       // A checkerboard, or the same seen through a soft lens.
       for y in stride(from: 0, to: h, by: 4) {
         for x in stride(from: 0, to: w, by: 4) {
@@ -57,13 +52,6 @@ enum CameraTests {
     let soft = Sharpness.measure(picture(128, 128, blur: true), in: CGRect(x: 0, y: 0, width: 1, height: 1))
     try check(sharp.g > soft.g * 20, "a sharp picture measures sharper than a soft one")
 
-    // The channel gels.
-    let red = picture(8, 8, colour: (1, 0, 0))
-    let throughRed = pipe.raster(ChannelView.r.apply(red), maxDimension: 8).pixel(4, 4).values
-    let throughGreen = pipe.raster(ChannelView.g.apply(red), maxDimension: 8).pixel(4, 4).values
-    try check(throughRed.allSatisfy { $0 > 0.95 } && throughGreen.allSatisfy { $0 < 0.05 } && ChannelView.all.apply(red) === red,
-      "a gel shows its channel alone in grey: red is white through the red gel, black through the green")
-
     // The controller, fed the process's events.
     let camFolder = folder.appendingPathComponent("camera", isDirectory: true)
     try? FileManager.default.removeItem(at: camFolder)
@@ -80,6 +68,27 @@ enum CameraTests {
     camera.receive(#"{"event":"props","props":[{"name":"FNumber","code":256,"type":2,"value":800,"settable":true,"readable":true,"values":[400,560,800,1100]},{"name":"FocusMode","code":265,"type":2,"value":1,"settable":true,"readable":true,"values":[1,2]}]}"#)
     try check(camera.properties["FNumber"]?.text == "f/8.0" && camera.properties["FNumber"]?.values.count == 4 && !camera.autofocusMode,
       "the settings arrive with the values the camera offers")
+    // Where the pictures go: one choice, remembered, sent as the camera connects and set at once while connected.
+    let cardSuite = "EpsonScanPlus.tests.\(UUID().uuidString)"
+    let cardDefaults = UserDefaults(suiteName: cardSuite)!
+    defer { cardDefaults.removePersistentDomain(forName: cardSuite) }
+    let carding = AppModel(libraryURL: folder.appendingPathComponent("card-library"), preferences: Preferences(defaults: cardDefaults))
+    let cardCamera = CameraController(helper: URL(fileURLWithPath: "/nonexistent"), folder: folder.appendingPathComponent("camera-card", isDirectory: true))
+    var cardSent = [String]()
+    cardCamera.transport = { cardSent.append($0) }
+    carding.camera = cardCamera
+    let cardOffAtFirst = !carding.keepsOnCard
+    carding.keepOnCard(true)
+    carding.connectCamera()
+    let cardAsked = cardSent.last?.contains("\"card\":true") == true && Preferences(defaults: cardDefaults).keepOnCard
+    cardCamera.receive(#"{"event":"connected","model":"ILCE-7RM4","cameras":1}"#)
+    cardCamera.receive(#"{"event":"props","props":[{"name":"StillImageStoreDestination","code":300,"type":2,"value":3,"settable":true,"readable":true,"values":[1,2,3]}]}"#)
+    let cardReadBack = carding.keepsOnCard
+    cardSent.removeAll()
+    carding.keepOnCard(false)
+    try check(cardOffAtFirst && cardAsked && cardReadBack && !Preferences(defaults: cardDefaults).keepOnCard
+      && cardSent.last.map { $0.contains("\"StillImageStoreDestination\"") && $0.contains("\"value\":1") } == true,
+      "where the pictures go is one choice: off at first, remembered, sent as the camera connects, read back from it, and set on it at once while connected")
     camera.receive(#"{"event":"props","props":[{"name":"WhiteBalance","code":263,"type":2,"value":0,"settable":true,"readable":true,"values":[0,17,256]},{"name":"Colortemp","code":282,"type":16386,"value":5500,"settable":true,"readable":true,"values":[2500,9900,100]}]}"#)
     sent.removeAll()
     camera.nudgeColourTemperature(by: 100)
@@ -146,12 +155,8 @@ enum CameraTests {
     camera.step(1)
     try check(sent.last?.contains("\"magnify\":\((Int64(59) << 32) | (Int64(160) << 16) | 240)") == true,
       "a step carries the magnifier, for the process to put back should it switch the camera to manual focus, which ends it")
-    let stage = CGSize(width: 520, height: 390), point = CGPoint(x: 260, y: 195)
-    let standing = LiveLoupe.render(picture(1024, 768), size: stage, at: point, style: .pentax, backing: 2)
     let loupe = CropLens.loupe(picture(160, 107))
-    try check(standing.map { $0.image.width == Int($0.frame.width * 2) && $0.frame.contains(point) && CGRect(origin: .zero, size: stage).contains($0.frame) } == true
-      && loupe?.width == 224,
-      "the light table's loupe stands on the live view at the focus point, and the library's loupe, both at the screen's resolution")
+    try check(loupe?.width == 224, "the library's loupe is drawn at the screen's resolution")
     camera.running = { ["com.apple.finder"] }
     camera.receive(#"{"event":"error","stage":"enum","code":"0x8000","message":"没有找到相机"}"#)
     try check(camera.phase == .failed && camera.message == "没有找到相机（0x8000）", "a failure is shown as the process says it")

@@ -3,19 +3,19 @@ import Foundation
 
 /// Explicit opt-in integration test. Never runs during normal app launch.
 enum HardwareTest {
-  static func run(sane: Bool = false) {
+  static func run() {
     _ = NSApplication.shared
     guard let index = CommandLine.arguments.firstIndex(of: "--library"),
       index + 1 < CommandLine.arguments.count
     else {
-      fputs("--hardware-test requires --library PATH\n", stderr)
+      fputs("--sane-hardware-test requires --library PATH\n", stderr)
       exit(1)
     }
-    let scanner: ScannerController = sane ? SaneScannerController() : ScannerController()
-    // The SANE test runs with saved settings at their defaults, in a suite of its own and removed
+    let scanner = SaneScannerController()
+    // The test runs with saved settings at their defaults, in a suite of its own and removed
     // afterwards, so it also covers the positives exported when the batch ends.
     let suite = "local.epscan.mac.hardware-test"
-    let defaults = sane ? UserDefaults(suiteName: suite) : nil
+    let defaults = UserDefaults(suiteName: suite)
     defaults?.removePersistentDomain(forName: suite)
     let model = AppModel(
       libraryURL: URL(fileURLWithPath: CommandLine.arguments[index + 1]), scanner: scanner,
@@ -62,7 +62,7 @@ enum HardwareTest {
         model.scanSelected()
       } else if stage == 2 && !model.isWorking, let frame = model.selected,
         let path = frame.scanPath, let session = model.sessionURL,
-        !sane || automaticExport(session) != nil
+        automaticExport(session) != nil
       {
         stage = 3
         let info = ImagePipeline.shared.info(URL(fileURLWithPath: path))
@@ -94,46 +94,44 @@ enum HardwareTest {
             ji.width == ti.width
           else { throw DeskError.message("Unexpected export dimensions/depth") }
           var precision = ""
-          if sane {
-            // Any film in the holder: how many frames it holds is reported, not required.
-            guard raw.bits == 16, frame.adjustments.inputGamma == 1,
-              frame.captureRect.contains(frame.rect), model.singleView,
-              !model.frames.isEmpty, model.scanBatch.completed == 1
-            else { throw DeskError.message("RGB48/gamma/coverage/batch verification failed") }
-            let image = try ImagePipeline.shared.load(URL(fileURLWithPath: path))
-            let data = image.dataProvider!.data! as Data
-            let step = image.bitsPerPixel / 8
-            let little = image.bitmapInfo.contains(.byteOrder16Little)
-            var values = [Set<UInt16>(), Set<UInt16>(), Set<UInt16>()]
-            for y in stride(from: 0, to: image.height, by: 3) {
-              for x in stride(from: 0, to: image.width, by: 3) {
-                for c in 0..<3 {
-                  let i = y * image.bytesPerRow + x * step + c * 2
-                  let v = little ? UInt16(data[i]) | UInt16(data[i+1]) << 8 : UInt16(data[i]) << 8 | UInt16(data[i+1])
-                  values[c].insert(v)
-                }
+          // Any film in the holder: how many frames it holds is reported, not required.
+          guard raw.bits == 16, frame.adjustments.inputGamma == 1,
+            frame.captureRect.contains(frame.rect), model.singleView,
+            !model.frames.isEmpty, model.scanBatch.completed == 1
+          else { throw DeskError.message("RGB48/gamma/coverage/batch verification failed") }
+          let image = try ImagePipeline.shared.load(URL(fileURLWithPath: path))
+          let data = image.dataProvider!.data! as Data
+          let step = image.bitsPerPixel / 8
+          let little = image.bitmapInfo.contains(.byteOrder16Little)
+          var values = [Set<UInt16>(), Set<UInt16>(), Set<UInt16>()]
+          for y in stride(from: 0, to: image.height, by: 3) {
+            for x in stride(from: 0, to: image.width, by: 3) {
+              for c in 0..<3 {
+                let i = y * image.bytesPerRow + x * step + c * 2
+                let v = little ? UInt16(data[i]) | UInt16(data[i+1]) << 8 : UInt16(data[i]) << 8 | UInt16(data[i+1])
+                values[c].insert(v)
               }
             }
-            guard values.allSatisfy({ $0.count > 1024 && $0.contains { $0 % 257 != 0 } }) else {
-              throw DeskError.message("RGB48 samples do not demonstrate higher than 8-bit precision")
-            }
-            precision = "Distinct sampled R/G/B values: \(values.map(\.count))\nInput gamma: 1.0, identity hardware LUT\nActual footprint contains crop: yes\n"
-            // Reported, not required: the film in the holder decides how much the roll shows.
-            precision += frame.adjustments.rollSlopes.map {
-              String(format: "Roll estimate: R %.3f · G %.3f · B %.3f\n", $0.r, $0.g, $0.b)
-            } ?? "Roll estimate: none\n"
-            guard let automatic = automaticExport(session) else { throw DeskError.message("No positive was exported when the batch ended") }
-            let ai = ImagePipeline.shared.info(automatic)
-            guard ai.bits == 16, ai.width == ti.width, ai.height == ti.height else {
-              throw DeskError.message("The positive exported when the batch ended has the wrong size or depth")
-            }
-            precision += "Exported when the batch ended: \(automatic.lastPathComponent), \(ai.width) × \(ai.height), \(ai.bits)-bit/channel\n"
-            // The scan is put on the preview's scale; its fit says it lay where the preview saw it.
-            guard let levels = frame.levels, levels.usable else {
-              throw DeskError.message("The scan was not aligned to the preview (fit \(frame.levels?.fit ?? 0))")
-            }
-            precision += String(format: "Aligned to preview: fit %.4f · gain R %.4f G %.4f B %.4f\n", levels.fit, levels.gain.r, levels.gain.g, levels.gain.b)
           }
+          guard values.allSatisfy({ $0.count > 1024 && $0.contains { $0 % 257 != 0 } }) else {
+            throw DeskError.message("RGB48 samples do not demonstrate higher than 8-bit precision")
+          }
+          precision = "Distinct sampled R/G/B values: \(values.map(\.count))\nInput gamma: 1.0, identity hardware LUT\nActual footprint contains crop: yes\n"
+          // Reported, not required: the film in the holder decides how much the roll shows.
+          precision += frame.adjustments.rollSlopes.map {
+            String(format: "Roll estimate: R %.3f · G %.3f · B %.3f\n", $0.r, $0.g, $0.b)
+          } ?? "Roll estimate: none\n"
+          guard let automatic = automaticExport(session) else { throw DeskError.message("No positive was exported when the batch ended") }
+          let ai = ImagePipeline.shared.info(automatic)
+          guard ai.bits == 16, ai.width == ti.width, ai.height == ti.height else {
+            throw DeskError.message("The positive exported when the batch ended has the wrong size or depth")
+          }
+          precision += "Exported when the batch ended: \(automatic.lastPathComponent), \(ai.width) × \(ai.height), \(ai.bits)-bit/channel\n"
+          // The scan is put on the preview's scale; its fit says it lay where the preview saw it.
+          guard let levels = frame.levels, levels.usable else {
+            throw DeskError.message("The scan was not aligned to the preview (fit \(frame.levels?.fit ?? 0))")
+          }
+          precision += String(format: "Aligned to preview: fit %.4f · gain R %.4f G %.4f B %.4f\n", levels.fit, levels.gain.r, levels.gain.g, levels.gain.b)
           let report =
             "Epson Scan plus hardware integration test\nDate: \(Date())\nScanner: \(model.scanner.name)\nBackend: \(model.scanner.backendID)\nAcquisition: \(raw.bits*3)-bit RGB\n\(precision)Frames detected: \(model.frames.count)\nScan: frame \(frame.name), 2400 dpi, \(raw.width) × \(raw.height)\nTIFF: \(ti.width) × \(ti.height), \(ti.bits)-bit/channel\nJPEG: \(ji.width) × \(ji.height), \(ji.bits)-bit/channel\nDust removal: disabled\nRaw: \(path)\nTIFF: \(tif.path)\nJPEG: \(jpg.path)\nRESULT: PASS\n"
           try report.write(

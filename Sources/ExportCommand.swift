@@ -10,7 +10,7 @@ enum ExportCommand {
     }
     guard let path = argument("--export-project"), let folder = argument("--output") else {
       fputs(
-        "--export-project FILE --output DIRECTORY [--format tiff|tiff8|jpeg|png] [--color-space srgb|p3|adobe|prophoto] [--rotation 0|1|2|3]\n",
+        "--export-project FILE --output DIRECTORY [--format tiff|tiff8|jpeg|png] [--color-space srgb|p3|adobe|prophoto] [--rotation 0|1|2|3] [--mirror]\n",
         stderr)
       exit(1)
     }

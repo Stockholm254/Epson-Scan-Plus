@@ -409,7 +409,7 @@ struct ContentView: View {
         m.mirrorRoll()
       } label: {
         Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
-      }.buttonStyle(KeyStyle(latched: m.contactMirrored)).help("全卷水平镜像：修正胶片正反面放反").disabled(m.frames.isEmpty)
+      }.buttonStyle(KeyStyle(latched: m.rollMirrored)).help(m.rollMirrored ? "取消全卷水平镜像" : "全卷水平镜像：修正胶片正反面放反").disabled(m.frames.isEmpty)
     }
   }
   /// What floats over the picture: the render in progress, the frame's resolution, the tool's hint.
@@ -540,9 +540,12 @@ struct ContentView: View {
         .menuStyle(.button).frame(maxWidth: .infinity, alignment: .leading)
         .help("这一卷用的预设：通道斜率和标定的中性。也可以在下面输入胶片名")
         labeled("胶片名") {
-          TextField("胶片名", text: $m.filmName).textFieldStyle(.roundedBorder).font(.system(size: 12))
-            .onSubmit { m.matchFilm() }
-            .help("这一卷的胶片名，库里也显示；回车后，收录的胶片换成对应的预设")
+          HStack(spacing: 6) {
+            TextField("胶片名", text: $m.filmName).textFieldStyle(.roundedBorder).font(.system(size: 12))
+              .onSubmit { m.matchFilm() }
+              .help("这一卷的胶片名，库里也显示；回车或「应用」后，收录的胶片换成对应的预设")
+            Button("应用") { m.matchFilm() }.controlSize(.small).help("按胶片名换成收录的预设；没有收录的用通用配置")
+          }
         }
         Text(conversionBasisShort).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
           .fixedSize(horizontal: false, vertical: true)
@@ -1004,9 +1007,8 @@ struct ContentView: View {
       ).font(.system(size: 11, design: .monospaced))
       if let url = URL(string: m.profile.sourceURL) { Link("打开官方技术文档", destination: url) }
       Divider()
-      Text("输入已收录胶片名称会应用对应配置。未收录的胶片使用通用配置，也可以导入附有来源和通道斜率的 JSON 文件。").font(.system(size: 12))
+      Text("输入已收录胶片名称会应用对应配置。未收录的胶片使用通用配置，也可以在胶片菜单的「管理预设…」打开的预设表格里导入附有来源和通道斜率的 JSON 文件。").font(.system(size: 12))
       HStack {
-        Button("导入配置…") { m.importProfile() }
         Spacer()
         Button("完成") { showInfo = false }.keyboardShortcut(.defaultAction)
       }

@@ -196,14 +196,4 @@ extension ImagePipeline {
     }
     return bare
   }
-  /// One base for a roll from its frames' edges: those whose base shares the colour most of them
-  /// have (within 4%), their median. Which frames it came from, with it.
-  func rollEdgeBase(_ bases: [(id: UUID, base: RGB)]) -> (base: RGB, from: [UUID])? {
-    guard !bases.isEmpty else { return nil }
-    func colour(_ v: RGB) -> (Double, Double) { (log(v.r / v.g), log(v.b / v.g)) }
-    let a = quantile(bases.map { colour($0.base).0 }, 0.5), b = quantile(bases.map { colour($0.base).1 }, 0.5)
-    let agreeing = bases.filter { abs(colour($0.base).0 - a) < 0.04 && abs(colour($0.base).1 - b) < 0.04 }
-    guard !agreeing.isEmpty else { return nil }
-    return (RGB((0..<3).map { c in quantile(agreeing.map { $0.base.values[c] }, 0.5) }), agreeing.map(\.id))
-  }
 }

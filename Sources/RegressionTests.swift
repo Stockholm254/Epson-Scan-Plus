@@ -445,27 +445,5 @@ enum RegressionTests {
     try check(
       emptySelection.enabledCount == 0 && emptySelection.selectedID == nil,
       "bulk selection is safe with an empty project")
-    if let index = CommandLine.arguments.firstIndex(of: "--review-project"),
-      index + 1 < CommandLine.arguments.count
-    {
-      let p = try JSONDecoder().decode(
-        DeskProject.self,
-        from: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[index + 1])))
-      if let f = p.frames.first(where: { $0.name == "13" }) {
-        let raw = try pipe.load(URL(fileURLWithPath: p.overviewPath))
-        let image = try pipe.crop(raw, rect: f.rect)
-        try pipe.savePNG(
-          pipe.preview(image, settings: f.adjustments, profile: p.profile),
-          to: folder.appendingPathComponent("13-current-settings.png"))
-        var adjusted = f.adjustments
-        adjusted.autoWhiteBalance = true
-        adjusted.manualBalance = nil
-        adjusted.neutralSample = nil
-        try pipe.savePNG(
-          pipe.preview(image, settings: adjusted, profile: p.profile),
-          to: folder.appendingPathComponent("13-recalculated.png"))
-        print("PASS: frame 13 visual review written without changing the user project")
-      }
-    }
   }
 }

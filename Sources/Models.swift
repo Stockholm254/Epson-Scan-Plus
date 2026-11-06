@@ -549,7 +549,7 @@ enum CanvasTool: String, CaseIterable {
   var help: String {
     let what: String
     switch self {
-    case .select: what = "选择：点选、移动画框，双击进入单张"
+    case .select: what = "选择：点接触表上的画面进入单张；单张放大时拖动平移"
     case .crop: what = "画框：在接触表上拖出新画框；单张中裁切"
     case .base: what = "取片基：点未曝光的橙色片基，作为去色罩的基准"
     case .neutral: what = "取中性灰：点画面中应为灰色的地方，校正白平衡"

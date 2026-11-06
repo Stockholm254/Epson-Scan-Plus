@@ -11,7 +11,7 @@ final class SaneScannerController: ScannerController {
   override var finishesScanBeforeQuit: Bool { true }
   private var lastArea: CGRect?
   private var previewingDPI = 150
-  override var captureNote: String { "epson2 · 48-bit 实验接口\n线性采集，输入 Gamma 1.0；无除尘、自动调色或锐化。" }
+  override var captureNote: String { "epson2 · 48-bit\n线性采集，输入 Gamma 1.0；无除尘、自动调色或锐化。" }
   private let helper: URL
   private let backend: URL
   private let config: URL
@@ -46,7 +46,7 @@ final class SaneScannerController: ScannerController {
       let folder = FileManager.default.temporaryDirectory.appendingPathComponent("EpsonScanPlus-" + UUID().uuidString)
       try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
       let output = folder.appendingPathComponent("overview.tiff")
-      let dpi = [150, 300, 600].contains(previewDPI) ? previewDPI : 150
+      let dpi = [150, 600].contains(previewDPI) ? previewDPI : 150
       let args = try Self.captureArguments(rect: .full, dpi: dpi, size: physicalMM, output: output)
       previewingDPI = dpi
       // What has been read so far, for the light table while the preview goes on.
@@ -204,7 +204,7 @@ final class SaneScannerController: ScannerController {
         } else if let output {
           self.status = "48-bit 扫描完成"; self.record(output.lastPathComponent)
           self.onScan?(output); self.onFinished?(nil)
-        } else { self.status = "透扫就绪 · 48-bit RGB · epson2（实验）" }
+        } else { self.status = "透扫就绪 · 48-bit RGB · epson2" }
       }
     }
   }
