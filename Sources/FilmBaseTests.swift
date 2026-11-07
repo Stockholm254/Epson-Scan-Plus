@@ -106,5 +106,21 @@ enum FilmBaseTests {
     try check(sane.selected?.adjustments.rollBase != nil, "resetting the adjustments keeps the roll base")
     try check(try load(nil).frames.allSatisfy { $0.adjustments.rollBase == nil },
       "projects without a 48-bit preview keep their per-frame base")
+
+    // The negative as 取片基 and the light table show it, from a linear file: a copy roll's base
+    // (R 0.10, G 0.31, B 0.21, about a fifth of full scale) on the left, film 1 D denser on the right.
+    let copyBase = RGB(r: 0.10, g: 0.31, b: 0.21)
+    let film = image16(64, 16) { x, _ in RGB(copyBase.values.map { x < 32 ? $0 : $0 * 0.1 }) }
+    var copy = Adjustments()
+    copy.inputGamma = 1
+    copy.rollBase = copyBase
+    let single = pipe.raster(pipe.render(film, settings: copy, profile: portra, analysis: nil, negative: true)!, maxDimension: 64)
+    let table = pipe.raster(pipe.neutralNegative(film, settings: copy), maxDimension: 64)
+    let (onBase, denser) = (single.pixel(16, 8), single.pixel(48, 8))
+    func neutral(_ p: RGB) -> Bool { p.values.max()! - p.values.min()! < 0.02 }
+    try check(abs(onBase.g - ImagePipeline.shownBase) < 0.02 && neutral(onBase) && denser.g > 0.2 && denser.g < 0.35 && neutral(denser)
+      && [16, 48].allSatisfy { x in zip(single.pixel(x, 8).values, table.pixel(x, 8).values).allSatisfy { abs($0 - $1) < 0.01 } },
+      String(format: "a linear negative shows its base a light neutral grey (%.2f, was about 0.2) and film 1 D denser %.2f, the single frame (so 取片基) as the light table",
+        onBase.g, denser.g))
   }
 }

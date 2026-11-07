@@ -835,23 +835,40 @@ final class ImagePipeline {
     guard r.width >= 1, r.height >= 1, let cg = context.createCGImage(ci, from: r, format: .RGBA8, colorSpace: outputSpace) else { return nil }
     return (cg, NormalRect(x: r.minX / e.width, y: 1 - r.maxY / e.height, width: r.width / e.width, height: r.height / e.height))
   }
-  /// Each channel divided by the film base (picked, the roll's, or the frame's edges'): the base
-  /// shows neutral grey at its own brightness, neither the mask's orange nor a copy light's green,
-  /// and what is left is what the layers made, which also shows whether a pick was on the base. A
-  /// power-law encoding keeps neutral neutral, so no decoding is needed. As it is with no base.
-  static func baseNeutral(_ ci: CIImage, base: RGB?) -> CIImage {
-    guard let base, base.values.allSatisfy({ $0 > 1e-4 }) else { return ci }
-    let mean = (base.r + base.g + base.b) / 3
-    return ci.applyingFilter("CIColorMatrix", parameters: [
-      "inputRVector": CIVector(x: mean / base.r, y: 0, z: 0, w: 0),
-      "inputGVector": CIVector(x: 0, y: mean / base.g, z: 0, w: 0),
-      "inputBVector": CIVector(x: 0, y: 0, z: mean / base.b, w: 0),
-    ])
+  /// How light the film base shows in a negative, encoded for the screen: a light grey, as on a
+  /// light box, with bare light past the film lighter still.
+  static let shownBase = 0.8
+  /// A negative for the screen. Each channel divided by the film base (picked, the roll's, or the
+  /// frame's edges'): the base shows a neutral grey, `shownBase`, neither the mask's orange nor a
+  /// copy light's green, and what is left is what the layers made, which also shows whether a pick
+  /// was on the base. The values are the file's own, read without colour management. A linear file
+  /// (`gamma` 1: the V850's 48-bit scans, the camera's raw files) is its light, encoded here as
+  /// sRGB: shown as if it already were, it came out nearly black, its base at 0.1–0.3, and wherever
+  /// the view took no colour space from the file (the single frame, so 取片基) it did. A file
+  /// encoded for the screen is shown as it is. A power-law encoding keeps neutral neutral. With no
+  /// base, the file as it is, encoded if it is linear.
+  static func baseNeutral(_ ci: CIImage, base: RGB?, gamma: Double) -> CIImage {
+    var out = ci
+    let linear = abs(gamma - 1) < 1e-6
+    if let b = base, b.values.allSatisfy({ $0 > 1e-4 }) {
+      let k = linear ? srgbDecoded(shownBase) : shownBase
+      out = out.applyingFilter("CIColorMatrix", parameters: [
+        "inputRVector": CIVector(x: k / b.r, y: 0, z: 0, w: 0),
+        "inputGVector": CIVector(x: 0, y: k / b.g, z: 0, w: 0),
+        "inputBVector": CIVector(x: 0, y: 0, z: k / b.b, w: 0),
+      ])
+    }
+    return linear ? out.applyingFilter("CILinearToSRGBToneCurve") : out
   }
+  /// The light an sRGB-encoded value stands for.
+  static func srgbDecoded(_ v: Double) -> Double { v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4) }
   /// A negative as the light table shows it, as it lies: its base a neutral grey (`baseNeutral`).
   func neutralNegative(_ image: CGImage, settings: Adjustments) -> CGImage {
-    let ci = Self.baseNeutral(CIImage(cgImage: image, options: [.colorSpace: NSNull()]), base: settings.base ?? settings.rollBase)
-    return context.createCGImage(ci, from: ci.extent, format: .RGBA8, colorSpace: image.colorSpace ?? outputSpace) ?? image
+    let ci = Self.baseNeutral(CIImage(cgImage: image, options: [.colorSpace: NSNull()]), base: settings.base ?? settings.rollBase,
+      gamma: settings.inputGamma)
+    // A linear file comes out encoded as sRGB; one encoded for the screen keeps its own space.
+    let space = abs(settings.inputGamma - 1) < 1e-6 ? outputSpace : image.colorSpace ?? outputSpace
+    return context.createCGImage(ci, from: ci.extent, format: .RGBA8, colorSpace: space) ?? image
   }
   /// The picture as shown, positive or negative, straightened, turned and mirrored, from the origin.
   private func shown(
@@ -860,7 +877,8 @@ final class ImagePipeline {
   ) -> CIImage? {
     var ci: CIImage
     if negative {
-      ci = Self.baseNeutral(CIImage(cgImage: image, options: [.colorSpace: NSNull()]), base: analysis?.base ?? settings.base ?? settings.rollBase)
+      ci = Self.baseNeutral(CIImage(cgImage: image, options: [.colorSpace: NSNull()]), base: analysis?.base ?? settings.base ?? settings.rollBase,
+        gamma: settings.inputGamma)
       ci = Self.straightened(ci, degrees: settings.angle ?? 0)
       ci = ci.oriented(forExifOrientation: [1, 6, 3, 8][((settings.rotation % 4) + 4) % 4])
       if settings.flipHorizontal == true {
