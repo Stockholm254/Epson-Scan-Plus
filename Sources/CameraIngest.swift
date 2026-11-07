@@ -42,12 +42,23 @@ extension AppModel {
       }
     } catch { errorText = "收不下相机拍的照片：\(error.localizedDescription)" }
   }
-  /// A pixel-shift group that will not be completed (the press brought fewer pictures): its first
-  /// picture as one shot, so the next press starts a group of its own.
+  /// A pixel-shift group that will not be completed (the press brought fewer pictures), so the next
+  /// press starts a group of its own. Four or more of 16 are the camera set to 4 (the app cannot set
+  /// it: the camera's SDK has no such setting), or the rest lost: the first four, one square, are
+  /// composed as a 4-shot group. Fewer: the first picture as one shot.
   func releaseShift() {
     guard let first = pendingShift.first, let root = sessionURL else { return }
+    let group = pendingShift, square = SensorRaw.shiftOrder.count
     pendingShift = []
-    decodeCapture(first, root: root)
+    if group.count >= square {
+      let said = group.count == square
+        ? "相机这一下只拍了 4 张：相机里像素位移的张数是 4，取景区这里选 16 改不了相机。已按 4 张合成；要 16 张，在相机菜单的像素位移多重拍摄里把张数改成 16"
+        : "这一下只收到 \(group.count) / \(pixelShiftCount) 张，后面的没有来。已用前 4 张按 4 张合成"
+      camera.explain(said)
+      decodeShift(Array(group.prefix(square)), root: root, note: group.count == square ? "相机设的是 4 张，按 4 张合成" : "只收到 \(group.count) / \(pixelShiftCount) 张，用前 4 张按 4 张合成")
+    } else {
+      decodeCapture(first, root: root)
+    }
   }
   /// A new roll for the camera, measured as one roll and sharing a picked base.
   func startCameraRoll() throws {
@@ -114,7 +125,7 @@ extension AppModel {
   /// measured, instead of one shot's colours filled in from its neighbours: 4 shots at the sensor's
   /// resolution, 16 at twice it each way. When they are not uncompressed ARWs of one kind (JPEGs, a
   /// compressed RAW), the first is used as one shot.
-  private func decodeShift(_ group: [URL], root: URL) {
+  private func decodeShift(_ group: [URL], root: URL, note: String? = nil) {
     let square = SensorRaw.shiftOrder.count, all = square * SensorRaw.shiftGroups.count
     guard group.count == square || group.count == all, let first = group.first else {
       status = "像素位移 \(group.count) 张已收齐；只有 4 张或 16 张一组能合成，先用这组的第一张"
@@ -158,6 +169,7 @@ extension AppModel {
           let said = String(format: "%.1f%%", composed.greens * 100)
           // What went wrong, which asks for the group again, and what is only so.
           var problems = [String](), facts = [String]()
+          if let note { facts.append(note) }
           if composed.greens > Self.shiftGreensLimit {
             problems.append("两次绿色相差 \(said)（正常约 1.5%）：4 张之间有东西动了（胶片、相机或灯），细节会有重影")
           }

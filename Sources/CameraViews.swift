@@ -183,7 +183,7 @@ struct CameraStage: View {
               Text("位移 4").tag(4)
               Text("位移 16").tag(16)
             }.pickerStyle(.segmented).labelsHidden().frame(width: 190)
-              .help("像素位移要先在相机菜单里打开，张数和这里一样，间隔选最短。一次快门收到的一组合成一张：4 张时每个点的红、绿、蓝都是实测的，没有去马赛克的假色；16 张再加上半像素的位移，合成长宽各两倍的画面（A7R IV 约 2.45 亿像素，每组约 2 GB 原片加 1.5 GB 合成图）")
+              .help("像素位移要先在相机菜单里打开，张数设成和这里一样，间隔选最短：这里只告诉 App 一下会来几张，改不了相机的张数。一次快门收到的一组合成一张：4 张时每个点的红、绿、蓝都是实测的，没有去马赛克的假色；16 张再加上半像素的位移，合成长宽各两倍的画面（A7R IV 约 2.45 亿像素，每组约 2 GB 原片加 1.5 GB 合成图）")
             if m.pixelShiftCount == 16 {
               Toggle("超采样", isOn: $m.shiftSupersample).toggleStyle(.checkbox).font(.system(size: 11))
                 .help("超采样到传感器原生尺寸：颜色更干净、噪声略低、文件小四分之三；解析力和 4 张相同。不勾时合成长宽各两倍的画面（A7R IV 约 2.45 亿像素、1.5 GB）")

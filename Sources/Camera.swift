@@ -113,6 +113,9 @@ final class CameraController: ObservableObject {
   @Published private(set) var phase: Phase
   @Published private(set) var model = ""
   @Published private(set) var message = ""
+  /// What the app makes of what the camera did (a pixel-shift group that came short, say), in the
+  /// panel's line.
+  func explain(_ text: String) { message = text }
   @Published private(set) var live: CGImage? {
     didSet {
       liveHistogram = live.map(Histogram.picture)
@@ -527,17 +530,22 @@ final class CameraController: ObservableObject {
     case "downloaded":
       received += 1
       let got = received - receivedAtPress
-      if got >= picturesPerShot || !awaitingPicture {
-        awaitingPicture = false
-      } else {
-        // More of this press to come: if they stop, the shutter is free again and the group is let go.
-        let press = presses, count = received
+      if got >= picturesPerShot { awaitingPicture = false }
+      if picturesPerShot > 1 {
+        // The pictures stopping for a while ends the shot, however it was pressed: here, on the
+        // camera, or here with the camera answering an error and shooting all the same. The
+        // shutter is free again, and a group short of its count is let go.
+        let count = received, pressed = awaitingPicture
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.groupWait) { [weak self] in
-          guard let self, self.presses == press, self.received == count, self.awaitingPicture else { return }
+          guard let self, self.received == count else { return }
           self.awaitingPicture = false
-          self.message = "这一下只收到 \(got) / \(self.picturesPerShot) 张：相机可能没有打开像素位移，或张数不是 \(self.picturesPerShot)。请在相机菜单里设好，或在取景区选「单张」"
+          if pressed {
+            self.message = "这一下只收到 \(got) / \(self.picturesPerShot) 张：相机可能没有打开像素位移，或张数不是 \(self.picturesPerShot)。请在相机菜单里设好，或在取景区选「单张」"
+          }
           self.onShotEnded?(got)
         }
+      } else {
+        awaitingPicture = false
       }
       if let ms = event["afterShotMs"] as? Int { log.append("照片在按下快门 \(ms) ms 后到达") }
       if let path = event["path"] as? String, !path.isEmpty { onCapture?(URL(fileURLWithPath: path)) }

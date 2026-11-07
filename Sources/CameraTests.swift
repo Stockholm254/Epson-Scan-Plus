@@ -190,6 +190,14 @@ enum CameraTests {
     settle(0.5)
     try check(held && !camera.awaitingPicture && ended == [1] && camera.message.contains("1 / 4"),
       "a press that brings one picture of four frees the shutter after a while and says the camera may not be shifting: \(camera.message)")
+    // A press the camera answers with an error and takes all the same (seen with the focus locked):
+    // its pictures, short of the count, are still let go once they stop.
+    camera.shoot()
+    camera.receive(#"{"event":"shot","ok":false,"code":"0x8402"}"#)
+    for n in 95...96 { camera.receive("{\"event\":\"downloaded\",\"path\":\"\(camFolder.path)/EPS000\(n).ARW\",\"type\":1}") }
+    settle(0.5)
+    try check(!camera.awaitingPicture && ended == [1, 2],
+      "pictures that come after the camera said the shutter failed are still let go as a group once they stop")
     CameraController.groupWait = wait
     camera.picturesPerShot = 1
 
@@ -257,16 +265,30 @@ enum CameraTests {
     try check(waitingOne == 1 && model.pendingShift.isEmpty && model.frames.count == 5
       && model.frames[4].sourcePath?.hasSuffix("Decoded/EPS00011.tif") == true,
       "a group that will not be completed gives its picture as one shot, and the next press starts afresh")
-    // Sixteen: composed at twice the resolution each way.
+    // Sixteen chosen, the camera set to 4: the press's four composed as a 4-shot group, and the
+    // camera's line says where the count is set.
     model.pixelShiftCount = 16
+    for (k, data) in PixelShiftTests.shots(width: 12, height: 10).enumerated() {
+      let url = incoming.appendingPathComponent(String(format: "EPS%05d.ARW", 12 + k))
+      try data.write(to: url)
+      model.receiveCapture(url)
+    }
+    let fourOfSixteen = model.pendingShift.count
+    model.releaseShift()
+    for _ in 0..<120 where model.frames.count == 5 { settle(0.05) }
+    try check(fourOfSixteen == 4 && model.pendingShift.isEmpty && model.frames.count == 6
+      && model.frames[5].sourcePath?.contains("Decoded/PixelShift-") == true && model.frames[5].sensorRead == true
+      && model.status.contains("相机设的是 4 张，按 4 张合成") && model.camera.message.contains("把张数改成 16"),
+      "with 16 chosen and the camera set to 4, a press's four compose as 4 shots and the camera's count is named: \(model.status)")
+    // Sixteen: composed at twice the resolution each way.
     for (k, data) in PixelShiftTests.shots16(width: 160, height: 120).enumerated() {
       let url = incoming.appendingPathComponent(String(format: "EPS%05d.ARW", 20 + k))
       try data.write(to: url)
       model.receiveCapture(url)
     }
-    for _ in 0..<200 where model.frames.count == 5 { settle(0.05) }
-    let big = model.frames.count == 6 ? model.frames[5].sourcePath.map { ImagePipeline.shared.info(URL(fileURLWithPath: $0)) } : nil
-    try check(big?.width == 320 && big?.height == 240 && model.frames[5].sourcePath?.contains("Decoded/PixelShift-") == true
+    for _ in 0..<200 where model.frames.count == 6 { settle(0.05) }
+    let big = model.frames.count == 7 ? model.frames[6].sourcePath.map { ImagePipeline.shared.info(URL(fileURLWithPath: $0)) } : nil
+    try check(big?.width == 320 && big?.height == 240 && model.frames[6].sourcePath?.contains("Decoded/PixelShift-") == true
       && model.status.contains("16 张") && model.status.contains("4 组对齐"),
       "sixteen uncompressed ARWs of a pixel-shift shot compose into one frame twice the sensor's size each way: \(model.status)")
     model.shiftSupersample = true
@@ -275,8 +297,8 @@ enum CameraTests {
       try data.write(to: url)
       model.receiveCapture(url)
     }
-    for _ in 0..<200 where model.frames.count == 6 { settle(0.05) }
-    let shrunk = model.frames.count == 7 ? model.frames[6].sourcePath.map { ImagePipeline.shared.info(URL(fileURLWithPath: $0)) } : nil
+    for _ in 0..<200 where model.frames.count == 7 { settle(0.05) }
+    let shrunk = model.frames.count == 8 ? model.frames[7].sourcePath.map { ImagePipeline.shared.info(URL(fileURLWithPath: $0)) } : nil
     try check(shrunk?.width == 160 && shrunk?.height == 120 && model.status.contains("超采样到 160×120"),
       "with supersampling chosen, a 16-shot group comes in at the sensor's size: \(model.status)")
     model.shiftSupersample = false
