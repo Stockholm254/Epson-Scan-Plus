@@ -855,11 +855,29 @@ final class AppModel: ObservableObject {
       }
     }
   }
+  /// The name a new frame takes: one past the highest number in the roll (or its count, if
+  /// higher), so a frame added after some were deleted never takes the name of one still there.
+  var nextFrameName: String { Self.frameName(after: frames) }
+  static func frameName(after frames: [FilmFrame]) -> String {
+    String(format: "%02d", max(frames.compactMap { Int($0.name) }.max() ?? 0, frames.count) + 1)
+  }
+  /// Gives each frame whose name an earlier frame of the roll already has the next free number, in
+  /// the roll's order: what was renamed, from and to.
+  @discardableResult static func renumberRepeats(_ frames: inout [FilmFrame]) -> [(from: String, to: String)] {
+    var seen = Set<String>(), renamed = [(from: String, to: String)]()
+    for i in frames.indices {
+      guard seen.contains(frames[i].name) else { seen.insert(frames[i].name); continue }
+      let to = frameName(after: frames)
+      renamed.append((frames[i].name, to))
+      frames[i].name = to
+      seen.insert(to)
+    }
+    return renamed
+  }
   func addFrame(_ rect: NormalRect) {
     guard rect.width > 0.008, rect.height > 0.008 else { return }
     recordEdit("添加画面")
-    var f = FilmFrame(
-      name: String(format: "%02d", frames.count + 1), rect: rect, format: format.rawValue)
+    var f = FilmFrame(name: nextFrameName, rect: rect, format: format.rawValue)
     if let selected, let path = selected.sourcePath {
       f.sourcePath = path
       f.scanDPI = selected.scanDPI
@@ -3167,6 +3185,8 @@ final class AppModel: ObservableObject {
         if f.sensorRead == true && f.adjustments.colourNoise == nil { f.adjustments.colourNoise = 1 }
         return f
       }
+      // Up to 0.11.2 a picture taken after others were deleted could take a name still in use.
+      let renamed = Self.renumberRepeats(&frames)
       clearEdits()
       profile = p.profile
       filmName = p.filmName
@@ -3186,6 +3206,11 @@ final class AppModel: ObservableObject {
       refresh()
       updateThumbnails()
       status = overviewPath == p.overviewPath ? "已打开工程" : "已打开工程 · 工程文件夹已移动，按新位置读取文件"
+      if !renamed.isEmpty {
+        status += " · 重名的" + renamed.map { "第 \($0.from) 张" }.joined(separator: "、") + "（后拍的）改成了 "
+          + renamed.map(\.to).joined(separator: "、")
+        if !readOnly { saveProject() }
+      }
       if !readOnly {
         registerMissingLevels()
         measureEdgeBases()

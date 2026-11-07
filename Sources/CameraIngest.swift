@@ -204,7 +204,7 @@ extension AppModel {
     let info = ImagePipeline.shared.info(picture)
     // The long side taken as the 36 mm of a 135 frame filling it; only the export's dpi follows it.
     let dpi = info.width > 0 ? Double(max(info.width, info.height)) / 36 * 25.4 : 300
-    var f = FilmFrame(name: String(format: "%02d", frames.count + 1), rect: .full, format: "翻拍")
+    var f = FilmFrame(name: nextFrameName, rect: .full, format: "翻拍")
     f.sourcePath = picture.path
     f.sourceBits = info.bits
     f.scanDPI = Int(dpi.rounded())

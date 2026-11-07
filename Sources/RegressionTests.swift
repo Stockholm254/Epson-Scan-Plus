@@ -167,6 +167,17 @@ enum RegressionTests {
     saved["highlightSample"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(RGB(r: 0.1, g: 0.2, b: 0.3)))
     let reopened = try? JSONDecoder().decode(Adjustments.self, from: JSONSerialization.data(withJSONObject: saved))
     try check(reopened == settings, "a frame saved with a highlight (Dmax) point opens as it was, without the point")
+    // A picture taken after earlier ones were deleted takes the number past the highest, not one in
+    // use; a roll saved with repeats (up to 0.11.2) has its later ones renumbered when it opens.
+    func named(_ n: String) -> FilmFrame { FilmFrame(name: n, rect: .full, format: "翻拍") }
+    var repeats = ["03", "04", "03", "04"].map(named)
+    let renamed = AppModel.renumberRepeats(&repeats)
+    var distinct = ["01", "02", "05"].map(named)
+    try check(AppModel.frameName(after: ["03", "04"].map(named)) == "05" && AppModel.frameName(after: []) == "01"
+      && AppModel.frameName(after: ["A", "B"].map(named)) == "03"
+      && repeats.map(\.name) == ["03", "04", "05", "06"] && renamed.map(\.from) == ["03", "04"] && renamed.map(\.to) == ["05", "06"]
+      && AppModel.renumberRepeats(&distinct).isEmpty && distinct.map(\.name) == ["01", "02", "05"],
+      "a new frame is numbered past the roll's highest, and repeated names are renumbered in the roll's order")
     let rawRect = NormalRect(x: 0.15, y: 0.22, width: 0.6, height: 0.51)
     let point = CGPoint(x: 0.19, y: 0.67)
     let orientationFixture = makeImage(80, 60) { x, y in
