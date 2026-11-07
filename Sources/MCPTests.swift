@@ -182,6 +182,8 @@ enum MCPTests {
     try check((hello?["result"] as? [String: Any])?["protocolVersion"] as? String == "2025-06-18"
       && ((listed?["result"] as? [String: Any])?["tools"] as? [Any])?.count == names.count,
       "started as an assistant starts it, the bridge answers the handshake and lists the tools")
+    try check(NSRunningApplication(processIdentifier: bridge.processIdentifier) == nil,
+      "and it is not known to Launch Services as this app, so opening the app while it runs starts the window instead of failing (-600)")
     let remote = ask(["id": 3, "method": "tools/call", "params": ["name": "adjust", "arguments": ["tint": -0.2]]])
     try check((remote?["result"] as? [String: Any])?["isError"] as? Bool == false && model.settings.tint == -0.2,
       "a tool call goes through the socket into the running app")

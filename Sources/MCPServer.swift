@@ -146,11 +146,15 @@ final class MCPServer {
 /// `EpsonScanPlus --mcp`: the MCP server an assistant starts, over stdio. It answers the handshake
 /// and the list of tools itself, and passes each tool call to the running app; with the app closed
 /// or MCP off, the call says so instead of failing the session.
+///
+/// It never touches AppKit. Once a process has made `NSApplication.shared` it is known to Launch
+/// Services as this app, even as a background one, and while it lives, opening the app (Finder,
+/// the Dock, `open`, the updater's reopening) goes to it and fails with -600 instead of starting
+/// the window. The assistant keeps the bridge running long after the window has closed.
 enum MCPBridge {
   static let protocolVersions = ["2025-06-18", "2025-03-26", "2024-11-05"]
 
   static func run() -> Never {
-    NSApplication.shared.setActivationPolicy(.prohibited)
     signal(SIGPIPE, SIG_IGN)
     let out = FileHandle.standardOutput
     func send(_ object: [String: Any]) {
