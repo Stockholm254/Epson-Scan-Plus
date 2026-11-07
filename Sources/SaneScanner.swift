@@ -30,15 +30,17 @@ final class SaneScannerController: ScannerController {
     status = "正在检测 48-bit 透扫…"
     bits = 16
   }
+  /// The look for the scanner as the app opens: with none on the cable it says so only in the
+  /// scanner's lamp (「未就绪」, the reason in its tooltip), not in an alert. 「重新连接」 still says so.
   override func start() {
     guard !started, !busy else { return }
     started = true
-    probe()
+    probe(quiet: true)
   }
-  override func reconnect() { guard !busy else { return }; started = true; probe() }
-  private func probe() {
+  override func reconnect() { guard !busy else { return }; started = true; probe(quiet: false) }
+  private func probe(quiet: Bool) {
     ready = false
-    launch(arguments: ["--probe"], output: nil, preview: false)
+    launch(arguments: ["--probe"], output: nil, preview: false, quiet: quiet)
   }
   override func preview() {
     guard ready, !busy else { return }
@@ -90,8 +92,10 @@ final class SaneScannerController: ScannerController {
     else { throw DeskError.message("无法保留 48-bit 预览像素。") }
     return detached
   }
-  private func launch(arguments: [String], output: URL?, preview: Bool) {
+  /// Runs the helper. A `quiet` failure goes only into the status, not to `onFailure`.
+  private func launch(arguments: [String], output: URL?, preview: Bool, quiet: Bool = false) {
     guard !busy else { return }
+    let fail: (String) -> Void = { [weak self] message in if !quiet { self?.onFailure?(message) } }
     let id = UUID(); job = id; cancelled = false; closing = false; lastArea = nil
     let p = Process(), pipe = Pipe()
     p.executableURL = helper
@@ -109,7 +113,7 @@ final class SaneScannerController: ScannerController {
       process = nil; busy = false; ready = false
       status = "无法启动 48-bit 接口：\(error.localizedDescription)"
       if preview, let output { try? FileManager.default.removeItem(at: output.deletingLastPathComponent()) }
-      onFailure?(status)
+      fail(status)
       return
     }
     worker.async { [weak self] in
@@ -179,13 +183,17 @@ final class SaneScannerController: ScannerController {
         if let error = returnedError ?? (p.terminationStatus == 0 ? nil : "48-bit 接口异常退出。请检查连接并重新连接。") {
           self.ready = false; self.status = error; self.record(error)
           if !returnedDiagnostics.isEmpty { self.record(returnedDiagnostics) }
-          self.onFailure?(error)
+          fail(error)
           return
         }
         guard let c = returnedCapability, c["bits"] as? Int == 16,
           let w = c["widthMM"] as? Double, let h = c["heightMM"] as? Double,
           w > 100, w <= 151, h > 200, h <= 247, let resolutions = c["dpi"] as? [Int]
-        else { self.ready = false; self.onFailure?("接口未确认 48-bit 透扫能力。"); return }
+        else {
+          self.ready = false; self.status = "接口未确认 48-bit 透扫能力。"
+          fail(self.status)
+          return
+        }
         self.name = c["name"] as? String ?? "EPSON V800/V850"
         self.physicalMM = CGSize(width: w, height: h)
         self.supportedDPI = resolutions.filter { $0 >= 300 }

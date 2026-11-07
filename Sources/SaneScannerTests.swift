@@ -38,6 +38,31 @@ enum SaneScannerTests {
       p.waitUntilExit()
       try check(p.terminationReason == .exit && p.terminationStatus != 0,
         "the bundled 48-bit helper starts SANE and libusb here and, with no scanner, says so instead of crashing")
+
+      // The same helper finding no scanner as the app opens: no alert, the reason in the lamp's
+      // tooltip; 「重新连接」 says it in an alert.
+      let quietResources = folder.appendingPathComponent("sane-quiet-start", isDirectory: true)
+      let quietScanner = quietResources.appendingPathComponent("Scanner", isDirectory: true)
+      try? FileManager.default.removeItem(at: quietResources)
+      try FileManager.default.createDirectory(at: quietScanner, withIntermediateDirectories: true)
+      for name in ["SaneCapture", "libsane-epson2.1.dylib", "libusb-1.0.0.dylib"] {
+        try FileManager.default.copyItem(at: resources.appendingPathComponent(name), to: quietScanner.appendingPathComponent(name))
+      }
+      try FileManager.default.copyItem(at: none, to: quietScanner.appendingPathComponent("config"))
+      let absent = SaneScannerController(resources: quietResources)
+      let opened = AppModel(libraryURL: folder.appendingPathComponent("sane-quiet-library"), scanner: absent)
+      func settle(_ seconds: Double) {
+        let end = Date().addingTimeInterval(seconds)
+        while absent.busy && Date() < end { RunLoop.current.run(until: Date().addingTimeInterval(0.05)) }
+      }
+      absent.start()
+      settle(30)
+      try check(!absent.busy && !absent.ready && opened.errorText == nil && absent.status.contains("没有找到"),
+        "with no scanner on the cable, opening the app shows no alert; the lamp says 未就绪 and its tooltip why")
+      absent.reconnect()
+      settle(30)
+      try check(!absent.busy && !absent.ready && opened.errorText?.contains("没有找到") == true,
+        "and 重新连接 with still no scanner says so in an alert")
     }
     let scanner = SaneScannerController()
     let model = AppModel(libraryURL: folder.appendingPathComponent("sane-offline"), scanner: scanner)
@@ -51,7 +76,11 @@ enum SaneScannerTests {
     var message: String?
     missing.onFailure = { message = $0 }
     missing.start()
-    try check(!missing.busy && !missing.ready && message != nil, "missing helper fails clearly without claiming 48-bit readiness")
+    try check(!missing.busy && !missing.ready && message == nil && missing.status.contains("无法启动"),
+      "missing helper, as the app opens: not ready, said in the status, no alert")
+    missing.reconnect()
+    try check(!missing.busy && !missing.ready && message?.contains("无法启动") == true,
+      "and on 重新连接 it fails clearly without claiming 48-bit readiness")
     let frame = FilmFrame(name: "01", rect: .full, format: "135")
     let p = DeskProject(overviewPath: output.path, overviewDPI: 150, physicalWidthMM: 149,
       physicalHeightMM: 246, filmName: "Portra 160", profile: FilmProfile.builtins[0], scanDPI: 2400,
