@@ -84,10 +84,12 @@ final class AppModel: ObservableObject {
     let c = CameraController()
     c.onCapture = { [weak self] url in self?.receiveCapture(url) }
     c.onShotEnded = { [weak self] _ in self?.releaseShift() }
+    c.onShiftRead = { [weak self] count in self?.pixelShiftCount = count }
     return c
   }()
-  /// Connects the camera, the pictures coming here and, as chosen, a copy staying on its card.
-  func connectCamera() { camera.connect(keepOnCard: preferences.keepOnCard) }
+  /// Connects the camera, the pictures coming here and, as chosen, a copy staying on its card; its
+  /// pixel shift set as chosen here, or, with nothing chosen yet, read for the choice to follow.
+  func connectCamera() { camera.connect(keepOnCard: preferences.keepOnCard, shift: pixelShiftChosen ? pixelShiftCount : nil) }
   /// Where the camera's pictures go: always here, and with `on` a copy on the memory card too.
   /// Remembered for the next connection; while connected the camera is set at once.
   func keepOnCard(_ on: Bool) {
@@ -102,6 +104,17 @@ final class AppModel: ObservableObject {
   /// composes the group, and the shutter waits for it.
   @Published var pixelShiftCount = 1 {
     didSet { camera.picturesPerShot = pixelShiftCount }
+  }
+  /// Whether the pixel shift was chosen here since the app opened: then the camera is set to it as
+  /// it connects; till then the choice follows the camera.
+  private(set) var pixelShiftChosen = false
+  /// Pictures a press is to take, chosen here: the camera is set to it at once while connected (the
+  /// live view gone for some seconds), else as it connects.
+  func choosePixelShift(_ count: Int) {
+    guard count != pixelShiftCount else { return }
+    pixelShiftCount = count
+    pixelShiftChosen = true
+    if camera.connected { camera.switchPixelShift(to: count, keepOnCard: preferences.keepOnCard) }
   }
   /// A 16-shot group brought back to the sensor's size from its doubled grid: cleaner colours and a
   /// little less noise than 4 shots, a quarter of the size, the same resolution as 4 shots.

@@ -52,7 +52,7 @@ extension AppModel {
     pendingShift = []
     if group.count >= square {
       let said = group.count == square
-        ? "相机这一下只拍了 4 张：相机里像素位移的张数是 4，取景区这里选 16 改不了相机。已按 4 张合成；要 16 张，在相机菜单的像素位移多重拍摄里把张数改成 16"
+        ? "相机这一下只拍了 4 张：相机里像素位移的张数是 4。已按 4 张合成；要 16 张，在取景区重新选一次 16，或在相机菜单的像素位移多重拍摄里把张数改成 16"
         : "这一下只收到 \(group.count) / \(pixelShiftCount) 张，后面的没有来。已用前 4 张按 4 张合成"
       camera.explain(said)
       decodeShift(Array(group.prefix(square)), root: root, note: group.count == square ? "相机设的是 4 张，按 4 张合成" : "只收到 \(group.count) / \(pixelShiftCount) 张，用前 4 张按 4 张合成")

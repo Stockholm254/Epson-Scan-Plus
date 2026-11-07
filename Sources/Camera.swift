@@ -145,6 +145,23 @@ final class CameraController: ObservableObject {
   var picturesPerShot = 1
   /// A press whose pictures stopped coming before `picturesPerShot`: how many came.
   var onShotEnded: ((Int) -> Void)?
+  /// The camera's pixel shift (1 off, 4 or 16 shots), read and set over its own PTP: the SDK does
+  /// not reach it. Others for tests.
+  var readShift: () async throws -> Int = { try await SonyPTP.pixelShift() }
+  var writeShift: (Int) async throws -> Int = { try await SonyPTP.setPixelShift($0) }
+  /// Whether the pixel shift is read and set over PTP; by default with the real camera only, not
+  /// the simulated one nor a test's transport.
+  var shiftOverPTP: Bool?
+  private var reachesShift: Bool { shiftOverPTP ?? (transport == nil && helper.lastPathComponent == "EpsonCameraHelper") }
+  /// The pixel shift as read from the camera or set on it, for the app's choice to follow.
+  var onShiftRead: ((Int) -> Void)?
+  /// The count the camera is being set to, while the SDK has let go of it for that.
+  @Published private(set) var shiftSwitching: Int?
+  /// A switch waiting for the SDK to let go, and where the pictures were going.
+  private var switchOnDisconnect: (count: Int, card: Bool)?
+  /// What setting the pixel shift came to, said once the camera is connected again.
+  private var shiftNote: String?
+  static func shiftName(_ count: Int) -> String { count > 1 ? "像素位移 \(count) 张" : "单张（像素位移关）" }
   /// How long after a press's last picture the rest may still come: the A7R IV sends a pixel-shift
   /// shot's 120 MB RAWs about a second apart.
   static var groupWait: TimeInterval = 8
@@ -243,7 +260,10 @@ final class CameraController: ObservableObject {
 
   // MARK: Commands
 
-  func connect(keepOnCard: Bool = false) {
+  /// Connects, the pictures coming here and with `keepOnCard` staying on the card too. Before the SDK
+  /// takes the camera, its pixel shift is set to `shift` over PTP, or, without one, read for the
+  /// app's choice to follow.
+  func connect(keepOnCard: Bool = false, shift: Int? = nil) {
     guard available else {
       phase = .missing
       message = "这份 App 构建时没有 Sony Camera Remote SDK"
@@ -254,8 +274,51 @@ final class CameraController: ObservableObject {
     try? FileManager.default.createDirectory(at: liveFolder, withIntermediateDirectories: true)
     if transport == nil && process == nil { launch() }
     phase = .connecting
+    guard reachesShift else { return sendConnect(keepOnCard) }
+    message = shift.map { "正在把相机设为\(Self.shiftName($0))…" } ?? "正在读相机的像素位移设置…"
+    overPTP(shift) { [weak self] said in
+      self?.shiftNote = said
+      self?.sendConnect(keepOnCard)
+    }
+  }
+  private func sendConnect(_ keepOnCard: Bool) {
     message = "正在连接相机…"
     send(["cmd": "connect", "save": incoming.path, "card": keepOnCard])
+  }
+  /// The camera's pixel shift set to `count` (1 off, 4 or 16) while connected: the SDK lets go of
+  /// the camera, it is set over PTP, and the SDK connects again, the live view back after some
+  /// seconds. Not while a press's pictures are still coming.
+  func switchPixelShift(to count: Int, keepOnCard: Bool) {
+    guard reachesShift, connected, shiftSwitching == nil, !awaitingPicture else { return }
+    shiftSwitching = count
+    switchOnDisconnect = (count, keepOnCard)
+    message = "正在把相机设为\(Self.shiftName(count))：先断开…"
+    disconnect()
+  }
+  /// The pixel shift set to `count` over PTP, or read without one; then `done` on the main thread
+  /// with what to say of it, nil when it is as asked or was only read.
+  private func overPTP(_ count: Int?, done: @escaping (String?) -> Void) {
+    let read = readShift, write = writeShift
+    Task {
+      var got: Int?, failure: Error?
+      do {
+        if let count { got = try await write(count) } else { got = try await read() }
+      } catch { failure = error }
+      DispatchQueue.main.async {
+        if let got { self.onShiftRead?(got) }
+        var said: String?
+        if let count, let got, got != count {
+          said = "相机没有改成\(Self.shiftName(count))，读回来是\(Self.shiftName(got))：请在相机菜单里设"
+        } else if let failure {
+          said = (count.map { "没能从电脑把相机设为\(Self.shiftName($0))" } ?? "没能读出相机的像素位移设置")
+            + "（\(failure.localizedDescription)）" + (count == nil ? "" : "：请在相机菜单里设")
+        } else if let count {
+          said = "相机已设为\(Self.shiftName(count))"
+        }
+        if let said { self.note("像素位移：" + said) }
+        done(said)
+      }
+    }
   }
   func disconnect() {
     magnification = 0
@@ -369,6 +432,8 @@ final class CameraController: ObservableObject {
         self.input = nil
         self.liveOn = false
         self.awaitingPicture = false
+        self.shiftSwitching = nil
+        self.switchOnDisconnect = nil
         if self.phase != .idle {
           self.phase = .failed
           self.message = "相机进程已退出（\(p.terminationStatus)）"
@@ -421,16 +486,30 @@ final class CameraController: ObservableObject {
     case "connected":
       phase = .connected
       if let m = event["model"] as? String { model = m }
-      message = "已连接 \(model)"
+      message = "已连接 \(model)" + (shiftNote.map { "。" + $0 } ?? "")
+      shiftNote = nil
+      shiftSwitching = nil
       refreshProperties()
       setLive(true)
     case "disconnected":
+      // The SDK's own word on the disconnect a switch asked for, after the helper's: the switch goes on.
+      if shiftSwitching != nil, switchOnDisconnect == nil, phase == .connecting { break }
       phase = .idle
       focusLocked = false
       awaitingPicture = false
       liveOn = false
       live = nil
       message = "已断开"
+      if let s = switchOnDisconnect {
+        // The SDK has let go of the camera: its pixel shift set over PTP, and the SDK back.
+        switchOnDisconnect = nil
+        phase = .connecting
+        message = "正在把相机设为\(Self.shiftName(s.count))…"
+        overPTP(s.count) { [weak self] said in
+          self?.shiftNote = said
+          self?.sendConnect(s.card)
+        }
+      }
     case "warning":
       // The lens refused a focus step (0x60003, an invalid operation, on NearFar): the camera is not
       // in manual focus after all, so the next step switches it first.
@@ -443,7 +522,11 @@ final class CameraController: ObservableObject {
     case "error":
       let stage = event["stage"] as? String ?? ""
       message = (event["message"] as? String ?? "相机出错") + ((event["code"] as? String).map { $0 == "0x0" ? "" : "（\($0)）" } ?? "")
-      if stage == "enum" || stage == "connect" || stage == "init" { phase = .failed }
+      if stage == "enum" || stage == "connect" || stage == "init" {
+        phase = .failed
+        shiftSwitching = nil
+        shiftNote = nil
+      }
       // A camera not found or refused is most often held by a program open beside this one.
       if stage == "enum" || stage == "connect" {
         let rivals = Self.rivals(among: running())

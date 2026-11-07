@@ -201,6 +201,67 @@ enum CameraTests {
     CameraController.groupWait = wait
     camera.picturesPerShot = 1
 
+    // Pixel shift, which the SDK does not reach, over the camera's own PTP: read as the camera
+    // connects, the choice following it; chosen while connected, the SDK lets go, the camera is set
+    // and read back, and the SDK connects again; a setting that does not take is said, the choice
+    // back at what the camera reads; chosen while not connected, set as the camera connects.
+    final class FakeShift { var onCamera = 4, written = [Int](), refuse = false }
+    let fake = FakeShift()
+    let shiftSuite = "EpsonScanPlus.tests.\(UUID().uuidString)"
+    let shiftDefaults = UserDefaults(suiteName: shiftSuite)!
+    defer { shiftDefaults.removePersistentDomain(forName: shiftSuite) }
+    let shifting = AppModel(libraryURL: folder.appendingPathComponent("shift-library"), preferences: Preferences(defaults: shiftDefaults))
+    let shiftCamera = CameraController(helper: URL(fileURLWithPath: "/nonexistent"), folder: folder.appendingPathComponent("camera-shift", isDirectory: true))
+    var shiftSent = [String]()
+    shiftCamera.transport = { shiftSent.append($0) }
+    let byDefault = shiftCamera.shiftOverPTP == nil
+    shiftCamera.shiftOverPTP = true
+    shiftCamera.readShift = { fake.onCamera }
+    shiftCamera.writeShift = { n in
+      fake.written.append(n)
+      if !fake.refuse { fake.onCamera = n }
+      return fake.onCamera
+    }
+    shifting.camera = shiftCamera
+    shiftCamera.onShiftRead = { [weak shifting] n in shifting?.pixelShiftCount = n }
+    func connectSent() -> Bool { shiftSent.last?.contains("\"connect\"") == true }
+    let connected = #"{"event":"connected","model":"ILCE-7RM4","cameras":1}"#, gone = #"{"event":"disconnected","code":"0x0"}"#
+    shifting.connectCamera()
+    let readFirst = shiftSent.isEmpty && shiftCamera.phase == .connecting
+    for _ in 0..<60 where !connectSent() { settle(0.05) }
+    try check(byDefault && readFirst && connectSent() && shifting.pixelShiftCount == 4 && shiftCamera.picturesPerShot == 4 && fake.written.isEmpty,
+      "as the camera connects its pixel shift is read over PTP first, and the choice follows it")
+    shiftCamera.receive(connected)
+    shiftSent.removeAll()
+    shifting.choosePixelShift(16)
+    let letGo = shiftSent.last?.contains("\"disconnect\"") == true && shiftCamera.shiftSwitching == 16
+    // The helper's word on the disconnect, then the SDK's own: the switch goes on through both.
+    shiftCamera.receive(gone)
+    shiftCamera.receive(gone)
+    let heldOn = shiftCamera.phase == .connecting
+    for _ in 0..<60 where !connectSent() { settle(0.05) }
+    shiftCamera.receive(connected)
+    try check(letGo && heldOn && fake.written == [16] && shifting.pixelShiftCount == 16 && shiftCamera.picturesPerShot == 16
+      && shiftCamera.connected && shiftCamera.shiftSwitching == nil && shiftCamera.message.contains("相机已设为像素位移 16 张"),
+      "chosen while connected, the SDK lets go, the camera is set over PTP and the SDK connects again: \(shiftCamera.message)")
+    fake.refuse = true
+    shiftSent.removeAll()
+    shifting.choosePixelShift(4)
+    shiftCamera.receive(gone)
+    for _ in 0..<60 where !connectSent() { settle(0.05) }
+    shiftCamera.receive(connected)
+    try check(fake.written == [16, 4] && shifting.pixelShiftCount == 16 && shiftCamera.message.contains("读回来是像素位移 16 张"),
+      "a setting that does not take is said, and the choice goes back to what the camera reads: \(shiftCamera.message)")
+    fake.refuse = false
+    shiftCamera.receive(gone)
+    shifting.choosePixelShift(1)
+    let notYet = fake.written.count == 2 && shiftCamera.phase == .idle
+    shiftSent.removeAll()
+    shifting.connectCamera()
+    for _ in 0..<60 where !connectSent() { settle(0.05) }
+    try check(notYet && fake.written == [16, 4, 1] && fake.onCamera == 1 && shifting.pixelShiftCount == 1,
+      "chosen while not connected, the camera is set to it as it connects")
+
     // Pictures arriving in a camera roll.
     let lib = folder.appendingPathComponent("camera-library", isDirectory: true)
     try? FileManager.default.removeItem(at: lib)
