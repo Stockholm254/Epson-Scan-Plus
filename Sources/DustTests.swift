@@ -72,7 +72,7 @@ enum DustTests {
       Speck(x: 260, y: 120, radius: 2.5, excess: [0.7, 0.72, 0.7]), Speck(x: 330, y: 330, radius: 1.5, excess: [1.2, 1.2, 1.2]),
     ]
     let blueOnly = Speck(x: 100, y: 200, radius: 3, excess: [0, 0, 1.2])
-    let (plain, plainD) = negative(dust + [blueOnly])
+    let (plain, _) = negative(dust + [blueOnly])
     let found = DustFinder.find(plain)
     try check(dust.allSatisfy { finds(found, $0) } && found.count == dust.count,
       "dust found where it lies on the film and nowhere in the grain (\(found.count) of \(dust.count))")
@@ -108,7 +108,6 @@ enum DustTests {
       }
     }
     try check(denser < 1e-6 && outside == 0, "the fill only takes density away, and only inside the spots")
-    _ = plainD
     // The grain goes on through a filled speck: not a smooth patch.
     let big = dust[1]
     var inner = [Double]()
@@ -145,6 +144,7 @@ enum DustTests {
     var frame = FilmFrame(name: "01", rect: .full, format: "135")
     frame.sourcePath = file.path
     frame.sourceBits = 16
+    frame.adjustments.inputGamma = 1
     frame.dust = DustState(on: true, spots: spots, sensitivity: .medium)
     model.frames = [frame]
     model.selectedID = frame.id

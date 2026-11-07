@@ -3,10 +3,10 @@ import Foundation
 
 /// The frames' dust: looked for, marked by hand, kept or filled, and filled as each frame is read.
 extension AppModel {
-  /// Whether `frame` can have its dust filled: a negative read at 16 bits (a scan, a copy shot);
-  /// a positive or an 8-bit file has no density to look for dust by.
+  /// Whether `frame` can have its dust filled: a negative read at 16 bits (a scan, a copy shot, a
+  /// 16-bit file of another scanner's); a positive or an 8-bit file has no density to look for dust by.
   func dustApplies(_ frame: FilmFrame) -> Bool {
-    guard frame.adjustments.inputIsNegative, frame.adjustments.inputGamma == 1 else { return false }
+    guard frame.adjustments.inputIsNegative else { return false }
     if let bits = frame.sourceBits { return bits >= 16 }
     return true
   }
@@ -50,6 +50,7 @@ extension AppModel {
         guard let image = try? self.dustFreeSource(for: frame, full: true) else { continue }
         var options = DustFinder.Options()
         options.factor = sensitivity.factor
+        options.gamma = frame.adjustments.inputGamma
         options.greenOverRed = DispatchQueue.main.sync { self.dustGreenOverRed(frame) }
         let found = DustFinder.find(image, options: options) { done in
           DispatchQueue.main.async { self.dustSearch = label + " · \(Int(done * 100))%" }
@@ -126,6 +127,7 @@ extension AppModel {
       options.least = 0.1
       options.greenOverRed = nil
       options.edges = false
+      options.gamma = frame.adjustments.inputGamma
       options.scale = Double(max(W, H)) / 9600
       let near = max(3, r / 6)
       let found = DustFinder.find(window, options: options).filter { m in

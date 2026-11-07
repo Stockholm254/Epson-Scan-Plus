@@ -102,7 +102,7 @@ struct DustState: Codable, Equatable {
 /// How far past the film's own grain a spot must stand out to be taken for dust.
 enum DustSensitivity: String, Codable, CaseIterable {
   case low = "低", medium = "中", high = "高"
-  /// Times the local grain's tail (its 99.5th percentile), in every channel.
+  /// Times the local grain's tail (about its 99.5th percentile), in every channel.
   var factor: Double {
     switch self {
     case .low: return 2.6
@@ -169,8 +169,11 @@ enum DustPixels {
 ///
 /// - Dust keeps light out, so on the negative a speck is denser than the film around it. Each
 ///   channel's density less its grey opening is what stands above its surroundings; a speck stands
-///   far above the film's own grain, which is measured block by block (each channel's 99.5th
-///   percentile over the block and its neighbours), so busy parts of the picture need more.
+///   far above the film's own grain, which is measured block by block, so busy parts of the
+///   picture need more: each channel's 99.5th percentile over the block and two blocks round it
+///   each way. The window's top half percent is as big as the biggest spot taken, so a speck is
+///   not its own grain (over nine blocks, one of 40 pixels in a small picture was), while a busy
+///   pocket of grass or leaves still raises it (a median of blocks passed over those).
 /// - A speck keeps out every colour, so it stands out in all three channels; a single channel with
 ///   hardly any light in it (a saturated colour) does not count.
 /// - Dust takes the same share of each colour, so its green and red excesses are about equal; the
@@ -179,9 +182,8 @@ enum DustPixels {
 ///   frame's usual): green is read sharper than red, so a small speck's green stands higher at its
 ///   peak, and in a smooth sky a real speck would be turned away. Glints on water and the like sit
 ///   at the top of the film's curve and look neutral too: those are left for the user to keep.
-/// - A speck denser in red and green than anything else in the frame cannot be the picture.
 /// - Small only: big bright things are the picture. Spots at the edge of the picture (its border) are
-///   left out.
+///   left out, and so are spots on a hard edge, where the film around them is two films.
 enum DustFinder {
   struct Options {
     /// Past the grain's tail by this many times, in every channel, to start a spot.
@@ -195,21 +197,24 @@ enum DustFinder {
     var scale: Double? = nil
     /// Leave out spots that touch the picture's edge.
     var edges = true
+    /// The file's encoding: its densities are the film's over this (a file in gamma 2.2 holds a
+    /// speck of 1 D as 0.45), so the densities asked for are over it too.
+    var gamma = 1.0
   }
 
   static func find(_ image: CGImage, options o: Options = Options(), progress: ((Double) -> Void)? = nil) -> [DustMask] {
     let W = image.width, H = image.height
     guard W >= 16, H >= 16 else { return [] }
     let s = o.scale ?? Double(max(W, H)) / 9600
+    let g = Float(max(0.5, o.gamma))
     let k = max(5, Int((17 * s).rounded()) | 1)
     let block = max(24, Int((128 * s).rounded()))
     let core = block * max(1, 768 / block)
-    let margin = block + k
+    let margin = 2 * block + k
     let tilesX = (W + core - 1) / core, tilesY = (H + core - 1) / core
     let blocksX = (W + block - 1) / block, blocksY = (H + block - 1) / block
     let bins = 512, binWidth: Float = 0.004
     var marks = [UInt8](repeating: 0, count: W * H)  // 1: grows a spot, 2: starts one
-    var densityCounts = [Int](repeating: 0, count: 3 * 400)
     // Each block's grain tail, for how busy the film is around a spot.
     var blockTails = [Float](repeating: 0, count: blocksX * blocksY * 3)
     let lock = NSLock()
@@ -231,11 +236,11 @@ enum DustFinder {
           progress?(f)
         }
         guard let px = DustPixels.rgba16(image, x: bx0, y: by0, width: bw, height: bh) else { return }
-        let (T, D) = DustPixels.excess(px, width: bw, height: bh, kernel: k)
+        let (T, _) = DustPixels.excess(px, width: bw, height: bh, kernel: k)
         // The grain's tail, block by block: histograms of each block near the core, then each core
         // block's over it and its neighbours.
-        let gx0 = max(0, cx0 / block - 1), gx1 = min(blocksX - 1, (cx1 - 1) / block + 1)
-        let gy0 = max(0, cy0 / block - 1), gy1 = min(blocksY - 1, (cy1 - 1) / block + 1)
+        let gx0 = max(0, cx0 / block - 2), gx1 = min(blocksX - 1, (cx1 - 1) / block + 2)
+        let gy0 = max(0, cy0 / block - 2), gy1 = min(blocksY - 1, (cy1 - 1) / block + 2)
         let nbx = gx1 - gx0 + 1, nby = gy1 - gy0 + 1
         var counts = [Int32](repeating: 0, count: nbx * nby * 3 * bins)
         for y in max(by0, gy0 * block)..<min(by1, (gy1 + 1) * block) {
@@ -246,27 +251,31 @@ enum DustFinder {
             for c in 0..<3 { counts[base + c * bins + min(bins - 1, Int(T[c][i] / binWidth))] += 1 }
           }
         }
-        var tails = [Float](repeating: 0.02, count: nbx * nby * 3)
+        // Each block's tail: the 99.5th percentile over it and two blocks round it each way (25
+        // blocks, 410 000 pixels at full size), whose top half percent is as big as the biggest
+        // spot taken, so a speck is not its own grain, and a busy pocket still counts.
+        var tails = [Float](repeating: 0.02 / g, count: nbx * nby * 3)
+        var sum = [Int32](repeating: 0, count: bins)
         for gy in 0..<nby {
           for gx in 0..<nbx {
             for c in 0..<3 {
-              var sum = [Int32](repeating: 0, count: bins)
+              for b in 0..<bins { sum[b] = 0 }
               var total: Int32 = 0
-              for ny in max(0, gy - 1)...min(nby - 1, gy + 1) {
-                for nx in max(0, gx - 1)...min(nbx - 1, gx + 1) {
+              for ny in max(0, gy - 2)...min(nby - 1, gy + 2) {
+                for nx in max(0, gx - 2)...min(nbx - 1, gx + 2) {
                   let base = (ny * nbx + nx) * 3 * bins + c * bins
                   for b in 0..<bins { sum[b] += counts[base + b] }
                 }
               }
               for b in 0..<bins { total += sum[b] }
               guard total > 0 else { continue }
-              let want = Int32(Double(total) * 0.995)
+              let want = Int32((Double(total) * 0.995).rounded(.up))
               var run: Int32 = 0, at = bins - 1
               for b in 0..<bins {
                 run += sum[b]
                 if run >= want { at = b; break }
               }
-              tails[(gy * nbx + gx) * 3 + c] = max(0.02, (Float(at) + 0.5) * binWidth)
+              tails[(gy * nbx + gx) * 3 + c] = max(0.02 / g, (Float(at) + 0.5) * binWidth)
             }
           }
         }
@@ -275,37 +284,21 @@ enum DustFinder {
             for c in 0..<3 { tailsOut[(gy * blocksX + gx) * 3 + c] = tails[((gy - gy0) * nbx + gx - gx0) * 3 + c] }
           }
         }
-        var local = [Int](repeating: 0, count: 3 * 400)
-        let factor = Float(o.factor), least = Float(o.least)
+        let factor = Float(o.factor), least = Float(o.least) / g, grows = 0.05 / g
         for y in cy0..<cy1 {
           let gy = y / block - gy0
           for x in cx0..<cx1 {
             let i = (y - by0) * bw + (x - bx0)
             let tail = (gy * nbx + (x / block - gx0)) * 3
-            let r = T[0][i] / tails[tail], g = T[1][i] / tails[tail + 1], b = T[2][i] / tails[tail + 2]
-            let ratio = min(r, min(g, b)), mean = (T[0][i] + T[1][i] + T[2][i]) / 3
+            let rr = T[0][i] / tails[tail], gg = T[1][i] / tails[tail + 1], bb = T[2][i] / tails[tail + 2]
+            let ratio = min(rr, min(gg, bb)), mean = (T[0][i] + T[1][i] + T[2][i]) / 3
             var m: UInt8 = 0
-            if ratio > 1, mean > 0.08 { m = 1 }
+            if ratio > 0.7, mean > grows { m = 1 }
             if ratio > factor, mean > least { m = 3 }
             marked[y * W + x] = m
-            for c in 0..<3 { local[c * 400 + min(399, max(0, Int(D[c][i] * 100)))] += 1 }
           }
         }
-        lock.lock()
-        for j in 0..<local.count { densityCounts[j] += local[j] }
-        lock.unlock()
       }
-    }
-    // The frame's densest film in each channel, its 99.9th percentile: a speck past it in red and
-    // green is not the picture.
-    let densest: [Float] = (0..<3).map { c in
-      let total = (0..<400).reduce(0) { $0 + densityCounts[c * 400 + $1] }
-      var run = 0
-      for b in 0..<400 {
-        run += densityCounts[c * 400 + b]
-        if Double(run) >= Double(total) * 0.999 { return (Float(b) + 1) / 100 }
-      }
-      return 4
     }
     // The frame's plain grain, each channel's tail where the film is smoothest: the lowest quarter
     // of the blocks (a frame mostly of trees would make its median busy).
@@ -351,21 +344,45 @@ enum DustFinder {
       let rx0 = max(0, minX - k - 1), ry0 = max(0, minY - k - 1)
       let rx1 = min(W, maxX + k + 2), ry1 = min(H, maxY + k + 2)
       let rw = rx1 - rx0, rh = ry1 - ry0
+      guard let px = DustPixels.rgba16(image, x: rx0, y: ry0, width: rw, height: rh) else { continue }
+      let local = pixels.map { ($0 / W - ry0) * rw + ($0 % W - rx0) }
+      // On a hard edge (the film's border, a dark post against a pale wall) the film around it is two
+      // films: filling from it would carry one into the other. Its ring, six pixels deep at full
+      // size, spread more than 0.4 D in a channel (dust in grain or leaves, under 0.3).
+      var inSpot = [Bool](repeating: false, count: rw * rh)
+      for i in local { inSpot[i] = true }
+      var ring = [Int]()
+      let depth = max(3, Int((6 * s).rounded()))
+      for i in 0..<(rw * rh) where !inSpot[i] {
+        let x = i % rw, y = i / rw
+        var near = false
+        for dy in -depth...depth where !near {
+          let yy = y + dy
+          guard yy >= 0, yy < rh else { continue }
+          for dx in -depth...depth {
+            let xx = x + dx
+            if xx >= 0, xx < rw, inSpot[yy * rw + xx] { near = true; break }
+          }
+        }
+        if near { ring.append(i) }
+      }
+      let step = (0..<3).contains { c in
+        let v = ring.map { DustPixels.density(px[$0 * 4 + c]) }.sorted()
+        guard v.count >= 10 else { return false }
+        return v[v.count * 9 / 10] - v[v.count / 10] > 0.4 / g
+      }
+      if step { continue }
       let middle = ((minY + maxY) / 2 / block * blocksX + (minX + maxX) / 2 / block) * 3
       let busy = (0..<3).map { blockTails[middle + $0] / max(0.005, usual[$0]) }.reduce(0, +) / 3 > 1.5
-      if busy, let ratio = o.greenOverRed, let px = DustPixels.rgba16(image, x: rx0, y: ry0, width: rw, height: rh) {
-        let (T, D) = DustPixels.excess(px, width: rw, height: rh, kernel: k)
-        let local = pixels.map { ($0 / W - ry0) * rw + ($0 % W - rx0) }
+      if busy, let ratio = o.greenOverRed {
+        let (T, _) = DustPixels.excess(px, width: rw, height: rh, kernel: k)
         let peak = local.map { (T[0][$0] + T[1][$0] + T[2][$0]) / 3 }.max() ?? 0
         var e = [Float](repeating: 0, count: 3), n: Float = 0
-        var densestHere = [Float](repeating: 0, count: 3)
         for i in local where (T[0][i] + T[1][i] + T[2][i]) / 3 >= 0.6 * peak {
           for c in 0..<3 { e[c] += T[c][i] }
           n += 1
         }
-        for i in local { for c in 0..<3 { densestHere[c] = max(densestHere[c], D[c][i]) } }
-        let beyond = densestHere[0] > densest[0] + 0.1 && densestHere[1] > densest[1] + 0.1
-        if n > 0, e[0] / n > 0.08, Double(e[1] / e[0]) > ratio, !beyond { continue }
+        if n > 0, e[0] / n > 0.08 / g, Double(e[1] / e[0]) > ratio { continue }
       }
       // The spot and a rim around it, where it fades into the film.
       let x0 = max(0, minX - grow), y0 = max(0, minY - grow)
@@ -496,7 +513,13 @@ enum DustFill {
       for c in 0..<3 {
         var its = patch[c]
         membrane(&its, inside: inside, holes: holes, width: rw, height: rh)
-        for i in holes { result[c][i] = smooth[c][i] + patch[c][i] - its[i] }
+        // Only the patch's grain: its detail held within three of its own spreads (by the median
+        // of its deviations), so a patch that catches an edge or a leaf brings its grain, not those.
+        let detail = holes.map { patch[c][$0] - its[$0] }
+        let middle = detail.sorted()[detail.count / 2]
+        let deviations = detail.map { abs($0 - middle) }.sorted()
+        let limit = max(0.004, 3 * 1.48 * deviations[deviations.count / 2])
+        for (j, i) in holes.enumerated() { result[c][i] = smooth[c][i] + max(-limit, min(limit, detail[j] - middle)) }
       }
     }
     for i in holes {
