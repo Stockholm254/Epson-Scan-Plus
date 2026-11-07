@@ -16,6 +16,25 @@ struct PresetRow: Identifiable, Equatable {
 }
 
 enum PresetTable {
+  /// How many neutral points a calibrated preset was made from: those it keeps, else what its
+  /// source line says (presets from before it kept them); nil for any other preset.
+  static func pointCount(_ p: FilmProfile) -> Int? {
+    guard p.offsets != nil else { return nil }
+    if let spots = p.spots, !spots.isEmpty { return spots.count }
+    guard let r = p.publication.range(of: "[0-9]+ 个中性点", options: .regularExpression) else { return nil }
+    return Int(p.publication[r].prefix { $0.isNumber })
+  }
+  /// A calibrated preset's points, a line each: the frame, the densities above the base and how far
+  /// each lies off the preset's line, or only where it was for a preset that kept no reading.
+  static func pointLines(_ p: FilmProfile) -> [String] {
+    guard let offsets = p.offsets, let spots = p.spots else { return [] }
+    return spots.enumerated().map { i, s in
+      guard let value = s.value, let base = s.base else { return "\(i + 1) · 第 \(s.name) 张 · 只记了位置" }
+      let point = NeutralPoint(frame: s.frame, value: value, base: base, gamma: s.gamma ?? 1)
+      let d = point.density, off = point.misfit(slopes: p.slopes, offsets: offsets, toe: p.toe)
+      return String(format: "%d · 第 %@ 张 · 密度 R %.3f  G %.3f  B %.3f · 偏离 R %+.3f  B %+.3f D", i + 1, s.name, d[0], d[1], d[2], off[0], off[1])
+    }
+  }
   static func kind(_ p: FilmProfile, builtin: Bool) -> PresetRow.Kind {
     if builtin { return .builtin }
     if p.id.contains("-copy-") { return .copy }
@@ -97,6 +116,10 @@ struct PresetManagerSheet: View {
         TableColumn("斜率 R · G · B") { r in
           Text(String(format: "%.3f · %.3f · %.3f", r.profile.slopes.r, r.profile.slopes.g, r.profile.slopes.b)).monospacedDigit()
         }.width(min: 150, ideal: 160)
+        TableColumn("中性点") { r in
+          Text(PresetTable.pointCount(r.profile).map { "\($0) 个" } ?? "—").monospacedDigit()
+            .help(r.profile.offsets == nil ? "不是标定出来的预设" : "标定用的中性点；选中这一行在下面看每个点")
+        }.width(min: 56, ideal: 64)
         TableColumn("来源") { r in Text(r.profile.publication).lineLimit(1).truncationMode(.middle).help(r.profile.publication + "\n\n" + r.profile.notes) }
           .width(min: 160, ideal: 300)
         TableColumn("在用的卷") { r in
@@ -109,6 +132,14 @@ struct PresetManagerSheet: View {
       HStack {
         Button("用到这一卷") { single.map { m.chooseProfile($0.profile) } }
           .disabled(single == nil || single?.current == true || (m.frames.isEmpty && m.sessionURL == nil))
+        let blocked: String? = !m.calibrationPoints.isEmpty ? "左栏的预设标定里正在取 \(m.calibrationPoints.count) 个点：先生成预设或清除。"
+          : single.map { m.whyNotTakenUp($0.profile) } ?? "选一个本机或翻拍标定的预设。"
+        Button("接着标定") {
+          if let single { m.takeUpCalibration(single.profile) }
+          dismiss()
+        }
+        .disabled(blocked != nil)
+        .help(blocked ?? "这一卷用它，把它的中性点取回到左栏的预设标定里，接着加点；重新生成就替换它")
         Button("导出…") { single.map { m.exportProfile($0.profile) } }.disabled(single == nil)
         Button("恢复到列表") { for r in chosen where r.kind == .rollOnly { m.keepProfile(r.profile) } }
           .disabled(!chosen.contains { $0.kind == .rollOnly })
@@ -122,8 +153,12 @@ struct PresetManagerSheet: View {
       }
     }
     .padding(18)
-    .frame(minWidth: 1040, idealWidth: 1080, minHeight: 520)
-    .onAppear(perform: reload)
+    .frame(minWidth: 1110, idealWidth: 1150, minHeight: 520)
+    .onAppear {
+      if let focus = m.presetsFocus { selection = [focus] }
+      m.presetsFocus = nil
+      reload()
+    }
     .confirmationDialog(deleting.map { "删除 \($0.count) 个预设？" } ?? "", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
       Button("删除", role: .destructive) {
         if let deleting { m.deleteCustomProfiles(Set(deleting.map(\.id))) }
@@ -148,6 +183,14 @@ struct PresetManagerSheet: View {
     VStack(alignment: .leading, spacing: 4) {
       if let row {
         Text(row.profile.notes).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        let points = PresetTable.pointLines(row.profile)
+        if !points.isEmpty {
+          Text("中性点").font(.system(size: 11, weight: .medium)).padding(.top, 2)
+          ForEach(Array(points.prefix(12).enumerated()), id: \.offset) { _, line in
+            Text(line).font(.system(size: 11)).monospacedDigit().textSelection(.enabled)
+          }
+          if points.count > 12 { Text("等 \(points.count) 个").font(.system(size: 11)).foregroundStyle(.secondary) }
+        }
         if row.rolls.isEmpty {
           Text(row.current ? "只有这一卷在用（还没存进图库）。" : "图库里没有卷在用它。").font(.system(size: 11))
         } else {
@@ -155,7 +198,7 @@ struct PresetManagerSheet: View {
             + (row.rolls.count > 8 ? " 等 \(row.rolls.count) 卷" : "")).font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)
         }
       } else {
-        Text("选一行看它的说明和在用的卷；⌘ 点选可以多选。内置预设不能删除；删除本机预设时，在用它的卷各自保留一份。")
+        Text("选一行看它的说明、标定用的中性点和在用的卷；⌘ 点选可以多选。标定出来的预设可以「接着标定」：把中性点取回到左栏的预设标定里，加点后重新生成。内置预设不能删除；删除本机预设时，在用它的卷各自保留一份。")
           .font(.system(size: 11)).foregroundStyle(.secondary)
       }
     }.frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading)

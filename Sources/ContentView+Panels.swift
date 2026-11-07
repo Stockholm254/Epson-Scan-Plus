@@ -281,10 +281,13 @@ extension ContentView {
     let greens = m.calibrationPoints.map { $0.density[1] }
     let span = (greens.max() ?? 0) - (greens.min() ?? 0)
     let ready = m.calibrationPoints.count >= 2 && span >= FilmCalibration.minimumSpan
+    // The preset in use made here, its points ready to be taken up again.
+    let resumable = picking ? nil : m.resumableCalibration
     let step =
       ready ? "③ 可以生成预设；再取几个点能检查一致性。"
-      : m.calibrationPoints.isEmpty ? (picking ? (copy ? "② 在单张画面上点选本来是中性的东西，比如白牌子、灰水泥。" : "② 在单张画面上点选中性灰。") : "① 点「取中性点」开始。")
-      : "② 继续点选更亮或更暗的中性灰，跨度需 0.3 D 以上。"
+      : resumable.map { "① 点「接着取点」：在这个预设的 \($0) 个点上再加点，重新生成就替换它；要从头标定，接着以后点「清除」。" }
+      ?? (m.calibrationPoints.isEmpty ? (picking ? (copy ? "② 在单张画面上点选本来是中性的东西，比如白牌子、灰水泥。" : "② 在单张画面上点选中性灰。") : "① 点「取中性点」开始。")
+      : "② 继续点选更亮或更暗的中性灰，跨度需 0.3 D 以上。")
     return VStack(alignment: .leading, spacing: 8) {
       HStack {
         Text(copy ? "翻拍预设标定" : "本机预设标定").font(.system(size: 11, weight: .medium))
@@ -295,10 +298,13 @@ extension ContentView {
       }
       HStack(spacing: 8) {
         Button {
+          if resumable != nil { m.resumeCalibration() }
           m.useTool(picking ? .select : .calibrate)
         } label: {
-          Label(picking ? "完成取点" : "取中性点", systemImage: CanvasTool.calibrate.symbol).lineLimit(1).fixedSize()
+          Label(picking ? "完成取点" : resumable != nil ? "接着取点" : "取中性点", systemImage: CanvasTool.calibrate.symbol)
+            .lineLimit(1).fixedSize()
         }.buttonStyle(KeyStyle(latched: picking)).disabled(m.selected == nil)
+        .help(resumable != nil ? "把「\(m.profile.name)」的中性点取回来，在上面接着加点" : picking ? "结束取点" : "在单张画面上点选中性灰")
         Text(String(format: "%d 点 · %.2f D", m.calibrationPoints.count, span)).readout()
       }
       Text(step).font(.system(size: 11)).foregroundStyle(ready ? Hardware.amberText : Color.secondary)
@@ -329,6 +335,11 @@ extension ContentView {
       HStack(spacing: 8) {
         Button(copy ? "生成翻拍预设" : "生成 V850 预设") { m.makeScannerPreset() }.disabled(!ready)
         Button("清除") { m.clearCalibration() }.disabled(m.calibrationPoints.isEmpty)
+        Button("管理…") {
+          m.presetsFocus = m.profile.offsets != nil ? m.profile.id : nil
+          m.showPresets = true
+        }
+        .help("在预设表格里看所有标定出来的预设、它们的中性点和在用的卷，选一个接着标定")
       }
     }
   }

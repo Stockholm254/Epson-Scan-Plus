@@ -343,12 +343,16 @@ struct Adjustments: Codable, Equatable {
 }
 
 /// Where a calibrated preset's neutral point was picked: the frame (and its name then), and the
-/// spot in its source, as `NeutralPoint.at`.
+/// spot in its source, as `NeutralPoint.at`; and what was read there, so the calibration can be
+/// taken up again and points added to it (presets from 0.11.1 and before kept only the spot).
 struct CalibrationSpot: Codable, Equatable {
   var frame: UUID
   var name: String
   var x: Double
   var y: Double
+  var value: RGB? = nil
+  var base: RGB? = nil
+  var gamma: Double? = nil
 }
 
 struct FilmProfile: Codable, Identifiable, Equatable {

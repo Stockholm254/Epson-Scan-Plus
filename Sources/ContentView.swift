@@ -661,29 +661,22 @@ struct ContentView: View {
   /// The frame's extent and straightening, in the single view; open while the crop tool is.
   var frameSection: some View {
     PanelSection("画面范围", key: "frame", open: false, info: m.selected?.scanPath != nil
-      ? "在原扫描范围内无损裁切。要扩大扫描区域，请回接触表调整画框并重扫。\n\n「拉直」让画面绕中心转动（正数顺时针，⌥ 拖动更细），裁去转出的空角，拖动时显示网格线；裁切时按 [ ] 每次 0.1°，加 ⇧ 每次 1°。「画线」后沿地平线、墙边或建筑竖线拖一条线，松手就按它拉直（裁切时按住 ⌥ 拖也一样）。接触表上的画框仍按胶片原样显示，拉直后保留的部分用虚线框标出。"
-      : "画框周围保留了片基，可在单张中细调裁切，不会跳回接触表。\n\n翻拍的照片可以「自动裁切」：找出片框的四条边（片边或片间的片基转入画面的地方），裁到画面以内一点，并按边拉直；点旁边的箭头整卷一起裁。同一卷翻拍时放大倍率不变，每张的画面大小差不多：哪张的一条边找错了（比如画面底部有一大片和片基一样淡的阴影，它的直边被当成了片框），就按其他张的画面大小改正。片框的边伸出照片的那一侧，裁在照片的边上。\n\n「拉直」让画面绕中心转动（正数顺时针，⌥ 拖动更细），裁去转出的空角，拖动时显示网格线；裁切时按 [ ] 每次 0.1°，加 ⇧ 每次 1°。「画线」后沿地平线、墙边或建筑竖线拖一条线，松手就按它拉直（裁切时按住 ⌥ 拖也一样）。接触表上的画框仍按胶片原样显示，拉直后保留的部分用虚线框标出。",
+      ? "标题旁的「裁切」和画面上方工具条里的一样：按下后在画面上拖动边和角，这里可以逐边微调、还原范围，再按一次结束。\n\n在原扫描范围内无损裁切。要扩大扫描区域，请回接触表调整画框并重扫。\n\n「拉直」让画面绕中心转动（正数顺时针，⌥ 拖动更细），裁去转出的空角，拖动时显示网格线；裁切时按 [ ] 每次 0.1°，加 ⇧ 每次 1°。「画线」后沿地平线、墙边或建筑竖线拖一条线，松手就按它拉直（裁切时按住 ⌥ 拖也一样）。接触表上的画框仍按胶片原样显示，拉直后保留的部分用虚线框标出。"
+      : "画框周围保留了片基，可在单张中细调裁切，不会跳回接触表。\n\n标题旁的「裁切」和画面上方工具条里的一样：按下后在画面上拖动边和角，这里可以逐边微调、还原范围，再按一次结束。\n\n翻拍的照片可以「自动裁切」：找出片框的四条边（片边或片间的片基转入画面的地方），裁到画面以内一点，并按边拉直；「本张」只裁这一张，「整卷」整卷一起裁。同一卷翻拍时放大倍率不变，每张的画面大小差不多：哪张的一条边找错了（比如画面底部有一大片和片基一样淡的阴影，它的直边被当成了片框），就按其他张的画面大小改正。片框的边伸出照片的那一侧，裁在照片的边上。\n\n「拉直」让画面绕中心转动（正数顺时针，⌥ 拖动更细），裁去转出的空角，拖动时显示网格线；裁切时按 [ ] 每次 0.1°，加 ⇧ 每次 1°。「画线」后沿地平线、墙边或建筑竖线拖一条线，松手就按它拉直（裁切时按住 ⌥ 拖也一样）。接触表上的画框仍按胶片原样显示，拉直后保留的部分用虚线框标出。",
       forced: m.tool == .crop
     ) {
-      // One key in the title: automatic cropping for a picture of its own, fine cropping for a scan.
-      if let f = m.selected, m.isSinglePicture(f) {
-        Menu("自动裁切") {
-          Button("整卷自动裁切") { m.autoCrop(roll: true) }
-        } primaryAction: {
-          m.autoCrop(roll: false)
-        }
-        .menuStyle(.button).fixedSize().font(.system(size: 11))
-        .help("按片框的四条边裁到画面以内，并按边拉直；点箭头整卷一起裁。⌘Z 撤销，原文件不改")
-      } else {
-        cropKey
-      }
+      // In the title, open or not: the crop key, which opens the section while cropping.
+      cropKey
     } content: {
       VStack(alignment: .leading, spacing: 8) {
         if let f = m.selected, m.isSinglePicture(f) {
-          HStack {
-            Text("裁切").font(.system(size: 12)).foregroundStyle(.secondary)
+          HStack(spacing: 6) {
+            Text("自动裁切").font(.system(size: 12)).foregroundStyle(.secondary)
             Spacer()
-            cropKey
+            Button("本张") { m.autoCrop(roll: false) }.font(.system(size: 11))
+              .help("按片框的四条边裁到画面以内，并按边拉直。⌘Z 撤销，原文件不改")
+            Button("整卷") { m.autoCrop(roll: true) }.font(.system(size: 11))
+              .help("整卷每张都按片框自动裁切；哪张的边找错了，按其他张的画面大小改正。⌘Z 撤销，原文件不改")
           }
         }
         VStack(spacing: 3) {
@@ -707,10 +700,15 @@ struct ContentView: View {
       }
     }
   }
-  /// Fine cropping on the picture, or done with it.
+  /// The crop tool, as on the bar over the picture: latched while cropping, pressed again to finish.
   var cropKey: some View {
-    Button(m.tool == .crop ? "完成" : "微调") { m.useTool(m.tool == .crop ? .select : .crop) }
-      .font(.system(size: 11)).help(m.tool == .crop ? "结束裁切" : "在画面上细调裁切 · C")
+    Button {
+      m.useTool(m.tool == .crop ? .select : .crop)
+    } label: {
+      Label("裁切", systemImage: CanvasTool.crop.symbol).lineLimit(1).fixedSize()
+    }
+    .buttonStyle(KeyStyle(latched: m.tool == .crop)).font(.system(size: 11)).disabled(m.selected == nil)
+    .help(m.tool == .crop ? "结束裁切 · C" : "在画面上裁切：拖动边和角，边栏里可以逐边微调 · C")
   }
   /// White balance: automatic or by hand, the roll as one, and the points picked on the frame.
   var balanceSection: some View {

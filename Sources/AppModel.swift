@@ -275,6 +275,8 @@ final class AppModel: ObservableObject {
   @Published var showLibrary = false
   /// The presets table is open.
   @Published var showPresets = false
+  /// The preset the presets table selects when it opens next (the calibration panel's 「管理…」).
+  @Published var presetsFocus: String?
   /// Counted up by 设置…: the window opens module ①'s left panel, where the settings are.
   @Published var settingsRequests = 0
   /// The window about updates is open.
@@ -843,7 +845,7 @@ final class AppModel: ObservableObject {
         }
         let not = missed.isEmpty ? "" : "第 " + missed.joined(separator: "、") + " 张没找到片框的边"
         if cropped.isEmpty {
-          finish(not + " · 可用「微调」手动裁切")
+          finish(not + " · 可用「裁切」手动裁切")
         } else if targets.count == 1, let f = cropped.first {
           let turn = f.adjustments.angle.map { String(format: "拉直 %+.2f°", $0) } ?? "画面是正的"
           finish("已自动裁切 · \(turn) · ⌘Z 撤销 · 原文件未改动")
@@ -1577,9 +1579,14 @@ final class AppModel: ObservableObject {
       let copy = copyStandRoll
       // How the points' frames were read: the slopes hold for that reading.
       let readings = Set(calibrationPoints.compactMap { p in frames.first { $0.id == p.frame }.map { $0.crosstalk != nil } })
-      // Where they were picked, kept with the preset and marked on their frames.
+      // Where they were picked and what was read there, kept with the preset: marked on their
+      // frames, and taken up again to add points to (`resumeCalibration`).
       let spots = calibrationPoints.compactMap { p in
-        p.at.flatMap { at in frames.first { $0.id == p.frame }.map { CalibrationSpot(frame: p.frame, name: $0.name, x: at.x, y: at.y) } }
+        p.at.map { at in
+          CalibrationSpot(
+            frame: p.frame, name: frames.first { $0.id == p.frame }?.name ?? p.name ?? "?", x: at.x, y: at.y,
+            value: p.value, base: p.base, gamma: p.gamma)
+        }
       }
       let made = FilmCalibration.profile(
         from: fit, basedOn: profile, points: calibrationPoints.count,
@@ -1587,10 +1594,13 @@ final class AppModel: ObservableObject {
         unmixed: readings.count == 1 ? readings.first : nil, spots: spots.isEmpty ? nil : spots, batch: copy ? copyBatch : nil)
       try made.validate()
       // Calibrating a copy session again replaces its preset, so the menu holds one for each session;
-      // projects that used the old one keep their own copy.
+      // points added to a preset taken up again replace that one. Projects that used the old one
+      // keep their own copy.
       if copy { preferences.customProfiles.removeAll { $0.offsets != nil && $0.name == made.name } }
+      if let resumed = resumedCalibration { preferences.customProfiles.removeAll { $0.offsets != nil && $0.id == resumed } }
       keepProfile(made)
       calibrationPoints = []
+      resumedCalibration = nil
       showCalibrationPoints = true
       if tool == .calibrate { tool = .select }
       chooseProfile(made)
@@ -1601,7 +1611,90 @@ final class AppModel: ObservableObject {
   }
   func clearCalibration() {
     calibrationPoints = []
+    resumedCalibration = nil
     if tool == .calibrate { useTool(.select) }
+  }
+  /// The calibrated preset whose points were taken up again (`resumeCalibration`): making the
+  /// preset then replaces it.
+  private(set) var resumedCalibration: String?
+  /// How many points the calibrated preset in use was made from, when none are being picked and
+  /// they can be taken up again: it says where they were, and making it again here gives the same
+  /// preset — on the copy stand this copy session's (another session's, chosen from the menu, stays
+  /// as it is), else this scanner's.
+  var resumableCalibration: Int? {
+    guard calibrationPoints.isEmpty, whyNotTakenUp(profile) == nil else { return nil }
+    return profile.spots?.count
+  }
+  /// Why the calibration preset `p` was made from cannot be taken up on the roll open; nil when it
+  /// can: a calibrated preset that says where its points were, and, made again here, the same one.
+  func whyNotTakenUp(_ p: FilmProfile) -> String? {
+    guard p.offsets != nil else { return "只有本机或翻拍标定的预设才有中性点。" }
+    guard let spots = p.spots, !spots.isEmpty else { return "这个预设没有记下中性点在哪里。" }
+    guard !(frames.isEmpty && sessionURL == nil) else { return "先打开一卷。" }
+    let copy = p.publication.hasPrefix("翻拍标定")
+    if copy != copyStandRoll {
+      return copy ? "这是翻拍的预设，要在翻拍的卷里接着标定。" : "这是扫描仪的预设，要在扫描的卷里接着标定。"
+    }
+    if copy && p.name != FilmCalibration.name(basedOn: p, copyStand: true, batch: copyBatch) {
+      return "这是另一次翻拍的预设，要在那次翻拍的卷里接着标定；在这一卷生成会用这一卷的名字。"
+    }
+    return nil
+  }
+  /// Takes up `p`'s calibration on the roll open, from the presets table: the roll converts with
+  /// `p`, its points come back, and the picker is on for more.
+  func takeUpCalibration(_ p: FilmProfile) {
+    guard whyNotTakenUp(p) == nil, calibrationPoints.isEmpty else { return }
+    if profile.id != p.id { chooseProfile(p) }
+    resumeCalibration()
+    useTool(.calibrate)
+  }
+  /// Takes up the calibration the preset in use was made from: its points back as picked, to add
+  /// more to and make the preset again, which then replaces it. A point the preset kept only the
+  /// spot of (presets from 0.11.1 and before) is read again there, when its frame is in this roll,
+  /// with the base that frame converts with; one on another roll's frame is left out, and said so.
+  func resumeCalibration() {
+    guard resumableCalibration != nil, let spots = profile.spots else { return }
+    let pipe = ImagePipeline.shared
+    var read = [UUID: (samples: Samples, base: RGB)]()
+    var points = [NeutralPoint](), missing = 0
+    for s in spots {
+      let at = CGPoint(x: s.x, y: s.y)
+      if let value = s.value, let base = s.base {
+        points.append(NeutralPoint(frame: s.frame, value: value, base: base, gamma: s.gamma ?? 1, at: at, name: s.name))
+        continue
+      }
+      guard let frame = frames.first(where: { $0.id == s.frame }) else { missing += 1; continue }
+      let crop = frame.rect
+      let x = (s.x - crop.x) / max(1e-9, crop.width), y = (s.y - crop.y) / max(1e-9, crop.height)
+      guard (0...1).contains(x), (0...1).contains(y) else { missing += 1; continue }
+      if read[frame.id] == nil {
+        guard let source = try? self.source(for: frame, maxDimension: 2000),
+          let small = try? self.source(for: frame, maxDimension: 600)
+        else { missing += 1; continue }
+        let fine = frame.adjustments.baseFine ?? .zero
+        let analysed = pipe.analyze(small, settings: frame.adjustments, profile: profile).base
+        read[frame.id] = (pipe.samples(source, maxDimension: 2000), RGB((0..<3).map { analysed.values[$0] * pow(2, fine.values[$0]) }))
+      }
+      guard let (r, base) = read[frame.id] else { missing += 1; continue }
+      let px = Int(x * Double(r.width)), py = Int(y * Double(r.height))
+      let radius = max(1, min(3, Int(Double(min(r.width, r.height)) * 0.006)))
+      var sum = [0.0, 0.0, 0.0], n = 0.0
+      for dy in -radius...radius {
+        for dx in -radius...radius {
+          let v = r.pixel(px + dx, py + dy).values
+          for c in 0..<3 { sum[c] += v[c] }
+          n += 1
+        }
+      }
+      points.append(NeutralPoint(
+        frame: frame.id, value: RGB(sum.map { $0 / n }), base: base, gamma: frame.adjustments.inputGamma, at: at, name: frame.name))
+    }
+    calibrationPoints = points
+    resumedCalibration = points.isEmpty ? nil : profile.id
+    showCalibrationPoints = true
+    status = "接着「\(profile.name)」标定：已取 \(points.count) 个中性点"
+      + (missing > 0 ? " · 另有 \(missing) 个在别的卷或画面外，读不回来，没有算进去" : "")
+      + " · 再点选中性灰加点，然后重新生成"
   }
 
   // MARK: Scanner calibration (IT8)
@@ -2397,7 +2490,7 @@ final class AppModel: ObservableObject {
         frame: frames[i].id, value: color,
         base: RGB((0..<3).map { analysis.base.values[$0] * pow(2, fine.values[$0]) }),
         gamma: frames[i].adjustments.inputGamma,
-        at: CGPoint(x: crop.x + pt.x * crop.width, y: crop.y + pt.y * crop.height))
+        at: CGPoint(x: crop.x + pt.x * crop.width, y: crop.y + pt.y * crop.height), name: frames[i].name)
       calibrationPoints.append(point)
       let span = calibrationPoints.map { $0.density[1] }
       status = String(
