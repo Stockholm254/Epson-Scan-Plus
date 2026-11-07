@@ -10,28 +10,13 @@ struct ScanCanvas: NSViewRepresentable {
     v.model = model
     model.frameOpener = { [weak v] id in v?.open(id) }
     model.viewWillChange = { [weak v] change in v?.viewWillChange(change) }
+    model.pictureChanged = { [weak v] in v?.modelChanged() }
     return v
   }
   func updateNSView(_ view: FilmCanvasView, context: Context) {
     view.model = model
     view.reserved = reserved
-    // A sampler shows its eyedropper over the canvas.
-    if view.cursorTool != model.tool {
-      view.cursorTool = model.tool
-      view.window?.invalidateCursorRects(for: view)
-      view.window?.invalidateCursorRects(for: view.loupe)
-    }
-    if view.lastViewportRevision != model.viewportRevision {
-      view.pan = .zero
-      view.lastViewportRevision = model.viewportRevision
-    }
-    view.refreshCursorArea()
-    view.clampPan()
-    view.applyFocusRequest()
-    view.needsDisplay = true
-    view.updateLoupe()
-    view.updateScanHead()
-    view.settleOpening()
+    view.modelChanged()
   }
 }
 
@@ -87,6 +72,28 @@ final class FilmCanvasView: NSView {
     addSubview(scanHead, positioned: .below, relativeTo: loupe)
   }
   override var wantsDefaultClipping: Bool { true }
+  /// Follows the model: on every update of the window, and by itself for each new picture of the
+  /// single frame, which the model hands the canvas without updating the window around it.
+  func modelChanged() {
+    guard let model else { return }
+    // A sampler shows its eyedropper over the canvas.
+    if cursorTool != model.tool {
+      cursorTool = model.tool
+      window?.invalidateCursorRects(for: self)
+      window?.invalidateCursorRects(for: loupe)
+    }
+    if lastViewportRevision != model.viewportRevision {
+      pan = .zero
+      lastViewportRevision = model.viewportRevision
+    }
+    refreshCursorArea()
+    clampPan()
+    applyFocusRequest()
+    needsDisplay = true
+    updateLoupe()
+    updateScanHead()
+    settleOpening()
+  }
   var lastViewportRevision = -1
   var lastFocusRevision = -1
   func applyFocusRequest() {

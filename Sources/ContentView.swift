@@ -416,7 +416,7 @@ struct ContentView: View {
   }
   /// What floats over the picture: the render in progress, the frame's resolution, the tool's hint.
   @ViewBuilder var canvasOverlays: some View {
-      if m.rendering { RenderProgress(step: m.renderStep).padding(14) }
+      if m.rendering { RenderProgress(step: m.renderStep, pictureShownAt: { m.pictureShownAt }).padding(14) }
       if m.singleView && !m.rendering {
         VStack(alignment: .trailing, spacing: 6) {
           if let frame = m.selected, !frame.hasFullResolution {
@@ -1071,11 +1071,22 @@ struct ContentView: View {
 /// wheel until the first step says where it is.
 struct RenderProgress: View {
   let step: (done: Double, label: String)?
-  /// Shown only for a render that takes a while, so a slider's quick ones do not flash it.
+  /// When the canvas last had a new picture.
+  var pictureShownAt: () -> Date = { .distantPast }
+  /// Shown only for a render that takes a while, so a slider's quick ones do not flash it, nor
+  /// while the picture follows a slider, rendering all the while.
   @State private var due = false
   var body: some View {
     Group { if due { bar } }
-      .onAppear { DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { due = true } }
+      .task {
+        while !Task.isCancelled {
+          try? await Task.sleep(for: .milliseconds(350))
+          if Date().timeIntervalSince(pictureShownAt()) >= 0.35 {
+            due = true
+            return
+          }
+        }
+      }
   }
   var bar: some View {
     VStack(alignment: .trailing, spacing: 5) {

@@ -118,17 +118,37 @@ enum RenderTests {
 
     // A slider moved every 30 ms: put off until it stopped, as before, no picture came while it moved.
     var shown = 0
-    let watching = model.$displayed.dropFirst().sink { _ in shown += 1 }
+    model.pictureChanged = { shown += 1 }
+    var finished = 0
+    let finishing = model.$rendering.dropFirst().sink { if !$0 { finished += 1 } }
     for i in 1...16 {
       model.change("曝光") { $0.exposure = Double(i) * 0.04 }
       settle(0.03)
     }
-    let whileMoving = shown
-    for _ in 0..<80 where model.rendering { settle(0.05) }
+    let whileMoving = shown, finishedMoving = finished
+    let stopped = Date()
+    for _ in 0..<80 where model.rendering { settle(0.02) }
+    let caughtUp = Date().timeIntervalSince(stopped)
     settle(0.2)
-    watching.cancel()
+    finishing.cancel()
     try check(whileMoving >= 2 && !model.rendering,
       "a slider dragged over the frame shows pictures as it moves (\(whileMoving) in half a second), and the last when it stops")
+    // Beside the picture (histograms, film strip, the render's end) the window catches up twice a
+    // second while it moves, and once it stops.
+    try check(finishedMoving <= 1 && caughtUp < 0.6 && model.thumbnails[model.frames[0].id] != nil,
+      "while it moves the window beside the picture is updated at most twice a second (\(finishedMoving) ends in half a second), and \(Int(caughtUp * 1000)) ms after it stops")
+    // Each goes to the canvas alone: the window is updated for the slider's step, not again for its picture.
+    var updates = 0
+    let watching = model.objectWillChange.sink { updates += 1 }
+    let last = model.displayed!
+    let counted = shown
+    model.showOnCanvas(last.cropping(to: CGRect(x: 0, y: 0, width: 8, height: 8))!)
+    let quiet = (shown - counted, updates)
+    model.pictureChanged = nil
+    model.showOnCanvas(last)
+    watching.cancel()
+    try check(quiet == (1, 0) && updates == 1 && model.displayed === last,
+      "a new picture of the frame is drawn by the canvas without updating the window (\(quiet)); with no canvas, the window is updated")
 
     // The analysis kept over the print's own controls is the one the frame's settings give.
     func same(_ a: ToneAnalysis?, _ b: ToneAnalysis) -> Bool {

@@ -26,7 +26,7 @@ struct Samples {
   }
 }
 
-struct ToneAnalysis {
+struct ToneAnalysis: Equatable {
   var base: RGB
   var balance: RGB
   var low: Double

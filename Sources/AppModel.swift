@@ -36,7 +36,31 @@ final class AppModel: ObservableObject {
   /// What the table's last picture was made from: the same again (another frame selected, back
   /// from the single frame), and it is shown as it is, not made again.
   private var tablePrintKey: String?
-  @Published var displayed: CGImage?
+  /// The picture the canvas shows. Set, it updates the window, as published state does; a new
+  /// picture of the single frame goes to the canvas alone (`showOnCanvas`).
+  var displayed: CGImage? {
+    get { shownPicture }
+    set {
+      objectWillChange.send()
+      shownPicture = newValue
+      pictureShownAt = Date()
+    }
+  }
+  private var shownPicture: CGImage?
+  /// When the canvas was last given a picture: the render's progress shows only after a while without one.
+  private(set) var pictureShownAt = Date.distantPast
+  /// Draws a new picture on the canvas and does what waits for it; the canvas sets it.
+  var pictureChanged: (() -> Void)?
+  /// Hands the canvas a new picture of the single frame without updating the window: a slider
+  /// dragged brings one every tenth of a second, and each updating the whole window, as long as
+  /// the slider's own step, halved how often the slider followed the hand. With no canvas to take
+  /// it, the window is updated.
+  func showOnCanvas(_ picture: CGImage) {
+    guard picture !== shownPicture else { return }
+    shownPicture = picture
+    pictureShownAt = Date()
+    if let pictureChanged { pictureChanged() } else { objectWillChange.send() }
+  }
   /// The frames' positives, as the filmstrip shows them; the library keeps a small copy of each.
   @Published var thumbnails = [UUID: CGImage]() {
     didSet {
@@ -2001,6 +2025,7 @@ final class AppModel: ObservableObject {
     let queued = singleQueued
     singleQueued = true
     wantedLock.unlock()
+    singleAskedAt = (singleAskedAt.last, Date())
     // At most one waits: it takes whatever was asked for last when its turn comes.
     if !queued { renderQueue.asyncAfter(deadline: .now() + 0.015) { [weak self] in self?.renderSingle() } }
   }
@@ -2013,6 +2038,54 @@ final class AppModel: ObservableObject {
   }
   /// The single render asked for last, not yet begun; a newer request, or another view, replaces it.
   private var wantedSingle: SingleRender?
+  /// When the single frame's last two renders were asked for: within a slider's step of each other,
+  /// and the last just now, a slider is being dragged over it (or the frames run through).
+  private var singleAskedAt = (previous: Date.distantPast, last: Date.distantPast)
+  private var sliding: Bool {
+    let (previous, last) = singleAskedAt
+    return Date().timeIntervalSince(last) < Self.slideStep && last.timeIntervalSince(previous) < Self.slideStep
+  }
+  static let slideStep = 0.12
+  /// What the window shows beside the single frame's picture, as its newest renders left it: the
+  /// film strip's copy, the histograms, the range, and the end of the render.
+  private struct BesidePicture {
+    var frame: FilmFrame
+    var thumbnail: CGImage?
+    var histograms: ([Double], [[Double]])?
+    var range: ToneRange??
+    var finished: Int?
+  }
+  private var besidePicture: BesidePicture?
+  private var besideShownAt = Date.distantPast
+  private var catchingUp = false
+  /// Shows what is beside the picture: at once, or while a slider is dragged twice a second and
+  /// once it stops. Each showing updates the whole window, as long as the slider's own step: with
+  /// one for every picture the slider followed the hand half as often as it did in 0.8.0, when no
+  /// picture came until it stopped.
+  private func catchUp() {
+    guard let side = besidePicture else { return }
+    if sliding && Date().timeIntervalSince(besideShownAt) < 0.5 {
+      guard !catchingUp else { return }
+      catchingUp = true
+      DispatchQueue.main.asyncAfter(deadline: .now() + Self.slideStep / 2) { [weak self] in
+        self?.catchingUp = false
+        self?.catchUp()
+      }
+      return
+    }
+    besidePicture = nil
+    besideShownAt = Date()
+    if let thumbnail = side.thumbnail { thumbnails[side.frame.id] = thumbnail }
+    // Another frame or the table shown since: the histograms and range are not its.
+    if singleView, selectedID == side.frame.id {
+      if let h = side.histograms { (histogram, channelHistograms) = h }
+      if let r = side.range { toneRange = r }
+    }
+    if let token = side.finished, revision == token {
+      rendering = false
+      readAhead(around: side.frame, token: token)
+    }
+  }
   /// A single render is waiting on the render queue.
   private var singleQueued = false
   /// The newest single render on screen: one finishing after a newer one is not shown.
@@ -2122,19 +2195,27 @@ final class AppModel: ObservableObject {
             return
           }
           self.shownSingle = token
-          self.displayed = output
-          self.canvasRegion = context?.region
+          self.showOnCanvas(output)
+          // Only what changed is set, as setting published state updates the window even to the same.
+          if self.canvasRegion != context?.region { self.canvasRegion = context?.region }
           self.samplingInput = input
-          self.toneAnalysis = analysis
+          if self.toneAnalysis != analysis { self.toneAnalysis = analysis }
           if edit { self.editRegionLock = context?.region }
-          if let thumbnail { self.thumbnails[frame.id] = thumbnail }
-          if let hist { (self.histogram, self.channelHistograms) = hist }
-          if measured { self.toneRange = range }
-          self.sourceSummary = summary
-          if newest {
-            self.rendering = false
-            self.readAhead(around: frame, token: token)
+          if self.sourceSummary != summary { self.sourceSummary = summary }
+          // What the window shows beside the picture follows it when it can (`catchUp`).
+          // Another frame's left waiting keeps its film-strip copy.
+          if let left = self.besidePicture, left.frame.id != frame.id {
+            if let thumbnail = left.thumbnail { self.thumbnails[left.frame.id] = thumbnail }
+            self.besidePicture = nil
           }
+          var side = self.besidePicture ?? BesidePicture(frame: frame)
+          side.frame = frame
+          if let thumbnail { side.thumbnail = thumbnail }
+          if let hist { side.histograms = hist }
+          if measured { side.range = .some(range) }
+          if newest { side.finished = token }
+          self.besidePicture = side
+          self.catchUp()
         }
       } catch {
         DispatchQueue.main.async {
