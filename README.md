@@ -148,7 +148,7 @@ Epson Scan plus 可以作为 [MCP](https://modelcontextprotocol.io) 服务器，
   - 取点用浮点读数，密的地方也不会因为 8 位量化而不准。
   - 看预览时，画面会发给助手所在的 AI 服务处理。
 
-助手启动的是 App 自己（`EpsonScanPlus --mcp`），它通过只有你的账户能访问的本机连接与正在运行的 App 通信，不经过网络。工具列表：`get_state`、`list_frames`、`list_presets`、`list_rolls`、`select_frame`、`preview`、`sample`、`adjust`、`pick_film_base`、`auto_film_base`、`pick_neutral`、`pick_highlight`、`choose_preset`、`apply_to_roll`、`reset_adjustments`、`undo`、`auto_crop`，以及预设标定的 `calibration_add_points`、`calibration_state`、`calibration_remove_point`、`calibration_clear`、`calibration_make_preset`。
+助手启动的是 App 自己（`EpsonScanPlus --mcp`），它通过只有你的账户能访问的本机连接与正在运行的 App 通信，不经过网络。工具列表：`get_state`、`list_frames`、`list_presets`、`list_rolls`、`select_frame`、`preview`、`sample`、`adjust`、`pick_film_base`、`auto_film_base`、`pick_neutral`、`choose_preset`、`apply_to_roll`、`reset_adjustments`、`undo`、`auto_crop`，以及预设标定的 `calibration_add_points`、`calibration_state`、`calibration_remove_point`、`calibration_clear`、`calibration_make_preset`。
 
 去漏光页也在同一个 MCP 服务器里。FilmLightLab 原来本机 HTTP 接口能做的，这里都能做，对照表见 [去漏光](doc/light-leak.md#通过-mcp)：
 

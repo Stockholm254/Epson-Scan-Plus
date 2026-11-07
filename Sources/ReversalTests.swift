@@ -101,13 +101,6 @@ enum ReversalTests {
     let fadedGrey = try shown(faded, s, patch: 2), restored = try shown(faded, auto, patch: 2), restoredDark = try shown(faded, auto, patch: 3)
     try check(!neutral(fadedGrey, 0.05) && neutral(restored, 0.012) && neutral(restoredDark, 0.012),
       "auto white balance takes each channel of a faded slide from its own black to its own white: the grey \(text(fadedGrey)) comes back \(text(restored))")
-    // A grey and a white picked: each channel through both, a cast with a black of its own undone.
-    var twoPoint = s
-    twoPoint.neutralSample = RGB((0..<3).map { 0.09 * gains[$0] + blacks[$0] })
-    twoPoint.highlightSample = RGB((0..<3).map { 0.6 * gains[$0] + blacks[$0] })
-    let white = try shown(faded, twoPoint, patch: 0), between = try shown(faded, twoPoint, patch: 1)
-    try check(white.values.allSatisfy { $0 > 0.985 } && neutral(between, 0.012),
-      "a grey and a white picked on a slide: the white white (\(text(white))), a grey between them grey (\(text(between)))")
 
     // Frames on a preview, 150 dpi on a bed 120 × 160 mm: three mounted slides and an empty slot in
     // a holder, and a strip of three frames of reversal film, black between them.
@@ -194,7 +187,7 @@ enum ReversalTests {
     files.resetAdjustments()
     let stillSlide = files.frames[0].adjustments.isSlide && !files.frames[0].adjustments.autoWhiteBalance
     files.setNeutral(RGB(r: 0.2, g: 0.2, b: 0.2))
-    files.recalculateWhiteBalance()
+    files.clearBalanceSamples()
     let ownColour = !files.frames[0].adjustments.autoWhiteBalance && files.frames[0].adjustments.neutralSample == nil
     // The switch, the exposure, the reset, the grey and the recalculation.
     for _ in 0..<5 { fileEdits.undo() }

@@ -256,7 +256,7 @@ final class AppModel: ObservableObject {
   @Published var page = Page.capture {
     didSet {
       // The pickers belong to taking the mask off.
-      if page == .capture, [CanvasTool.base, .neutral, .highlight].contains(tool) { tool = .select }
+      if page == .capture, [CanvasTool.base, .neutral].contains(tool) { tool = .select }
     }
   }
   /// Where module ① takes pictures from.
@@ -393,7 +393,6 @@ final class AppModel: ObservableObject {
       return singleView ? "拖动四角裁切 · 方向键微调 · [ ] 拉直 0.1°（⇧ 1°） · ⌥ 拖一条线拉直 · 回车完成 · Esc 退出" : "在接触表上拖出新的画框 · Esc 退出"
     case .base: return "点未曝光的橙色片基（片间或片边），不要点景物或片夹；琥珀色是自动找到的片基 · Esc 退出"
     case .neutral: return "点画面中应为中性灰的地方：灰卡、白墙、水泥 · Esc 退出"
-    case .highlight: return "点负片上最密、正片里应为纯白的高光：阳光下的白墙、高光反射；更亮处会剪成白 · Esc 退出"
     case .calibrate:
       return "点选中性灰：灰卡、白墙、水泥等均匀处 · 已取 \(calibrationPoints.count) 个"
         + (calibrationPoints.isEmpty ? "" : " · ⌫ 撤回上一点") + " · Esc 结束"
@@ -434,7 +433,7 @@ final class AppModel: ObservableObject {
     if value != tool { editRegionLock = nil }
     if value != .crop { levelling = false }
     tool = value
-    if value == .neutral || value == .highlight || value == .calibrate || value == .it8 || value == .dust { singleView = selected != nil }
+    if value == .neutral || value == .calibrate || value == .it8 || value == .dust { singleView = selected != nil }
     if value == .base || value == .crop { fitView() }
     focusCanvas()
     refresh()
@@ -464,15 +463,18 @@ final class AppModel: ObservableObject {
     }
     commitSingleCrop(r)
   }
-  func recalculateWhiteBalance() {
-    change("重算白平衡") {
+  /// The neutral point (and an old version's neutral) let go, the white balance
+  /// back to the app's: automatic for a negative, a slide's own colour for a slide. Nothing is
+  /// worked out anew, the automatic balance always follows the frame; warmth, tint and the base
+  /// stay.
+  func clearBalanceSamples() {
+    change("清除取样") {
       // A slide goes back to its own colour; a negative to the scene's.
       $0.autoWhiteBalance = !$0.isSlide
       $0.manualBalance = nil
       $0.neutralSample = nil
-      $0.highlightSample = nil
     }
-    status = settings.isSlide ? "已重算白平衡 · 保留反转片本来的颜色" : "已重算白平衡 · 独立校正通道亮暗范围"
+    status = settings.isSlide ? "已清除取样 · 回到反转片本来的颜色" : "已清除取样 · 回到自动白平衡"
   }
   func adjustBase(_ channel: Int, value: Double) {
     change("片基微调") {
@@ -1230,7 +1232,6 @@ final class AppModel: ObservableObject {
       frames[i].adjustments.base = moved(frames[i].adjustments.base, at: picked)
       frames[i].adjustments.rollBase = moved(frames[i].adjustments.rollBase)
       frames[i].adjustments.neutralSample = moved(frames[i].adjustments.neutralSample)
-      frames[i].adjustments.highlightSample = moved(frames[i].adjustments.highlightSample)
       frames[i].crosstalk = to
       frames[i].flatField = flatTo
       frames[i].edgeBase = nil
@@ -2412,8 +2413,6 @@ final class AppModel: ObservableObject {
       setFilmBase(color, at: at)
     } else if tool == .neutral {
       setNeutral(color)
-    } else if tool == .highlight {
-      setHighlight(color)
     }
     tool = .select
     refresh()
@@ -2429,7 +2428,7 @@ final class AppModel: ObservableObject {
       $0.neutralSample = nil
       $0.autoWhiteBalance = false
     }
-    status = "已取片基 · 自动白平衡已关闭以保留取样，可按需重算"
+    status = "已取片基 · 自动白平衡已关闭以保留取样；要回到自动，打开「自动」"
     updateThumbnails()
   }
   /// Auto white balance on a reading of something that should be grey: the grey sets the
@@ -2441,13 +2440,6 @@ final class AppModel: ObservableObject {
       $0.autoWhiteBalance = true
     }
     status = "已按中性点自动白平衡"
-    updateThumbnails()
-  }
-  /// The densest highlight (Dmax) from a reading of something that should be white: each
-  /// channel's white is put on it.
-  func setHighlight(_ color: RGB) {
-    change("高光点") { $0.highlightSample = color }
-    status = "已取高光（Dmax）：这一点在正片里是白色，各通道以它为白点对齐"
     updateThumbnails()
   }
   func scanEnabled() {

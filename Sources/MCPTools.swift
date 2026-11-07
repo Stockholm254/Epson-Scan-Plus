@@ -64,7 +64,6 @@ enum MCPTools {
     ]),
     Tool(name: "auto_film_base", description: "放弃手动片基，改用自动片基：扫描的卷用整卷片间测得的，翻拍和单张照片用片边的未曝光片基，都没有时按本张最薄处估计。", properties: [:]),
     Tool(name: "pick_neutral", description: "把指定位置作为中性灰，按它自动白平衡（灰卡、白墙、水泥等）。", properties: point, required: ["x", "y"]),
-    Tool(name: "pick_highlight", description: "把指定位置作为高光（Dmax）：负片上最密、正片里应为纯白的地方（阳光下的白墙、高光反射）。各通道以它为白点对齐，它在正片里是白色；更亮的地方会剪成白。", properties: point, required: ["x", "y"]),
     Tool(name: "choose_preset", description: "选用胶片预设（按名称，部分匹配，如 \"Portra 160\"）。", properties: ["name": ["type": "string"]], required: ["name"]),
     Tool(name: "apply_to_roll", description: "把选中画面的调整同步到本卷所有画面（保留各张的方向和裁切）。", properties: [:]),
     Tool(name: "reset_adjustments", description: "把选中画面的调整恢复默认（保留输入 Gamma、方向和整卷估计）。", properties: [:]),
@@ -135,7 +134,7 @@ enum MCPTools {
     let s = f.adjustments
     var g: [String: Any] = ["mirrored": s.flipHorizontal == true,
       "crop": ["x": round(f.rect.x), "y": round(f.rect.y), "width": round(f.rect.width), "height": round(f.rect.height)],
-      "picked": ["film_base": s.base != nil, "neutral": s.neutralSample != nil, "highlight": s.highlightSample != nil]]
+      "picked": ["film_base": s.base != nil, "neutral": s.neutralSample != nil]]
     if let angle = s.angle { g["straighten_degrees"] = angle }
     if let path = f.sourcePath { g["file"] = URL(fileURLWithPath: path).lastPathComponent }
     return g
@@ -323,7 +322,6 @@ enum MCPTools {
       }
       var balance: [String: Any] = ["auto": s.autoWhiteBalance, "warmth": s.warmth, "tint": s.tint, "shadow_warmth": s.shadowWarmthAmount]
       if let neutral = s.neutralSample { balance["neutral_sample"] = rgb(neutral) }
-      if let highlight = s.highlightSample { balance["highlight_sample_dmax"] = rgb(highlight) }
       state["white_balance"] = balance
       state["levels"] = ["auto": s.autoLevels, "black": s.black, "white": s.white, "midtone": s.midtone]
       state["tone"] = ["exposure": s.exposure, "contrast": s.contrast, "saturation": s.saturation, "curves": s.curves != nil,
@@ -462,19 +460,18 @@ enum MCPTools {
         if let b = arguments["shared_levels"] as? Bool { model.setSharedLevels(b) }
       }
       return [["type": "text", "text": "已调整：\(arguments.keys.sorted().joined(separator: ", "))。可用 ⌘Z 或 undo 撤销。"]]
-    case "pick_film_base", "pick_neutral", "pick_highlight":
+    case "pick_film_base", "pick_neutral":
       let p = try coordinate(arguments)
       let (frame, _) = try selected(model)
       let v = reading(pipe.raster(try model.source(for: frame, maxDimension: 2000), maxDimension: 2000), at: p, settings: frame.adjustments)
       onMain {
         switch name {
         case "pick_film_base": model.setFilmBase(v)
-        case "pick_highlight": model.setHighlight(v)
         default: model.setNeutral(v)
         }
       }
       let reading = "负片线性 RGB \(String(format: "%.4f %.4f %.4f", v.r, v.g, v.b))"
-      let said = ["pick_film_base": "已取片基：\(reading)；自动白平衡已关闭。", "pick_highlight": "已取高光（Dmax）：\(reading)；这一点在正片里是白色。"]
+      let said = ["pick_film_base": "已取片基：\(reading)；自动白平衡已关闭。"]
       return [["type": "text", "text": said[name] ?? "已按中性点自动白平衡：\(reading)。"]]
     case "calibration_add_points":
       guard let list = arguments["points"] as? [[Any]], !list.isEmpty else { throw DeskError.message("需要 points：[[x, y], …]。") }
