@@ -159,5 +159,16 @@ enum DustTests {
     off.dust?.on = false
     try check(abs(densities(try model.source(for: off, maxDimension: w))[1][speck] - before[1][speck]) < 1e-3,
       "with its dust left in, the frame is read as it is")
+    // A copy shot's dust is looked for before its unmix, which would make a speck fainter in green;
+    // the frame itself is still read unmixed.
+    var copy = model.frames[0]
+    copy.crosstalk = .measured
+    copy.dust = nil
+    let clean = 10 * w + 10
+    let looked = densities(try model.dustFreeSource(for: copy, full: true))
+    let unmixed = densities(try model.source(for: copy, full: true))
+    try check(abs(looked[1][speck] - before[1][speck]) < 1e-3 && abs(looked[1][clean] - before[1][clean]) < 1e-3
+      && abs(unmixed[1][clean] - before[1][clean]) > 0.05,
+      "a copy's dust is looked for before its unmix, and the frame is still read unmixed")
   }
 }

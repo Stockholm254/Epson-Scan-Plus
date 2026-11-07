@@ -1569,9 +1569,15 @@ final class AppModel: ObservableObject {
     let image = dustFilled(try uncorrectedSource(for: frame, full: full, maxDimension: maxDimension), frame)
     return raw ? image : corrected(image, frame, scan: Self.readsScan(frame))
   }
-  /// The frame's pixels as read, its dust not filled: what dust is looked for on.
+  /// What dust is looked for on: the frame's pixels as read, its dust not filled, and a copy shot's
+  /// not unmixed. The unmix is pixel by pixel, so the spots found fill the unmixed frame where they
+  /// are; but it takes a third of blue out of green, and a speck, which reads densest in blue, comes
+  /// out up to half fainter in green and under the grain there (three copies of the author's: 6 / 21 /
+  /// 9 found unmixed, 17 / 28 / 16 not).
   func dustFreeSource(for frame: FilmFrame, full: Bool, maxDimension: Int? = nil) throws -> CGImage {
-    try uncorrectedSource(for: frame, full: full, maxDimension: maxDimension)
+    var mixed = frame
+    mixed.crosstalk = nil
+    return try uncorrectedSource(for: mixed, full: full, maxDimension: maxDimension)
   }
   /// Whether a frame's pixels come from its own scan, rather than the preview or an imported file.
   static func readsScan(_ frame: FilmFrame) -> Bool { frame.sourcePath == nil && frame.scanPath != nil && frame.hasFullResolution }
