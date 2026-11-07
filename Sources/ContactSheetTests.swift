@@ -80,12 +80,15 @@ enum ContactSheetTests {
       ctx.setFillColor(red: c[0], green: c[1], blue: c[2], alpha: 1)
       ctx.fill(CGRect(x: r.minX, y: CGFloat(oh) - r.maxY, width: r.width, height: r.height))
     }
-    fill(CGRect(x: 0, y: 0, width: ow, height: oh), [0.06, 0.06, 0.06])
+    // The holder all but opaque, as it is: denser than the frames in every channel.
+    fill(CGRect(x: 0, y: 0, width: ow, height: oh), [0.01, 0.01, 0.01])
     fill(CGRect(x: 60, y: 260, width: 1380, height: 280), [0.80, 0.52, 0.33])
     for i in 0..<4 {
       let x = 90 + CGFloat(i) * 340
+      // A thin shadow and a dense highlight: a scene of ordinary length, longer than the four
+      // stops below which automatic levels leave a short one short.
       fill(CGRect(x: x, y: 293, width: 320, height: 120), [0.62, 0.38, 0.26])
-      fill(CGRect(x: x, y: 413, width: 320, height: 94), [0.42, 0.33, 0.30])
+      fill(CGRect(x: x, y: 413, width: 320, height: 94), [0.12, 0.07, 0.045])
     }
     let overviewURL = roll.appendingPathComponent("overview.png")
     try pipe.savePNG(ctx.makeImage()!, to: overviewURL)

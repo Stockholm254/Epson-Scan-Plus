@@ -66,6 +66,24 @@ enum RenderTests {
       return straight.alphaInfo == .noneSkipLast && drawn(straight) == drawn(dropped)
     }, "an export is rendered without alpha, 8 and 16 bits, to the values and the way up it had drawn without it")
 
+    // A short scene's automatic ends: at least four stops apart, about the middle they had.
+    func flatDensities(_ low: Double, _ high: Double) -> [[Double]] {
+      (0..<3).map { c in (0..<2000).map { i in low + (high - low) * Double(i) / 1999 + 0.02 * Double(c) } }
+    }
+    let film = FilmProfile.builtins[0]
+    let foggy = flatDensities(0.55, 0.85), sunny = flatDensities(0.15, 1.7)
+    let foggyAsWas = pipe.analyze(base: .one, density: foggy, settings: Adjustments(), profile: film, shortestEnds: 0)
+    let foggyNow = pipe.analyze(base: .one, density: foggy, settings: Adjustments(), profile: film)
+    let sunnyAsWas = pipe.analyze(base: .one, density: sunny, settings: Adjustments(), profile: film, shortestEnds: 0)
+    let sunnyNow = pipe.analyze(base: .one, density: sunny, settings: Adjustments(), profile: film)
+    try check(foggyAsWas.high - foggyAsWas.low < ImagePipeline.shortestEnds
+      && abs((foggyNow.high - foggyNow.low) - ImagePipeline.shortestEnds) < 1e-9
+      && abs((foggyNow.high + foggyNow.low) - (foggyAsWas.high + foggyAsWas.low)) < 1e-9,
+      String(format: "a foggy frame's ends open from %.2f to %.2f about the same middle, not pulled out to black and white",
+        foggyAsWas.high - foggyAsWas.low, foggyNow.high - foggyNow.low))
+    try check(sunnyNow.low == sunnyAsWas.low && sunnyNow.high == sunnyAsWas.high && sunnyNow.high - sunnyNow.low > ImagePipeline.shortestEnds,
+      "and a sunny frame's ends stay as they were")
+
     // One large frame on a preview, so a render takes a while, as a real one does.
     let roll = folder.appendingPathComponent("render-throttle")
     try? FileManager.default.removeItem(at: roll)

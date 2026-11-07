@@ -787,7 +787,7 @@ struct ContentView: View {
   }
   /// The ends: automatic, the roll as one, or set by hand.
   var levelsSection: some View {
-    PanelSection("色阶", key: "levels", info: "自动：按画面的密度范围设定黑白两端。关闭后用黑点、白点和中间调手动设定。\n\n「整卷同一色阶」：整卷用同一组黑白两端，按整卷所有画面一起统计，像冲印店一卷用一个印放曝光：暗的场景就是暗的，亮的就是亮的。每张仍可以用「曝光」微调。取了高光（Dmax）或关了自动色阶的那一张按你的来。") {
+    PanelSection("色阶", key: "levels", info: "自动：按画面的密度范围设定黑白两端。范围不到 4 档的画面（雾、霾、很平的光）不拉满到黑和白，以中间为准撑开到 4 档，保留它本来的灰和柔；要更硬，调「对比度」或关掉自动。关闭后用黑点、白点和中间调手动设定。\n\n「整卷同一色阶」：整卷用同一组黑白两端，按整卷所有画面一起统计，像冲印店一卷用一个印放曝光：暗的场景就是暗的，亮的就是亮的。每张仍可以用「曝光」微调。取了高光（Dmax）或关了自动色阶的那一张按你的来。") {
       Toggle("自动", isOn: bool(\.autoLevels)).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
     } content: {
       VStack(alignment: .leading, spacing: 10) {

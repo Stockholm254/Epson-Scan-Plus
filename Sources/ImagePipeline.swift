@@ -500,8 +500,15 @@ final class ImagePipeline {
     }
     return nil
   }
-  /// A frame's balance and ends from its densities above `base`.
-  func analyze(base: RGB, density: [[Double]], settings: Adjustments, profile: FilmProfile) -> ToneAnalysis {
+  /// The least a scene's automatic ends span, in log exposure: 4 stops. A shorter one (fog, haze,
+  /// flat light) keeps its shortness rather than being pulled out to a full black and white.
+  /// Measured on the author's library, the flattest of 262 frames spans 1.25 and the middle 1.6,
+  /// so none of them changes; NexFilm's 0.8 D would have reached into ordinary overcast frames.
+  static let shortestEnds = 1.2
+  /// A frame's balance and ends from its densities above `base`; `shortestEnds` as above.
+  func analyze(
+    base: RGB, density: [[Double]], settings: Adjustments, profile: FilmProfile, shortestEnds: Double = ImagePipeline.shortestEnds
+  ) -> ToneAnalysis {
     let (slopes, fixed) = Self.slopes(settings, profile)
     let toe = Self.toe(settings, profile)
     func exposure(_ density: Double, _ c: Int) -> Double { FilmToe.exposure(density / slopes.values[c], width: toe.values[c]) }
@@ -588,8 +595,15 @@ final class ImagePipeline {
         highs.append(q[1])
       }
     }
-    let low = settings.autoLevels ? (lows.min() ?? 0) : 0
-    let high = settings.autoLevels ? max(low + 0.05, white ?? highs.max() ?? 2) : 3.6
+    var low = settings.autoLevels ? (lows.min() ?? 0) : 0
+    var high = settings.autoLevels ? max(low + 0.05, white ?? highs.max() ?? 2) : 3.6
+    // A short scene opened about its middle to `shortestEnds`: its middle tones stay where they
+    // were, so it prints grey and soft as the film saw it, not darker (NexFilm found a floor kept
+    // from the black end darkened such frames). A white picked by hand is the user's own end.
+    if settings.autoLevels, white == nil, high - low < shortestEnds {
+      let middle = (low + high) / 2
+      (low, high) = (middle - shortestEnds / 2, middle + shortestEnds / 2)
+    }
     let reach = settings.autoLevels && white == nil
       ? self.reach(e, gain: gain, balance: balance, weight: weight, saturation: settings.saturation) : nil
     return ToneAnalysis(
