@@ -5,12 +5,12 @@
 <h1 align="center">Epson Scan plus</h1>
 
 <p align="center">
-  在 macOS 上扫描和转换彩色负片<br>
+  在 macOS 上扫描和转换彩色负片与反转片<br>
   为 Epson Perfection V800 / V850 设计，也能用 Sony A7R IV 联机翻拍
 </p>
 
 <p align="center">
-  <b>0.9.0</b> · macOS 26 · Apple 芯片 · 全部在本机处理
+  <b>0.10.0</b> · macOS 26 · Apple 芯片 · 全部在本机处理
 </p>
 
 <p align="center">
