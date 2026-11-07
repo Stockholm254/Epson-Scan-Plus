@@ -137,19 +137,33 @@ extension AppModel {
           }
         }
       }
-      if let m = found.min(by: { $0.area < $1.area }) {
+      // All of a wide soft speck, which stands out of the opening only at its thin parts; only what
+      // stood out where all of it would lie across two films.
+      let core = found.min(by: { $0.area < $1.area })
+      var speck = DustFinder.wholeSpeck(at: (px - x0, py - y0), in: window, core: core, near: near, gamma: options.gamma) ?? core
+      if let whole = speck, whole != core, DustFinder.twoFilms(whole, in: window, scale: options.scale ?? 1, gamma: options.gamma) {
+        speck = core
+      }
+      if let m = speck {
         var placed = m
         (placed.x, placed.y) = (m.x + x0, m.y + y0)
         spot = placed.spot(in: crop, width: W, height: H, marked: true)
       }
     }
     if spot == nil {
-      // Nothing stands out: a round spot the size of a small speck.
+      // Nothing stands out: a round spot the size of a small speck; but not across two films (a
+      // click beside the dust, on the edge of a sculpture against the sky), which the fill would
+      // carry one into the other.
       let radius = max(2, Int(0.0025 * Double(max(W, H))))
       let side = 2 * radius + 1
       var cells = [Bool](repeating: false, count: side * side)
       for y in 0..<side { for x in 0..<side where (x - radius) * (x - radius) + (y - radius) * (y - radius) <= radius * radius { cells[y * side + x] = true } }
-      spot = DustMask(x: px - radius, y: py - radius, width: side, height: side, cells: cells).spot(in: crop, width: W, height: H, marked: true)
+      let round = DustMask(x: px - radius, y: py - radius, width: side, height: side, cells: cells)
+      if DustFinder.twoFilms(round, in: image, scale: Double(max(W, H)) / 9600, gamma: frame.adjustments.inputGamma) {
+        status = "这里压在两种胶片的交界上，补了会把一边带进另一边：点在灰尘的正中"
+        return
+      }
+      spot = round.spot(in: crop, width: W, height: H, marked: true)
     }
     guard let spot else { return }
     recordEdit("点选灰尘")

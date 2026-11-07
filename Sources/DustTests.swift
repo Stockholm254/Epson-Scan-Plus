@@ -23,14 +23,14 @@ enum DustTests {
     // The film: densities above the base by channel, a gentle gradient, grain; busy grain on the
     // right third. Each speck adds density at a point, `excess` per channel, `radius` across.
     struct Speck { var x: Int, y: Int, radius: Double, excess: [Double] }
-    func negative(_ specks: [Speck], busyFrom: Int = w) -> (image: CGImage, density: [[Double]]) {
+    func negative(_ specks: [Speck], busyFrom: Int = w, edgeFrom: Int = w) -> (image: CGImage, density: [[Double]]) {
       var d = [[Double]](repeating: [Double](repeating: 0, count: w * h), count: 3)
       let base = [0.35, 0.55, 0.75]
       for y in 0..<h {
         for x in 0..<w {
           let i = y * w + x, busy = x >= busyFrom
           let grain = gauss() * (busy ? 0.09 : 0.025)
-          for c in 0..<3 { d[c][i] = base[c] + 0.2 * Double(x) / Double(w) + grain * (1 + 0.1 * Double(c)) }
+          for c in 0..<3 { d[c][i] = base[c] + 0.2 * Double(x) / Double(w) + grain * (1 + 0.1 * Double(c)) + (x >= edgeFrom ? 0.8 : 0) }
         }
       }
       for s in specks {
@@ -170,5 +170,46 @@ enum DustTests {
     try check(abs(looked[1][speck] - before[1][speck]) < 1e-3 && abs(looked[1][clean] - before[1][clean]) < 1e-3
       && abs(unmixed[1][clean] - before[1][clean]) > 0.05,
       "a copy's dust is looked for before its unmix, and the frame is still read unmixed")
+
+    // A click with the dust tool where nothing stands out: a round spot on plain film; none across
+    // two films (a pale wall against a dark post), which its fill would carry one into the other.
+    let (edged, _) = negative([], edgeFrom: w / 2)
+    let edgeFile = roll.appendingPathComponent("EPS00002.tif")
+    let second = CGImageDestinationCreateWithURL(edgeFile as CFURL, UTType.tiff.identifier as CFString, 1, nil)!
+    CGImageDestinationAddImage(second, edged, nil)
+    guard CGImageDestinationFinalize(second) else { throw DeskError.message("FAIL: test file written") }
+    var edgeFrame = FilmFrame(name: "02", rect: .full, format: "135")
+    edgeFrame.sourcePath = edgeFile.path
+    edgeFrame.sourceBits = 16
+    edgeFrame.adjustments.inputGamma = 1
+    model.frames = [edgeFrame]
+    model.selectedID = edgeFrame.id
+    model.markDust(at: CGPoint(x: 0.5, y: 0.5))
+    let acrossEdge = model.frames[0].dust?.spots.count ?? 0
+    model.markDust(at: CGPoint(x: 0.25, y: 0.5))
+    try check(acrossEdge == 0 && model.frames[0].dust?.spots.count == 1,
+      "a click marks a spot on plain film, and none across two films")
+
+    // A click on a wide speck (dust on the base side, out of focus), wider than the opening: all of
+    // it filled, not only its thin parts.
+    let wide = Speck(x: 150, y: 200, radius: 9, excess: [0.35, 0.35, 0.35])
+    let (wideImage, _) = negative([wide])
+    let wideFile = roll.appendingPathComponent("EPS00003.tif")
+    let third = CGImageDestinationCreateWithURL(wideFile as CFURL, UTType.tiff.identifier as CFString, 1, nil)!
+    CGImageDestinationAddImage(third, wideImage, nil)
+    guard CGImageDestinationFinalize(third) else { throw DeskError.message("FAIL: test file written") }
+    var wideFrame = FilmFrame(name: "03", rect: .full, format: "135")
+    wideFrame.sourcePath = wideFile.path
+    wideFrame.sourceBits = 16
+    wideFrame.adjustments.inputGamma = 1
+    model.frames = [wideFrame]
+    model.selectedID = wideFrame.id
+    model.markDust(at: CGPoint(x: Double(wide.x) / Double(w), y: Double(wide.y) / Double(h)))
+    let wideRead = densities(try model.source(for: model.frames[0], maxDimension: w))
+    let wideBack = [(0, 0), (6, 0), (0, -6), (-5, 5)].allSatisfy { dx, dy in
+      let x = wide.x + dx, i = (wide.y + dy) * w + x
+      return abs(wideRead[1][i] - (0.55 + 0.2 * Double(x) / Double(w))) < 0.12
+    }
+    try check(wideBack, "a click takes all of a wide speck, not only its thin parts")
   }
 }
