@@ -346,32 +346,9 @@ enum DustFinder {
       let rw = rx1 - rx0, rh = ry1 - ry0
       guard let px = DustPixels.rgba16(image, x: rx0, y: ry0, width: rw, height: rh) else { continue }
       let local = pixels.map { ($0 / W - ry0) * rw + ($0 % W - rx0) }
-      // On a hard edge (the film's border, a dark post against a pale wall) the film around it is two
-      // films: filling from it would carry one into the other. Its ring, six pixels deep at full
-      // size, spread more than 0.4 D in a channel (dust in grain or leaves, under 0.3).
       var inSpot = [Bool](repeating: false, count: rw * rh)
       for i in local { inSpot[i] = true }
-      var ring = [Int]()
-      let depth = max(3, Int((6 * s).rounded()))
-      for i in 0..<(rw * rh) where !inSpot[i] {
-        let x = i % rw, y = i / rw
-        var near = false
-        for dy in -depth...depth where !near {
-          let yy = y + dy
-          guard yy >= 0, yy < rh else { continue }
-          for dx in -depth...depth {
-            let xx = x + dx
-            if xx >= 0, xx < rw, inSpot[yy * rw + xx] { near = true; break }
-          }
-        }
-        if near { ring.append(i) }
-      }
-      let step = (0..<3).contains { c in
-        let v = ring.map { DustPixels.density(px[$0 * 4 + c]) }.sorted()
-        guard v.count >= 10 else { return false }
-        return v[v.count * 9 / 10] - v[v.count / 10] > 0.4 / g
-      }
-      if step { continue }
+      if twoFilms(px, width: rw, height: rh, spot: inSpot, depth: max(3, Int((6 * s).rounded())), gamma: g) { continue }
       let middle = ((minY + maxY) / 2 / block * blocksX + (minX + maxX) / 2 / block) * 3
       let busy = (0..<3).map { blockTails[middle + $0] / max(0.005, usual[$0]) }.reduce(0, +) / 3 > 1.5
       if busy, let ratio = o.greenOverRed {
@@ -403,6 +380,123 @@ enum DustFinder {
       found.append(DustMask(x: x0, y: y0, width: w, height: h, cells: cells))
     }
     return found.sorted { $0.area > $1.area }
+  }
+
+  /// Whether the film around a spot is two films (the film's border, a dark post against a pale
+  /// wall, the sky against a yellow sculpture): filling from it would carry one into the other. Its
+  /// ring, `depth` pixels deep around the spot's cells, spreads more than 0.4 D in a channel (dust
+  /// in grain or leaves, under 0.3). `px` is RGBA, `spot` its cells.
+  static func twoFilms(_ px: [UInt16], width rw: Int, height rh: Int, spot inSpot: [Bool], depth: Int, gamma g: Float) -> Bool {
+    var ring = [Int]()
+    for i in 0..<(rw * rh) where !inSpot[i] {
+      let x = i % rw, y = i / rw
+      var near = false
+      for dy in -depth...depth where !near {
+        let yy = y + dy
+        guard yy >= 0, yy < rh else { continue }
+        for dx in -depth...depth {
+          let xx = x + dx
+          if xx >= 0, xx < rw, inSpot[yy * rw + xx] { near = true; break }
+        }
+      }
+      if near { ring.append(i) }
+    }
+    return (0..<3).contains { c in
+      let v = ring.map { DustPixels.density(px[$0 * 4 + c]) }.sorted()
+      guard v.count >= 10 else { return false }
+      return v[v.count * 9 / 10] - v[v.count / 10] > 0.4 / g
+    }
+  }
+
+  /// `twoFilms` for a spot marked on `image` (a click's round spot), read from the picture around it.
+  static func twoFilms(_ mask: DustMask, in image: CGImage, scale s: Double, gamma: Double) -> Bool {
+    let depth = max(3, Int((6 * s).rounded()))
+    let x0 = max(0, mask.x - depth), y0 = max(0, mask.y - depth)
+    let x1 = min(image.width, mask.x + mask.width + depth), y1 = min(image.height, mask.y + mask.height + depth)
+    let w = x1 - x0, h = y1 - y0
+    guard w > 0, h > 0, let px = DustPixels.rgba16(image, x: x0, y: y0, width: w, height: h) else { return false }
+    var inSpot = [Bool](repeating: false, count: w * h)
+    for y in 0..<mask.height {
+      for x in 0..<mask.width where mask.cells[y * mask.width + x] {
+        let xx = mask.x + x - x0, yy = mask.y + y - y0
+        if xx >= 0, xx < w, yy >= 0, yy < h { inSpot[yy * w + xx] = true }
+      }
+    }
+    return twoFilms(px, width: w, height: h, spot: inSpot, depth: depth, gamma: Float(max(0.5, gamma)))
+  }
+
+  /// All of a speck clicked on: in `window` (a small part of the picture around the click, at
+  /// `click`), the pixels joined to `core` or to the click that are denser than the window's film in
+  /// all three channels, by three of the grain's spreads, smoothed over 3 × 3. A wide soft speck
+  /// (dust on the base side, out of focus) stands out of the opening only at its thin parts; this
+  /// takes the rest. nil where nothing near the click is denser, or what is takes more than a fifth
+  /// of the window: a pale thing of the picture, not a speck.
+  static func wholeSpeck(at click: (x: Int, y: Int), in window: CGImage, core: DustMask?, near: Int, gamma: Double) -> DustMask? {
+    let w = window.width, h = window.height
+    guard w > 2, h > 2, let px = DustPixels.rgba16(window, x: 0, y: 0, width: w, height: h) else { return nil }
+    let g = Float(max(0.5, gamma))
+    var dense = [Bool](repeating: true, count: w * h)
+    var d = [Float](repeating: 0, count: w * h), smooth = [Float](repeating: 0, count: w * h)
+    for c in 0..<3 {
+      for i in 0..<(w * h) { d[i] = DustPixels.density(px[i * 4 + c]) }
+      for y in 0..<h {
+        for x in 0..<w {
+          var sum: Float = 0, n: Float = 0
+          for yy in max(0, y - 1)...min(h - 1, y + 1) {
+            for xx in max(0, x - 1)...min(w - 1, x + 1) { sum += d[yy * w + xx]; n += 1 }
+          }
+          smooth[y * w + x] = sum / n
+        }
+      }
+      let median = smooth.sorted()[w * h / 2]
+      let spread = smooth.map { abs($0 - median) }.sorted()[w * h / 2]
+      let least = max(0.03 / g, 3 * 1.48 * spread)
+      for i in 0..<(w * h) where smooth[i] - median <= least { dense[i] = false }
+    }
+    var inSpeck = [Bool](repeating: false, count: w * h), stack = [Int]()
+    func take(_ x: Int, _ y: Int) {
+      guard x >= 0, x < w, y >= 0, y < h else { return }
+      let i = y * w + x
+      if dense[i], !inSpeck[i] { inSpeck[i] = true; stack.append(i) }
+    }
+    for y in (click.y - near)...(click.y + near) { for x in (click.x - near)...(click.x + near) { take(x, y) } }
+    if let core {
+      for y in 0..<core.height { for x in 0..<core.width where core.cells[y * core.width + x] { take(core.x + x, core.y + y) } }
+    }
+    var count = 0, minX = w, minY = h, maxX = -1, maxY = -1
+    while let i = stack.popLast() {
+      count += 1
+      if count > w * h / 5 { return nil }
+      let x = i % w, y = i / w
+      (minX, minY, maxX, maxY) = (min(minX, x), min(minY, y), max(maxX, x), max(maxY, y))
+      for dy in -1...1 { for dx in -1...1 { take(x + dx, y + dy) } }
+    }
+    guard count > 0 else { return nil }
+    // Two pixels more all round, where it fades into the film, and the core's cells.
+    let x0 = max(0, minX - 2), y0 = max(0, minY - 2), x1 = min(w, maxX + 3), y1 = min(h, maxY + 3)
+    let mw = x1 - x0, mh = y1 - y0
+    var cells = [Bool](repeating: false, count: mw * mh)
+    for y in y0..<y1 {
+      for x in x0..<x1 {
+        var hit = false
+        for yy in max(0, y - 2)...min(h - 1, y + 2) where !hit {
+          for xx in max(0, x - 2)...min(w - 1, x + 2) where inSpeck[yy * w + xx] { hit = true; break }
+        }
+        cells[(y - y0) * mw + (x - x0)] = hit
+      }
+    }
+    var whole = DustMask(x: x0, y: y0, width: mw, height: mh, cells: cells)
+    if let core {
+      // The core within the same box, or the box widened to hold it.
+      let ux0 = min(whole.x, core.x), uy0 = min(whole.y, core.y)
+      let ux1 = max(whole.x + whole.width, core.x + core.width), uy1 = max(whole.y + whole.height, core.y + core.height)
+      var union = [Bool](repeating: false, count: (ux1 - ux0) * (uy1 - uy0))
+      for m in [whole, core] {
+        for y in 0..<m.height { for x in 0..<m.width where m.cells[y * m.width + x] { union[(m.y + y - uy0) * (ux1 - ux0) + (m.x + x - ux0)] = true } }
+      }
+      whole = DustMask(x: ux0, y: uy0, width: ux1 - ux0, height: uy1 - uy0, cells: union)
+    }
+    return whole
   }
 }
 
