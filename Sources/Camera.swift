@@ -105,10 +105,16 @@ enum Sharpness {
   }
 }
 
-/// The camera on the copy stand, driven by a process of its own over Sony's Camera Remote SDK
-/// (`EpsonCameraHelper`, built when the SDK is on this Mac). Live view arrives as JPEG frames, and
-/// each picture taken arrives as a file, which `onCapture` hands on.
+/// The camera on the copy stand, driven by a process of its own: over the camera's own PTP (this
+/// app started again as `--sony-ptp-camera`, SonyPTPCamera.swift), or over Sony's Camera Remote
+/// SDK (`EpsonCameraHelper`, built when the SDK is on this Mac). Both speak the same lines. Live
+/// view arrives as JPEG frames, and each picture taken arrives as a file, which `onCapture` hands on.
 final class CameraController: ObservableObject {
+  /// How the camera is reached: its own PTP, which reaches the pixel shift, or Sony's SDK.
+  enum Link: String, CaseIterable {
+    case ptp, sdk
+    var name: String { self == .ptp ? "直连 PTP" : "Sony SDK" }
+  }
   enum Phase: Equatable { case missing, idle, connecting, connected, failed }
   @Published private(set) var phase: Phase
   @Published private(set) var model = ""
@@ -152,7 +158,10 @@ final class CameraController: ObservableObject {
   /// Whether the pixel shift is read and set over PTP; by default with the real camera only, not
   /// the simulated one nor a test's transport.
   var shiftOverPTP: Bool?
-  private var reachesShift: Bool { shiftOverPTP ?? (transport == nil && helper.lastPathComponent == "EpsonCameraHelper") }
+  /// With the SDK, the pixel shift is read and set by letting go of the camera for a moment.
+  private var reachesShift: Bool { link == .sdk && (shiftOverPTP ?? (transport == nil && helper.lastPathComponent == "EpsonCameraHelper")) }
+  /// Over the camera's own PTP, it is set and read in the connection itself.
+  var shiftDirect: Bool { link == .ptp }
   /// The pixel shift as read from the camera or set on it, for the app's choice to follow.
   var onShiftRead: ((Int) -> Void)?
   /// The count the camera is being set to, while the SDK has let go of it for that.
@@ -167,7 +176,12 @@ final class CameraController: ObservableObject {
   static var groupWait: TimeInterval = 8
   /// Lines the controller sends, instead of to the process: for tests.
   var transport: ((String) -> Void)?
-  let helper: URL
+  private(set) var link: Link
+  private(set) var helper: URL
+  /// What the process is started with: `--sony-ptp-camera` for the app itself.
+  private(set) var helperArguments = [String]()
+  /// Sony's SDK process, when the link is the SDK.
+  private let sdkHelper: URL
   let incoming: URL
   let liveFolder: URL
   private var process: Process?
@@ -182,12 +196,30 @@ final class CameraController: ObservableObject {
   init(
     helper: URL = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/EpsonCameraHelper"),
     folder: URL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-      .appendingPathComponent("local.epscan.mac").appendingPathComponent("Camera")
+      .appendingPathComponent("local.epscan.mac").appendingPathComponent("Camera"),
+    link: Link = .sdk
   ) {
+    sdkHelper = helper
+    self.link = link
     self.helper = helper
     incoming = folder.appendingPathComponent("Incoming")
     liveFolder = folder.appendingPathComponent("Live")
+    phase = .idle
+    use(link)
+  }
+  /// The link the next connection takes; not while connected, or while its process is still there.
+  func use(_ link: Link) {
+    guard process == nil, phase != .connected, phase != .connecting else { return }
+    self.link = link
+    if link == .ptp, let me = Bundle.main.executableURL {
+      helper = me
+      helperArguments = ["--sony-ptp-camera"]
+    } else {
+      helper = sdkHelper
+      helperArguments = []
+    }
     phase = FileManager.default.isExecutableFile(atPath: helper.path) ? .idle : .missing
+    if phase == .idle, message.hasPrefix("这份 App 构建时没有") { message = "" }
   }
   var available: Bool { transport != nil || FileManager.default.isExecutableFile(atPath: helper.path) }
   var connected: Bool { phase == .connected }
@@ -260,9 +292,9 @@ final class CameraController: ObservableObject {
 
   // MARK: Commands
 
-  /// Connects, the pictures coming here and with `keepOnCard` staying on the card too. Before the SDK
-  /// takes the camera, its pixel shift is set to `shift` over PTP, or, without one, read for the
-  /// app's choice to follow.
+  /// Connects, the pictures coming here and with `keepOnCard` staying on the card too. Its pixel
+  /// shift is set to `shift`, or, without one, read for the app's choice to follow: over PTP once
+  /// connected; with the SDK, over PTP before the SDK takes the camera.
   func connect(keepOnCard: Bool = false, shift: Int? = nil) {
     guard available else {
       phase = .missing
@@ -272,8 +304,19 @@ final class CameraController: ObservableObject {
     guard phase != .connecting, phase != .connected else { return }
     try? FileManager.default.createDirectory(at: incoming, withIntermediateDirectories: true)
     try? FileManager.default.createDirectory(at: liveFolder, withIntermediateDirectories: true)
+    if retiring, process != nil {
+      // The last PTP process still letting go of the camera: connected once it has gone.
+      connectAfterExit = (keepOnCard, shift)
+      phase = .connecting
+      message = "正在连接相机…"
+      return
+    }
     if transport == nil && process == nil { launch() }
     phase = .connecting
+    if shiftDirect {
+      shiftOnConnect = shift ?? 0
+      return sendConnect(keepOnCard)
+    }
     guard reachesShift else { return sendConnect(keepOnCard) }
     message = shift.map { "正在把相机设为\(Self.shiftName($0))…" } ?? "正在读相机的像素位移设置…"
     overPTP(shift) { [weak self] said in
@@ -289,6 +332,13 @@ final class CameraController: ObservableObject {
   /// the camera, it is set over PTP, and the SDK connects again, the live view back after some
   /// seconds. Not while a press's pictures are still coming.
   func switchPixelShift(to count: Int, keepOnCard: Bool) {
+    if shiftDirect {
+      // Over PTP, in the connection itself: the live view goes on.
+      guard connected, shiftSwitching == nil, !awaitingPicture else { return }
+      shiftSwitching = count
+      message = "正在把相机设为\(Self.shiftName(count))…"
+      return send(["cmd": "shift", "count": count])
+    }
     guard reachesShift, connected, shiftSwitching == nil, !awaitingPicture else { return }
     shiftSwitching = count
     switchOnDisconnect = (count, keepOnCard)
@@ -411,11 +461,20 @@ final class CameraController: ObservableObject {
     process = nil
   }
 
+  /// Over PTP: the pixel shift to set once connected (0 to read it), nil when nothing is to be done.
+  private var shiftOnConnect: Int?
+  /// The PTP process ends when it lets go of the camera (ptpcamerad keeps the USB for as long as it
+  /// lives): after it has said so, a connection waits for it to be gone.
+  private var retiring = false
+  private var connectAfterExit: (card: Bool, shift: Int?)?
+
   // MARK: The process
 
   private func launch() {
     let p = Process(), toHelper = Pipe(), fromHelper = Pipe()
+    retiring = false
     p.executableURL = helper
+    p.arguments = helperArguments
     p.currentDirectoryURL = incoming
     if let environment { p.environment = ProcessInfo.processInfo.environment.merging(environment) { $1 } }
     p.standardInput = toHelper
@@ -427,13 +486,29 @@ final class CameraController: ObservableObject {
     }
     p.terminationHandler = { [weak self] p in
       DispatchQueue.main.async {
-        guard let self else { return }
+        guard let self, self.process === p else { return }
         self.process = nil
         self.input = nil
         self.liveOn = false
         self.awaitingPicture = false
         self.shiftSwitching = nil
         self.switchOnDisconnect = nil
+        if self.link == .ptp, p.terminationStatus == 0 {
+          // It let go of the camera, as it does on a disconnect or a failed connection.
+          self.retiring = false
+          if let next = self.connectAfterExit {
+            self.connectAfterExit = nil
+            // A moment for ptpcamerad to let go of the USB.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+              if self.phase == .connecting { self.phase = .idle }
+              self.connect(keepOnCard: next.card, shift: next.shift)
+            }
+          } else if self.phase == .connected || self.phase == .connecting {
+            self.phase = .idle
+            self.message = "已断开"
+          }
+          return
+        }
         if self.phase != .idle {
           self.phase = .failed
           self.message = "相机进程已退出（\(p.terminationStatus)）"
@@ -491,15 +566,46 @@ final class CameraController: ObservableObject {
       shiftSwitching = nil
       refreshProperties()
       setLive(true)
+      if shiftDirect, let shift = shiftOnConnect {
+        shiftOnConnect = nil
+        if shift > 0 {
+          shiftSwitching = shift
+          send(["cmd": "shift", "count": shift])
+        } else {
+          send(["cmd": "shift"])
+        }
+      }
+    case "shift":
+      // Over PTP: what the pixel shift reads, after a switch asked for, or as changed on the camera.
+      let asked = shiftSwitching ?? (event["asked"] as? Int)
+      shiftSwitching = nil
+      guard let got = event["shots"] as? Int else {
+        let why = event["error"] as? String ?? "读不出相机的像素位移设置"
+        message = "像素位移：" + why + (asked == nil ? "" : "：请在相机菜单里设")
+        note(message)
+        break
+      }
+      onShiftRead?(got)
+      if let asked {
+        message = got == asked
+          ? "相机已设为\(Self.shiftName(got))"
+          : "相机没有改成\(Self.shiftName(asked))，读回来是\(Self.shiftName(got))：请在相机菜单里设"
+      } else if event["changed"] as? Bool == true {
+        message = "相机上改成了\(Self.shiftName(got))"
+      }
     case "disconnected":
       // The SDK's own word on the disconnect a switch asked for, after the helper's: the switch goes on.
       if shiftSwitching != nil, switchOnDisconnect == nil, phase == .connecting { break }
+      if link == .ptp {
+        retiring = true
+        shiftSwitching = nil
+      }
       phase = .idle
       focusLocked = false
       awaitingPicture = false
       liveOn = false
       live = nil
-      message = "已断开"
+      message = event["code"] as? String == "gone" ? "相机断开了（关机或拔了线？）" : "已断开"
       if let s = switchOnDisconnect {
         // The SDK has let go of the camera: its pixel shift set over PTP, and the SDK back.
         switchOnDisconnect = nil
@@ -526,6 +632,8 @@ final class CameraController: ObservableObject {
         phase = .failed
         shiftSwitching = nil
         shiftNote = nil
+        // The PTP process ends after a failed connection.
+        if link == .ptp { retiring = true }
       }
       // A camera not found or refused is most often held by a program open beside this one.
       if stage == "enum" || stage == "connect" {

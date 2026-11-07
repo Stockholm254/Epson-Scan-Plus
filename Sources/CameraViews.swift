@@ -184,7 +184,7 @@ struct CameraStage: View {
               Text("位移 16").tag(16)
             }.pickerStyle(.segmented).labelsHidden().frame(width: 190)
               .disabled(camera.shiftSwitching != nil || camera.awaitingPicture || !m.pendingShift.isEmpty)
-              .help("选了就由 App 把相机设好：打开或关上像素位移，张数 4 或 16。Sony 的 SDK 改不了这一项，App 先断开它，用相机自己的 PTP 设好再连上，取景停十来秒；没连着时，连接时设。连接时这里先跟着相机现在的设置。间隔在相机菜单里选最短。一次快门收到的一组合成一张：4 张时每个点的红、绿、蓝都是实测的，没有去马赛克的假色；16 张再加上半像素的位移，合成长宽各两倍的画面（A7R IV 约 2.45 亿像素，每组约 2 GB 原片加 1.5 GB 合成图）")
+              .help((camera.shiftDirect ? "选了就由 App 把相机设好：打开或关上像素位移，张数 4 或 16，连着时直接改，取景不停；" : "选了就由 App 把相机设好：打开或关上像素位移，张数 4 或 16。Sony 的 SDK 改不了这一项，App 先断开它，用相机自己的 PTP 设好再连上，取景停十来秒；") + "没连着时，连接时设。连接时这里先跟着相机现在的设置。间隔在相机菜单里选最短。一次快门收到的一组合成一张：4 张时每个点的红、绿、蓝都是实测的，没有去马赛克的假色；16 张再加上半像素的位移，合成长宽各两倍的画面（A7R IV 约 2.45 亿像素，每组约 2 GB 原片加 1.5 GB 合成图）")
             if m.pixelShiftCount == 16 {
               Toggle("超采样", isOn: $m.shiftSupersample).toggleStyle(.checkbox).font(.system(size: 11))
                 .help("超采样到传感器原生尺寸：颜色更干净、噪声略低、文件小四分之三；解析力和 4 张相同。不勾时合成长宽各两倍的画面（A7R IV 约 2.45 亿像素、1.5 GB）")
@@ -383,6 +383,7 @@ struct CameraPanel: View {
       HStack(spacing: 8) {
         StatusLED(lamp: camera.connected ? .ready : camera.phase == .connecting ? .busy : .fault, size: 7)
         Text(camera.connected ? camera.model : camera.phase == .missing ? "没有 SDK" : camera.phase == .connecting ? "连接中" : "未连接").readout(10)
+        if camera.connected { Text(camera.link.name).font(.system(size: 10)).foregroundStyle(.tertiary) }
         Spacer()
         if let battery = camera.properties["BatteryRemain"] { Text("电量 \(battery.text)").font(.system(size: 11)).foregroundStyle(.secondary) }
       }
@@ -400,6 +401,16 @@ struct CameraPanel: View {
             Label("连接相机", systemImage: "cable.connector")
           }.buttonStyle(KeyStyle(prominent: true)).disabled(camera.phase == .missing || camera.phase == .connecting)
         }
+      }
+      // How the camera is reached, chosen while it is not connected.
+      if !camera.connected {
+        HStack {
+          Text("连接方式").font(.system(size: 12)).foregroundStyle(.secondary)
+          Spacer()
+          Picker("连接方式", selection: Binding(get: { camera.link }, set: { m.useCameraLink($0) })) {
+            ForEach(CameraController.Link.allCases, id: \.self) { Text($0.name).tag($0) }
+          }.labelsHidden().fixedSize().font(.system(size: 11)).disabled(camera.phase == .connecting)
+        }.help("直连 PTP：App 直接讲相机自己的协议，和 Imaging Edge 一样，像素位移的开关和张数连着就能改，取景不停。Sony SDK：Sony 给第三方的开发包，改像素位移时要先断开它再连上。直连有问题时可以换回 SDK。")
       }
       // Where the pictures go, one choice before and while connected; never the card alone, or none would come here.
       HStack {
@@ -456,7 +467,7 @@ struct CameraPanel: View {
         Divider()
         Text("文件").font(.system(size: 12, weight: .medium))
         setting("格式", "FileType")
-        Text("RAW 请在相机菜单里设为「无压缩」，SDK 改不了这一项。")
+        Text("RAW 请在相机菜单里设为「无压缩」，远程改不了这一项。")
           .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       }
       Divider()
@@ -464,9 +475,9 @@ struct CameraPanel: View {
       HStack {
         Text("像素位移").font(.system(size: 12, weight: .medium))
         Spacer()
-        InfoButton(text: "在下方取景区右侧选单张、4 张或 16 张，App 就把相机设好：打开或关上像素位移，设好张数。Sony 的 SDK 改不了这一项，App 先断开它，用相机自己的 PTP 设好，再连上，取景停十来秒。连接时那里先跟着相机现在的设置。间隔请在相机菜单里选最短，RAW 设为无压缩。按一次快门，相机拍一组，App 把这一组放进同一个文件夹，合成一张再转换。\n\n4 张：每张传感器移一个像素，合成的每个点红、绿、蓝都是实测的，没有去马赛克的假色，颗粒和细边缘的颜色更干净；像素数不变。\n\n16 张：4 组这样的 4 张，组与组之间再移半个像素，合成长宽各两倍的画面。半像素位移由 App 从画面上实测（相机给的常差 0.1–0.2 像素），每个点取离它最近的那一组。A7R IV 一组约 19 秒、原片约 2 GB，合成图约 1.5 GB，合成时要约 3 GB 内存。能多出的细节取决于镜头：在 Vlad's 测试标靶上，16 张比 4 张只多分辨了一个元素。\n\n勾选「超采样」时，16 张合成后再缩回传感器原生尺寸（Lanczos-3）：颜色比 4 张更干净（标靶上假色少约 30%）、噪声略低（暗处低 10–15%）、文件小四分之三；解析力和 4 张相同。\n\n一组之间胶片、相机或灯不能动：两次绿色相差超过 4%（正常约 1.5%），或 16 张的半像素位移偏离超过 0.25 像素时，App 会提醒重拍。")
+        InfoButton(text: "在下方取景区右侧选单张、4 张或 16 张，App 就把相机设好：打开或关上像素位移，设好张数。直连 PTP 时在连接里直接改，取景不停；用 Sony SDK 时它改不了这一项，App 先断开它，用相机自己的 PTP 设好，再连上，取景停十来秒。在相机菜单里改了，那里也跟着变。连接时那里先跟着相机现在的设置。间隔请在相机菜单里选最短，RAW 设为无压缩。按一次快门，相机拍一组，App 把这一组放进同一个文件夹，合成一张再转换。\n\n4 张：每张传感器移一个像素，合成的每个点红、绿、蓝都是实测的，没有去马赛克的假色，颗粒和细边缘的颜色更干净；像素数不变。\n\n16 张：4 组这样的 4 张，组与组之间再移半个像素，合成长宽各两倍的画面。半像素位移由 App 从画面上实测（相机给的常差 0.1–0.2 像素），每个点取离它最近的那一组。A7R IV 一组约 19 秒、原片约 2 GB，合成图约 1.5 GB，合成时要约 3 GB 内存。能多出的细节取决于镜头：在 Vlad's 测试标靶上，16 张比 4 张只多分辨了一个元素。\n\n勾选「超采样」时，16 张合成后再缩回传感器原生尺寸（Lanczos-3）：颜色比 4 张更干净（标靶上假色少约 30%）、噪声略低（暗处低 10–15%）、文件小四分之三；解析力和 4 张相同。\n\n一组之间胶片、相机或灯不能动：两次绿色相差超过 4%（正常约 1.5%），或 16 张的半像素位移偏离超过 0.25 像素时，App 会提醒重拍。")
       }
-      Text("下方取景区右侧选张数，App 会把相机设好（取景停十来秒）。间隔在相机菜单里选最短，RAW 设为无压缩。")
+      Text("下方取景区右侧选张数，App 会把相机设好" + (camera.shiftDirect ? "。" : "（取景停十来秒）。") + "间隔在相机菜单里选最短，RAW 设为无压缩。")
         .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       Divider()
       HStack {

@@ -105,7 +105,7 @@ final class AppModel: ObservableObject {
   @Published var rollSource: RollSource?
   /// The camera on the copy stand.
   lazy var camera: CameraController = {
-    let c = CameraController()
+    let c = CameraController(link: preferences.cameraLink)
     c.onCapture = { [weak self] url in self?.receiveCapture(url) }
     c.onShotEnded = { [weak self] _ in self?.releaseShift() }
     c.onShiftRead = { [weak self] count in self?.pixelShiftCount = count }
@@ -114,6 +114,12 @@ final class AppModel: ObservableObject {
   /// Connects the camera, the pictures coming here and, as chosen, a copy staying on its card; its
   /// pixel shift set as chosen here, or, with nothing chosen yet, read for the choice to follow.
   func connectCamera() { camera.connect(keepOnCard: preferences.keepOnCard, shift: pixelShiftChosen ? pixelShiftCount : nil) }
+  /// How the camera is reached from the next connection on, remembered.
+  func useCameraLink(_ link: CameraController.Link) {
+    preferences.cameraLink = link
+    camera.use(link)
+    objectWillChange.send()
+  }
   /// Where the camera's pictures go: always here, and with `on` a copy on the memory card too.
   /// Remembered for the next connection; while connected the camera is set at once.
   func keepOnCard(_ on: Bool) {

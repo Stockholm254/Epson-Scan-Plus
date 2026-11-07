@@ -427,7 +427,7 @@ extension ContentView {
   var cameraTab: some View {
     VStack(alignment: .leading, spacing: 14) {
       titled("A7R IV 翻拍", symbol: "camera", info:
-        "联机用 Sony Camera Remote SDK。A7R IV 只能用 USB 连接，相机的 USB 连接方式选「PC 遥控」。\n\nSDK 能取实时取景（JPEG，最宽 1024 像素）、半按快门自动对焦、设对焦点、手动对焦按 ±7 档步进、对焦放大，并把拍好的 RAW 直接传到电脑。像素位移、电子快门和 RAW 的压缩方式不能远程设置，要在相机上设好。")
+        "联机默认直连相机自己的 PTP（和 Imaging Edge 一样），也可以在下面改用 Sony Camera Remote SDK。A7R IV 只能用 USB 连接，相机的 USB 连接方式选「PC 遥控」。\n\n两种都能取实时取景、半按快门自动对焦、设对焦点、手动对焦步进、对焦放大，并把拍好的 RAW 直接传到电脑。直连时像素位移的开关和张数在连接里直接改，取景不停；用 SDK 时要先断开，用 PTP 改好再连上。电子快门、像素位移的间隔和 RAW 的压缩方式要在相机上设好。")
       CameraPanel(m: m, camera: m.camera)
     }
   }

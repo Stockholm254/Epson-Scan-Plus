@@ -129,6 +129,9 @@ final class Preferences: ObservableObject {
   static let leftWidths = 210.0...380.0, rightWidths = 240.0...420.0
   /// The camera keeps a copy of each picture on its memory card as well as sending it here.
   @Published var keepOnCard: Bool { didSet { defaults?.set(keepOnCard, forKey: "cameraKeepOnCard") } }
+  /// How the camera is reached: over its own PTP (the default, which reaches the pixel shift
+  /// without letting go of the camera), or over Sony's SDK.
+  @Published var cameraLink: CameraController.Link { didSet { defaults?.set(cameraLink.rawValue, forKey: "cameraLink") } }
   /// Imported and calibrated film presets, offered next to the built-in ones.
   @Published var customProfiles: [FilmProfile] {
     didSet { defaults?.set(try? JSONEncoder().encode(customProfiles), forKey: "customProfiles") }
@@ -203,6 +206,7 @@ final class Preferences: ObservableObject {
     rowScanning = defaults?.object(forKey: "rowScanning") as? Bool ?? true
     scanReversal = defaults?.bool(forKey: "scanReversal") ?? false
     keepOnCard = defaults?.bool(forKey: "cameraKeepOnCard") ?? false
+    cameraLink = defaults?.string(forKey: "cameraLink").flatMap(CameraController.Link.init(rawValue:)) ?? .ptp
     mcpEnabled = defaults?.bool(forKey: "mcpEnabled") ?? false
     leakJob = defaults?.string(forKey: "leakJob")
     autoUpdate = defaults?.object(forKey: "autoUpdate") as? Bool ?? true

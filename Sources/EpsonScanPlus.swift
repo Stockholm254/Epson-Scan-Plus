@@ -11,6 +11,8 @@ struct EpsonScanPlusApp: App {
     if args.contains("--mcp") { MCPBridge.run() }
     // The camera's pixel shift read or set over PTP, in a process of its own (SonyPTP.inChild).
     if args.contains("--sony-ptp") { SonyPTP.runChild() }
+    // The camera driven over its own PTP instead of Sony's SDK, in a process of its own.
+    if args.contains("--sony-ptp-camera") { SonyPTPCamera.runProcess() }
     if args.contains("--self-test") { SmokeTests.run() }
     if args.contains("--sane-hardware-test") { HardwareTest.run() }
     if args.contains("--export-project") { ExportCommand.run() }
