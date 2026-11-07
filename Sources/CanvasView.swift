@@ -144,7 +144,7 @@ final class FilmCanvasView: NSView {
     case .base: return Self.filledDropper
     case .neutral, .calibrate: return Self.dropper
     case .highlight: return Self.halfDropper
-    case .it8: return .crosshair
+    case .it8, .dust: return .crosshair
     default: return nil
     }
   }
@@ -484,6 +484,12 @@ final class FilmCanvasView: NSView {
       let marks = model.neutralMarks(on: frame)
       if !marks.isEmpty { drawNeutralMarks(marks, frame: frame, aspect: model.shownAspect(frame)) }
     }
+    // The frame's dust, while it is shown or being marked.
+    if model.singleView, let frame = model.selected, let dust = frame.dust, !dust.spots.isEmpty,
+      model.showDust || model.tool == .dust
+    {
+      drawDust(dust, frame: frame, aspect: model.shownAspect(frame))
+    }
     drawLens()
   }
   /// Puts the glass bubble on the corner under `p`, as it is dragged.
@@ -678,6 +684,37 @@ final class FilmCanvasView: NSView {
       NSColor.white.withAlphaComponent(0.9).setFill()
       NSBezierPath(roundedRect: label, xRadius: 4, yRadius: 4).fill()
       text.draw(at: CGPoint(x: label.minX + 5, y: label.minY + 2), withAttributes: [.font: font, .foregroundColor: NSColor.black])
+    }
+    NSGraphicsContext.restoreGraphicsState()
+  }
+  /// A ring round each spot of dust, through the frame's crop, turn and mirror: solid where it is
+  /// filled, dotted where it is kept, or all dotted while the frame's dust is left in.
+  private func drawDust(_ dust: DustState, frame: FilmFrame, aspect: Double?) {
+    let r = imageRect, crop = frame.rect
+    NSGraphicsContext.saveGraphicsState()
+    NSBezierPath(rect: r).addClip()
+    for spot in dust.spots {
+      let b = spot.box
+      let corners = [(b.x, b.y), (b.x + b.width, b.y), (b.x, b.y + b.height), (b.x + b.width, b.y + b.height)].map { x, y in
+        let q = CGPoint(x: (x - crop.x) / max(1e-6, crop.width), y: (y - crop.y) / max(1e-6, crop.height))
+        let d = ImageGeometry.display(q, settings: frame.adjustments, aspect: aspect)
+        return CGPoint(x: r.minX + d.x * r.width, y: r.minY + d.y * r.height)
+      }
+      let xs = corners.map(\.x), ys = corners.map(\.y)
+      guard let minX = xs.min(), let maxX = xs.max(), let minY = ys.min(), let maxY = ys.max(),
+        maxX >= r.minX, minX <= r.maxX, maxY >= r.minY, minY <= r.maxY
+      else { continue }
+      let c = CGPoint(x: (minX + maxX) / 2, y: (minY + maxY) / 2)
+      let radius = max(6, max(maxX - minX, maxY - minY) / 2 + 4)
+      let ring = NSBezierPath(ovalIn: CGRect(x: c.x - radius, y: c.y - radius, width: 2 * radius, height: 2 * radius))
+      let filled = dust.on && spot.filled
+      ring.lineWidth = 3
+      NSColor.black.withAlphaComponent(0.5).setStroke()
+      ring.stroke()
+      ring.lineWidth = 1.5
+      if !filled { ring.setLineDash([3, 3], count: 2, phase: 0) }
+      (filled ? NSColor.systemGreen : NSColor.white).setStroke()
+      ring.stroke()
     }
     NSGraphicsContext.restoreGraphicsState()
   }

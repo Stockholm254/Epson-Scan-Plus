@@ -507,6 +507,8 @@ struct ContentView: View {
         Divider()
         colourSection
         Divider()
+        DustSection(m: m)
+        Divider()
         curvesSection
         Divider()
         // The scanner's measured MTF is no lens's: on the copy stand only where it was set, to be taken off.

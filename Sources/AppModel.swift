@@ -354,6 +354,10 @@ final class AppModel: ObservableObject {
     case .calibrate:
       return "点选中性灰：灰卡、白墙、水泥等均匀处 · 已取 \(calibrationPoints.count) 个"
         + (calibrationPoints.isEmpty ? "" : " · ⌫ 撤回上一点") + " · Esc 结束"
+    case .dust:
+      return singleView
+        ? "点一处灰尘去掉它；点已标出的圆圈，去掉的留下、留下的去掉 · Esc 退出"
+        : "进入单张后点灰尘 · Esc 退出"
     case .it8:
       let n = it8Marks.count, undo = n > 0 ? " · ⌫ 撤回上一点" : ""
       guard n < IT8Layout.marks.count else { return "6 个点已就位 · 检查色块位置后点「生成标定」" + undo + " · Esc 退出" }
@@ -387,7 +391,7 @@ final class AppModel: ObservableObject {
     if value != tool { editRegionLock = nil }
     if value != .crop { levelling = false }
     tool = value
-    if value == .neutral || value == .highlight || value == .calibrate || value == .it8 { singleView = selected != nil }
+    if value == .neutral || value == .highlight || value == .calibrate || value == .it8 || value == .dust { singleView = selected != nil }
     if value == .base || value == .crop { fitView() }
     focusCanvas()
     refresh()
@@ -906,7 +910,7 @@ final class AppModel: ObservableObject {
   private var lastEdit: (key: String, at: Date)?
   private var editState: EditState { EditState(frames: frames, selectedID: selectedID, profile: profile, filmName: filmName) }
   /// Called before an edit. Repeats of one control within a second, a fader being dragged, are one step.
-  private func recordEdit(_ name: String, key: String? = nil, filmName shown: String? = nil) {
+  func recordEdit(_ name: String, key: String? = nil, filmName shown: String? = nil) {
     guard let undoManager, !undoManager.isUndoing, !undoManager.isRedoing else { return }
     let key = key ?? name, now = Date()
     defer { lastEdit = (key, now) }
@@ -942,6 +946,7 @@ final class AppModel: ObservableObject {
       if f.flatField != old.flatField { f.edgeBase = nil }
       f.crosstalk = old.crosstalk
       f.flatField = old.flatField
+      f.dust = old.dust
       f.adjustments = old.adjustments
       (f.adjustments.rollBase, f.adjustments.rollSlopes) = (rollBase, rollSlopes)
       return f
@@ -1033,6 +1038,10 @@ final class AppModel: ObservableObject {
   }
   /// Shows on the single frame where its film base was read at its edges.
   @Published var showBaseAreas = false
+  /// The frame's dust marked on the single view: filled spots ringed, kept ones dotted.
+  @Published var showDust = true
+  /// What the dust search is doing, while it runs.
+  @Published var dustSearch: String?
   /// The picture's file, whole and small, as it reads for the edge base: crosstalk taken out as
   /// the frame has it.
   private func edgeSource(for frame: FilmFrame, maxDimension: Int = 800) throws -> CGImage? {
@@ -1557,8 +1566,12 @@ final class AppModel: ObservableObject {
   /// `maxDimension` overrides the preview size, for statistics that need less. `raw` leaves the
   /// scanner's stray light in, for measuring it.
   func source(for frame: FilmFrame, full: Bool = false, maxDimension: Int? = nil, raw: Bool = false) throws -> CGImage {
-    let image = try uncorrectedSource(for: frame, full: full, maxDimension: maxDimension)
+    let image = dustFilled(try uncorrectedSource(for: frame, full: full, maxDimension: maxDimension), frame)
     return raw ? image : corrected(image, frame, scan: Self.readsScan(frame))
+  }
+  /// The frame's pixels as read, its dust not filled: what dust is looked for on.
+  func dustFreeSource(for frame: FilmFrame, full: Bool, maxDimension: Int? = nil) throws -> CGImage {
+    try uncorrectedSource(for: frame, full: full, maxDimension: maxDimension)
   }
   /// Whether a frame's pixels come from its own scan, rather than the preview or an imported file.
   static func readsScan(_ frame: FilmFrame) -> Bool { frame.sourcePath == nil && frame.scanPath != nil && frame.hasFullResolution }
@@ -1774,7 +1787,7 @@ final class AppModel: ObservableObject {
     guard let analysis = toneAnalysis else { return DispatchQueue.main.async { completion(nil) } }
     let negative = showNegative || tool == .base, p = profile, key = loupeDetailKey(frame, single: true)
     renderQueue.async {
-      let source = [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", frame.sourcePath ?? ""].joined(separator: "|")
+      let source = [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", frame.sourcePath ?? "", frame.dust?.signature ?? ""].joined(separator: "|")
       if self.detailSource?.key != source {
         self.detailSource = nil
         self.detailSource = (try? self.source(for: frame, full: true)).map { (source, $0) }
@@ -1798,7 +1811,7 @@ final class AppModel: ObservableObject {
     encoder.outputFormatting = .sortedKeys
     let settings = (try? encoder.encode(frame.adjustments)).map { $0.base64EncodedString() } ?? ""
     let shown = (single ? "single " : "table ") + "\(!showNegative)"
-    return [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", shown, profile.id, settings]
+    return [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", shown, profile.id, settings, frame.dust?.signature ?? ""]
       .joined(separator: "|")
   }
   /// How far the picture's render has got, while it runs: the share done and the step under way.
@@ -2175,6 +2188,10 @@ final class AppModel: ObservableObject {
   }
   func sample(_ point: CGPoint) {
     guard let i = selectedIndex, !rendering else { return }
+    if tool == .dust {
+      if singleView { markDust(at: point) }
+      return
+    }
     if tool == .it8 {
       guard singleView, it8Marks.count < IT8Layout.marks.count else { return }
       it8Marks.append(ImageGeometry.raw(point, settings: frames[i].adjustments, aspect: shownAspect(frames[i])))
