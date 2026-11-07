@@ -40,7 +40,7 @@
 ## 功能
 
 - **三个模块和本地库**：顶栏中间的分段按钮在 ① 采集（V850 扫描、A7R IV 翻拍；导入文件用工具栏的「导入」或 ⌘O）、② 去色罩、③ 去漏光之间切换。扫描、翻拍和导入的每一卷都自动放进库里；库是一个档案柜，每卷是一页底片保存页，打开过的卷显示正片，其余显示负片原样。见下文[库](#库)。
-- **A7R IV 联机翻拍**：通过 Sony Camera Remote SDK 拍摄，实时取景和对焦检查，读出无压缩 RAW；RGB 光源翻拍时先去串色、再除以平场；像素位移（4 张或 16 张，App 从电脑把相机设好）一次快门收成一组，合成一张再转换。见下文[构建](#构建)里的 SDK 说明。
+- **A7R IV 联机翻拍**：直连相机自己的 PTP（也可以改用 Sony Camera Remote SDK）拍摄，实时取景和对焦检查，读出无压缩 RAW；RGB 光源翻拍时先去串色、再除以平场；像素位移（4 张或 16 张，App 连着就把相机设好，取景不停）一次快门收成一组，合成一张再转换。
 - **48-bit 采集**：内置独立的 SANE epson2 采集进程，绕过 ICA 驱动的 24-bit 限制；线性 RGB16，扫描仪不做除尘、锐化或自动调色。见[扫描仪接口](doc/scanner.md)。
 - **整幅预览**：600 dpi（约 80 秒）或 150 dpi（约 50 秒），自动识别 135 和 120 画面，可手动调整或补画。
 - **反转片**：① 采集 · 扫描仪的「胶片」选「反转片（正片）」，扫幻灯片和正片条：按透光的地方识别画面，读数直接作画面，不去色罩、不用通道斜率，默认保留片子本来的颜色。见[扫描仪接口](doc/scanner.md#反转片)。
@@ -55,7 +55,7 @@
 
 - Apple Silicon Mac，macOS 26 或更新。
 - 扫描：Epson Perfection V800 / V850（USB `04b8:0151`，实测设备名 GT-X980）。
-- 翻拍（可选）：Sony A7R IV，USB 连接；构建时要有 Sony Camera Remote SDK，见[构建](#构建)。
+- 翻拍（可选）：Sony A7R IV，USB 连接；直连不需要别的，要改用 Sony 的 SDK 时构建要有它，见[构建](#构建)。
 - App 为本地临时签名，未经 Apple 公证。
 
 ## 安装与更新
@@ -208,10 +208,10 @@ bash build.sh
 
 - **工具**：只需 Xcode Command Line Tools，不需要 Metal 工具链（图像内核在 App 运行时编译），也不依赖第三方 Swift 包。
 - **液态玻璃**：用 Xcode（macOS 26 SDK）构建时，用的是 SwiftUI 的液态玻璃：会流动、会融合、按下会回弹；用 Command Line Tools 构建的是运行时取用的静态玻璃。
-- **翻拍要用 Sony Camera Remote SDK**：它不在这个仓库里，受 Sony 的许可约束。
+- **Sony Camera Remote SDK 可选**：翻拍默认直连相机自己的 PTP，不需要它；「连接方式」里的 Sony SDK 才要。它不在这个仓库里，受 Sony 的许可约束。
   - 头文件放在 `../Sony-CrSDK/include`，`libCr_Core.dylib` 和 `CrAdapter/` 放在 `../Sony-CrSDK/lib`，或者用 `EPSON_SCAN_PLUS_CRSDK` 指定位置。
   - 构建时它会编进相机进程，SDK 的库放进 App 的 `Contents/Frameworks`。
-  - 没有 SDK 时照常构建，只是翻拍面板会提示缺少 SDK。
+  - 没有 SDK 时照常构建，翻拍照样直连，只是选 Sony SDK 时会提示缺少它。
 - **图标**：源文件是 `Icon/AppIcon.icon`，编译好的图标已经提交，构建时不需要 Xcode；改图标见[构建与测试](doc/building-and-testing.md#图标)。
 - **更多**：自检、扫描仪实测和命令行导出见[构建与测试](doc/building-and-testing.md)。
 
