@@ -224,6 +224,19 @@ struct ShotFailure: Error { let message: String }
 enum Picture {
   /// The window as the window server draws it, without its shadow.
   static func capture(_ window: NSWindow, work: URL) throws -> CGImage {
+    // A sheet is drawn inside its window (macOS 27): `screencapture -l` of the sheet gives the
+    // whole window, so the sheet is cut from the window's picture where it lies.
+    if let parent = window.sheetParent {
+      let whole = try capture(parent, work: work)
+      let k = parent.backingScaleFactor, f = window.frame, p = parent.frame
+      // Screen points, from the bottom left, to the picture's pixels, from the top left.
+      let rect = CGRect(x: (f.minX - p.minX) * k, y: (p.maxY - f.maxY) * k, width: f.width * k, height: f.height * k)
+        .integral.intersection(CGRect(x: 0, y: 0, width: whole.width, height: whole.height))
+      guard rect.width >= f.width * k - 4, let sheet = whole.cropping(to: rect) else {
+        throw ShotFailure(message: "截不到面板：\(Int(f.width))×\(Int(f.height)) pt 的面板不在窗口的截图里。")
+      }
+      return sheet
+    }
     let url = work.appendingPathComponent("window-\(window.windowNumber)-\(UUID().uuidString).png")
     let task = Process()
     task.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
