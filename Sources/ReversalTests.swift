@@ -194,7 +194,7 @@ enum ReversalTests {
     files.resetAdjustments()
     let stillSlide = files.frames[0].adjustments.isSlide && !files.frames[0].adjustments.autoWhiteBalance
     files.setNeutral(RGB(r: 0.2, g: 0.2, b: 0.2))
-    files.recalculateWhiteBalance()
+    files.clearBalanceSamples()
     let ownColour = !files.frames[0].adjustments.autoWhiteBalance && files.frames[0].adjustments.neutralSample == nil
     // The switch, the exposure, the reset, the grey and the recalculation.
     for _ in 0..<5 { fileEdits.undo() }

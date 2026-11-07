@@ -458,15 +458,19 @@ final class AppModel: ObservableObject {
     }
     commitSingleCrop(r)
   }
-  func recalculateWhiteBalance() {
-    change("重算白平衡") {
+  /// The neutral and highlight points (and an old version's neutral) let go, the white balance
+  /// back to the app's: automatic for a negative, a slide's own colour for a slide. Nothing is
+  /// worked out anew, the automatic balance always follows the frame; warmth, tint and the base
+  /// stay.
+  func clearBalanceSamples() {
+    change("清除取样") {
       // A slide goes back to its own colour; a negative to the scene's.
       $0.autoWhiteBalance = !$0.isSlide
       $0.manualBalance = nil
       $0.neutralSample = nil
       $0.highlightSample = nil
     }
-    status = settings.isSlide ? "已重算白平衡 · 保留反转片本来的颜色" : "已重算白平衡 · 独立校正通道亮暗范围"
+    status = settings.isSlide ? "已清除取样 · 回到反转片本来的颜色" : "已清除取样 · 回到自动白平衡"
   }
   func adjustBase(_ channel: Int, value: Double) {
     change("片基微调") {
@@ -2423,7 +2427,7 @@ final class AppModel: ObservableObject {
       $0.neutralSample = nil
       $0.autoWhiteBalance = false
     }
-    status = "已取片基 · 自动白平衡已关闭以保留取样，可按需重算"
+    status = "已取片基 · 自动白平衡已关闭以保留取样；要回到自动，打开「自动」"
     updateThumbnails()
   }
   /// Auto white balance on a reading of something that should be grey: the grey sets the

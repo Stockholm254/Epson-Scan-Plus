@@ -714,7 +714,7 @@ struct ContentView: View {
   }
   /// White balance: automatic or by hand, the roll as one, and the points picked on the frame.
   var balanceSection: some View {
-    PanelSection("白平衡", key: "balance", info: "自动白平衡按画面估计，忽略外缘 5%（不改变导出范围）。用本机或翻拍标定的预设时不按画面估计，按标定时记下的中性配平，开不开「自动」都一样；这个中性是在标定时的光下定的（比如阳光），阴天、树荫、室内的照片会带上光的颜色，用「中性灰」或冷暖、绿 / 洋红调。\n\n「阴影冷暖」只动暗部，越亮作用越小，阳光下的灰不变：晴天的阴影由蓝天照亮，本来就偏蓝，往右拨把它暖回来。\n\n「中性灰」用滴管点画面中应为灰色的地方，按这一点自动白平衡（「自动」保持开着）。「高光」（Dmax）点负片上最密、正片里应为纯白的地方，比如阳光下的白墙或高光反射：各通道从暗部（标定预设从标定的中性，取过中性灰时从那一点）拉到这一点，它在正片里是白色。两个滴管也在画面上方的工具条里（N、W）。「重算」放弃取样点，按画面重新估计，标定预设回到标定的中性。\n\n反转片：片子本来的颜色就是画面，默认不自动白平衡，透过片子最亮处的光就是白。打开「自动」时每个通道各自从最暗拉到最亮，适合褪色、偏色的片子。「中性灰」把那一点配成灰，「高光」把那一点配成白，两个都取时各通道同时经过这两点。「重算」回到片子本来的颜色。") {
+    PanelSection("白平衡", key: "balance", info: "自动白平衡按画面估计，忽略外缘 5%（不改变导出范围）。用本机或翻拍标定的预设时不按画面估计，按标定时记下的中性配平，开不开「自动」都一样；这个中性是在标定时的光下定的（比如阳光），阴天、树荫、室内的照片会带上光的颜色，用「中性灰」或冷暖、绿 / 洋红调。\n\n「阴影冷暖」只动暗部，越亮作用越小，阳光下的灰不变：晴天的阴影由蓝天照亮，本来就偏蓝，往右拨把它暖回来。\n\n「中性灰」用滴管点画面中应为灰色的地方，按这一点自动白平衡（「自动」保持开着）。「高光」（Dmax）点负片上最密、正片里应为纯白的地方，比如阳光下的白墙或高光反射：各通道从暗部（标定预设从标定的中性，取过中性灰时从那一点）拉到这一点，它在正片里是白色。两个滴管也在画面上方的工具条里（N、W）。取过点以后，两个滴管下面出现「清除取样」：放弃这两个取样点，打开「自动」，按画面估计，标定预设回到标定的中性；冷暖、绿 / 洋红和片基不动。\n\n反转片：片子本来的颜色就是画面，默认不自动白平衡，透过片子最亮处的光就是白。打开「自动」时每个通道各自从最暗拉到最亮，适合褪色、偏色的片子。「中性灰」把那一点配成灰，「高光」把那一点配成白，两个都取时各通道同时经过这两点。「清除取样」放弃取样点，回到片子本来的颜色。") {
       Toggle(
         "自动",
         isOn: Binding(
@@ -761,11 +761,14 @@ struct ContentView: View {
               Image(systemName: "xmark")
             }.help("清除高光点").accessibilityLabel("清除高光点")
           }
-          Spacer(minLength: 4)
-          Button("重算") { m.recalculateWhiteBalance() }.help("放弃取样点，按画面重新估计白平衡")
         }.font(.system(size: 11)).lineLimit(1)
+        // Under the pickers once there is a point to let go; the row above has no room for it.
+        if m.settings.neutralSample != nil || m.settings.highlightSample != nil || m.settings.manualBalance != nil {
+          Button("清除取样") { m.clearBalanceSamples() }.font(.system(size: 11))
+            .help(m.settings.isSlide ? "放弃取样点，回到片子本来的颜色" : "放弃中性灰和高光两个取样点，回到自动白平衡")
+        }
         if m.settings.manualBalance != nil {
-          Text("保留了旧版中性点；可点「重算」使用新版校正。").font(.system(size: 11)).foregroundStyle(accent)
+          Text("保留了旧版中性点；可点「清除取样」使用新版校正。").font(.system(size: 11)).foregroundStyle(accent)
             .fixedSize(horizontal: false, vertical: true)
         }
       }
