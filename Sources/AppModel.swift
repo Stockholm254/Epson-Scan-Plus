@@ -460,12 +460,13 @@ final class AppModel: ObservableObject {
   }
   func recalculateWhiteBalance() {
     change("重算白平衡") {
-      $0.autoWhiteBalance = true
+      // A slide goes back to its own colour; a negative to the scene's.
+      $0.autoWhiteBalance = !$0.isSlide
       $0.manualBalance = nil
       $0.neutralSample = nil
       $0.highlightSample = nil
     }
-    status = "已重算白平衡 · 独立校正通道亮暗范围"
+    status = settings.isSlide ? "已重算白平衡 · 保留反转片本来的颜色" : "已重算白平衡 · 独立校正通道亮暗范围"
   }
   func adjustBase(_ channel: Int, value: Double) {
     change("片基微调") {
@@ -651,8 +652,11 @@ final class AppModel: ObservableObject {
       detectFrames()
     } catch { errorText = error.localizedDescription }
   }
-  func detectFrames() {
+  /// Finds the frames on the overview, as negatives or, with `reversal`, slides (the roll's film
+  /// unless said: the next preview's choice when there are none yet).
+  func detectFrames(reversal: Bool? = nil) {
     guard let overview, !isWorking else { return }
+    let reversal = reversal ?? reversalRoll
     if frames.contains(where: { $0.hasFullResolution }) {
       let a = NSAlert()
       a.messageText = "重新识别画面？"
@@ -669,10 +673,11 @@ final class AppModel: ObservableObject {
     let importedPath = frames.first?.sourcePath
     let inputGamma = overviewInputGamma
     renderQueue.async {
-      var found = FrameDetector.detect(overview, physicalMM: size, format: format)
+      var found = FrameDetector.detect(overview, physicalMM: size, format: format, reversal: reversal)
       if importedPath == nil, let inputGamma {
         for i in found.indices { found[i].adjustments.inputGamma = inputGamma }
       }
+      if reversal { for i in found.indices { found[i].adjustments.setReversal(true) } }
       if let path = importedPath {
         let info = ImagePipeline.shared.info(URL(fileURLWithPath: path))
         for i in found.indices {
@@ -927,6 +932,8 @@ final class AppModel: ObservableObject {
       $0 = Adjustments()
       $0.inputGamma = kept.inputGamma
       $0.inputIsNegative = kept.inputIsNegative
+      // Which film it is, not a setting: a slide comes back a slide, its own colour kept.
+      if kept.isSlide { $0.setReversal(true) }
       $0.rotation = kept.rotation
       $0.flipHorizontal = kept.flipHorizontal
       $0.angle = kept.angle
@@ -1122,7 +1129,8 @@ final class AppModel: ObservableObject {
   /// Looks for the unexposed film at the edges of the roll's pictures not yet looked at, apart from
   /// the main thread, then converts with what it found. `wait` looks before returning.
   func measureEdgeBases(wait: Bool = false) {
-    let pending = frames.filter { $0.edgeBase == nil && isSinglePicture($0) }
+    // A slide has no mask to divide by: nothing at its edges to look for.
+    let pending = frames.filter { $0.edgeBase == nil && isSinglePicture($0) && $0.adjustments.inputIsNegative }
     guard !pending.isEmpty else { return }
     let project = sessionURL
     let apply = { (looks: [EdgeLook]) in
@@ -1161,6 +1169,30 @@ final class AppModel: ObservableObject {
   /// taken out; and whether they have.
   var hasSensorPictures: Bool { frames.contains { $0.sensorRead == true } }
   var crosstalkRemoved: Bool { frames.contains { $0.sensorRead == true && $0.crosstalk != nil } }
+  /// The roll is reversal film, slides; with no frames yet, what the next preview is set to.
+  var reversalRoll: Bool { frames.isEmpty ? preferences.scanReversal : frames.contains { $0.adjustments.isSlide } }
+  /// The roll read as slides, or as negatives again, as one edit; the next preview follows. Frames
+  /// only found on the overview, none scanned yet, are found again as this film shows them: a slide
+  /// is where light comes through, not where the orange mask is.
+  func setReversal(_ on: Bool) {
+    preferences.scanReversal = on
+    guard !isWorking else { return }
+    if overview != nil, frames.allSatisfy({ $0.sourcePath == nil && !$0.hasFullResolution }) {
+      detectFrames(reversal: on)
+      return
+    }
+    let affected = frames.indices.filter { frames[$0].adjustments.isSlide != on }
+    guard !affected.isEmpty else { return }
+    recordEdit(on ? "反转片" : "负片")
+    for i in affected { frames[i].adjustments.setReversal(on) }
+    status = (on ? "按反转片转换" : "按负片转换") + " · \(affected.count) 张"
+    updateRollBase()
+    updateRollSlopes()
+    refresh()
+    updateThumbnails()
+    saveProject()
+    measureEdgeBases()
+  }
   /// Takes the copy light's crosstalk out of the roll's pictures read from the sensor, or puts it
   /// back, as one edit; the roll's next pictures, and the next roll's, follow. What was read off
   /// the pictures (a base picked, the grey and the white picked, the roll's base) is read again
@@ -1397,7 +1429,8 @@ final class AppModel: ObservableObject {
     let token = rollSlopesRevision
     renderQueue.async {
       var result = [UUID: RGB?]()
-      for members in Self.rollGroups(snapshot, poolPictures: pool) {
+      // Slides have no layers' contrast to estimate: their dyes are the picture.
+      for members in Self.rollGroups(snapshot, poolPictures: pool).map({ $0.filter(\.adjustments.inputIsNegative) }) where !members.isEmpty {
         let inputs = members.compactMap { f in
           (try? self.source(for: f, maxDimension: 600)).map { (image: $0, settings: f.adjustments) }
         }

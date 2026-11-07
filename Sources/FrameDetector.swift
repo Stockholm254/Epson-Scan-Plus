@@ -2,9 +2,17 @@ import CoreGraphics
 import Foundation
 
 enum FrameDetector {
+  /// A slide's picture on a linear preview: lighter than the densest film (the black between the
+  /// frames of reversal film, a mount, the holder: on the V850 the holder reads under 0.003, two
+  /// steps in the 8 bits looked at here), and not bare light, which reads about 0.98 in every
+  /// channel where clear film lets through 0.8 at most.
+  static let slideLit = 0.006, bareLight = 0.88
+  static func slideLit(_ p: RGB) -> Bool { max(p.r, p.g, p.b) > slideLit && min(p.r, p.g, p.b) < bareLight }
   // Detect illuminated apertures, then split strips using physical film dimensions
   // and low-texture inter-frame gaps. Manual rectangles always remain editable.
-  static func detect(_ image: CGImage, physicalMM: CGSize, format: FilmFormat) -> [FilmFrame] {
+  // A negative's film is the orange mask, its gaps clear; reversal film (`reversal`) is the picture
+  // itself, of any colour, its gaps and rebate black: a frame is where light comes through.
+  static func detect(_ image: CGImage, physicalMM: CGSize, format: FilmFormat, reversal: Bool = false) -> [FilmFrame] {
     // Tuned on 150 dpi previews. Finer ones are averaged down to that first: at 600 dpi, grain
     // in the narrow gaps between frames moved frame edges by up to 9 mm from one scan to the next.
     let longest = Double(max(physicalMM.width, physicalMM.height))
@@ -16,9 +24,26 @@ enum FrameDetector {
     for y in 0..<h {
       for x in 0..<w {
         let p = raster.pixel(x, y)
-        mask[y * w + x] = p.r > 0.07 && p.r > p.b * 1.08 && p.g > 0.018 && p.r < 0.995
+        mask[y * w + x] = reversal ? slideLit(p) : p.r > 0.07 && p.r > p.b * 1.08 && p.g > 0.018 && p.r < 0.995
       }
     }
+    // The black round a slide's picture trimmed off: rows and columns at its edges that are mostly dark.
+    func lit(_ r: CGRect) -> CGRect {
+      var (x0, x1, y0, y1) = (max(0, Int(r.minX)), min(w, Int(r.maxX)) - 1, max(0, Int(r.minY)), min(h, Int(r.maxY)) - 1)
+      func share(_ xs: ClosedRange<Int>, _ ys: ClosedRange<Int>) -> Double {
+        var n = 0
+        for y in ys { for x in xs where mask[y * w + x] { n += 1 } }
+        return Double(n) / Double(max(1, xs.count * ys.count))
+      }
+      guard x0 < x1, y0 < y1 else { return r }
+      while x1 - x0 > 4, share(x0...x0, y0...y1) < 0.15 { x0 += 1 }
+      while x1 - x0 > 4, share(x1...x1, y0...y1) < 0.15 { x1 -= 1 }
+      while y1 - y0 > 4, share(x0...x1, y0...y0) < 0.15 { y0 += 1 }
+      while y1 - y0 > 4, share(x0...x1, y1...y1) < 0.15 { y1 -= 1 }
+      return CGRect(x: x0, y: y0, width: x1 - x0 + 1, height: y1 - y0 + 1)
+    }
+    // Where frames meet: a negative's gaps are clear film, light; reversal film's are black.
+    let gapLight = reversal ? -1.0 : 1.0
     var seen = [Bool](repeating: false, count: w * h)
     var boxes = [CGRect]()
     for start in 0..<mask.count where mask[start] && !seen[start] {
@@ -112,7 +137,7 @@ enum FrameDetector {
               for t in a...b {
                 let local = texture[max(0, t - 1)...min(length - 1, t + 1)].reduce(0, +) / 3
                 let s =
-                  local * 30 - brightness[t] * 0.04 + pow(
+                  local * 30 - gapLight * brightness[t] * 0.04 + pow(
                     (Double(t) - expected) / Double(radius), 2) * 0.006
                 if s < score {
                   score = s
@@ -147,7 +172,7 @@ enum FrameDetector {
       // cuts out of place; the end frames are one pitch long, not whatever the window leaves.
       func pitchCuts(_ n: Int) -> [Int]? {
         func gap(_ t: Int) -> Double {
-          texture[max(0, t - 1)...min(length - 1, t + 1)].reduce(0, +) / 3 * 30 - brightness[t] * 0.04
+          texture[max(0, t - 1)...min(length - 1, t + 1)].reduce(0, +) / 3 * 30 - gapLight * brightness[t] * 0.04
         }
         let scale = Double(pxPerMM)
         var best = (score: Double.infinity, first: 0, pitch: 0.0)
@@ -174,11 +199,11 @@ enum FrameDetector {
       let cuts = (is135 && count > 1 ? pitchCuts(count) : nil) ?? findCuts(count).cuts
       // Estimate the holder sides from the entire strip. A dark subject in one
       // frame must not move that frame's lateral aperture edge into the scene.
-      let stripInterior = FilmEdges.contentBounds(raster, within: box)
+      let stripInterior = reversal ? lit(box) : FilmEdges.contentBounds(raster, within: box)
       // Measure a shared film-base color at multiple predicted seams, rather than
       // treating the center of a potentially wide gap as the image boundary.
       var gapSamples = [RGB]()
-      for cut in cuts.dropFirst().dropLast() {
+      for cut in cuts.dropFirst().dropLast() where !reversal {
         let radius = max(3, Int(pxPerMM * 2))
         var best: FilmEdges.Line?
         for t in max(0, cut - radius)...min(length - 1, cut + radius) {
@@ -214,7 +239,7 @@ enum FrameDetector {
           : CGRect(
             x: box.minX + start, y: stripInterior.minY, width: end - start,
             height: stripInterior.height)
-        return FilmEdges.contentBounds(raster, within: candidate, base: gapBase, trimDark: false)
+        return reversal ? lit(candidate) : FilmEdges.contentBounds(raster, within: candidate, base: gapBase, trimDark: false)
       }
       // The end frames meet the holder window, not a gap, on their outer side, so nothing there
       // stops the trimming: keep them as long as the strip's other frames.

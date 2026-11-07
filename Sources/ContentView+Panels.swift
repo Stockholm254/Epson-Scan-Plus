@@ -44,14 +44,23 @@ extension ContentView {
   var scanTab: some View {
     VStack(alignment: .leading, spacing: 18) {
       titled("扫描仪", symbol: "scanner", info:
-        "原始文件是未反相的负片，保留橙色色罩，作存档和重新转换用；去色罩的正片默认在扫完后导出到 Exports（格式和位置在 ② 去色罩工具栏的「导出」→「导出设置…」）。无损压缩对扫描数据几乎无效（LZW 反而变大），因此不压缩。\n\n整幅预览用于识别画面、接触表和看片镜。600 dpi 时每张 35 mm 约 850 像素，未正式扫描的画面也能看清细节；300 dpi 并不比 600 dpi 快多少，所以不提供。\n\n扫描仪每次扫描都自己设定读数的高低：正式扫描的蓝色比预览高约 11%，比一张宽的窗口还每次不同。每张正式扫描到达时都和预览里同一块逐像素配准，换算到预览的标尺上，片基和整卷估计都在这个标尺上测，所以整卷一致。原始文件不改动。"
+        "原始文件是未反相的负片，保留橙色色罩，作存档和重新转换用；去色罩的正片默认在扫完后导出到 Exports（格式和位置在 ② 去色罩工具栏的「导出」→「导出设置…」）。无损压缩对扫描数据几乎无效（LZW 反而变大），因此不压缩。\n\n整幅预览用于识别画面、接触表和看片镜。600 dpi 时每张 35 mm 约 850 像素，未正式扫描的画面也能看清细节；300 dpi 并不比 600 dpi 快多少，所以不提供。\n\n扫描仪每次扫描都自己设定读数的高低：正式扫描的蓝色比预览高约 11%，比一张宽的窗口还每次不同。每张正式扫描到达时都和预览里同一块逐像素配准，换算到预览的标尺上，片基和整卷估计都在这个标尺上测，所以整卷一致。原始文件不改动。\n\n反转片（幻灯片、正片）：扫描仪的读法和负片一样，都是线性、不反相的透射读数；区别在转换。反转片的读数本身就是画面，不去色罩、不用通道斜率，按线性读数配平和定色阶，再编码到屏幕。默认保留片子本来的颜色（不自动白平衡）。识别画面时找透光的画面，片框、片夹和片间未曝光的黑边都不算。反转片的暗部很密（最大密度 3 以上），最暗处的噪点比负片多，这台扫描仪的接口没有多次曝光。"
           + (m.scanner.ready ? "\n\n" + m.scanner.captureNote : ""))
       HStack(alignment: .top, spacing: 8) {
         StatusLED(lamp: lampState.lamp, size: 7).padding(.top, 4)
         Text(m.scanner.name).font(.system(size: 12, weight: .medium)).fixedSize(horizontal: false, vertical: true)
       }
       VStack(alignment: .leading, spacing: 12) {
-        labeled("来源") { Text("透射光 · 保留负片").font(.system(size: 12)).foregroundStyle(.secondary) }
+        labeled("胶片") {
+          Picker("", selection: Binding(get: { m.reversalRoll }, set: { m.setReversal($0) })) {
+            Text("彩色负片").tag(false)
+            Text("反转片（正片）").tag(true)
+          }.labelsHidden().disabled(m.isWorking)
+            .help("这一卷是负片还是反转片；下一次预览沿用。还没正式扫描时切换会按新的片种重新识别画面")
+        }
+        labeled("来源") {
+          Text(m.reversalRoll ? "透射光 · 不反相" : "透射光 · 保留负片").font(.system(size: 12)).foregroundStyle(.secondary)
+        }
         labeled("分辨率") {
           Picker("", selection: $m.dpi) {
             ForEach(m.scanner.supportedDPI, id: \.self) { Text("\($0) dpi").tag($0) }
@@ -198,6 +207,7 @@ extension ContentView {
   /// Where this frame's channel slopes come from, in a line: the inspector's, with the whole of it
   /// (`conversionBasis`) behind its ⓘ.
   var conversionBasisShort: String {
+    if m.settings.isSlide { return "反转片 · 扫描的读数就是画面，不用通道斜率" }
     let p = m.profile.slopes
     if m.profile.offsets != nil {
       return String(format: "%@ · R %.3f · G %.3f · B %.3f", m.profile.id.contains("-copy-") ? "翻拍标定" : "本机标定", p.r, p.g, p.b)
@@ -237,6 +247,9 @@ extension ContentView {
   }
   /// Where this frame's channel slopes come from, in the order the pipeline uses them.
   var conversionBasis: String {
+    if m.settings.isSlide {
+      return "反转片：扫描的线性读数本身就是画面，不去色罩，也不用预设的通道斜率。按白平衡和色阶把线性的光配好，再按 Gamma 2.2 编码到屏幕，像在看片台上看片子。预设和胶片名只用来命名和记录。在 ① 采集 · 扫描仪的「胶片」里切回负片。"
+    }
     if m.profile.offsets != nil {
       let own = m.profile.slopes
       guard let s = m.settings.rollSlopes else { return "本机标定预设 · \(m.profile.publication)" }

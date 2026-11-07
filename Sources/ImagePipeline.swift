@@ -388,6 +388,10 @@ final class ImagePipeline {
   }
 
   func analyze(_ image: CGImage, settings: Adjustments, profile: FilmProfile) -> ToneAnalysis {
+    // A positive has no density to read: a slide its own light, a file already positive nothing.
+    if !settings.inputIsNegative {
+      return settings.isSlide ? slideAnalysis(image, settings: settings) : ToneAnalysis(base: .one, balance: .zero, low: 0, high: 1)
+    }
     let (base, density) = densities(image, settings: settings)
     var a = analyze(base: base, density: density, settings: settings, profile: profile)
     if let sampled = a.reach, let counted = pixelReach(image, settings: settings, profile: profile, analysis: a) {
@@ -654,7 +658,63 @@ final class ImagePipeline {
       CIVector(x: a.fade, y: a.fadeAtGrey),
       CIVector(x: s.shadowsAmount, y: s.highlightsAmount, z: s.pressHighlightsAmount, w: Self.highlightLightness),
       Self.shoulder(s, a),
+      s.inputIsNegative ? 1.0 : 1 / (s.isSlide ? Self.slideEncoding : max(s.inputGamma, 0.1)),
     ]
+  }
+  /// The power a slide's linear light is encoded with for the screen: its picture as it lies on a
+  /// light box, in the output's gamma.
+  static let slideEncoding = 2.2
+  /// A slide's white balance and ends, in its linear light, as the kernel's positive path takes them
+  /// (each channel's gain and black, then the ends; `Adjustments.reversal`). The slide's colour is
+  /// its picture, so with nothing picked and auto white balance off it stays as it is, the light
+  /// through clear film white. A grey picked comes out grey, each channel scaled; a white picked
+  /// comes out white, and with a grey too each channel runs through both. Auto white balance takes
+  /// each channel from its own darkest 0.5% to its own brightest, as a faded slide's dyes need.
+  /// Auto levels put the darkest 0.5% at black and the brightest 0.5% at white, one pair for every
+  /// channel, so the colour stays. The outer 5% is left out, as for a negative, and bare light.
+  func slideAnalysis(_ image: CGImage, settings s: Adjustments) -> ToneAnalysis {
+    let r = samples(image, maxDimension: 300), gamma = max(0.1, s.inputGamma)
+    func linear(_ v: Double) -> Double { pow(max(0, v), gamma) }
+    var light = [[Double](), [Double](), [Double]()]
+    let marginX = max(1, Int(ceil(Double(r.width) * 0.05))), marginY = max(1, Int(ceil(Double(r.height) * 0.05)))
+    for y in marginY..<max(marginY + 1, r.height - marginY) {
+      for x in marginX..<max(marginX + 1, r.width - marginX) {
+        let p = r.pixel(x, y).values
+        guard p.min()! < 0.995 else { continue }
+        for c in 0..<3 { light[c].append(linear(p[c])) }
+      }
+    }
+    var gain = [1.0, 1.0, 1.0], balance = [0.0, 0.0, 0.0]
+    let grey = s.neutralSample.map { $0.values.map { max(1e-6, linear($0)) } }
+    let top = s.highlightSample.map { $0.values.map { max(1e-6, linear($0)) } }
+    if let grey, let top {
+      // Grey to its own level under the white, the same in every channel; the white to 1.
+      let level = min(0.9, (0..<3).map { grey[$0] / top[$0] }.reduce(0, +) / 3)
+      for c in 0..<3 where top[c] > grey[c] {
+        gain[c] = (1 - level) / (top[c] - grey[c])
+        balance[c] = level - grey[c] * gain[c]
+      }
+    } else if let grey {
+      let mean = grey.reduce(0, +) / 3
+      gain = grey.map { mean / $0 }
+    } else if let manual = s.manualBalance {
+      gain = manual.values.map { pow(10, $0) }
+    } else if s.autoWhiteBalance, !light[0].isEmpty {
+      for c in 0..<3 {
+        let q = quantiles(light[c], [0.005, 0.995]), span = max(1e-4, q[1] - q[0])
+        (gain[c], balance[c]) = (1 / span, -q[0] / span)
+      }
+    }
+    if let top, grey == nil {
+      for c in 0..<3 { gain[c] = (1 - balance[c]) / top[c] }
+    }
+    var low = 0.0, high = 1.0
+    if s.autoLevels, !light[0].isEmpty {
+      let ends = (0..<3).map { c in quantiles(light[c].map { $0 * gain[c] + balance[c] }, [0.005, 0.995]) }
+      low = ends.map { $0[0] }.min()!
+      high = top != nil ? 1 : max(low + 0.01, ends.map { $0[1] }.max()!)
+    }
+    return ToneAnalysis(base: .one, balance: RGB(balance), low: low, high: high, gain: RGB(gain))
   }
   /// Where `image`'s tones lie against what a screen shows of them (`ToneRange`), as `negative`
   /// takes them into its ends: counted over every pixel, as grain and fine highlights are what
@@ -705,10 +765,13 @@ final class ImagePipeline {
     let line = CIImage(bitmapData: Data(bytes: grey, count: grey.count * 4), bytesPerRow: m * 16,
       size: CGSize(width: m, height: 1), format: .RGBAf, colorSpace: nil)
     var flat = Self.arguments(line, s, profile, a)
+    flat[4] = CIVector(x: 1, y: 1, z: 1)
+    flat[5] = CIVector(x: 0, y: 0, z: 0)
     flat[6] = CIVector(x: 0, y: 1, z: 2, w: 3)
     flat[7] = CIVector(x: 0, y: s.midtone, z: 1, w: 1)
     flat[8] = CIVector(x: 0, y: 0, z: 0, w: 1)
     flat[10] = 0.0
+    flat[14] = 1.0
     guard var shown = ended.apply(extent: line.extent, arguments: flat) else { return nil }
     if let curves = s.curves { shown = applyCurves(curves, to: shown) }
     var screen = [Float](repeating: 0, count: m * 4)

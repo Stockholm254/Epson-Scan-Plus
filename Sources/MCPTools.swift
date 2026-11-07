@@ -328,7 +328,7 @@ enum MCPTools {
       state["levels"] = ["auto": s.autoLevels, "black": s.black, "white": s.white, "midtone": s.midtone]
       state["tone"] = ["exposure": s.exposure, "contrast": s.contrast, "saturation": s.saturation, "curves": s.curves != nil,
         "highlights": s.highlightsAmount, "press_highlights": s.pressHighlightsAmount, "shadows": s.shadowsAmount, "colour_noise": s.colourNoiseAmount, "soft_ends": s.softEndsOn]
-      state["input"] = ["negative": s.inputIsNegative, "gamma": s.inputGamma]
+      state["input"] = ["negative": s.inputIsNegative, "reversal": s.isSlide, "gamma": s.inputGamma]
       state["negative_density_above_base"] = ["r": percentiles(densities[0]), "g": percentiles(densities[1]), "b": percentiles(densities[2])]
       state["positive_srgb"] = ["r": percentiles(outputs[0]), "g": percentiles(outputs[1]), "b": percentiles(outputs[2]),
         "clipped_black_percent": round(dark / max(1, count) * 100, 10), "clipped_white_percent": round(bright / max(1, count) * 100, 10)]

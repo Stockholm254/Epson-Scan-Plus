@@ -286,6 +286,17 @@ struct Adjustments: Codable, Equatable {
   }
   var inputGamma = 2.2
   var inputIsNegative = true
+  /// The film is reversal film, a slide: its reading is the picture already, not a negative, read
+  /// raw (linear off the scanner), so it is shown through its own white balance and ends and
+  /// encoded for the screen. Nil for a negative, or a file already made positive, shown as it is.
+  var reversal: Bool? = nil
+  /// A slide's reading, converted as `reversal` says; never a negative's.
+  var isSlide: Bool { reversal == true && !inputIsNegative }
+  /// Read as a slide, or as a negative again. A slide's own colour is its picture, so it starts
+  /// with auto white balance off; a negative with it on, as it always does.
+  mutating func setReversal(_ on: Bool) {
+    (inputIsNegative, reversal, autoWhiteBalance) = on ? (false, true, false) : (true, nil, true)
+  }
   var base: RGB? = nil
   /// Where `base` was picked on the frame, normalised in the frame as cropped; nil when it came
   /// from elsewhere (the light table, an assistant).

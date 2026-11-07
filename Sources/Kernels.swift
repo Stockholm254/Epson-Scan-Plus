@@ -75,8 +75,8 @@ enum Kernels {
   /// The conversion the `negative` kernels share, up to its final clip: the tones (`graded`) and the
   /// saturation, in one order or the other.
   private static let conversion = """
-    #define NEGATIVE_ARGS float3 base, float3 slope, float3 toe, float3 gain, float3 balance, float4 levels, float4 tone, float4 color, float4 ends, float inverted, float2 fade, float4 lights, float4 shoulder
-    #define NEGATIVE_PASS base, slope, toe, gain, balance, levels, tone, color, ends, inverted, fade, lights, shoulder
+    #define NEGATIVE_ARGS float3 base, float3 slope, float3 toe, float3 gain, float3 balance, float4 levels, float4 tone, float4 color, float4 ends, float inverted, float2 fade, float4 lights, float4 shoulder, float encode
+    #define NEGATIVE_PASS base, slope, toe, gain, balance, levels, tone, color, ends, inverted, fade, lights, shoulder, encode
 
     // Saturation (tone.w) about each pixel's lightness, more in the shadows (ends.z).
     static float3 saturated(float3 q, float4 tone, float4 ends) {
@@ -87,16 +87,26 @@ enum Kernels {
     // black at 0 and white at 1, unclipped.
     //
     // Exposure (tone.x, in EV) is a print exposure: a shift of log exposure, 0.30103 per stop,
-    // applied before the levels and clipping so −EV recovers highlights. Positive input scales the
-    // linear value instead, through its encoding gamma.
+    // applied before the levels and clipping so −EV recovers highlights.
+    //
+    // Positive input (a slide, or a file already positive) is light, not density: decoded by its
+    // gamma (color.w) to linear, each channel through its gain and black (gain, balance), the ends
+    // (levels.x, levels.y) and the exposure, a scale, then encoded for the screen (`encode`, a
+    // power). A file already positive comes through with nothing in front, encoded as it came.
     static float3 toned(float4 p, bool first, NEGATIVE_ARGS) {
       float3 v = max(p.rgb, float3(0.000001));
-      float3 e = log(max(base, float3(0.000001)) / v) * (color.w / 2.302585093) / slope;
-      e += toe * log(max(float3(1.0) - exp(-e / max(toe, float3(0.000001))), float3(0.02)));
-      float3 b = balance;
-      if (fade.x > 0.0) { b *= min((1.0 - exp(-max((e.r + e.g + e.b) / 3.0, 0.0) / fade.x)) / fade.y, 1.0); }
-      float3 q = (e * gain + b + float3(tone.x * 0.30103) - float3(levels.x)) / max(levels.y - levels.x, 0.001);
-      if (inverted < 0.5) { q = v * pow(2.0, tone.x / max(color.w, 0.1)); }
+      float3 q;
+      if (inverted < 0.5) {
+        float3 t = pow(v, float3(color.w)) * gain + balance;
+        t = (t - float3(levels.x)) / max(levels.y - levels.x, 0.000001) * pow(2.0, tone.x);
+        q = sign(t) * pow(abs(t), float3(encode));
+      } else {
+        float3 e = log(max(base, float3(0.000001)) / v) * (color.w / 2.302585093) / slope;
+        e += toe * log(max(float3(1.0) - exp(-e / max(toe, float3(0.000001))), float3(0.02)));
+        float3 b = balance;
+        if (fade.x > 0.0) { b *= min((1.0 - exp(-max((e.r + e.g + e.b) / 3.0, 0.0) / fade.x)) / fade.y, 1.0); }
+        q = (e * gain + b + float3(tone.x * 0.30103) - float3(levels.x)) / max(levels.y - levels.x, 0.001);
+      }
       q = (q - float3(levels.z)) / max(levels.w - levels.z, 0.01);
       // Shadow warmth (color.z): red up and blue down by up to 0.2 in the dark tones, all of it at a
       // lightness of 0.2 and none over 0.55, so the sunlit greys keep their balance; none at black

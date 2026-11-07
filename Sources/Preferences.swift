@@ -164,6 +164,8 @@ final class Preferences: ObservableObject {
   @Published var mcpEnabled: Bool { didSet { defaults?.set(mcpEnabled, forKey: "mcpEnabled") } }
   /// Frames side by side scanned in one pass when that is quicker (48-bit interface only).
   @Published var rowScanning: Bool { didSet { defaults?.set(rowScanning, forKey: "rowScanning") } }
+  /// The scanner's film: reversal film (slides) rather than negatives, for the next preview's frames.
+  @Published var scanReversal: Bool { didSet { defaults?.set(scanReversal, forKey: "scanReversal") } }
   /// The light-leak job open last, opened again with the page.
   @Published var leakJob: String? { didSet { defaults?.set(leakJob, forKey: "leakJob") } }
   /// A copy in Applications fetches a newer version by itself and installs it on quitting. On
@@ -199,6 +201,7 @@ final class Preferences: ObservableObject {
     leftWidth = left > 0 ? min(Self.leftWidths.upperBound, max(Self.leftWidths.lowerBound, left)) : 230
     scanSpeed = (defaults?.dictionary(forKey: "scanSpeed") as? [String: Double]) ?? [:]
     rowScanning = defaults?.object(forKey: "rowScanning") as? Bool ?? true
+    scanReversal = defaults?.bool(forKey: "scanReversal") ?? false
     keepOnCard = defaults?.bool(forKey: "cameraKeepOnCard") ?? false
     mcpEnabled = defaults?.bool(forKey: "mcpEnabled") ?? false
     leakJob = defaults?.string(forKey: "leakJob")
