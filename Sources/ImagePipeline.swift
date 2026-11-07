@@ -94,7 +94,7 @@ final class ImagePipeline {
     }
     return CIVector(x: knee, y: span, z: (lo * hi).squareRoot(), w: t * t * (3 - 2 * t))
   }
-  /// A balance that makes the greys grey (a calibrated preset's neutral, a picked grey, Dmax) is
+  /// A balance that makes the greys grey (a calibrated preset's neutral, a picked grey) is
   /// worked out on the straight part of the film's curve. Film that took no light is black in every
   /// layer, and black is neutral; there the balance would only lift red and blue into a purple
   /// black. So, where no fitted toe bends the curve down to the base, the balance fades in over
@@ -398,8 +398,8 @@ final class ImagePipeline {
       a.reach = max(sampled, counted)
     }
     // The roll's print: its balance, or its ends, in place of this frame's own, where they are left
-    // to the app (no grey, white or balance of the frame's own, no calibrated neutral).
-    if let print = settings.rollPrint, settings.highlightSample == nil {
+    // to the app (no grey or balance of the frame's own, no calibrated neutral).
+    if let print = settings.rollPrint {
       if settings.sharedBalance == true, settings.autoWhiteBalance, settings.neutralSample == nil, settings.manualBalance == nil, profile.offsets == nil {
         // The frame's ends move with the balance, so it is lit as before, only its colour the roll's.
         let shift = (0..<3).map { print.balance.values[$0] - a.balance.values[$0] }.reduce(0, +) / 3
@@ -430,7 +430,7 @@ final class ImagePipeline {
     for f in each { for c in 0..<3 { pooled[c] += f.density[c] } }
     guard !pooled[0].isEmpty else { return nil }
     var s = first.settings
-    (s.neutralSample, s.manualBalance, s.highlightSample) = (nil, nil, nil)
+    (s.neutralSample, s.manualBalance) = (nil, nil)
     (s.autoWhiteBalance, s.autoLevels) = (true, true)
     let a = analyze(base: .one, density: pooled, settings: s, profile: profile)
     let reach = each.map { f -> Double in
@@ -558,24 +558,6 @@ final class ImagePipeline {
       }
       balance = RGB((0..<3).map { -channelLow[$0] * gain.values[$0] })
     }
-    // The densest highlight picked as white (Dmax): each channel stretched from its own reference,
-    // the picked grey, a calibrated preset's neutral, the scene's black under auto white balance,
-    // else the film base, up to it, so the highlight comes out a neutral white, and with auto levels
-    // the white of the picture.
-    var white: Double?
-    if let picked = settings.highlightSample {
-      let top = pointExposure(picked)
-      let reference = grey
-        ?? (settings.manualBalance != nil ? [0, 0, 0]
-          : profile.offsets?.values ?? (settings.autoWhiteBalance ? channelLow : [0, 0, 0]))
-      let reach = (0..<3).map { max(0.02, top[$0] - reference[$0]) }
-      let target = reach.reduce(0, +) / 3
-      gain = RGB(reach.map { clamp(target / $0, 0.5, 2) })
-      let anchored = (0..<3).map { reference[$0] * gain.values[$0] }
-      let meet = grey == nil ? 0 : anchored.reduce(0, +) / 3
-      balance = RGB(anchored.map { meet - $0 })
-      white = (0..<3).map { top[$0] * gain.values[$0] + balance.values[$0] }.reduce(0, +) / 3
-    }
     // Unexposed film comes out a neutral black (`unexposedFade`), unless the balance already starts
     // from the scene's black or a fitted toe takes the curve down to the base.
     let fromBlack = settings.neutralSample == nil && settings.manualBalance == nil && profile.offsets == nil
@@ -600,15 +582,15 @@ final class ImagePipeline {
       }
     }
     var low = settings.autoLevels ? (lows.min() ?? 0) : 0
-    var high = settings.autoLevels ? max(low + 0.05, white ?? highs.max() ?? 2) : 3.6
+    var high = settings.autoLevels ? max(low + 0.05, highs.max() ?? 2) : 3.6
     // A short scene opened about its middle to `shortestEnds`: its middle tones stay where they
     // were, so it prints grey and soft as the film saw it, not darker (NexFilm found a floor kept
-    // from the black end darkened such frames). A white picked by hand is the user's own end.
-    if settings.autoLevels, white == nil, high - low < shortestEnds {
+    // from the black end darkened such frames).
+    if settings.autoLevels, high - low < shortestEnds {
       let middle = (low + high) / 2
       (low, high) = (middle - shortestEnds / 2, middle + shortestEnds / 2)
     }
-    let reach = settings.autoLevels && white == nil
+    let reach = settings.autoLevels
       ? self.reach(e, gain: gain, balance: balance, weight: weight, saturation: settings.saturation) : nil
     return ToneAnalysis(
       base: base, balance: balance, low: low, high: high, gain: gain, fade: fade, fadeAtGrey: fadeAtGrey, reach: reach)
@@ -667,9 +649,9 @@ final class ImagePipeline {
   /// A slide's white balance and ends, in its linear light, as the kernel's positive path takes them
   /// (each channel's gain and black, then the ends; `Adjustments.reversal`). The slide's colour is
   /// its picture, so with nothing picked and auto white balance off it stays as it is, the light
-  /// through clear film white. A grey picked comes out grey, each channel scaled; a white picked
-  /// comes out white, and with a grey too each channel runs through both. Auto white balance takes
-  /// each channel from its own darkest 0.5% to its own brightest, as a faded slide's dyes need.
+  /// through clear film white. A grey picked comes out grey, each channel scaled. Auto white
+  /// balance takes each channel from its own darkest 0.5% to its own brightest, as a faded slide's
+  /// dyes need.
   /// Auto levels put the darkest 0.5% at black and the brightest 0.5% at white, one pair for every
   /// channel, so the colour stays. The outer 5% is left out, as for a negative, and bare light.
   func slideAnalysis(_ image: CGImage, settings s: Adjustments) -> ToneAnalysis {
@@ -686,15 +668,7 @@ final class ImagePipeline {
     }
     var gain = [1.0, 1.0, 1.0], balance = [0.0, 0.0, 0.0]
     let grey = s.neutralSample.map { $0.values.map { max(1e-6, linear($0)) } }
-    let top = s.highlightSample.map { $0.values.map { max(1e-6, linear($0)) } }
-    if let grey, let top {
-      // Grey to its own level under the white, the same in every channel; the white to 1.
-      let level = min(0.9, (0..<3).map { grey[$0] / top[$0] }.reduce(0, +) / 3)
-      for c in 0..<3 where top[c] > grey[c] {
-        gain[c] = (1 - level) / (top[c] - grey[c])
-        balance[c] = level - grey[c] * gain[c]
-      }
-    } else if let grey {
+    if let grey {
       let mean = grey.reduce(0, +) / 3
       gain = grey.map { mean / $0 }
     } else if let manual = s.manualBalance {
@@ -705,14 +679,11 @@ final class ImagePipeline {
         (gain[c], balance[c]) = (1 / span, -q[0] / span)
       }
     }
-    if let top, grey == nil {
-      for c in 0..<3 { gain[c] = (1 - balance[c]) / top[c] }
-    }
     var low = 0.0, high = 1.0
     if s.autoLevels, !light[0].isEmpty {
       let ends = (0..<3).map { c in quantiles(light[c].map { $0 * gain[c] + balance[c] }, [0.005, 0.995]) }
       low = ends.map { $0[0] }.min()!
-      high = top != nil ? 1 : max(low + 0.01, ends.map { $0[1] }.max()!)
+      high = max(low + 0.01, ends.map { $0[1] }.max()!)
     }
     return ToneAnalysis(base: .one, balance: RGB(balance), low: low, high: high, gain: RGB(gain))
   }

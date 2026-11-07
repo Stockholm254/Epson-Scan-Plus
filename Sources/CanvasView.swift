@@ -150,14 +150,12 @@ final class FilmCanvasView: NSView {
     switch model?.tool {
     case .base: return Self.filledDropper
     case .neutral, .calibrate: return Self.dropper
-    case .highlight: return Self.halfDropper
     case .it8, .dust: return .crosshair
     default: return nil
     }
   }
   private static let dropper = eyedropper("eyedropper")
   private static let filledDropper = eyedropper("eyedropper.full")
-  private static let halfDropper = eyedropper("eyedropper.halffull")
   private static func eyedropper(_ symbol: String) -> NSCursor {
     let size = NSSize(width: 24, height: 24)
     let image = NSImage(size: size, flipped: false) { rect in
@@ -1648,7 +1646,7 @@ final class FilmCanvasView: NSView {
       let key = event.charactersIgnoringModifiers?.lowercased(),
       let tool = CanvasTool.allCases.first(where: { $0.shortcut == key }),
       // The pickers belong to taking the mask off; capturing has only the frame tools.
-      model?.page != .capture || ![CanvasTool.base, .neutral, .highlight].contains(tool)
+      model?.page != .capture || ![CanvasTool.base, .neutral].contains(tool)
     {
       model?.useTool(tool)
     } else {

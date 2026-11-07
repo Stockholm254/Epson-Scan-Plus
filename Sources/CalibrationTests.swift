@@ -81,11 +81,8 @@ enum CalibrationTests {
     slopesOnly.offsets = nil
     settings.autoWhiteBalance = true
     let calibrated = try cast(made, in: shadowed, row: h / 4), aligned = try cast(slopesOnly, in: shadowed, row: h / 4)
-    settings.highlightSample = value(1.5)
-    let stretched = try cast(made, in: shadowed, row: h / 4)
-    settings.highlightSample = nil
-    try check(calibrated < 1.5 && aligned > calibrated * 3 && stretched < 1.5,
-      String(format: "with auto white balance and unexposed film as the darkest part, the calibrated preset keeps the grey grey: %.1f levels of cast (%.1f with a Dmax highlight), %.1f aligning the black", calibrated, stretched, aligned))
+    try check(calibrated < 1.5 && aligned > calibrated * 3,
+      String(format: "with auto white balance and unexposed film as the darkest part, the calibrated preset keeps the grey grey: %.1f levels of cast, %.1f aligning the black", calibrated, aligned))
     // The unexposed film itself took no light: black, and neutral, not the purple the neutral's
     // balance would make of it on the straight line.
     let black = try cast(made, in: shadowed, row: h * 7 / 8)

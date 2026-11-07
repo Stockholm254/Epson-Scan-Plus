@@ -157,17 +157,15 @@ enum RegressionTests {
     ).pixel(256, 32).values
     try check(
       picked.max()! - picked.min()! < 0.012, "neutral picker anchors sampled negative values")
-    // The densest highlight picked as white (Dmax): neutral and white there, neutral between.
     settings.neutralSample = nil
     settings.autoWhiteBalance = true
     settings.autoLevels = true
-    settings.highlightSample = pipe.raster(neutral, maxDimension: 512).pixel(470, 32)
-    let whitened = pipe.raster(try pipe.preview(neutral, settings: settings, profile: stretch), maxDimension: 512)
-    let top = whitened.pixel(470, 32).values, middle = whitened.pixel(256, 32).values
-    try check(top.max()! - top.min()! < 0.02 && top.min()! > 0.95,
-      "a picked highlight (Dmax) comes out a neutral white: \(top.map { String(format: "%.3f", $0) })")
-    try check(middle.max()! - middle.min()! < 0.035, "and the tones between it and the black stay neutral")
-    settings.highlightSample = nil
+    // A frame saved with a highlight point (Dmax, picked until 0.10.0) opens as it was, the point
+    // not read.
+    var saved = try JSONSerialization.jsonObject(with: JSONEncoder().encode(settings)) as? [String: Any] ?? [:]
+    saved["highlightSample"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(RGB(r: 0.1, g: 0.2, b: 0.3)))
+    let reopened = try? JSONDecoder().decode(Adjustments.self, from: JSONSerialization.data(withJSONObject: saved))
+    try check(reopened == settings, "a frame saved with a highlight (Dmax) point opens as it was, without the point")
     let rawRect = NormalRect(x: 0.15, y: 0.22, width: 0.6, height: 0.51)
     let point = CGPoint(x: 0.19, y: 0.67)
     let orientationFixture = makeImage(80, 60) { x, y in
