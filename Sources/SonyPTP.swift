@@ -1,9 +1,12 @@
-import Foundation
+import AppKit
 import ImageCaptureCore
 
 /// The camera's pixel shift, which Sony's Camera Remote SDK does not reach on the A7R IV: read and
 /// set over the camera's own PTP (Sony's vendor operations, as libgphoto2 speaks them), through
 /// macOS's image capture. Only while the SDK has let go of the camera: the two cannot share it.
+/// And only in a process of its own (`inChild`): image capture's daemon, ptpcamerad, keeps the
+/// camera's USB for as long as the process that opened it lives, its session closed or not, and
+/// the SDK cannot connect until that process is gone (seen in the app 2026-11-06).
 ///
 /// As found on the A7R IV (2026-11-05/06): pixel shift on is 0xD239 (read only), switched by
 /// ControlDevice 0xD2D4 (2 on, 1 off); its count is 0xD23A (1, 4, 16). Both take effect only with
@@ -11,13 +14,14 @@ import ImageCaptureCore
 /// read back as set only in the next session. Nothing else is written; no file is read.
 final class SonyPTP: NSObject, ICDeviceBrowserDelegate, ICCameraDeviceDelegate {
   enum Failure: LocalizedError {
-    case noCamera, session(String), answered(UInt16, UInt16), unread
+    case noCamera, session(String), answered(UInt16, UInt16), unread, child(String)
     var errorDescription: String? {
       switch self {
       case .noCamera: return "电脑上没有找到 Sony 相机（开着吗？USB 连接方式是「PC 遥控」吗？）"
       case .session(let why): return "打不开和相机的会话：" + why
       case .answered(let op, let code): return String(format: "相机拒绝了操作 0x%04X（0x%04X）", op, code)
       case .unread: return "读不出相机的像素位移设置"
+      case .child(let why): return why
       }
     }
   }
@@ -75,6 +79,12 @@ final class SonyPTP: NSObject, ICDeviceBrowserDelegate, ICCameraDeviceDelegate {
   /// Finds the camera, opens a session and makes Sony's handshake (protocol 300, which lists the
   /// pixel-shift properties).
   private func open(_ timeout: TimeInterval) async throws {
+    do { try await start(timeout) } catch {
+      close()
+      throw error
+    }
+  }
+  private func start(_ timeout: TimeInterval) async throws {
     try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
       DispatchQueue.main.async {
         self.opened = c
@@ -143,6 +153,70 @@ final class SonyPTP: NSObject, ICDeviceBrowserDelegate, ICCameraDeviceDelegate {
         }
       }
     }
+  }
+
+  // MARK: In a process of its own
+
+  /// The pictures a press takes, read (`["read"]`) or set (`["set", "16"]`) by this app started
+  /// again with `--sony-ptp`, which is gone before this returns, the camera's USB let go with it.
+  static func inChild(_ arguments: [String], executable: URL? = Bundle.main.executableURL,
+                      timeout: TimeInterval = 40) async throws -> Int {
+    guard let executable else { throw Failure.child("找不到 App 自己的程序") }
+    let p = Process()
+    p.executableURL = executable
+    p.arguments = ["--sony-ptp"] + arguments
+    let out = Pipe()
+    p.standardOutput = out
+    p.standardError = FileHandle.nullDevice
+    let said: Data = try await withCheckedThrowingContinuation { c in
+      p.terminationHandler = { _ in c.resume(returning: out.fileHandleForReading.readDataToEndOfFile()) }
+      do { try p.run() } catch {
+        p.terminationHandler = nil
+        c.resume(throwing: error)
+        return
+      }
+      DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { if p.isRunning { p.terminate() } }
+    }
+    // ptpcamerad lets the USB go as the process ends: a moment for it before the SDK connects.
+    try await Task.sleep(nanoseconds: 500_000_000)
+    return try answer(said)
+  }
+  /// The last line `--sony-ptp` printed: `{"shots":N}`, or `{"error":"…"}`.
+  static func answer(_ said: Data) throws -> Int {
+    let line = said.split(separator: 10).last.map { Data($0) } ?? Data()
+    guard let o = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] else {
+      throw Failure.child("相机的设置没有读完（读取它的进程没有回答）")
+    }
+    if let shots = o["shots"] as? Int { return shots }
+    throw Failure.child(o["error"] as? String ?? "读取相机设置的进程出错了")
+  }
+  /// `EpsonScanPlus --sony-ptp read | set N`: one line, as `answer` reads it, and the process ends.
+  static func runChild() -> Never {
+    NSApplication.shared.setActivationPolicy(.prohibited)
+    let args = CommandLine.arguments
+    let rest = args.firstIndex(of: "--sony-ptp").map { Array(args[($0 + 1)...]) } ?? []
+    func finish(_ object: [String: Any]) -> Never {
+      var line = (try? JSONSerialization.data(withJSONObject: object)) ?? Data()
+      line.append(10)
+      FileHandle.standardOutput.write(line)
+      exit(0)
+    }
+    Task {
+      var result: [String: Any]
+      do {
+        if rest.first == "set", rest.count > 1, let n = Int(rest[1]) {
+          result = ["shots": try await setPixelShift(n)]
+        } else {
+          result = ["shots": try await pixelShift()]
+        }
+      } catch { result = ["error": error.localizedDescription] }
+      // The session's close goes out before the process ends.
+      try? await Task.sleep(nanoseconds: 300_000_000)
+      DispatchQueue.main.async { finish(result) }
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 30) { finish(["error": "相机 30 秒没有回应"]) }
+    RunLoop.main.run()
+    exit(0)
   }
 
   // MARK: Sony's property list

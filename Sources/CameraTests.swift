@@ -205,6 +205,21 @@ enum CameraTests {
     // connects, the choice following it; chosen while connected, the SDK lets go, the camera is set
     // and read back, and the SDK connects again; a setting that does not take is said, the choice
     // back at what the camera reads; chosen while not connected, set as the camera connects.
+    // The PTP work runs in a process of its own (the system keeps the camera's USB while the
+    // process that opened it lives): what it is asked and what it answers, with a stand-in.
+    let stand = folder.appendingPathComponent("sony-ptp-stand-in.sh")
+    try "#!/bin/sh\necho \"$@\" > \"$0.args\"\necho 'noise'\necho '{\"shots\":16}'\n".write(to: stand, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stand.path)
+    final class ChildSaid { var shots: Int?, failure: String? }
+    let childSaid = ChildSaid()
+    Task { do { childSaid.shots = try await SonyPTP.inChild(["set", "16"], executable: stand) } catch { childSaid.failure = "\(error)" } }
+    for _ in 0..<40 where childSaid.shots == nil && childSaid.failure == nil { settle(0.1) }
+    let childArgs = (try? String(contentsOf: URL(fileURLWithPath: stand.path + ".args"), encoding: .utf8)) ?? ""
+    let refused = (try? SonyPTP.answer(Data(#"{"error":"相机拒绝了"}"#.utf8))) == nil
+    let unanswered = (try? SonyPTP.answer(Data())) == nil
+    try check(childSaid.shots == 16 && childArgs == "--sony-ptp set 16\n" && refused && unanswered,
+      "the pixel shift is set by the app started again with --sony-ptp, and its last line read; an error or no answer is a failure")
+
     final class FakeShift { var onCamera = 4, written = [Int](), refuse = false }
     let fake = FakeShift()
     let shiftSuite = "EpsonScanPlus.tests.\(UUID().uuidString)"

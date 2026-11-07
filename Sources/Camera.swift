@@ -147,8 +147,8 @@ final class CameraController: ObservableObject {
   var onShotEnded: ((Int) -> Void)?
   /// The camera's pixel shift (1 off, 4 or 16 shots), read and set over its own PTP: the SDK does
   /// not reach it. Others for tests.
-  var readShift: () async throws -> Int = { try await SonyPTP.pixelShift() }
-  var writeShift: (Int) async throws -> Int = { try await SonyPTP.setPixelShift($0) }
+  var readShift: () async throws -> Int = { try await SonyPTP.inChild(["read"]) }
+  var writeShift: (Int) async throws -> Int = { try await SonyPTP.inChild(["set", String($0)]) }
   /// Whether the pixel shift is read and set over PTP; by default with the real camera only, not
   /// the simulated one nor a test's transport.
   var shiftOverPTP: Bool?

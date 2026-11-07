@@ -9,6 +9,8 @@ struct EpsonScanPlusApp: App {
     let args = CommandLine.arguments
     // Started by an assistant: a stdio MCP server that talks to the running app, never a window.
     if args.contains("--mcp") { MCPBridge.run() }
+    // The camera's pixel shift read or set over PTP, in a process of its own (SonyPTP.inChild).
+    if args.contains("--sony-ptp") { SonyPTP.runChild() }
     if args.contains("--self-test") { SmokeTests.run() }
     if args.contains("--sane-hardware-test") { HardwareTest.run() }
     if args.contains("--export-project") { ExportCommand.run() }
