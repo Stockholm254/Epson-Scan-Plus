@@ -144,6 +144,61 @@ enum CalibrationTests {
       && FilmCalibration.calibratedFrom(doubled) == ("Kodak Portra 160", "portra160")
       && FilmCalibration.calibratedFrom(again) == ("Kodak Portra 160", "portra160"),
       "calibrating the copy session again replaces its preset, named after the film and the session, not piled on")
+    // The preset keeps what each point read, so its calibration can be taken up again: the points
+    // come back as picked, one more is added, and making it again replaces it.
+    let picked = [(0.4, 0.2), (0.9, 0.5), (1.4, 0.8)].map { e, x -> NeutralPoint in
+      var p = point(e)
+      p.at = CGPoint(x: x, y: 0.3)
+      p.name = "07"
+      return p
+    }
+    copying.calibrationPoints = picked
+    copying.makeScannerPreset()
+    let first = copying.profile
+    try check(copying.calibrationPoints.isEmpty && first.spots?.count == 3 && first.spots?.allSatisfy { $0.value != nil && $0.base != nil && $0.name == "07" } == true
+      && copying.resumableCalibration == 3,
+      "a preset keeps each neutral point's reading and spot, also for a frame of another roll, and can be taken up again")
+    copying.resumeCalibration()
+    try check(copying.calibrationPoints == picked && copying.resumableCalibration == nil && copying.status.contains("接着"),
+      "taking the calibration up again brings its points back as they were picked")
+    var more = point(1.1)
+    more.at = CGPoint(x: 0.6, y: 0.6)
+    copying.calibrationPoints.append(more)
+    copying.makeScannerPreset()
+    let grown = copying.profile
+    try check(copying.errorText == nil && grown.spots?.count == 4 && grown.publication.hasSuffix("4 个中性点") && grown.id != first.id
+      && copying.preferences.customProfiles.filter { $0.offsets != nil } == [grown],
+      "a point added to it makes the preset again from all four, which replaces the one taken up")
+    // Another copy session's preset, chosen from the menu, is not taken up: making it here would
+    // name it after this session. Neither is one whose points it cannot read again.
+    var otherSession = grown
+    otherSession.name = "Kodak Portra 160 · 翻拍 · 2026-10-29 21:00"
+    copying.chooseProfile(otherSession)
+    let foreign = copying.resumableCalibration
+    var spotsOnly = grown
+    spotsOnly.spots = grown.spots?.map { CalibrationSpot(frame: $0.frame, name: $0.name, x: $0.x, y: $0.y) }
+    copying.chooseProfile(spotsOnly)
+    copying.resumeCalibration()
+    try check(foreign == nil && copying.calibrationPoints.isEmpty && copying.status.contains("读不回来"),
+      "another session's preset is not taken up, and points kept only as spots on frames elsewhere are said to be left out")
+    // The presets table shows each calibrated preset's points and takes one up on this roll.
+    var counted = portra
+    counted.offsets = RGB(r: 0.1, g: 0, b: 0.2)
+    counted.publication = "翻拍标定 · A7R IV · 2026-10-01 · 5 个中性点"
+    let lines = PresetTable.pointLines(grown), legacy = PresetTable.pointLines(spotsOnly)
+    try check(PresetTable.pointCount(grown) == 4 && PresetTable.pointCount(counted) == 5 && PresetTable.pointCount(portra) == nil
+      && lines.count == 4 && lines.allSatisfy { $0.contains("偏离") } && lines.allSatisfy { line in
+        line.split(separator: "偏离").last.map { $0.split(separator: " ").compactMap { Double($0) }.allSatisfy { abs($0) < 0.002 } } ?? false }
+      && legacy.count == 4 && legacy.allSatisfy { $0.contains("只记了位置") },
+      "the presets table counts a calibrated preset's points and lists each, on its line: \(lines.first ?? "")")
+    try check(copying.whyNotTakenUp(otherSession)?.contains("另一次翻拍") == true && copying.whyNotTakenUp(portra) != nil
+      && copying.whyNotTakenUp(grown) == nil,
+      "only this copy session's calibrated preset can be taken up on its roll, and the table says why not")
+    copying.chooseProfile(portra)
+    copying.takeUpCalibration(grown)
+    try check(copying.profile == grown && copying.calibrationPoints.count == 4 && copying.tool == .calibrate,
+      "taking it up from the table puts the roll on it, brings its points back and turns the picker on")
+    copying.clearCalibration()
     let notes = [true, false, nil].map { FilmCalibration.profile(from: fit, basedOn: portra, points: 3, scanner: "A7R IV", copyStand: true, unmixed: $0).notes }
     try check(notes[0].contains("标定时去串色是开着的") && notes[1].contains("标定时没有去串色") && notes[2].contains("有的去了串色、有的没有"),
       "a copy-stand preset says how its points were read, crosstalk taken out or not, as its slopes hold for that")

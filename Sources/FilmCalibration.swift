@@ -11,6 +11,15 @@ struct NeutralPoint: Equatable {
   /// Where it was picked, in the frame's source normalised from the top left, as `FilmFrame.rect`
   /// is: it stays on its spot when the crop changes. Nil when not known.
   var at: CGPoint? = nil
+  /// The frame's name when it was picked, for a point on a frame of another roll.
+  var name: String? = nil
+  /// How far it lies off a preset's line, red and blue, in density: 0 for a neutral the preset
+  /// makes grey.
+  func misfit(slopes: RGB, offsets: RGB, toe: RGB?) -> [Double] {
+    let d = density, w = toe ?? .zero
+    let xg = FilmToe.exposure(d[1] / slopes.g, width: w.g)
+    return [0, 2].map { c in (FilmToe.exposure(d[c] / slopes.values[c], width: w.values[c]) - xg - offsets.values[c]) * slopes.values[c] }
+  }
   /// Density above the film base, per channel.
   var density: [Double] {
     (0..<3).map { log10(max(1e-6, base.values[$0]) / max(1e-6, value.values[$0])) * gamma }
