@@ -32,6 +32,7 @@ enum RegressionTests {
     try CameraTests.run(folder: folder)
     try EdgeBaseTests.run(folder: folder)
     try CopyLightTests.run(folder: folder)
+    try DustTests.run(folder: folder)
     try FrameCropTests.run(folder: folder)
     try RollPrintTests.run(folder: folder)
     try CameraSimulationTests.run(folder: folder)

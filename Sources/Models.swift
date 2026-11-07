@@ -449,6 +449,8 @@ struct FilmFrame: Identifiable, Codable {
   /// The copy light's flat field divided out of the picture after its crosstalk, so every part of
   /// the frame reads as if lit as its brightest; nil leaves it as lit.
   var flatField: FlatField? = nil
+  /// Dust found on the film or marked by hand, filled as the frame is read; nil until looked for.
+  var dust: DustState? = nil
   var captureRect: NormalRect { scanRect ?? rect }
   var hasFullResolution: Bool {
     sourcePath != nil || (scanPath != nil && captureRect.contains(rect))
@@ -523,9 +525,10 @@ enum CanvasTool: String, CaseIterable {
   case highlight = "高光"
   case calibrate = "标定中性点"
   case it8 = "IT8 色卡"
+  case dust = "灰尘"
 
   /// The tools a click reads a point of the picture with.
-  var picksPoint: Bool { self == .base || self == .neutral || self == .highlight || self == .calibrate || self == .it8 }
+  var picksPoint: Bool { self == .base || self == .neutral || self == .highlight || self == .calibrate || self == .it8 || self == .dust }
 
   /// Each tool's SF Symbol. The two samplers differ in glyph and carry a label as well: the
   /// film base is the orange mask, the neutral a grey in the picture.
@@ -538,6 +541,7 @@ enum CanvasTool: String, CaseIterable {
     case .highlight: return "eyedropper.halffull"
     case .calibrate: return "target"
     case .it8: return "squareshape.split.3x3"
+    case .dust: return "aqi.medium"
     }
   }
   /// Shown next to the symbol in the toolbar.
@@ -557,7 +561,7 @@ enum CanvasTool: String, CaseIterable {
     case .base: return "b"
     case .neutral: return "n"
     case .highlight: return "w"
-    case .calibrate, .it8: return nil
+    case .calibrate, .it8, .dust: return nil
     }
   }
   var help: String {
@@ -570,6 +574,7 @@ enum CanvasTool: String, CaseIterable {
     case .highlight: what = "取高光（Dmax）：点负片上最密、正片里应为纯白的地方，各通道以它为白点对齐"
     case .calibrate: what = "标定中性点：点选灰卡等中性灰，生成这台扫描仪或这次翻拍的预设"
     case .it8: what = "IT8 色卡：按提示点色卡上的 6 个点"
+    case .dust: what = "点选灰尘：在单张上点一处灰尘去掉它，点标出的圆圈改成留下或去掉"
     }
     return what + (shortcut.map { " · \($0.uppercased())" } ?? "")
   }
