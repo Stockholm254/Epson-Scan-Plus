@@ -95,6 +95,21 @@ enum EdgeBaseTests {
       "the panel says where each frame's base came from: \(model.baseSource(f[1]))")
     let pipeBase = pipe.densities(try model.source(for: model.frames[2], maxDimension: 300), settings: model.frames[2].adjustments).base
     try check(close(pipeBase, balanced), "the conversion divides by the base found at the edges")
+    // The crosstalk turned off and on again while the edges were looked at: the look at the reading
+    // with it in comes back after the picture has it out again. It is let go, and the look at the
+    // picture as it reads now gives the base, the base as unmixed as the picture.
+    let mix = Crosstalk.measured
+    model.frames[0].edgeBase = nil
+    let stale = model.lookAtEdges([model.frames[0]])
+    model.frames[0].crosstalk = mix
+    model.takeEdgeLooks(stale)
+    let letGo = model.frames[0].edgeBase == nil
+    model.measureEdgeBases(wait: true)
+    try check(letGo && close(model.frames[0].edgeBase?.base, mix.unmixed(orange)) && close(model.frames[0].adjustments.rollBase, mix.unmixed(orange)),
+      "a look at the edges taken on a reading the picture no longer has is let go, and the base comes from the reading it has: \(model.frames[0].adjustments.rollBase?.values.map { String(format: "%.3f", $0) } ?? [])")
+    model.frames[0].crosstalk = nil
+    model.frames[0].edgeBase = nil
+    model.measureEdgeBases(wait: true)
     // Picked by hand on the single frame: where, kept with the base, and undone with it.
     model.select(model.frames[0].id)
     model.singleView = true

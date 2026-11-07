@@ -1062,25 +1062,50 @@ final class AppModel: ObservableObject {
     let image = try ImagePipeline.shared.load(URL(fileURLWithPath: path), maxDimension: maxDimension)
     return ImagePipeline.shared.corrected(image, crosstalk: frame.crosstalk, flat: frame.flatField)
   }
+  /// What a look at a picture's edges found, and how the picture was read for it.
+  struct EdgeLook {
+    var id: UUID
+    var crosstalk: Crosstalk?
+    var flat: FlatField?
+    var found: EdgeBase
+  }
+  /// Looks at the edges of `frames`, each read as it is now.
+  func lookAtEdges(_ frames: [FilmFrame]) -> [EdgeLook] {
+    frames.compactMap { f in
+      (try? edgeSource(for: f)).flatMap { $0 }.map {
+        EdgeLook(id: f.id, crosstalk: f.crosstalk, flat: f.flatField, found: ImagePipeline.shared.edgeBase($0))
+      }
+    }
+  }
+  /// Keeps what the looks found for the pictures still waiting for it, then converts with it. A look
+  /// at a reading the picture no longer has is let go: with the crosstalk turned off and on again
+  /// while it ran, the base it read with the crosstalk in would be divided into pictures read with
+  /// it out (a roll of Portra on the copy stand went 49% too light in red, its shadows maroon), and
+  /// the look begun on the new reading would find its place taken.
+  func takeEdgeLooks(_ looks: [EdgeLook]) {
+    for look in looks {
+      guard let i = frames.firstIndex(where: { $0.id == look.id }), frames[i].edgeBase == nil,
+        frames[i].crosstalk == look.crosstalk, frames[i].flatField == look.flat
+      else { continue }
+      frames[i].edgeBase = look.found
+    }
+    updateRollBase()
+    updateRollSlopes()
+    refresh()
+    updateThumbnails()
+    saveProject()
+  }
   /// Looks for the unexposed film at the edges of the roll's pictures not yet looked at, apart from
   /// the main thread, then converts with what it found. `wait` looks before returning.
   func measureEdgeBases(wait: Bool = false) {
     let pending = frames.filter { $0.edgeBase == nil && isSinglePicture($0) }
     guard !pending.isEmpty else { return }
     let project = sessionURL
-    let measure = { pending.compactMap { f in (try? self.edgeSource(for: f)).flatMap { $0 }.map { (f.id, ImagePipeline.shared.edgeBase($0)) } } }
-    let apply = { (results: [(UUID, EdgeBase)]) in
+    let apply = { (looks: [EdgeLook]) in
       guard self.sessionURL == project else { return }
-      for (id, found) in results {
-        if let i = self.frames.firstIndex(where: { $0.id == id }), self.frames[i].edgeBase == nil { self.frames[i].edgeBase = found }
-      }
-      self.updateRollBase()
-      self.updateRollSlopes()
-      self.refresh()
-      self.updateThumbnails()
-      self.saveProject()
+      self.takeEdgeLooks(looks)
     }
-    if wait { apply(measure()) } else { renderQueue.async { let r = measure(); DispatchQueue.main.async { apply(r) } } }
+    if wait { apply(lookAtEdges(pending)) } else { renderQueue.async { let r = self.lookAtEdges(pending); DispatchQueue.main.async { apply(r) } } }
   }
   /// The frames measured together as one roll, for the channel slopes and a shared film base:
   /// the scanned frames; each file holding several frames, an imported strip, on its own; and the
