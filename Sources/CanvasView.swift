@@ -120,6 +120,10 @@ final class FilmCanvasView: NSView {
   var original: CGRect?
   var dragID: UUID?
   var corner: Int?
+  /// The crop's edge being dragged, as `cropHold` names it.
+  var edge: Int?
+  /// The crop's resize pointer is up (`updateCropCursor`).
+  private var cropCursorShown = false
   /// The glass bubble over a corner being dragged: the corner, in the shown picture's normalised
   /// coordinates, and when it appeared; the bubble last drawn, and the one fading after release.
   var lens: (point: CGPoint, since: CFTimeInterval)?
@@ -265,6 +269,53 @@ final class FilmCanvasView: NSView {
     let b = imageRect
     return [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.minX, y: r.maxY), CGPoint(x: r.maxX, y: r.maxY)]
       .map { n in let d = turn.shown(n); return CGPoint(x: b.minX + d.x * b.width, y: b.minY + d.y * b.height) }
+  }
+  /// A rect's edges by their two corners (`corners` order): its min y, max y, min x and max x.
+  static let edgeEnds = [(0, 1), (2, 3), (0, 2), (1, 3)]
+  /// What a press at canvas point `p` takes hold of on the crop `r`: a corner (13 points round it,
+  /// in `corners` order), else an edge (8 points either side of it, in `edgeEnds` order), else
+  /// neither.
+  func cropHold(_ r: CGRect, at p: CGPoint) -> (corner: Int?, edge: Int?) {
+    let c = corners(r)
+    if let i = c.firstIndex(where: { hypot($0.x - p.x, $0.y - p.y) < 13 }) { return (i, nil) }
+    func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat {
+      let d = CGPoint(x: b.x - a.x, y: b.y - a.y), length = d.x * d.x + d.y * d.y
+      let t = length > 0 ? max(0, min(1, ((p.x - a.x) * d.x + (p.y - a.y) * d.y) / length)) : 0
+      return hypot(p.x - (a.x + t * d.x), p.y - (a.y + t * d.y))
+    }
+    let near = Self.edgeEnds.indices.map { ($0, distance(c[Self.edgeEnds[$0].0], c[Self.edgeEnds[$0].1])) }
+      .filter { $0.1 < 8 }.min { $0.1 < $1.1 }
+    return (nil, near?.0)
+  }
+  /// Over the single frame's crop, the pointer shows what a press there would resize: a corner or
+  /// an edge, at the side of the box it is on the screen.
+  private func updateCropCursor(at p: CGPoint?) {
+    var cursor: NSCursor?
+    if let p, let model, model.singleView, model.tool == .crop, let crop = model.canvasCrop, !model.isWorking,
+      dragStart == nil, imageRect.contains(p)
+    {
+      let hold = cropHold(crop.cg, at: p), r = screen(crop.cg), c = corners(crop.cg)
+      let at: CGPoint? = hold.corner.map { c[$0] } ?? hold.edge.map { e in
+        let (a, b) = (c[Self.edgeEnds[e].0], c[Self.edgeEnds[e].1])
+        return CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
+      }
+      if let at {
+        // The view is flipped: the smaller y is the top.
+        let left = at.x < r.midX - r.width / 4, right = at.x > r.midX + r.width / 4
+        let top = at.y < r.midY - r.height / 4, bottom = at.y > r.midY + r.height / 4
+        let position: NSCursor.FrameResizePosition? =
+          top && left ? .topLeft : top && right ? .topRight : bottom && left ? .bottomLeft : bottom && right ? .bottomRight
+          : top ? .top : bottom ? .bottom : left ? .left : right ? .right : nil
+        cursor = position.map { NSCursor.frameResize(position: $0, directions: .all) }
+      }
+    }
+    if let cursor {
+      cursor.set()
+      cropCursorShown = true
+    } else if cropCursorShown {
+      NSCursor.arrow.set()
+      cropCursorShown = false
+    }
   }
   override func updateTrackingAreas() {
     if let tracking { removeTrackingArea(tracking) }
@@ -839,9 +890,11 @@ final class FilmCanvasView: NSView {
   }
   override func mouseMoved(with event: NSEvent) {
     hover = convert(event.locationInWindow, from: nil)
+    updateCropCursor(at: hover)
   }
   override func mouseExited(with event: NSEvent) {
     hover = nil
+    updateCropCursor(at: nil)
   }
 
   // MARK: Loupe
@@ -1446,8 +1499,8 @@ final class FilmCanvasView: NSView {
         original = crop.cg
         draft = crop.cg
         let r = screen(crop.cg)
-        corner = corners(crop.cg).firstIndex { hypot($0.x - p.x, $0.y - p.y) < 13 }
-        if corner == nil && !r.contains(p) {
+        (corner, edge) = cropHold(crop.cg, at: p)
+        if corner == nil && edge == nil && !r.contains(p) {
           dragID = nil
           original = nil
           draft = CGRect(origin: normal(p), size: .zero)
@@ -1497,6 +1550,17 @@ final class FilmCanvasView: NSView {
           x: min(end.x, opposite.x), y: min(end.y, opposite.y), width: abs(end.x - opposite.x),
           height: abs(end.y - opposite.y))
         showLens(at: p)
+      } else if let edge {
+        // Only that edge follows the pointer, across it; the other three stay.
+        var (x0, x1, y0, y1) = (original.minX, original.maxX, original.minY, original.maxY)
+        switch edge {
+        case 0: y0 = end.y
+        case 1: y1 = end.y
+        case 2: x0 = end.x
+        default: x1 = end.x
+        }
+        draft = CGRect(x: min(x0, x1), y: min(y0, y1), width: abs(x1 - x0), height: abs(y1 - y0))
+        showLens(at: p)
       } else {
         draft = CGRect(
           x: clamp(original.minX + end.x - start.x, 0, 1 - original.width),
@@ -1519,6 +1583,7 @@ final class FilmCanvasView: NSView {
       original = nil
       dragID = nil
       corner = nil
+      edge = nil
       panStart = nil
       levelLine = nil
       needsDisplay = true

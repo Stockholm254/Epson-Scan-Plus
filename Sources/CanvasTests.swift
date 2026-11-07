@@ -135,6 +135,32 @@ enum CanvasTests {
     canvas.mouseUp(with: event(.leftMouseUp, moved))
     try check(model.frames[2].rect == frames[2].rect && model.selectedID == frames[2].id && !model.singleView,
       "on the light table a frame's box neither resizes by its corner nor moves, and a drag opens nothing: its crop is set on its own")
+
+    // Over the single frame with the crop tool, an edge drags on its own: the right edge 40 points
+    // in, the other three where they were.
+    let toolBefore = model.tool
+    model.singleView = true
+    model.useTool(.crop)
+    for _ in 0..<40 where model.rendering || model.canvasCrop == nil { settle(0.1) }
+    if let before = model.canvasCrop {
+      let c = canvas.corners(before.cg), right = CGPoint(x: (c[1].x + c[3].x) / 2, y: (c[1].y + c[3].y) / 2)
+      let hold = canvas.cropHold(before.cg, at: CGPoint(x: right.x + 5, y: right.y))
+      canvas.mouseDown(with: event(.leftMouseDown, right))
+      canvas.mouseDragged(with: event(.leftMouseDragged, CGPoint(x: right.x - 20, y: right.y + 6)))
+      canvas.mouseDragged(with: event(.leftMouseDragged, CGPoint(x: right.x - 40, y: right.y + 9)))
+      canvas.mouseUp(with: event(.leftMouseUp, CGPoint(x: right.x - 40, y: right.y + 9)))
+      for _ in 0..<40 where model.rendering { settle(0.1) }
+      let after = model.canvasCrop ?? before, shrunk = Double(40 / canvas.imageRect.width)
+      try check(hold.edge == 3 && hold.corner == nil && abs(after.x - before.x) < 0.002 && abs(after.y - before.y) < 0.002
+        && abs(after.height - before.height) < 0.002 && abs(before.width - after.width - shrunk) < 0.004,
+        String(format: "in single view the crop's right edge drags on its own, %.3f narrower, the other edges where they were", before.width - after.width))
+    } else {
+      try check(false, "the single frame shows a crop to drag")
+    }
+    model.setRect(frames[2].id, rect: frames[2].rect)
+    model.useTool(toolBefore)
+    model.singleView = false
+    for _ in 0..<40 where model.rendering { settle(0.1) }
     let perMM = canvas.imageRect.height / 135.5
     try check(abs(canvas.loupeRadius(for: .pentax) - min(110, max(44, CGFloat(LoupeStyle.pentax.baseMM / 2) * perMM))) < 0.5,
       "the loupe keeps the film's scale on the turned table")
