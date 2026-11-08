@@ -1068,7 +1068,7 @@ final class FilmCanvasView: NSView {
     guard let layer, bounds.width > 0, let table = tableSnapshot() else { return }
     let cell = screen(model.contactRect(f).cg)
     // The positive the film strip has, where the table shows positives; else the table's own.
-    let face = !model.showNegative ? model.thumbnails[f.id] : nil
+    let face = !model.showsNegative ? model.thumbnails[f.id] : nil
     var from = cell, image: CGImage?
     if let face, face.width > 0, face.height > 0 {
       image = face
@@ -1302,7 +1302,7 @@ final class FilmCanvasView: NSView {
       return scene
     }
     guard let detail = loupeDetail, !detail.single else { return scene }
-    if detail.positive == !model.showNegative,
+    if detail.positive == !model.showsNegative,
       let frame = model.contactFrames.first(where: { $0.id == detail.id }), frame.rect == detail.rect
     {
       scene.detail = turnedDetail(detail.key, detail.image)
@@ -1465,7 +1465,7 @@ final class FilmCanvasView: NSView {
     }
     loupeDetailRequest = key
     loupeDetailStale = false
-    let positive = !model.showNegative
+    let positive = !model.showsNegative
     model.loupeDetail(for: frame, single: single, pixels: pixels) { [weak self] image in
       guard let self, self.loupeDetailRequest == key else { return }
       self.loupeDetailRequest = nil

@@ -68,7 +68,7 @@ final class AppModel: ObservableObject {
       if !singleView, let picture = selected.flatMap({ thumbnails[$0.id] }), picture !== selected.flatMap({ oldValue[$0.id] }) {
         (histogram, channelHistograms) = Self.histograms(picture)
       }
-      if onSheetPage && !showNegative { refresh() }
+      if onSheetPage && !showsNegative { refresh() }
       guard !thumbnails.isEmpty, !readOnly, let folder = sessionURL else { return }
       // Only the positives that changed, so a slider dragged over one frame writes that one.
       let changed = thumbnails.filter { $0.value !== oldValue[$0.key] }
@@ -256,12 +256,29 @@ final class AppModel: ObservableObject {
     case capture = "采集", convert = "去色罩", leak = "去漏光"
     var number: String { ["①", "②", "③"][Self.allCases.firstIndex(of: self) ?? 0] }
   }
-  @Published var page = Page.capture {
+  /// The module a window opens on: ①, capturing. The self-test starts its models on ②, whose
+  /// conversion most of it looks at; ① shows the raw picture (`showsOriginal`).
+  static var firstPage = Page.capture
+  @Published var page = AppModel.firstPage {
     didSet {
       // The pickers belong to taking the mask off.
       if page == .capture, [CanvasTool.base, .neutral].contains(tool) { tool = .select }
+      // Module ① shows the raw picture, ② the converted one: across, the picture is another.
+      if (oldValue == .capture) != (page == .capture) {
+        exposureReading = nil
+        refresh()
+        if showsOriginal { updateRawThumbnails() }
+      }
     }
   }
+  /// Module ① shows each picture as it came, the raw file's readings in a linear response, nothing
+  /// inverted or taken off; converting it is module ②'s (`ImagePipeline.original`).
+  var showsOriginal: Bool { page == .capture }
+  /// The picture is shown as read, not converted: the raw one in module ①, or the negative where
+  /// chosen in ②.
+  var showsNegative: Bool { showNegative || showsOriginal }
+  /// How the single frame's raw picture was exposed, while module ① shows it.
+  @Published private(set) var exposureReading: ExposureReading?
   /// Where module ① takes pictures from.
   enum CaptureSource: String, CaseIterable {
     case scanner = "V850 扫描", camera = "A7R IV 翻拍"
@@ -1977,13 +1994,17 @@ final class AppModel: ObservableObject {
   /// shows it, positive or raw (its scan, or the full-resolution preview); over the single frame
   /// as that view shows it, turned and mirrored, at full resolution.
   func loupeDetail(for frame: FilmFrame, single: Bool = false, pixels: Int = 2400, completion: @escaping (CGImage?) -> Void) {
-    let positive = !showNegative, p = conversionProfile
+    let positive = !showsNegative, original = showsOriginal, p = conversionProfile
     // A page laid out from files of their own shows each positive as the film strip has it,
     // turned, mirrored and straightened; the holder's preview, as the frame lies under its box.
     let asLaidOut = onSheetPage && sheetPageFrames.contains { $0.id == frame.id }
     renderQueue.async {
       var image = try? self.source(for: frame, full: single, maxDimension: single ? nil : pixels)
-      if single, let crop = image {
+      if original {
+        // The raw picture: its readings as the file has them, nothing unmixed or filled.
+        image = (try? self.dustFreeSource(for: frame, full: single, maxDimension: single ? nil : pixels))
+          .flatMap { ImagePipeline.shared.original($0, settings: frame.adjustments, oriented: single) }
+      } else if single, let crop = image {
         image = ImagePipeline.shared.render(crop, settings: frame.adjustments, profile: p, analysis: nil, negative: !positive)
       } else if positive, let crop = image {
         var s = frame.adjustments
@@ -2040,19 +2061,26 @@ final class AppModel: ObservableObject {
   /// frame has been analysed.
   func renderDetail(_ frame: FilmFrame, region: NormalRect, completion: @escaping (Detail?) -> Void) {
     // Never answered at once: an asker that asks again on an answer would never stop.
-    guard let analysis = toneAnalysis else { return DispatchQueue.main.async { completion(nil) } }
-    let negative = showNegative || tool == .base, p = conversionProfile, key = loupeDetailKey(frame, single: true)
+    let original = showsOriginal
+    // The raw picture needs no analysis: nothing is taken off it.
+    guard let analysis = original ? ToneAnalysis(base: .one, balance: .zero, low: 0, high: 1) : toneAnalysis else {
+      return DispatchQueue.main.async { completion(nil) }
+    }
+    let negative = showsNegative || tool == .base, p = conversionProfile, key = loupeDetailKey(frame, single: true)
+    // The raw picture as `ImagePipeline.original` has it: as a negative, with no base to divide by.
+    var settings = frame.adjustments
+    if original { (settings.base, settings.rollBase) = (nil, nil) }
     renderQueue.async {
-      let source = [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", frame.sourcePath ?? "", frame.dust?.signature ?? ""].joined(separator: "|")
+      let source = [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", frame.sourcePath ?? "", frame.dust?.signature ?? "", "\(original)"].joined(separator: "|")
       if self.detailSource?.key != source {
         self.detailSource = nil
-        self.detailSource = (try? self.source(for: frame, full: true)).map { (source, $0) }
+        self.detailSource = (try? original ? self.dustFreeSource(for: frame, full: true) : self.source(for: frame, full: true)).map { (source, $0) }
       }
       var detail: Detail?
       // The whole frame as shown, straightened, turned and mirrored, of which only the part asked
       // for is worked out.
       if let full = self.detailSource?.image,
-        let part = ImagePipeline.shared.render(full, region: region, settings: frame.adjustments, profile: p, analysis: analysis, negative: negative)
+        let part = ImagePipeline.shared.render(full, region: region, settings: settings, profile: p, analysis: original ? nil : analysis, negative: negative)
       {
         detail = Detail(key: key, region: part.region, image: part.image)
       }
@@ -2066,7 +2094,7 @@ final class AppModel: ObservableObject {
     let encoder = JSONEncoder()
     encoder.outputFormatting = .sortedKeys
     let settings = (try? encoder.encode(frame.adjustments)).map { $0.base64EncodedString() } ?? ""
-    let shown = (single ? "single " : "table ") + "\(!showNegative)"
+    let shown = (single ? "single " : "table ") + "\(!showNegative) \(showsOriginal)"
     return [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", shown, conversionProfile.id, settings, frame.dust?.signature ?? ""]
       .joined(separator: "|")
   }
@@ -2119,11 +2147,11 @@ final class AppModel: ObservableObject {
       // Frames of their own files (a camera's, imports) on a page laid out as a contact sheet:
       // positives from the film strip's, negatives read small from their files.
       if onSheetPage {
-        let page = sheetPageFrames, positive = !showNegative, positives = thumbnails, pages = contactPages.count
+        let page = sheetPageFrames, positive = !showsNegative, original = showsOriginal, positives = thumbnails, pages = contactPages.count
         let aspects = page.map { sheetAspect($0, positive: positive) }
         let index = contactPage
         // Each tile as it is: the film strip's positive, else the frame's own conversion.
-        let key = "sheet \(index) \(positive) \(pages)|" + zip(page, aspects).map { f, aspect in
+        let key = "sheet \(index) \(positive) \(original) \(pages)|" + zip(page, aspects).map { f, aspect in
           "\(f.name) \(aspect) " + (positive ? positives[f.id].map { "\(ObjectIdentifier($0).hashValue)" } ?? "-" : analysisKey(f, everything: true))
         }.joined(separator: "|")
         if let kept = tablePrint, kept.page == index, kept.positive == positive, tablePrintKey == key, positive {
@@ -2142,7 +2170,9 @@ final class AppModel: ObservableObject {
           guard let self else { return }
           self.step(0.2, "排接触表", token)
           let tiles = zip(page, aspects).map { f, aspect -> (name: String, image: CGImage?, aspect: CGFloat) in
-            (f.name, positive ? positives[f.id] : (try? self.source(for: f, maxDimension: 480)).map { ImagePipeline.shared.neutralNegative($0, settings: f.adjustments) }, aspect)
+            (f.name, positive ? positives[f.id]
+              : original ? (try? self.dustFreeSource(for: f, full: false, maxDimension: 480)).flatMap { ImagePipeline.shared.original($0, settings: f.adjustments, oriented: false) }
+              : (try? self.source(for: f, maxDimension: 480)).map { ImagePipeline.shared.neutralNegative($0, settings: f.adjustments) }, aspect)
           }
           let sheet = Self.composeSheet(tiles, pages: pages)
           DispatchQueue.main.async {
@@ -2161,7 +2191,7 @@ final class AppModel: ObservableObject {
       }
       // Frames that lie on the displayed overview; imports from other files are not on it.
       let onOverview = frames.filter { $0.sourcePath == nil || $0.sourcePath == overviewURL?.path }
-      guard !showNegative, let overview, !onOverview.isEmpty else {
+      guard !showsNegative, let overview, !onOverview.isEmpty else {
         displayed = overview
         rendering = false
         return
@@ -2205,7 +2235,7 @@ final class AppModel: ObservableObject {
     if !edit { editRegionLock = nil }
     rendering = true
     let request = SingleRender(
-      token: token, frame: frame, profile: conversionProfile, edit: edit, negative: showNegative || tool == .base,
+      token: token, frame: frame, profile: conversionProfile, edit: edit, negative: showsNegative || tool == .base, original: showsOriginal,
       sharpening: preferences.sharpening, previewDPI: Int(overviewDPI), analysisKey: analysisKey(frame),
       overview: overview)
     wantedLock.lock()
@@ -2219,7 +2249,7 @@ final class AppModel: ObservableObject {
   }
   /// The single frame's render, as asked for (`wantedSingle`, under `wantedLock`).
   private struct SingleRender {
-    let token: Int, frame: FilmFrame, profile: FilmProfile, edit: Bool, negative: Bool
+    let token: Int, frame: FilmFrame, profile: FilmProfile, edit: Bool, negative: Bool, original: Bool
     let sharpening: SharpeningProfile?, previewDPI: Int, analysisKey: String
     /// The preview it may be cut from, kept with its analysis so the key's identity of it holds.
     let overview: CGImage?
@@ -2324,6 +2354,10 @@ final class AppModel: ObservableObject {
     guard let r = wanted else { return }
     let frame = r.frame, p = r.profile, edit = r.edit, negative = r.negative, token = r.token
     let started = Date()
+    if r.original {
+      renderOriginal(r, started: started)
+      return
+    }
       do {
         self.step(0.05, frame.sourcePath != nil || Self.readsScan(frame) ? "读取原图" : "读取预览", token, since: started)
         let cropped = try self.source(for: frame)
@@ -2377,7 +2411,7 @@ final class AppModel: ObservableObject {
           // Newer than the picture shown, and of what is still shown: the frame, alone, as it is
           // looked at (edited or not, negative or not).
           guard token > self.shownSingle, self.singleView, self.selectedID == frame.id, edit == self.editingSingle,
-            negative == (self.showNegative || self.tool == .base)
+            negative == (self.showsNegative || self.tool == .base), !self.showsOriginal
           else {
             if newest { self.rendering = false }
             return
@@ -2413,6 +2447,41 @@ final class AppModel: ObservableObject {
         }
       }
   }
+  /// Module ①'s single frame: the raw picture in a linear response (`ImagePipeline.original`) and
+  /// how it was exposed; nothing analysed, converted or measured beside it.
+  private func renderOriginal(_ r: SingleRender, started: Date) {
+    let frame = r.frame, edit = r.edit, token = r.token
+    do {
+      step(0.05, "读取原图", token, since: started)
+      let raw = try dustFreeSource(for: frame, full: false)
+      let context = edit ? try contextSource(for: frame) : nil
+      var shown = frame.adjustments
+      if edit { shown.angle = nil }
+      guard let output = ImagePipeline.shared.original(context?.image ?? raw, settings: shown, oriented: true) else {
+        throw DeskError.message("无法生成预览")
+      }
+      let exposure = ImagePipeline.shared.exposure(raw)
+      DispatchQueue.main.async {
+        let newest = self.revision == token
+        guard token > self.shownSingle, self.singleView, self.selectedID == frame.id, edit == self.editingSingle, self.showsOriginal else {
+          if newest { self.rendering = false }
+          return
+        }
+        self.shownSingle = token
+        self.showOnCanvas(output)
+        if self.canvasRegion != context?.region { self.canvasRegion = context?.region }
+        if edit { self.editRegionLock = context?.region }
+        if self.exposureReading != exposure { self.exposureReading = exposure }
+        if newest { self.rendering = false }
+      }
+    } catch {
+      DispatchQueue.main.async {
+        guard self.revision == token else { return }
+        self.errorText = error.localizedDescription
+        self.rendering = false
+      }
+    }
+  }
   /// The frames either side of the one shown, read from their files while it is looked at, so that
   /// → and ← show them as soon as they are drawn: after the frame's own render, on the same queue,
   /// the one after first. Another render wanted first, the rest is left.
@@ -2433,7 +2502,41 @@ final class AppModel: ObservableObject {
   /// reads, so only the frames that changed are converted again; a pass asked for while another
   /// runs replaces it, going on from what is kept; and the passes go a frame at a time, so the
   /// single frame's render, asked for meanwhile, comes in between.
+  /// Module ①'s film strip: each frame's raw picture, small, as `ImagePipeline.original` shows it,
+  /// made while ① is shown and kept until the frame is read or cut otherwise.
+  @Published private(set) var rawThumbnails = [UUID: CGImage]()
+  private var rawThumbnailKeys = [UUID: String]()
+  /// What a frame's raw picture in the strip is made from.
+  static func rawThumbnailKey(_ f: FilmFrame) -> String {
+    let a = f.adjustments
+    return [f.id.uuidString, "\(f.rect)", f.scanPath ?? "", f.sourcePath ?? "", "\(a.rotation) \(a.flipHorizontal == true) \(a.angle ?? 0) \(a.inputGamma)"].joined(separator: "|")
+  }
+  func updateRawThumbnails() {
+    let ids = Set(frames.map(\.id))
+    if rawThumbnails.keys.contains(where: { !ids.contains($0) }) {
+      rawThumbnails = rawThumbnails.filter { ids.contains($0.key) }
+      rawThumbnailKeys = rawThumbnailKeys.filter { ids.contains($0.key) }
+    }
+    let wanted = frames.filter { rawThumbnailKeys[$0.id] != Self.rawThumbnailKey($0) }
+    guard showsOriginal, !wanted.isEmpty else { return }
+    renderQueue.async { [weak self] in
+      guard let self else { return }
+      let made = wanted.compactMap { f -> (UUID, String, CGImage)? in
+        guard let raw = try? self.dustFreeSource(for: f, full: false, maxDimension: 320),
+          let small = ImagePipeline.shared.original(raw, settings: f.adjustments, oriented: true)
+        else { return nil }
+        return (f.id, Self.rawThumbnailKey(f), small)
+      }
+      DispatchQueue.main.async {
+        for (id, key, small) in made {
+          self.rawThumbnails[id] = small
+          self.rawThumbnailKeys[id] = key
+        }
+      }
+    }
+  }
   func updateThumbnails() {
+    if showsOriginal { updateRawThumbnails() }
     guard overview != nil else { return }
     thumbnailRevision += 1
     let request = ThumbnailPass(

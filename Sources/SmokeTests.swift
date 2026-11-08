@@ -5,6 +5,8 @@ import ImageIO
 
 enum SmokeTests {
   static func run() {
+    // The models made here start on ② 去色罩, whose conversion they look at; a test of ① goes there.
+    AppModel.firstPage = .convert
     do {
       let pipe = ImagePipeline.shared
       let folder = URL(

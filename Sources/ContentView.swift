@@ -329,7 +329,8 @@ struct ContentView: View {
       }
       Spacer(minLength: 8)
       HStack(spacing: 8) { displayControls }.glassBar()
-      HStack(spacing: 8) { orientationControls }.glassBar()
+      // Module ① shows the raw picture, with nothing to adjust: turning it is ②'s.
+      if m.page != .capture { HStack(spacing: 8) { orientationControls }.glassBar() }
     }
   }
   /// Which frame is shown, with the keys to the ones beside it; or how many there are.
@@ -356,6 +357,27 @@ struct ContentView: View {
   /// What is shown, the negative or the positive, one choice on the light table and for the single
   /// frame; and the single frame's zoom.
   @ViewBuilder var displayControls: some View {
+    if m.showsOriginal {
+      // Module ①: the raw picture, and in the single view how it was exposed.
+      if m.singleView, let e = m.exposureReading {
+        HStack(spacing: 6) {
+          Circle().fill(e.verdict == .over ? Color.red : e.verdict == .under ? Color.orange : Color.green).frame(width: 7, height: 7)
+          Text(e.short).font(.system(size: 11, weight: .medium)).lineLimit(1)
+          InfoButton(text: e.text + "\n\n" + Self.originalInfo)
+        }
+      } else {
+        HStack(spacing: 6) {
+          Text("原片 · 线性").font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+          InfoButton(text: Self.originalInfo)
+        }
+      }
+    } else {
+      conversionDisplayControls
+    }
+  }
+  static let originalInfo = "① 采集显示原片：raw 文件里的读数原样，按线性响应显示（光多一倍，读数就大一倍，再编码到屏幕），不反相、不去色罩、不去串色，也不配平、不加曲线，负片的橙色色罩照原样。这里先不提供调整；去色罩和调整在 ②。\n\n曝光指示看的是胶片最亮的地方：负片是最薄的片基和暗部，反转片是最亮处。有通道到顶的胶片超过 0.5% 算过曝，最亮处不到满量程的 25%（还差两档以上）算欠曝。三个通道都到顶的裸光（灯箱、空片框）不算在内；没到顶的裸光会被当成胶片，翻拍时把画面裁到胶片上判断更准。"
+  /// Module ②'s: the negative or the positive, and the single frame's zoom.
+  @ViewBuilder var conversionDisplayControls: some View {
     Picker("显示", selection: $m.showNegative) {
       Text("负片").tag(true)
       Text("正片").tag(false)
@@ -981,7 +1003,8 @@ struct ContentView: View {
                   Rectangle().fill(Color.black.opacity(0.55))
                   // A frame not ticked for scanning and export lies dimmed; the one shown has the border.
                   Group {
-                    if let cg = m.thumbnails[f.id] {
+                    // Module ① shows the raw pictures, ② the converted ones.
+                    if let cg = m.showsOriginal ? m.rawThumbnails[f.id] : m.thumbnails[f.id] {
                       Image(decorative: cg, scale: 1).resizable().aspectRatio(contentMode: .fit)
                         .padding(2)
                     } else {

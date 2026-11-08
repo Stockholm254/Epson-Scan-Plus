@@ -178,7 +178,10 @@ enum LibraryTests {
 
     // MARK: The modules, and opening a roll
 
+    // As the app opens, not as the self-test starts its models (on ②).
+    AppModel.firstPage = .capture
     let model = AppModel(libraryURL: lib)
+    AppModel.firstPage = .convert
     try check(model.page == .capture && model.libraryRoots.count == 1,
       "the window opens on ① 采集 with the scanner's panel; a library chosen elsewhere lists only itself")
     model.page = .convert
