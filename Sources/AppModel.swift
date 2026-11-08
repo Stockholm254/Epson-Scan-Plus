@@ -1205,13 +1205,15 @@ final class AppModel: ObservableObject {
   var crosstalkRemoved: Bool { frames.contains { $0.sensorRead == true && $0.crosstalk != nil } }
   /// The roll is reversal film, slides; with no frames yet, what the next preview is set to.
   var reversalRoll: Bool { frames.isEmpty ? preferences.scanReversal : frames.contains { $0.adjustments.isSlide } }
-  /// The roll read as slides, or as negatives again, as one edit; the next preview follows. Frames
-  /// only found on the overview, none scanned yet, are found again as this film shows them: a slide
-  /// is where light comes through, not where the orange mask is.
+  /// The roll read as slides, or as negatives again, as one edit, from the scanner's panel or the
+  /// film section; the next preview follows, and pictures copied into the roll after. Frames only
+  /// found on the scanner's overview, none scanned yet, are found again as this film shows them: a
+  /// slide is where light comes through, not where the orange mask is.
   func setReversal(_ on: Bool) {
     preferences.scanReversal = on
     guard !isWorking else { return }
-    if overview != nil, frames.allSatisfy({ $0.sourcePath == nil && !$0.hasFullResolution }) {
+    // Only a scanner's overview is looked at for frames; a copy roll's first picture is no holder.
+    if overview != nil, rollSource != .camera, frames.allSatisfy({ $0.sourcePath == nil && !$0.hasFullResolution }) {
       detectFrames(reversal: on)
       return
     }

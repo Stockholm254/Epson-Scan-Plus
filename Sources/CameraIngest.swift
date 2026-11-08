@@ -209,6 +209,8 @@ extension AppModel {
     f.sourceBits = info.bits
     f.scanDPI = Int(dpi.rounded())
     f.adjustments.inputGamma = linear ? 1 : 2.2
+    // It joins the roll's film: a copy of a slide in a roll of slides is a slide.
+    if frames.contains(where: { $0.adjustments.isSlide }) { f.adjustments.setReversal(true) }
     f.sensorRead = sensor
     if sensor {
       f.adjustments.colourNoise = 1

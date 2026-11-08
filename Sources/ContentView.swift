@@ -563,6 +563,13 @@ struct ContentView: View {
         }
         .menuStyle(.button).frame(maxWidth: .infinity, alignment: .leading)
         .help("这一卷用的预设：通道斜率和标定的中性。也可以在下面输入胶片名")
+        // Which film the roll is comes before its preset: a slide is not inverted at all.
+        Picker("片种", selection: Binding(get: { m.reversalRoll }, set: { m.setReversal($0) })) {
+          Text("负片").tag(false)
+          Text("反转片").tag(true)
+        }
+        .pickerStyle(.segmented).labelsHidden().disabled(m.isWorking || m.frames.isEmpty)
+        .help("这一卷是负片还是反转片（幻灯片、正片）：整卷一起切换，可以撤销；扫描、翻拍和导入的卷都一样。反转片不去色罩、不用通道斜率，扫描的读数就是画面")
         labeled("胶片名") {
           HStack(spacing: 6) {
             TextField("胶片名", text: $m.filmName).textFieldStyle(.roundedBorder).font(.system(size: 12))

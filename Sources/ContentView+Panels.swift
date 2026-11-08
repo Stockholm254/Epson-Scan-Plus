@@ -56,7 +56,7 @@ extension ContentView {
             Text("彩色负片").tag(false)
             Text("反转片（正片）").tag(true)
           }.labelsHidden().disabled(m.isWorking)
-            .help("这一卷是负片还是反转片；下一次预览沿用。还没正式扫描时切换会按新的片种重新识别画面")
+            .help("这一卷是负片还是反转片；下一次预览沿用。还没正式扫描时切换会按新的片种重新识别画面。② 去色罩的「胶片」一节里也能切换")
         }
         labeled("来源") {
           Text(m.reversalRoll ? "透射光 · 不反相" : "透射光 · 保留负片").font(.system(size: 12)).foregroundStyle(.secondary)

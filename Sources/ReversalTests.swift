@@ -194,5 +194,19 @@ enum ReversalTests {
     let undone = !files.frames.contains { $0.adjustments.isSlide }
     try check(switched && stillSlide && ownColour && undone,
       "a roll of files switches to reversal film as one edit, its edges not looked at for a mask; a reset keeps a slide a slide, a recalculated balance its own colour; undone, negatives again")
+
+    // Switched from the film section as from the scanner's panel: a picture copied into the roll
+    // after joins its film, a slide among slides and a negative among negatives.
+    var joined = [Bool]()
+    for (n, slides) in [(3, true), (4, false)] {
+      files.setReversal(slides)
+      let url = decoded.appendingPathComponent("EPS0000\(n).tif")
+      try pipe.saveTIFF(slide(), to: url, dpi: 2400)
+      files.addCapturedFrame(url, original: url, linear: true)
+      let new = files.frames.last!.adjustments
+      joined.append(new.isSlide == slides && new.autoWhiteBalance != slides)
+    }
+    let copied = files.frames.count == 4 && joined == [true, true]
+    try check(copied, "a picture copied into a roll of slides is a slide, into a roll of negatives a negative")
   }
 }
