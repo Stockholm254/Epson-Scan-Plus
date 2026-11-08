@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import CoreImage
 import Foundation
 import ImageIO
@@ -126,6 +127,14 @@ final class ImagePipeline {
   }
 
   func load(_ url: URL, maxDimension: Int? = nil) throws -> CGImage {
+    // A big file read small comes from its small copy (`Proxies`), made the first time.
+    if let maxDimension, maxDimension <= Proxies.side, let image = Proxies.image(of: url, maxDimension: maxDimension, reading: readSmall) {
+      return image
+    }
+    return try readSmall(url, maxDimension: maxDimension)
+  }
+  /// `url` read whole, or as ImageIO makes it no larger than `maxDimension`, turned upright.
+  private func readSmall(_ url: URL, maxDimension: Int?) throws -> CGImage {
     guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else {
       throw DeskError.message("无法读取图像：\(url.lastPathComponent)")
     }
@@ -1169,5 +1178,95 @@ final class OverviewCache {
     let copy = ImagePipeline.shared.scaled(image, maxDimension: maxDimension)
     scaled[maxDimension] = copy
     return copy
+  }
+}
+
+/// Small copies of the big files frames are read from (a 61-megapixel copy shot is a 370 MB TIFF, a
+/// V850 scan more), kept in the app's caches: everything but an export reads a frame at 3000 pixels
+/// or less, and reading one from its 370 MB file took 1.8 s, twice a frame as a roll opened (its
+/// estimates, then its positives). The copy is the file read at `side` pixels, as `load` read it,
+/// kept losslessly in 16 bits, about 36 MB; read at `side` it gives the very same pixels, smaller it
+/// is made smaller by ImageIO, as the file itself would be. Each is named by its file's path, size
+/// and date, so a file changed is read again; the least recently read go past `budget`.
+enum Proxies {
+  static let side = 3000
+  /// Files smaller than this read fast enough as they are.
+  static var from = 96 << 20
+  static let budget = 4 << 30
+  static var root = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+    .appendingPathComponent("local.epscan.mac").appendingPathComponent("Proxies")
+  private static let lock = NSLock()
+  /// One lock a file, so that two queues reading it at once make its copy once.
+  nonisolated(unsafe) private static var making = [String: NSLock]()
+  /// Where `url`'s copy is kept, or nil for a file too small to need one.
+  static func place(of url: URL) -> URL? {
+    guard let a = try? FileManager.default.attributesOfItem(atPath: url.path),
+      let size = (a[.size] as? NSNumber)?.intValue, size >= from, let date = a[.modificationDate] as? Date
+    else { return nil }
+    let key = "\(url.standardizedFileURL.path)|\(size)|\(Int(date.timeIntervalSince1970 * 1000))"
+    let digest = SHA256.hash(data: Data(key.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
+    return root.appendingPathComponent(digest + ".tif")
+  }
+  /// `url` no larger than `maxDimension`, from its copy, made with `reading` if there is none yet;
+  /// nil for a file that needs none, or when the copy cannot be made.
+  static func image(of url: URL, maxDimension: Int, reading: (URL, Int?) throws -> CGImage) -> CGImage? {
+    guard let copy = place(of: url) else { return nil }
+    if let image = read(copy, maxDimension: maxDimension) { return image }
+    lock.lock()
+    let mine = making[copy.path] ?? NSLock()
+    making[copy.path] = mine
+    lock.unlock()
+    mine.lock()
+    defer { mine.unlock() }
+    if let image = read(copy, maxDimension: maxDimension) { return image }
+    guard let whole = try? reading(url, side) else { return nil }
+    do {
+      try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+      let partial = root.appendingPathComponent(UUID().uuidString + ".part")
+      guard let out = CGImageDestinationCreateWithURL(partial as CFURL, UTType.tiff.identifier as CFString, 1, nil) else { return nil }
+      CGImageDestinationAddImage(out, whole, [kCGImagePropertyTIFFDictionary: [kCGImagePropertyTIFFCompression: 1]] as CFDictionary)
+      guard CGImageDestinationFinalize(out) else { return nil }
+      _ = try? FileManager.default.removeItem(at: copy)
+      try FileManager.default.moveItem(at: partial, to: copy)
+    } catch { return maxDimension >= side ? whole : nil }
+    DispatchQueue.global(qos: .utility).async { trim() }
+    return read(copy, maxDimension: maxDimension)
+  }
+  /// The copy at `url`, at its own size or made smaller; its date set to now, as read last.
+  private static func read(_ url: URL, maxDimension: Int) -> CGImage? {
+    guard let src = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+      let p = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
+      let w = p[kCGImagePropertyPixelWidth] as? Int, let h = p[kCGImagePropertyPixelHeight] as? Int
+    else { return nil }
+    let image: CGImage?
+    if maxDimension >= max(w, h) {
+      image = CGImageSourceCreateImageAtIndex(src, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+    } else {
+      let opts: [CFString: Any] = [
+        kCGImageSourceCreateThumbnailFromImageAlways: true,
+        kCGImageSourceThumbnailMaxPixelSize: maxDimension,
+        kCGImageSourceCreateThumbnailWithTransform: true,
+        kCGImageSourceShouldCacheImmediately: true,
+      ]
+      image = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary)
+    }
+    if image != nil { try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path) }
+    return image
+  }
+  /// The copies past `budget` removed, the least recently read first.
+  static func trim() {
+    let files = FileManager.default
+    guard let names = try? files.contentsOfDirectory(at: root, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey]) else { return }
+    let all = names.compactMap { u -> (url: URL, date: Date, size: Int)? in
+      guard let v = try? u.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]), let d = v.contentModificationDate else { return nil }
+      return (u, d, v.fileSize ?? 0)
+    }.sorted { $0.date > $1.date }
+    var total = 0
+    for f in all {
+      total += f.size
+      // A copy half written by another queue is left to it, unless a day old.
+      if f.url.pathExtension == "part" { if f.date < Date().addingTimeInterval(-86400) { try? files.removeItem(at: f.url) }; continue }
+      if total > budget { try? files.removeItem(at: f.url) }
+    }
   }
 }

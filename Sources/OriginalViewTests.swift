@@ -103,10 +103,77 @@ enum OriginalViewTests {
     model.refresh()
     settle { !model.rendering && model.exposureReading != first }
     try check(model.exposureReading?.verdict == .under, "the next frame, a darker copy, reads underexposed: \(model.exposureReading?.short ?? "-")")
+    // A camera's raw picture is balanced for the screen, its base shown a negative's orange on a
+    // white light table, red as read; 原样 shows it as the sensor read it. The readings stay.
+    let sensorURL = decoded.appendingPathComponent("COPY0003.tif")
+    let greenBase = RGB(r: 0.3, g: 0.62, b: 0.2)
+    try pipe.saveTIFF(negative(base: greenBase), to: sensorURL, dpi: 2400)
+    model.addCapturedFrame(sensorURL, original: sensorURL, linear: true, sensor: true)
+    guard let sensorFrame = model.frames.last else { throw DeskError.message("FAIL: no sensor frame") }
+    model.select(sensorFrame.id)
+    model.refresh()
+    settle { !model.rendering && model.baseBalance.map { abs($0.level.g - 0.62) < 0.01 } == true }
+    let balancedPixel = model.displayed.map { pipe.raster($0) }?.pixel(5, 5)
+    let mask = AppModel.shownMask
+    let balancedWant = RGB((0..<3).map { srgb(0.3 * mask.values[$0] / mask.r) })
+    let wasBalanced = model.preferences.balanceRawView
+    let balancedShown = model.displayed, balancedExposure = model.exposureReading
+    model.setBalanceRawView(false)
+    settle { !model.rendering && model.displayed !== balancedShown }
+    let asReadPixel = model.displayed.map { pipe.raster($0) }?.pixel(5, 5)
+    func close(_ a: RGB?, _ b: RGB) -> Bool { a.map { zip($0.values, b.values).allSatisfy { abs($0 - $1) < 0.02 } } ?? false }
+    try check(wasBalanced && close(balancedPixel, balancedWant) && close(asReadPixel, RGB(greenBase.values.map(srgb)))
+      && balancedExposure != nil && model.exposureReading == balancedExposure,
+      "a camera's raw picture shows balanced for the screen, its base orange (\(balancedPixel.map { String(format: "%.2f %.2f %.2f", $0.r, $0.g, $0.b) } ?? "-")), and as read with 原样 (\(asReadPixel.map { String(format: "%.2f %.2f %.2f", $0.r, $0.g, $0.b) } ?? "-"), redrawn \(model.displayed !== balancedShown)); the exposure reading the same either way")
+    model.setBalanceRawView(true)
     model.page = .convert
     settle { !model.rendering }
     let converted = model.displayed.map { pipe.raster($0) }?.pixel(5, 5)
     try check(model.exposureReading == nil && !model.showsNegative && converted.map { abs($0.r - srgb(0.5)) > 0.1 || abs($0.b - srgb(0.14)) > 0.1 } == true,
       "module ② shows its conversion, the exposure left to ①")
+  }
+}
+
+/// The small copies big files are read from: the same pixels at their size, made once, read again
+/// from the copy, a file changed read afresh.
+enum ProxyTests {
+  static func run(folder: URL) throws {
+    func check(_ value: Bool, _ label: String) throws {
+      guard value else { throw DeskError.message("FAIL: " + label) }; print("PASS: " + label)
+    }
+    let pipe = ImagePipeline.shared
+    let (root, from) = (Proxies.root, Proxies.from)
+    Proxies.root = folder.appendingPathComponent("proxies")
+    defer { (Proxies.root, Proxies.from) = (root, from) }
+    // A 16-bit linear picture longer than the copies, its every pixel its own.
+    let (w, h) = (3400, 2200)
+    var px = [UInt16](repeating: 0, count: w * h * 3)
+    for y in 0..<h { for x in 0..<w { for c in 0..<3 { px[(y * w + x) * 3 + c] = UInt16(truncatingIfNeeded: (x * 37 + y * 101 + c * 9973) % 65536) } } }
+    let image = CGImage(
+      width: w, height: h, bitsPerComponent: 16, bitsPerPixel: 48, bytesPerRow: w * 6,
+      space: CGColorSpace(name: CGColorSpace.linearSRGB)!,
+      bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue | CGBitmapInfo.byteOrder16Little.rawValue),
+      provider: CGDataProvider(data: px.withUnsafeBufferPointer { Data(buffer: $0) } as CFData)!, decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
+    let url = folder.appendingPathComponent("proxy-source.tif")
+    try pipe.saveTIFF(image, to: url, dpi: 300)
+    func same(_ a: CGImage, _ b: CGImage) -> Bool {
+      guard a.width == b.width, a.height == b.height else { return false }
+      let sa = pipe.samples(a, maxDimension: max(a.width, a.height)), sb = pipe.samples(b, maxDimension: max(b.width, b.height))
+      return zip(sa.values, sb.values).allSatisfy { abs($0 - $1) < 1e-6 }
+    }
+    Proxies.from = Int.max
+    let direct = try pipe.load(url, maxDimension: Proxies.side), directSmall = try pipe.load(url, maxDimension: 600)
+    Proxies.from = 0
+    let made = try pipe.load(url, maxDimension: Proxies.side)
+    let copies = (try? FileManager.default.contentsOfDirectory(atPath: Proxies.root.path))?.filter { $0.hasSuffix(".tif") } ?? []
+    let again = try pipe.load(url, maxDimension: Proxies.side), small = try pipe.load(url, maxDimension: 600)
+    try check(copies.count == 1 && same(direct, made) && same(direct, again) && small.width == directSmall.width && small.height == directSmall.height,
+      "a big file read small is kept as a copy of \(Proxies.side) pixels, read back to the very same pixels; smaller reads come from it at the same size")
+    // The file written again: its copy is made afresh.
+    try pipe.saveTIFF(image, to: url, dpi: 300)
+    try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: url.path)
+    _ = try pipe.load(url, maxDimension: 800)
+    let after = (try? FileManager.default.contentsOfDirectory(atPath: Proxies.root.path))?.filter { $0.hasSuffix(".tif") } ?? []
+    try check(after.count == 2, "a file changed since is read again into a copy of its own")
   }
 }

@@ -183,7 +183,7 @@ struct FlatManagerSheet: View {
           .disabled(targets.isEmpty || blocked != nil)
           .help(blocked ?? "选中的照片不再按空白帧补平：去串色开着、做过光源标定的，回到光源标定的平场；其余的不补")
         let one = frameSelection.count == 1 ? m.frames.first { frameSelection.contains($0.id) } : nil
-        Button("这张是空白帧") {
+        Button("设成平场") {
           if let one { m.makeFlat(from: one) }
           said = "正在量平场…"
         }

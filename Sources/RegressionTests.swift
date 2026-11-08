@@ -36,6 +36,7 @@ enum RegressionTests {
     try AnalysisRegionTests.run(folder: folder)
     try ReversalTests.run(folder: folder)
     try OriginalViewTests.run(folder: folder)
+    try ProxyTests.run(folder: folder)
     try CopyLightTests.run(folder: folder)
     try DustTests.run(folder: folder)
     try FrameCropTests.run(folder: folder)

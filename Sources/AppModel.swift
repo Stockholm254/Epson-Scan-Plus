@@ -62,6 +62,18 @@ final class AppModel: ObservableObject {
     pictureShownAt = Date()
     if let pictureChanged { pictureChanged() } else { objectWillChange.send() }
   }
+  /// How far a roll opening has got, for the bar beside the frame count: its frames read for the
+  /// roll's estimate (when that takes a while), then its positives converted, two or more. Nil when
+  /// they are all there.
+  @Published private(set) var positivesLoading: LoadProgress?
+  struct LoadProgress: Equatable {
+    var done: Int
+    var total: Int
+    var what = "转换正片"
+  }
+  /// The library's small copies shown in the strip while a roll opens, until each frame is
+  /// converted: not written back to the library.
+  private var keptPositivesShown = [UUID: CGImage]()
   /// The frames' positives, as the filmstrip shows them; the library keeps a small copy of each.
   @Published var thumbnails = [UUID: CGImage]() {
     didSet {
@@ -72,7 +84,7 @@ final class AppModel: ObservableObject {
       if onSheetPage && !showsNegative { refresh() }
       guard !thumbnails.isEmpty, !readOnly, let folder = sessionURL else { return }
       // Only the positives that changed, so a slider dragged over one frame writes that one.
-      let changed = thumbnails.filter { $0.value !== oldValue[$0.key] }
+      let changed = thumbnails.filter { $0.value !== oldValue[$0.key] && $0.value !== keptPositivesShown[$0.key] }
       let keep = Set(thumbnails.keys)
       guard !changed.isEmpty || keep != Set(oldValue.keys) else { return }
       Self.libraryWrites.async { RollLibrary.storePositives(changed, keeping: keep, folder: folder) }
@@ -467,7 +479,7 @@ final class AppModel: ObservableObject {
       if singleView && levelling { return "沿地平线、墙边或建筑竖线拖一条线，松手即按它拉直 · Esc 退出" }
       return singleView ? "拖动四角裁切 · 方向键微调 · [ ] 拉直 0.1°（⇧ 1°） · ⌥ 拖一条线拉直 · 回车完成 · Esc 退出" : "在接触表上拖出新的画框 · Esc 退出"
     case .region:
-      return singleView ? "在画面里拖出青色的去色罩区域：片基估计、白平衡和色阶只看这里 · 拖边、角或框内调整 · ⌫ 跟随画面 · Esc 退出" : "进入单张后框选去色罩区域 · Esc 退出"
+      return singleView ? "在画面里拖出青色的去色罩区域：片基估计、白平衡和色阶只看这里 · 拖边、角或框内调整 · ⌫ 跟随画面 · 回车完成 · Esc 退出" : "进入单张后框选去色罩区域 · Esc 退出"
     case .base: return "点未曝光的橙色片基（片间或片边），不要点景物或片夹；琥珀色是自动找到的片基 · Esc 退出"
     case .neutral: return "点画面中应为中性灰的地方：灰卡、白墙、水泥 · Esc 退出"
     case .calibrate:
@@ -1806,17 +1818,31 @@ final class AppModel: ObservableObject {
       var result = [UUID: RGB?]()
       // Slides have no layers' contrast to estimate: their dyes are the picture.
       // Blank frames have no film on them: no layers' contrast to measure.
-      for members in Self.rollGroups(snapshot, poolPictures: pool).map({ $0.filter { $0.adjustments.inputIsNegative && !blanks.contains($0.id) } })
-      where !members.isEmpty {
-        let inputs = members.compactMap { f in
-          (try? self.source(for: f, maxDimension: 600)).map { (image: $0, settings: f.adjustments) }
+      let groups = Self.rollGroups(snapshot, poolPictures: pool).map({ $0.filter { $0.adjustments.inputIsNegative && !blanks.contains($0.id) } })
+      // Read from their files (a roll opened the first time), the frames counted on the bar once
+      // it takes more than half a second; from memory it is too quick to show.
+      let started = Date(), total = groups.reduce(0) { $0 + $1.count }
+      var read = 0, shown = false
+      for members in groups where !members.isEmpty {
+        let inputs = members.compactMap { f -> (image: CGImage, settings: Adjustments)? in
+          defer {
+            read += 1
+            if total >= 2 && Date().timeIntervalSince(started) > 0.5 {
+              shown = true
+              let progress = LoadProgress(done: read, total: total, what: "读取原图")
+              DispatchQueue.main.async { if token == self.rollSlopesRevision { self.positivesLoading = progress } }
+            }
+          }
+          return (try? self.source(for: f, maxDimension: 600)).map { (image: $0, settings: f.adjustments) }
         }
         // The toe only bends from a measured film base, as in the conversion.
         let measured = inputs.allSatisfy { ($0.settings.base ?? $0.settings.rollBase) != nil }
         let slopes = ImagePipeline.shared.rollSlopes(inputs, greenSlope: green, toe: measured ? toe : nil)
         for f in members { result[f.id] = .some(slopes) }
       }
+      let wasShown = shown
       DispatchQueue.main.async {
+        if wasShown, self.positivesLoading?.what == "读取原图" { self.positivesLoading = nil }
         // A newer estimate is on its way; still let the caller go on.
         guard token == self.rollSlopesRevision else {
           completion?()
@@ -2031,7 +2057,7 @@ final class AppModel: ObservableObject {
     for s in spots {
       let at = CGPoint(x: s.x, y: s.y)
       if let value = s.value, let base = s.base {
-        points.append(NeutralPoint(frame: s.frame, value: value, base: base, gamma: s.gamma ?? 1, at: at, name: s.name))
+        points.append(NeutralPoint(frame: s.frame, value: value, base: base, gamma: s.gamma ?? 1, at: at, name: frames.first { $0.id == s.frame }?.name ?? s.name))
         continue
       }
       guard let frame = frames.first(where: { $0.id == s.frame }) else { missing += 1; continue }
@@ -2453,7 +2479,7 @@ final class AppModel: ObservableObject {
         let aspects = page.map { sheetAspect($0, positive: positive) }
         let index = contactPage
         // Each tile as it is: the film strip's positive, else the frame's own conversion.
-        let key = "sheet \(index) \(positive) \(original) \(pages)|" + zip(page, aspects).map { f, aspect in
+        let key = "sheet \(index) \(positive) \(original) \(original && preferences.balanceRawView) \(pages)|" + zip(page, aspects).map { f, aspect in
           "\(f.name) \(aspect) " + (positive ? positives[f.id].map { "\(ObjectIdentifier($0).hashValue)" } ?? "-" : analysisKey(f, everything: true))
         }.joined(separator: "|")
         if let kept = tablePrint, kept.page == index, kept.positive == positive, tablePrintKey == key, positive {
@@ -2473,7 +2499,7 @@ final class AppModel: ObservableObject {
           self.step(0.2, "排接触表", token)
           let tiles = zip(page, aspects).map { f, aspect -> (name: String, image: CGImage?, aspect: CGFloat) in
             (f.name, positive ? positives[f.id]
-              : original ? (try? self.dustFreeSource(for: f, full: false, maxDimension: 480)).flatMap { ImagePipeline.shared.original($0, settings: f.adjustments, oriented: false) }
+              : original ? (try? self.dustFreeSource(for: f, full: false, maxDimension: 480)).flatMap { ImagePipeline.shared.original($0, settings: f.adjustments, oriented: false, gains: self.rawGains(f, balance: self.baseBalance(of: f, raw: $0))) }
               : (try? self.source(for: f, maxDimension: 480)).map { ImagePipeline.shared.neutralNegative($0, settings: f.adjustments) }, aspect)
           }
           let sheet = Self.composeSheet(tiles, pages: pages)
@@ -2488,7 +2514,9 @@ final class AppModel: ObservableObject {
           }
         }
         renderWork = work
-        renderQueue.asyncAfter(deadline: .now() + 0.05, execute: work)
+        // Positives are laid out from the strip's, reading no file: not behind the roll's estimate
+        // on the render queue, which reads every frame the first time a roll opens.
+        (positive ? DispatchQueue.global(qos: .userInitiated) : renderQueue).asyncAfter(deadline: .now() + 0.05, execute: work)
         return
       }
       // Frames that lie on the displayed overview; imports from other files are not on it.
@@ -2759,22 +2787,11 @@ final class AppModel: ObservableObject {
       let context = edit ? try contextSource(for: frame) : nil
       var shown = frame.adjustments
       if edit { shown.angle = nil }
-      guard let output = ImagePipeline.shared.original(context?.image ?? raw, settings: shown, oriented: true) else {
+      let balance = baseBalance(of: frame, raw: raw)
+      guard let output = ImagePipeline.shared.original(context?.image ?? raw, settings: shown, oriented: true, gains: rawGains(frame, balance: balance)) else {
         throw DeskError.message("无法生成预览")
       }
       let exposure = ImagePipeline.shared.exposure(raw)
-      // The base where the app found it at the frame's edges, else where it was picked, else the
-      // brightest film; read as the sensor read it, in the frame as cropped.
-      let crop = frame.rect
-      func inCrop(_ a: NormalRect) -> CGRect {
-        CGRect(x: (a.x - crop.x) / crop.width, y: (a.y - crop.y) / crop.height, width: a.width / crop.width, height: a.height / crop.height)
-      }
-      let edges = (frame.edgeBase?.base != nil ? frame.edgeBase?.areas ?? [] : []).map(inCrop)
-        .filter { $0.intersects(CGRect(x: 0, y: 0, width: 1, height: 1)) }
-      let picked = frame.adjustments.basePicked.map { p in frame.sourcePath != nil ? inCrop(p) : p.cg }
-      let balance = edges.isEmpty
-        ? ImagePipeline.shared.baseBalance(raw, areas: picked.map { [$0.insetBy(dx: -0.004, dy: -0.004)] } ?? [], source: picked == nil ? "最亮的胶片" : "手动取样")
-        : ImagePipeline.shared.baseBalance(raw, areas: edges, source: "片边")
       DispatchQueue.main.async {
         let newest = self.revision == token
         guard token > self.shownSingle, self.singleView, self.selectedID == frame.id, edit == self.editingSingle, self.showsOriginal else {
@@ -2796,6 +2813,42 @@ final class AppModel: ObservableObject {
         self.rendering = false
       }
     }
+  }
+  /// The film base's reading in `raw` (the frame's pixels as the sensor read them, cropped): where
+  /// the app found the base at the frame's edges, else where it was picked, else the brightest film.
+  func baseBalance(of frame: FilmFrame, raw: CGImage) -> BaseBalance? {
+    let crop = frame.rect
+    func inCrop(_ a: NormalRect) -> CGRect {
+      CGRect(x: (a.x - crop.x) / crop.width, y: (a.y - crop.y) / crop.height, width: a.width / crop.width, height: a.height / crop.height)
+    }
+    let edges = (frame.edgeBase?.base != nil ? frame.edgeBase?.areas ?? [] : []).map(inCrop)
+      .filter { $0.intersects(CGRect(x: 0, y: 0, width: 1, height: 1)) }
+    let picked = frame.adjustments.basePicked.map { p in frame.sourcePath != nil ? inCrop(p) : p.cg }
+    return edges.isEmpty
+      ? ImagePipeline.shared.baseBalance(raw, areas: picked.map { [$0.insetBy(dx: -0.004, dy: -0.004)] } ?? [], source: picked == nil ? "最亮的胶片" : "手动取样")
+      : ImagePipeline.shared.baseBalance(raw, areas: edges, source: "片边")
+  }
+  /// What a colour negative's base looks like on a white light table, in linear light against its
+  /// red: the orange of a C-41 mask, green about 0.4 D and blue about 0.65 D denser than red. Only
+  /// for the screen, so a typical mask rather than this film's.
+  static let shownMask = RGB(r: 1, g: 0.4, b: 0.22)
+  /// The gains ① shows a camera's raw picture with, for the screen only: a sensor reads green about
+  /// twice as strongly as red and blue, and its file is not white balanced, so the raw picture as
+  /// read is green. The base is shown as a negative's orange on a white light table, a slide's
+  /// brightest film white; red kept as read. Nil for scans (the scanner balances to its lamp),
+  /// imports, or with 原样 chosen. The exposure and the base readings stay the sensor's own.
+  func rawGains(_ frame: FilmFrame, balance: BaseBalance?) -> RGB? {
+    guard preferences.balanceRawView, frame.sensorRead == true, let level = balance?.level, level.values.allSatisfy({ $0 > 1e-4 }) else { return nil }
+    let target = frame.adjustments.isSlide ? RGB(r: 1, g: 1, b: 1) : Self.shownMask
+    return RGB((0..<3).map { c in min(16, max(1.0 / 16, (target.values[c] / target.r) * (level.r / level.values[c]))) })
+  }
+  /// 原样 or 配平 for ①'s raw pictures; the strip's made again.
+  func setBalanceRawView(_ on: Bool) {
+    guard preferences.balanceRawView != on else { return }
+    preferences.balanceRawView = on
+    rawThumbnailKeys = [:]
+    updateRawThumbnails()
+    refresh()
   }
   /// The frames either side of the one shown, read from their files while it is looked at, so that
   /// → and ← show them as soon as they are drawn: after the frame's own render, on the same queue,
@@ -2822,9 +2875,10 @@ final class AppModel: ObservableObject {
   @Published private(set) var rawThumbnails = [UUID: CGImage]()
   private var rawThumbnailKeys = [UUID: String]()
   /// What a frame's raw picture in the strip is made from.
-  static func rawThumbnailKey(_ f: FilmFrame) -> String {
+  static func rawThumbnailKey(_ f: FilmFrame, balanced: Bool = false) -> String {
     let a = f.adjustments
-    return [f.id.uuidString, "\(f.rect)", f.scanPath ?? "", f.sourcePath ?? "", "\(a.rotation) \(a.flipHorizontal == true) \(a.angle ?? 0) \(a.inputGamma)"].joined(separator: "|")
+    let base = balanced ? "\(f.edgeBase?.areas ?? []) \(a.basePicked.map { "\($0)" } ?? "-") \(a.isSlide)" : "as read"
+    return [f.id.uuidString, "\(f.rect)", f.scanPath ?? "", f.sourcePath ?? "", "\(a.rotation) \(a.flipHorizontal == true) \(a.angle ?? 0) \(a.inputGamma)", base].joined(separator: "|")
   }
   func updateRawThumbnails() {
     let ids = Set(frames.map(\.id))
@@ -2832,15 +2886,16 @@ final class AppModel: ObservableObject {
       rawThumbnails = rawThumbnails.filter { ids.contains($0.key) }
       rawThumbnailKeys = rawThumbnailKeys.filter { ids.contains($0.key) }
     }
-    let wanted = frames.filter { rawThumbnailKeys[$0.id] != Self.rawThumbnailKey($0) }
+    let balanced = preferences.balanceRawView
+    let wanted = frames.filter { rawThumbnailKeys[$0.id] != Self.rawThumbnailKey($0, balanced: balanced) }
     guard showsOriginal, !wanted.isEmpty else { return }
     renderQueue.async { [weak self] in
       guard let self else { return }
       let made = wanted.compactMap { f -> (UUID, String, CGImage)? in
         guard let raw = try? self.dustFreeSource(for: f, full: false, maxDimension: 320),
-          let small = ImagePipeline.shared.original(raw, settings: f.adjustments, oriented: true)
+          let small = ImagePipeline.shared.original(raw, settings: f.adjustments, oriented: true, gains: self.rawGains(f, balance: self.baseBalance(of: f, raw: raw)))
         else { return nil }
-        return (f.id, Self.rawThumbnailKey(f), small)
+        return (f.id, Self.rawThumbnailKey(f, balanced: balanced), small)
       }
       DispatchQueue.main.async {
         for (id, key, small) in made {
@@ -2849,6 +2904,20 @@ final class AppModel: ObservableObject {
         }
       }
     }
+  }
+  /// The positives the library kept of the roll in `folder`, small, shown at once in the strip and
+  /// on the light table, each replaced as its frame is converted: a roll of 61-megapixel copy
+  /// shots reads 370 MB a frame before its first positive.
+  private func showKeptPositives(_ folder: URL) {
+    let cache = RollLibrary.cacheFolder(for: folder)
+    var kept = [UUID: CGImage]()
+    for f in frames {
+      let url = cache.appendingPathComponent(f.id.uuidString + ".jpg")
+      guard let src = CGImageSourceCreateWithURL(url as CFURL, nil), let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else { continue }
+      kept[f.id] = image
+    }
+    keptPositivesShown = kept
+    thumbnails = kept
   }
   func updateThumbnails() {
     if showsOriginal { updateRawThumbnails() }
@@ -2868,6 +2937,8 @@ final class AppModel: ObservableObject {
     let token: Int, profile: FilmProfile, keys: [UUID: String]
     var pending: ArraySlice<FilmFrame>
     var result = [UUID: CGImage]()
+    /// The frames converted, of those that had to be.
+    var done = 0, total = 0
     init(token: Int, frames: [FilmFrame], profile: FilmProfile, keys: [UUID: String]) {
       (self.token, self.profile, self.keys, pending) = (token, profile, keys, frames[...])
     }
@@ -2890,6 +2961,13 @@ final class AppModel: ObservableObject {
     thumbnailsQueued = false
     wantedLock.unlock()
     guard let pass = wanted else { return }
+    pass.total = pass.pending.filter { f in pass.keys[f.id].map { keptThumbnails[f.id]?.key != $0 } ?? false }.count
+    let (token, total) = (pass.token, pass.total)
+    DispatchQueue.main.async {
+      guard token == self.thumbnailRevision else { return }
+      let progress = total >= 2 ? LoadProgress(done: 0, total: total) : nil
+      if self.positivesLoading != progress { self.positivesLoading = progress }
+    }
     thumbnailStep(pass)
   }
   /// One frame of `pass`, then the next on the queue's turn; a newer pass asked for takes over.
@@ -2901,6 +2979,8 @@ final class AppModel: ObservableObject {
       DispatchQueue.main.async {
         guard pass.token == self.thumbnailRevision else { return }
         self.thumbnails = result
+        self.keptPositivesShown = [:]
+        if self.positivesLoading != nil { self.positivesLoading = nil }
       }
       return
     }
@@ -2913,6 +2993,14 @@ final class AppModel: ObservableObject {
         let small = ImagePipeline.shared.scaled(positive, maxDimension: Self.thumbnailDimension)
         keptThumbnails[f.id] = (key, small)
         pass.result[f.id] = small
+        // Shown as it comes, rather than when the whole roll is done.
+        pass.done += 1
+        let (id, token, progress) = (f.id, pass.token, pass.total >= 2 ? LoadProgress(done: pass.done, total: pass.total) : nil)
+        DispatchQueue.main.async {
+          guard token == self.thumbnailRevision else { return }
+          if self.thumbnails[id] !== small { self.thumbnails[id] = small }
+          if self.positivesLoading != progress { self.positivesLoading = progress }
+        }
       }
     }
     renderQueue.async { [weak self] in self?.thumbnailStep(pass) }
@@ -3741,6 +3829,7 @@ final class AppModel: ObservableObject {
       physicalMM = CGSize(width: p.physicalWidthMM, height: p.physicalHeightMM)
       selectedID = frames.first?.id
       singleView = false
+      showKeptPositives(folder)
       updateRollBase()
       updateRollSlopes()
       refresh()

@@ -1901,7 +1901,8 @@ final class FilmCanvasView: NSView {
       // [ and ]: a tenth of a degree, with shift a whole one.
       let step = event.modifierFlags.contains(.shift) ? 1.0 : 0.1
       model.straighten(model.screenAngle + (event.keyCode == 30 ? step : -step))
-    } else if event.keyCode == 36 && model?.tool == .crop && model?.singleView == true {
+    } else if [36, 76].contains(event.keyCode), model?.singleView == true, model?.tool == .crop || model?.tool == .region {
+      // Return (or the keypad's Enter) ends the crop or the de-masking region, as it is set.
       model?.useTool(.select)
     } else if [123, 124].contains(event.keyCode), event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty {
       // The frame before or after, on the light table too, its page turning with it.

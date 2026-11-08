@@ -336,12 +336,15 @@ extension ContentView {
         }
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 64), spacing: 4)], alignment: .leading, spacing: 4) {
           ForEach(Array(spots.enumerated()), id: \.offset) { i, s in
-            Button("\(i + 1) · \(s.name)") {
+            // The frame's number now (frames are numbered again after one is deleted or moved),
+            // else the one it had when the preset was made.
+            let here = m.frames.first { $0.id == s.frame }
+            Button("\(i + 1) · \(here?.name ?? s.name)") {
               m.showCalibrationPoints = true
               m.open(s.frame)
             }
-            .font(.system(size: 11)).disabled(!m.frames.contains { $0.id == s.frame })
-            .help(m.frames.contains { $0.id == s.frame } ? "打开第 \(s.name) 张，看中性 \(i + 1) 在哪里" : "第 \(s.name) 张不在这一卷")
+            .font(.system(size: 11)).disabled(here == nil)
+            .help(here.map { "打开第 \($0.name) 张，看中性 \(i + 1) 在哪里" } ?? "标定时的第 \(s.name) 张不在这一卷")
           }
         }
       }

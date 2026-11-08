@@ -160,8 +160,17 @@ extension ImagePipeline {
   /// for the screen as sRGB; nothing taken off, balanced or curved, a negative's orange mask as it
   /// is. A file encoded for the screen already is shown as encoded. `oriented` turns, mirrors and
   /// straightens it as the frame is, for the single view; the light table has it as it lies.
-  func original(_ image: CGImage, settings s: Adjustments, oriented: Bool) -> CGImage? {
-    var ci = Self.baseNeutral(CIImage(cgImage: image, options: [.colorSpace: NSNull()]), base: nil, gamma: s.inputGamma)
+  /// With `gains`, each channel of a linear file multiplied by its own, for the screen only.
+  func original(_ image: CGImage, settings s: Adjustments, oriented: Bool, gains: RGB? = nil) -> CGImage? {
+    var ci = CIImage(cgImage: image, options: [.colorSpace: NSNull()])
+    if let g = gains {
+      ci = ci.applyingFilter("CIColorMatrix", parameters: [
+        "inputRVector": CIVector(x: g.r, y: 0, z: 0, w: 0),
+        "inputGVector": CIVector(x: 0, y: g.g, z: 0, w: 0),
+        "inputBVector": CIVector(x: 0, y: 0, z: g.b, w: 0),
+      ])
+    }
+    ci = Self.baseNeutral(ci, base: nil, gamma: s.inputGamma)
     if oriented {
       ci = Self.straightened(ci, degrees: s.angle ?? 0)
       ci = ci.oriented(forExifOrientation: [1, 6, 3, 8][((s.rotation % 4) + 4) % 4])

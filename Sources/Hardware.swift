@@ -210,39 +210,62 @@ struct ModuleSwitch: NSViewRepresentable {
   func updateNSView(_ control: NSSegmentedControl, context: Context) {
     context.coordinator.choose = choose
     if control.segmentCount != titles.count { control.segmentCount = titles.count }
+    let font = control.font ?? .systemFont(ofSize: NSFont.systemFontSize)
+    if context.coordinator.greyed.count != titles.count { context.coordinator.greyed = Array(repeating: nil, count: titles.count) }
     for (i, title) in titles.enumerated() {
-      if control.label(forSegment: i) != title { control.setLabel(title, forSegment: i) }
       if control.isEnabled(forSegment: i) != enabled[i] { control.setEnabled(enabled[i], forSegment: i) }
+      // In the glass toolbar (macOS 26 on) a segment turned off is drawn as bright as the others,
+      // so its title is drawn here instead, as a picture in the colour of text that cannot be used.
+      let label = enabled[i] ? title : ""
+      if control.label(forSegment: i) != label { control.setLabel(label, forSegment: i) }
+      let greyed = enabled[i] ? nil : title
+      if context.coordinator.greyed[i] != greyed {
+        context.coordinator.greyed[i] = greyed
+        control.setImage(greyed.map { Self.greyedTitle($0, font: font) }, forSegment: i)
+      }
     }
     if control.selectedSegment != selected { control.selectedSegment = selected }
     control.toolTip = help
   }
+  /// `title` as a picture, drawn when shown so that it follows the window's light or dark look. The
+  /// system's own greys come out clear in the glass, and a segment turned off draws its picture at
+  /// about half strength, so it is drawn at 70% white (or black): a third, as text that cannot be used.
+  static func greyedTitle(_ title: String, font: NSFont) -> NSImage {
+    let size = (title as NSString).size(withAttributes: [.font: font])
+    let image = NSImage(size: NSSize(width: ceil(size.width), height: ceil(size.height)), flipped: false) { _ in
+      let dark = NSAppearance.currentDrawing().bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+      (title as NSString).draw(at: .zero, withAttributes: [.font: font, .foregroundColor: NSColor(white: dark ? 1 : 0, alpha: 0.7)])
+      return true
+    }
+    image.isTemplate = false
+    image.accessibilityDescription = title
+    return image
+  }
   final class Coordinator: NSObject {
     var choose: (Int) -> Void
+    /// The segments drawn greyed, by their titles; nil where a segment shows its own label.
+    var greyed = [String?]()
     init(_ choose: @escaping (Int) -> Void) { self.choose = choose }
     @objc func changed(_ control: NSSegmentedControl) { choose(control.selectedSegment) }
   }
 }
 
-/// A slider, the system's, a double click taking it back to `detent`; under its track, where the
-/// slider has one, a thin strip shading from what its left end does to what its right end does.
+/// A slider, the system's, a double click taking it back to `detent`. Where the slider has one, its
+/// track is drawn shading from what its left end does to what its right end does.
 struct Fader: View {
   let title: String
   @Binding var value: Double
   let range: ClosedRange<Double>
   var detent: Double? = nil
-  /// The strip's colours, left to right; nil takes the slider's own by its title (`gradients`).
+  /// The track's colours, left to right; nil takes the slider's own by its title (`gradients`).
   var gradient: [Color]? = nil
   var body: some View {
-    VStack(spacing: 2) {
+    if let colours = gradient ?? Self.gradients[title] {
+      GradientSlider(title: title, value: $value, range: range, detent: detent, colours: colours.map { NSColor($0) })
+    } else {
       Slider(value: $value, in: range) { Text(title) }.labelsHidden().tint(Hardware.accent)
         .simultaneousGesture(TapGesture(count: 2).onEnded { if let detent { value = detent } })
         .accessibilityLabel(title)
-      if let colours = gradient ?? Self.gradients[title] {
-        // As wide as the knob travels: half a knob in from each end.
-        Capsule().fill(LinearGradient(colors: colours, startPoint: .leading, endPoint: .trailing))
-          .frame(height: 3).padding(.horizontal, 8).accessibilityHidden(true)
-      }
     }
   }
   private static let cool = Color(red: 0.35, green: 0.58, blue: 0.98), warm = Color(red: 0.98, green: 0.66, blue: 0.28)
@@ -266,6 +289,81 @@ struct Fader: View {
     "白点": [grey(1), grey(0.74)],
     "饱和度": [grey(0.55), Color(red: 0.98, green: 0.42, blue: 0.22)],
   ]
+}
+
+/// The system's slider with its track drawn in `colours`, left to right, and no accent fill: the
+/// knob, the keys, scrolling and VoiceOver as any slider's. A double click takes it to `detent`.
+struct GradientSlider: NSViewRepresentable {
+  let title: String
+  @Binding var value: Double
+  let range: ClosedRange<Double>
+  var detent: Double?
+  let colours: [NSColor]
+  func makeCoordinator() -> Coordinator { Coordinator(self) }
+  func makeNSView(context: Context) -> DetentSlider {
+    let slider = DetentSlider(value: value, minValue: range.lowerBound, maxValue: range.upperBound,
+      target: context.coordinator, action: #selector(Coordinator.moved(_:)))
+    slider.isContinuous = true
+    slider.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    slider.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    return slider
+  }
+  func updateNSView(_ slider: DetentSlider, context: Context) {
+    context.coordinator.parent = self
+    if slider.minValue != range.lowerBound { slider.minValue = range.lowerBound }
+    if slider.maxValue != range.upperBound { slider.maxValue = range.upperBound }
+    if slider.doubleValue != value { slider.doubleValue = value }
+    slider.detent = detent
+    slider.isEnabled = context.environment.isEnabled
+    if let cell = slider.cell as? GradientSliderCell, cell.colours != colours {
+      cell.colours = colours
+      slider.needsDisplay = true
+    }
+    slider.setAccessibilityLabel(title)
+  }
+  final class Coordinator: NSObject {
+    var parent: GradientSlider
+    init(_ parent: GradientSlider) { self.parent = parent }
+    @objc func moved(_ slider: NSSlider) {
+      if parent.value != slider.doubleValue { parent.value = slider.doubleValue }
+    }
+  }
+}
+
+/// A slider a double click sets to `detent`.
+final class DetentSlider: NSSlider {
+  var detent: Double?
+  override class var cellClass: AnyClass? {
+    get { GradientSliderCell.self }
+    set {}
+  }
+  override func mouseDown(with event: NSEvent) {
+    if event.clickCount == 2, let detent {
+      doubleValue = detent
+      sendAction(action, to: target)
+      return
+    }
+    super.mouseDown(with: event)
+  }
+}
+
+/// The track as a rounded bar of the slider's colours, under the system's knob.
+final class GradientSliderCell: NSSliderCell {
+  var colours = [NSColor]()
+  override func drawBar(inside rect: NSRect, flipped: Bool) {
+    guard colours.count > 1, let gradient = NSGradient(colors: colours) else { return super.drawBar(inside: rect, flipped: flipped) }
+    let height: CGFloat = 5
+    let bar = NSRect(x: rect.minX, y: rect.midY - height / 2, width: rect.width, height: height)
+    let path = NSBezierPath(roundedRect: bar, xRadius: height / 2, yRadius: height / 2)
+    NSGraphicsContext.saveGraphicsState()
+    if !isEnabled { NSGraphicsContext.current?.cgContext.setAlpha(0.4) }
+    gradient.draw(in: path, angle: 0)
+    // An edge, so that the ends near the panel's own colour still show where the track is.
+    NSColor.separatorColor.setStroke()
+    path.lineWidth = 0.5
+    path.stroke()
+    NSGraphicsContext.restoreGraphicsState()
+  }
 }
 
 /// A slider's figure that can be typed into: shown as its readout, a click makes it a field.

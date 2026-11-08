@@ -99,7 +99,7 @@ struct LibraryPage: View {
         Text(m.libraryURL.path).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
           .lineLimit(1).truncationMode(.middle)
         Spacer()
-        Text("双击一页打开这一卷，进入 ② 去色罩；鼠标停在一格上可以放大看；右键可以重命名、移到废纸篓").font(.system(size: 11)).foregroundStyle(.secondary)
+        Text("双击一页打开这一卷，进入 ② 去色罩；鼠标停在一格上可以放大看；右键可以重命名；标签右下角的废纸篓把这一卷移到废纸篓").font(.system(size: 11)).foregroundStyle(.secondary)
       }.padding(.horizontal, 18).padding(.vertical, 8)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -320,8 +320,18 @@ struct RollSleeve: View {
           .font(.system(size: 11)).foregroundStyle(Self.ink.opacity(0.6)).lineLimit(1)
       }
     }
-    .padding(.horizontal, 10).padding(.vertical, 7).frame(maxWidth: .infinity, alignment: .leading)
+    .padding(.horizontal, 10).padding(.vertical, 7).padding(.trailing, 22).frame(maxWidth: .infinity, alignment: .leading)
     .background(LinearGradient(colors: [Self.paper, Self.paper.opacity(0.88)], startPoint: .top, endPoint: .bottom))
+    // Moving the roll to the Trash, at hand as well as in its menu: quiet until the page is under
+    // the pointer. It asks before anything moves.
+    .overlay(alignment: .bottomTrailing) {
+      Button(action: trash) {
+        Image(systemName: "trash").font(.system(size: 11, weight: .medium)).foregroundStyle(Self.ink.opacity(hover ? 0.75 : 0.3))
+          .frame(width: 22, height: 22).contentShape(Rectangle())
+      }.buttonStyle(.plain).padding(.trailing, 2).padding(.bottom, 1)
+        .help("把这一卷移到废纸篓（会先问一下）")
+        .accessibilityLabel("移到废纸篓")
+    }
     .padding(.top, 8).padding(.trailing, 8)
   }
   /// The strips under clear plastic, with a sheen across them.
