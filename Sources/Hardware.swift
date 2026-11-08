@@ -193,17 +193,79 @@ private struct GlassBar: ViewModifier {
   }
 }
 
-/// A slider, the system's, a double click taking it back to `detent`.
+/// The module switch: the system's segmented control, each segment greyed out where its page
+/// cannot open yet. A segment chosen calls `choose` with its index.
+struct ModuleSwitch: NSViewRepresentable {
+  let titles: [String]
+  let selected: Int
+  let enabled: [Bool]
+  let help: String
+  let choose: (Int) -> Void
+  func makeCoordinator() -> Coordinator { Coordinator(choose) }
+  func makeNSView(context: Context) -> NSSegmentedControl {
+    let control = NSSegmentedControl(labels: titles, trackingMode: .selectOne, target: context.coordinator, action: #selector(Coordinator.changed(_:)))
+    control.setAccessibilityLabel("模块")
+    return control
+  }
+  func updateNSView(_ control: NSSegmentedControl, context: Context) {
+    context.coordinator.choose = choose
+    if control.segmentCount != titles.count { control.segmentCount = titles.count }
+    for (i, title) in titles.enumerated() {
+      if control.label(forSegment: i) != title { control.setLabel(title, forSegment: i) }
+      if control.isEnabled(forSegment: i) != enabled[i] { control.setEnabled(enabled[i], forSegment: i) }
+    }
+    if control.selectedSegment != selected { control.selectedSegment = selected }
+    control.toolTip = help
+  }
+  final class Coordinator: NSObject {
+    var choose: (Int) -> Void
+    init(_ choose: @escaping (Int) -> Void) { self.choose = choose }
+    @objc func changed(_ control: NSSegmentedControl) { choose(control.selectedSegment) }
+  }
+}
+
+/// A slider, the system's, a double click taking it back to `detent`; under its track, where the
+/// slider has one, a thin strip shading from what its left end does to what its right end does.
 struct Fader: View {
   let title: String
   @Binding var value: Double
   let range: ClosedRange<Double>
   var detent: Double? = nil
+  /// The strip's colours, left to right; nil takes the slider's own by its title (`gradients`).
+  var gradient: [Color]? = nil
   var body: some View {
-    Slider(value: $value, in: range) { Text(title) }.labelsHidden().tint(Hardware.accent)
-      .simultaneousGesture(TapGesture(count: 2).onEnded { if let detent { value = detent } })
-      .accessibilityLabel(title)
+    VStack(spacing: 2) {
+      Slider(value: $value, in: range) { Text(title) }.labelsHidden().tint(Hardware.accent)
+        .simultaneousGesture(TapGesture(count: 2).onEnded { if let detent { value = detent } })
+        .accessibilityLabel(title)
+      if let colours = gradient ?? Self.gradients[title] {
+        // As wide as the knob travels: half a knob in from each end.
+        Capsule().fill(LinearGradient(colors: colours, startPoint: .leading, endPoint: .trailing))
+          .frame(height: 3).padding(.horizontal, 8).accessibilityHidden(true)
+      }
+    }
   }
+  private static let cool = Color(red: 0.35, green: 0.58, blue: 0.98), warm = Color(red: 0.98, green: 0.66, blue: 0.28)
+  private static let green = Color(red: 0.32, green: 0.78, blue: 0.4), magenta = Color(red: 0.88, green: 0.36, blue: 0.78)
+  private static func grey(_ w: Double) -> Color { Color(white: w) }
+  /// What each slider does, left to right, by its title: colours toward the colour it gives, greys
+  /// toward the lightness. Sliders whose ends are no colour or lightness (contrast, noise, gamma,
+  /// sharpening, angles) have none.
+  static let gradients: [String: [Color]] = [
+    "冷暖": [cool, grey(0.62), warm],
+    "冷 ↔ 暖": [cool, grey(0.62), warm],
+    "绿 / 洋红": [green, grey(0.62), magenta],
+    "阴影冷暖": [Color(red: 0.12, green: 0.22, blue: 0.48), grey(0.25), Color(red: 0.48, green: 0.3, blue: 0.1)],
+    "曝光 · EV": [grey(0.06), grey(0.5), grey(0.95)],
+    "曝光": [grey(0.06), grey(0.5), grey(0.95)],
+    "高光": [grey(0.62), grey(1)],
+    "阴影": [grey(0.02), grey(0.38)],
+    "压高光": [grey(1), grey(0.78)],
+    "中间调": [grey(0.22), grey(0.78)],
+    "黑点": [grey(0.22), grey(0)],
+    "白点": [grey(1), grey(0.74)],
+    "饱和度": [grey(0.55), Color(red: 0.98, green: 0.42, blue: 0.22)],
+  ]
 }
 
 /// A slider's figure that can be typed into: shown as its readout, a click makes it a field.

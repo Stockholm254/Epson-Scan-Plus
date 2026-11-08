@@ -182,6 +182,18 @@ enum RegressionTests {
       && repeats.map(\.name) == ["03", "04", "05", "06"] && renamed.map(\.from) == ["03", "04"] && renamed.map(\.to) == ["05", "06"]
       && AppModel.renumberRepeats(&distinct).isEmpty && distinct.map(\.name) == ["01", "02", "05"],
       "a new frame is numbered past the roll's highest, and repeated names are renumbered in the roll's order")
+    // After a frame is deleted or moved the roll is numbered 01, 02, … in its order again.
+    var gappy = ["03", "04", "07"].map(named)
+    let moves = AppModel.renumber(&gappy)
+    let order = AppModel(libraryURL: folder.appendingPathComponent("renumber", isDirectory: true))
+    order.frames = ["01", "02", "03", "04"].map(named).map { var f = $0; f.sourcePath = "/tmp/\(f.name).tif"; return f }
+    let ids = order.frames.map(\.id)
+    order.moveFrame(ids[3], to: ids[1])
+    let moved = order.frames.map(\.id) == [ids[0], ids[3], ids[1], ids[2]] && order.frames.map(\.name) == ["01", "02", "03", "04"]
+    order.remove(order.frames[0].id)
+    try check(gappy.map(\.name) == ["01", "02", "03"] && moves.count == 3 && moved
+      && order.frames.map(\.name) == ["01", "02", "03"] && order.frames.map(\.id) == [ids[3], ids[1], ids[2]],
+      "the roll is numbered 01, 02, … in its order: after a gap, after a frame is dragged to another's place, after one is deleted")
     // A slider's figure typed in: the number read past units, full-width figures and a decimal
     // comma; the field starts from the readout's figure, or the value where it shows a word.
     try check(ValueField.number("+0.25°") == 0.25 && ValueField.number("－１，５") == -1.5 && ValueField.number(" 85 % ") == 85

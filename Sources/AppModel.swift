@@ -302,6 +302,7 @@ final class AppModel: ObservableObject {
       // Module ① shows the raw picture, ② the converted one: across, the picture is another.
       if (shown == .capture) != (page == .capture) {
         exposureReading = nil
+        baseBalance = nil
         refresh()
         if showsOriginal { updateRawThumbnails() }
       }
@@ -321,6 +322,8 @@ final class AppModel: ObservableObject {
   var showsNegative: Bool { showNegative || showsOriginal }
   /// How the single frame's raw picture was exposed, while module ① shows it.
   @Published private(set) var exposureReading: ExposureReading?
+  /// How the film base reads in each channel of the raw picture shown in ①, for setting the light.
+  @Published private(set) var baseBalance: BaseBalance?
   /// Where module ① takes pictures from.
   enum CaptureSource: String, CaseIterable {
     case scanner = "V850 扫描", camera = "A7R IV 翻拍"
@@ -711,6 +714,20 @@ final class AppModel: ObservableObject {
     projectStarted = true
     if page == .library { page = .capture }
   }
+  /// A roll moved to the Trash, its folder whole (its originals, decoded pictures, exports and
+  /// project), from where Finder's 放回原处 brings it back. The roll open is closed first, the
+  /// window emptied and back on the library.
+  func trashRoll(_ folder: URL) throws {
+    guard !isWorking else { throw DeskError.message("扫描、翻拍或导出进行时不能删除一卷。") }
+    let target = folder.standardizedFileURL
+    if sessionURL?.standardizedFileURL == target {
+      newProject()
+      projectStarted = false
+      page = .library
+    }
+    try FileManager.default.trashItem(at: target, resultingItemURL: nil)
+    status = "已把「\(target.lastPathComponent)」移到废纸篓：在废纸篓里右键「放回原处」可以拿回来"
+  }
   func newProject() {
     guard !isWorking else { return }
     let had = sessionURL != nil && !frames.isEmpty
@@ -1043,9 +1060,40 @@ final class AppModel: ObservableObject {
     recordEdit("删除画面")
     thumbnails[id] = nil
     frames.remove(at: i)
+    // Pictures a file each are numbered again from 01, in their order; a scan's frames keep the
+    // numbers of their places in the holder.
+    if Self.numberedInOrder(frames) { Self.renumber(&frames) }
     if selectedID == id { selectedID = frames.isEmpty ? nil : frames[min(i, frames.count - 1)].id }
     updateRollBase()
     updateRollSlopes()
+    refresh()
+    saveProject()
+  }
+  /// Whether a roll's frames are numbered in their order: pictures a file each (a camera's, an
+  /// import's). A scan's frames are numbered by their places in the holder.
+  static func numberedInOrder(_ frames: [FilmFrame]) -> Bool { !frames.isEmpty && frames.allSatisfy { $0.sourcePath != nil } }
+  /// The roll's frames numbered 01, 02, … in their order; the names that changed, from and to.
+  @discardableResult static func renumber(_ frames: inout [FilmFrame]) -> [(from: String, to: String)] {
+    var changed = [(from: String, to: String)]()
+    for i in frames.indices {
+      let name = String(format: "%02d", i + 1)
+      if frames[i].name != name { changed.append((frames[i].name, name)); frames[i].name = name }
+    }
+    return changed
+  }
+  /// Frame `id` moved to where frame `target` is (the frames between step aside), as one edit; the
+  /// roll numbered again from 01 in its new order.
+  func moveFrame(_ id: UUID, to target: UUID) {
+    guard id != target, !isWorking, let from = frames.firstIndex(where: { $0.id == id }),
+      let to = frames.firstIndex(where: { $0.id == target })
+    else { return }
+    recordEdit("调整顺序", key: UUID().uuidString)
+    let moving = frames.remove(at: from)
+    frames.insert(moving, at: to)
+    let renumbered = Self.numberedInOrder(frames)
+    if renumbered { Self.renumber(&frames) }
+    status = renumbered ? "已移到第 \(frames[to].name) 张的位置，整卷从 01 重新编号" : "第 \(moving.name) 张已移到这里"
+    updateRollBase()
     refresh()
     saveProject()
   }
@@ -2715,6 +2763,18 @@ final class AppModel: ObservableObject {
         throw DeskError.message("无法生成预览")
       }
       let exposure = ImagePipeline.shared.exposure(raw)
+      // The base where the app found it at the frame's edges, else where it was picked, else the
+      // brightest film; read as the sensor read it, in the frame as cropped.
+      let crop = frame.rect
+      func inCrop(_ a: NormalRect) -> CGRect {
+        CGRect(x: (a.x - crop.x) / crop.width, y: (a.y - crop.y) / crop.height, width: a.width / crop.width, height: a.height / crop.height)
+      }
+      let edges = (frame.edgeBase?.base != nil ? frame.edgeBase?.areas ?? [] : []).map(inCrop)
+        .filter { $0.intersects(CGRect(x: 0, y: 0, width: 1, height: 1)) }
+      let picked = frame.adjustments.basePicked.map { p in frame.sourcePath != nil ? inCrop(p) : p.cg }
+      let balance = edges.isEmpty
+        ? ImagePipeline.shared.baseBalance(raw, areas: picked.map { [$0.insetBy(dx: -0.004, dy: -0.004)] } ?? [], source: picked == nil ? "最亮的胶片" : "手动取样")
+        : ImagePipeline.shared.baseBalance(raw, areas: edges, source: "片边")
       DispatchQueue.main.async {
         let newest = self.revision == token
         guard token > self.shownSingle, self.singleView, self.selectedID == frame.id, edit == self.editingSingle, self.showsOriginal else {
@@ -2726,6 +2786,7 @@ final class AppModel: ObservableObject {
         if self.canvasRegion != context?.region { self.canvasRegion = context?.region }
         if edit { self.editRegionLock = context?.region }
         if self.exposureReading != exposure { self.exposureReading = exposure }
+        if self.baseBalance != balance { self.baseBalance = balance }
         if newest { self.rendering = false }
       }
     } catch {
@@ -3648,8 +3709,10 @@ final class AppModel: ObservableObject {
         if f.sensorRead == true && f.adjustments.colourNoise == nil { f.adjustments.colourNoise = 1 }
         return f
       }
-      // Up to 0.11.2 a picture taken after others were deleted could take a name still in use.
-      let renamed = Self.renumberRepeats(&frames)
+      // Pictures a file each are numbered 01, 02, … in their order (up to 0.12.0 a deleted one left
+      // a gap); a scan's frames keep their holder's numbers, a repeat renumbered (up to 0.11.2 a
+      // picture taken after others were deleted could take a name still in use).
+      let renamed = Self.numberedInOrder(frames) ? Self.renumber(&frames) : Self.renumberRepeats(&frames)
       clearEdits()
       profile = p.profile
       filmName = p.filmName
@@ -3685,8 +3748,8 @@ final class AppModel: ObservableObject {
       status = overviewPath == p.overviewPath ? "已打开工程" : "已打开工程 · 工程文件夹已移动，按新位置读取文件"
       if lostFlats > 0 { status += " · \(lostFlats) 张的平场在工程里找不到，没有补平" }
       if !renamed.isEmpty {
-        status += " · 重名的" + renamed.map { "第 \($0.from) 张" }.joined(separator: "、") + "（后拍的）改成了 "
-          + renamed.map(\.to).joined(separator: "、")
+        status += (Self.numberedInOrder(frames) ? " · 编号按顺序从 01 重排：" : " · 重名的编号改了：")
+          + renamed.prefix(6).map { "\($0.from)→\($0.to)" }.joined(separator: "、") + (renamed.count > 6 ? " 等 \(renamed.count) 张" : "")
         if !readOnly { saveProject() }
       }
       if !readOnly {

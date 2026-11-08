@@ -14,6 +14,8 @@ extension View {
 struct ContentView: View {
   @ObservedObject var m: AppModel
   @State var showInfo = false
+  /// The strip's frame a dragged frame is over, to take its place.
+  @State var dropTarget: UUID?
   /// The window's, which the Edit menu's Undo and Redo use.
   @Environment(\.undoManager) private var undoManager
   /// The sidebar shown or hidden by the toolbar's key: in module ① it holds the source's settings
@@ -164,11 +166,19 @@ struct ContentView: View {
       }
     }
     ToolbarItem(placement: .principal) {
-      // The modules open once there is a project; until then a click on one stays on the library.
-      // A refused pick is published all the same, so the switcher shows the library again.
-      Picker("模块", selection: Binding(get: { m.page }, set: { p in if p == .library || m.hasProject { m.page = p } else { m.objectWillChange.send() } })) {
-        ForEach(AppModel.Page.allCases, id: \.self) { p in Text(p.title).tag(p).disabled(p != .library && !m.hasProject) }
-      }.pickerStyle(.segmented).labelsHidden().help("库（⇧⌘L）：所有的卷，新建工程和导入；模块 ① 采集、② 去色罩、③ 去漏光（⌥⌘1–3）")
+      // The modules open once there is a project: until then their segments are greyed out. The
+      // system's segmented control, as SwiftUI's segmented picker does not grey a segment alone.
+      let pages = AppModel.Page.allCases
+      ModuleSwitch(
+        titles: pages.map(\.title), selected: pages.firstIndex(of: m.page) ?? 0,
+        enabled: pages.map { $0 == .library || m.hasProject },
+        help: m.hasProject
+          ? "库（⇧⌘L）：所有的卷，新建工程和导入；模块 ① 采集、② 去色罩、③ 去漏光（⌥⌘1–3）"
+          : "先在库里新建工程、打开一卷或导入，① 采集、② 去色罩、③ 去漏光才能用"
+      ) { i in
+        let p = pages[i]
+        if p == .library || m.hasProject { m.page = p } else { m.objectWillChange.send() }
+      }
     }
     // The assistant by the modules, in the middle, clear of the inspector's part of the toolbar.
     ToolbarItem(placement: .status) { AssistantKey(m: m, panel: assistantPanel) }
@@ -375,6 +385,14 @@ struct ContentView: View {
           Circle().fill(e.verdict == .over ? Color.red : e.verdict == .under ? Color.orange : Color.green).frame(width: 7, height: 7)
           Text(e.short).font(.system(size: 11, weight: .medium)).lineLimit(1)
           InfoButton(text: e.text + "\n\n" + Self.originalInfo)
+          // The base's balance across the channels, for setting the narrowband light.
+          if let b = m.baseBalance {
+            Divider().frame(height: 12)
+            Circle().fill(b.isEven ? Color.green : Color.orange).frame(width: 7, height: 7)
+            Text(b.short).font(.system(size: 11, weight: .medium)).monospacedDigit().lineLimit(1)
+              .help(b.isEven ? "三个通道的片基一样亮" : "三个通道的片基不一样亮：点 ⓘ 看哪盏灯调多少")
+            InfoButton(text: b.text, about: "片基偏色")
+          }
         }
       } else {
         HStack(spacing: 6) {
@@ -1141,9 +1159,20 @@ struct ContentView: View {
                 }.frame(width: 84, height: 60)
                 .accessibilityValue(f.enabled ? "已勾选" : "未勾选")
                 .overlay(
-                  Rectangle().stroke(f.id == m.selectedID ? accent : Color.clear, lineWidth: 2)
+                  Rectangle().stroke(f.id == m.selectedID ? accent : dropTarget == f.id ? Color.white.opacity(0.8) : Color.clear, lineWidth: 2)
                     .padding(-2)
-                ).onTapGesture {
+                )
+                // Dragged onto another frame, it takes that frame's place; the roll is numbered again.
+                .draggable(f.id.uuidString) {
+                  Text(f.name).font(.system(size: 14, weight: .semibold, design: .monospaced)).padding(8)
+                    .background(RoundedRectangle(cornerRadius: 4).fill(Color.black.opacity(0.7))).foregroundStyle(.white)
+                }
+                .dropDestination(for: String.self) { items, _ in
+                  guard let moved = items.first.flatMap(UUID.init(uuidString:)), moved != f.id, !m.isWorking else { return false }
+                  m.moveFrame(moved, to: f.id)
+                  return true
+                } isTargeted: { over in dropTarget = over ? f.id : (dropTarget == f.id ? nil : dropTarget) }
+                .onTapGesture {
                   // From the light table it grows to the middle, shown on its own.
                   m.open(f.id)
                   m.focusCanvas()

@@ -54,7 +54,79 @@ struct ExposureReading: Equatable {
   }
 }
 
+/// How the film base reads in each of the camera's channels, as the sensor read it: for setting a
+/// narrowband light's three lights so that the base, the brightest film, comes near the top in all
+/// three alike and each channel's range is used to its full.
+struct BaseBalance: Equatable {
+  /// The base's reading in each channel, a share of the top of the range.
+  var level: RGB
+  /// Where it was read, in words: the film at the frame's edges, a base picked by hand, or the
+  /// brightest film.
+  var source: String
+  /// Channels this close in stops count as even.
+  static let even = 0.15
+  /// Stops each channel lies under the brightest of the three.
+  var under: [Double] {
+    let top = level.values.max() ?? 1
+    return level.values.map { log2(top / max($0, 1e-4)) }
+  }
+  /// Red's and blue's stops against green.
+  var red: Double { log2(max(level.r, 1e-4) / max(level.g, 1e-4)) }
+  var blue: Double { log2(max(level.b, 1e-4) / max(level.g, 1e-4)) }
+  var isEven: Bool { (under.max() ?? 0) < Self.even }
+  /// In a line, for the bar under the picture.
+  var short: String { String(format: "片基 红 %+.1f · 蓝 %+.1f 档", red, blue) }
+  /// The whole of it, and what to turn, for its help.
+  var text: String {
+    let names = ["红", "绿", "蓝"]
+    let levels = (0..<3).map { String(format: "%@ %.0f%%", names[$0], level.values[$0] * 100) }.joined(separator: " · ")
+    let room = (0..<3).map { String(format: "%@ %.1f", names[$0], max(0, log2(ExposureReading.top / max(level.values[$0], 1e-4)))) }.joined(separator: " · ")
+    var said = "片基（\(source)）的读数，占满量程：\(levels)；离到顶：\(room) 档。"
+      + String(format: "对绿：红 %+.2f 档，蓝 %+.2f 档。", red, blue)
+    if isEven {
+      said += "三个通道差不到 \(String(format: "%.2f", Self.even)) 档，灯的配比合适。"
+    } else {
+      let turns = (0..<3).filter { under[$0] >= Self.even }.map { String(format: "%@灯调亮约 %.1f 档", names[$0], under[$0]) }
+      said += "要让三个通道一样亮：" + turns.joined(separator: "、") + "（或把最亮的那盏调暗同样多），再拍一张看。"
+    }
+    said += "\n\n目的：片基是负片上最亮的地方，三个通道都把它放在接近满量程、又不到顶的地方，每个通道的读数范围都用满，密的地方离噪点最远。读的是传感器原样的读数（不去串色、不除平场）：蓝灯有约三分之一读进绿通道，调蓝灯时绿也会跟着变一点，调完再拍一张看。整体太亮或太暗用曝光调，看左边的曝光指示。"
+    return said
+  }
+}
+
 extension ImagePipeline {
+  /// The film base's reading in `image` (a frame's pixels as the sensor read it, cropped): the mean
+  /// over `areas` (normalised in the image) where given, else over the brightest film, the top
+  /// hundredth of it in its brightest channel, bare light left out. Nil with no film.
+  func baseBalance(_ image: CGImage, areas: [CGRect], source: String) -> BaseBalance? {
+    let s = samples(image, maxDimension: 800)
+    var sum = [0.0, 0.0, 0.0], n = 0.0
+    for a in areas {
+      let x0 = max(0, Int(a.minX * Double(s.width))), x1 = min(s.width, Int(ceil(a.maxX * Double(s.width))))
+      let y0 = max(0, Int(a.minY * Double(s.height))), y1 = min(s.height, Int(ceil(a.maxY * Double(s.height))))
+      guard x1 > x0, y1 > y0 else { continue }
+      for y in y0..<y1 {
+        for x in x0..<x1 {
+          let p = s.pixel(x, y).values
+          guard p.min()! < ExposureReading.top else { continue }
+          for c in 0..<3 { sum[c] += p[c] }
+          n += 1
+        }
+      }
+    }
+    if n > 0 { return BaseBalance(level: RGB(sum.map { $0 / n }), source: source) }
+    var film = [[Double]]()
+    for y in 0..<s.height { for x in 0..<s.width {
+      let p = s.pixel(x, y).values
+      if p.min()! < ExposureReading.top { film.append(p) }
+    } }
+    guard !film.isEmpty else { return nil }
+    let peaks = film.map { $0.max()! }
+    let cut = quantile(peaks, 0.99)
+    let brightest = film.filter { $0.max()! >= cut }
+    guard !brightest.isEmpty else { return nil }
+    return BaseBalance(level: RGB((0..<3).map { c in brightest.map { $0[c] }.reduce(0, +) / Double(brightest.count) }), source: "最亮的胶片")
+  }
   /// How `image` (a frame's pixels as read, linear or as encoded) was exposed; nil with no film
   /// in it at all.
   func exposure(_ image: CGImage) -> ExposureReading? {

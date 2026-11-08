@@ -62,6 +62,8 @@ struct LibraryPage: View {
   @Environment(\.colorScheme) private var scheme
   @AppStorage("libraryStacks") private var stacks = true
   @State private var renaming: RollEntry?
+  /// The roll asked to go to the Trash, until the user says yes.
+  @State private var trashing: RollEntry?
   @State private var newName = ""
   var shown: [RollEntry] {
     let query = shelf.query, source = shelf.source
@@ -97,7 +99,7 @@ struct LibraryPage: View {
         Text(m.libraryURL.path).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
           .lineLimit(1).truncationMode(.middle)
         Spacer()
-        Text("双击一页打开这一卷，进入 ② 去色罩；鼠标停在一格上可以放大看；右键可以重命名").font(.system(size: 11)).foregroundStyle(.secondary)
+        Text("双击一页打开这一卷，进入 ② 去色罩；鼠标停在一格上可以放大看；右键可以重命名、移到废纸篓").font(.system(size: 11)).foregroundStyle(.secondary)
       }.padding(.horizontal, 18).padding(.vertical, 8)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -112,6 +114,21 @@ struct LibraryPage: View {
       Button("取消", role: .cancel) { renaming = nil }
     } message: {
       Text("留空就按开始的时间显示。")
+    }
+    .confirmationDialog(trashing.map { "把「\($0.title)」移到废纸篓？" } ?? "", isPresented: Binding(get: { trashing != nil }, set: { if !$0 { trashing = nil } })) {
+      Button("移到废纸篓", role: .destructive) {
+        if let e = trashing {
+          do { try m.trashRoll(e.folder) } catch { m.errorText = "不能删除这一卷：\(error.localizedDescription)" }
+        }
+        trashing = nil
+        shelf.reload(m.libraryRoots)
+      }
+      Button("取消", role: .cancel) { trashing = nil }
+    } message: {
+      Text(trashing.map { e in
+        "整个文件夹一起移到废纸篓：\(e.frames.count) 张画面、原片和导出过的 \(e.exported) 个文件。清空废纸篓之前，都可以在废纸篓里右键「放回原处」拿回来。"
+          + (m.projectURL?.standardizedFileURL == e.project.standardizedFileURL ? "这一卷正打开着，会先关掉。" : "")
+      } ?? "")
     }
   }
   var header: some View {
@@ -183,7 +200,8 @@ struct LibraryPage: View {
               rename: {
                 newName = e.named ? e.title : ""
                 renaming = e
-              }
+              },
+              trash: { trashing = e }
             ) { m.openRoll(e) }
           }
         }.padding(.horizontal, 28).padding(.vertical, 30)
@@ -220,6 +238,7 @@ struct RollSleeve: View {
   var stacked = 0
   var spread: () -> Void = {}
   var rename: () -> Void = {}
+  var trash: () -> Void = {}
   let open: () -> Void
   @State private var pictures = [UUID: (image: CGImage, positive: Bool)]()
   /// A roll with no frames cut from its preview: the preview, small, in their place.
@@ -275,6 +294,8 @@ struct RollSleeve: View {
       if !entry.legacy { Button("重命名…") { rename() } }
       if stacked > 1 { Button("摊开同一批底片的 \(stacked) 卷") { spread() } }
       Button("在 Finder 中显示") { NSWorkspace.shared.activateFileViewerSelecting([entry.folder]) }
+      Divider()
+      Button("移到废纸篓…", role: .destructive) { trash() }
     }
     .help(entry.folder.path)
     .onAppear(perform: load)

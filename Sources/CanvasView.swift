@@ -277,19 +277,22 @@ final class FilmCanvasView: NSView {
   }
   /// A rect's edges by their two corners (`corners` order): its min y, max y, min x and max x.
   static let edgeEnds = [(0, 1), (2, 3), (0, 2), (1, 3)]
-  /// What a press at canvas point `p` takes hold of on the crop `r`: a corner (13 points round it,
-  /// in `corners` order), else an edge (8 points either side of it, in `edgeEnds` order), else
-  /// neither.
+  /// How near a press must come, in the window's points whatever the zoom, to take hold of a box's
+  /// corner, else its edge: the crop's and the de-masking region's alike.
+  static let cornerReach: CGFloat = 18, edgeReach: CGFloat = 12
+  /// What a press at canvas point `p` takes hold of on the crop `r`: a corner (`cornerReach` round
+  /// it, in `corners` order), else an edge (`edgeReach` either side of it, in `edgeEnds` order),
+  /// else neither.
   func cropHold(_ r: CGRect, at p: CGPoint) -> (corner: Int?, edge: Int?) {
     let c = corners(r)
-    if let i = c.firstIndex(where: { hypot($0.x - p.x, $0.y - p.y) < 13 }) { return (i, nil) }
+    if let i = c.indices.filter({ hypot(c[$0].x - p.x, c[$0].y - p.y) < Self.cornerReach }).min(by: { hypot(c[$0].x - p.x, c[$0].y - p.y) < hypot(c[$1].x - p.x, c[$1].y - p.y) }) { return (i, nil) }
     func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat {
       let d = CGPoint(x: b.x - a.x, y: b.y - a.y), length = d.x * d.x + d.y * d.y
       let t = length > 0 ? max(0, min(1, ((p.x - a.x) * d.x + (p.y - a.y) * d.y) / length)) : 0
       return hypot(p.x - (a.x + t * d.x), p.y - (a.y + t * d.y))
     }
     let near = Self.edgeEnds.indices.map { ($0, distance(c[Self.edgeEnds[$0].0], c[Self.edgeEnds[$0].1])) }
-      .filter { $0.1 < 8 }.min { $0.1 < $1.1 }
+      .filter { $0.1 < Self.edgeReach }.min { $0.1 < $1.1 }
     return (nil, near?.0)
   }
   /// The two crops' colours on the picture: the picture's amber, the de-masking region's cyan.
@@ -320,14 +323,14 @@ final class FilmCanvasView: NSView {
   func regionHold(_ r: CGRect, at p: CGPoint) -> (corner: Int?, edge: Int?) {
     let c = pictureCorners(r)
     guard c.count == 4 else { return (nil, nil) }
-    if let i = c.firstIndex(where: { hypot($0.x - p.x, $0.y - p.y) < 13 }) { return (i, nil) }
+    if let i = c.indices.filter({ hypot(c[$0].x - p.x, c[$0].y - p.y) < Self.cornerReach }).min(by: { hypot(c[$0].x - p.x, c[$0].y - p.y) < hypot(c[$1].x - p.x, c[$1].y - p.y) }) { return (i, nil) }
     func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat {
       let d = CGPoint(x: b.x - a.x, y: b.y - a.y), length = d.x * d.x + d.y * d.y
       let t = length > 0 ? max(0, min(1, ((p.x - a.x) * d.x + (p.y - a.y) * d.y) / length)) : 0
       return hypot(p.x - (a.x + t * d.x), p.y - (a.y + t * d.y))
     }
     let near = Self.edgeEnds.indices.map { ($0, distance(c[Self.edgeEnds[$0].0], c[Self.edgeEnds[$0].1])) }
-      .filter { $0.1 < 8 }.min { $0.1 < $1.1 }
+      .filter { $0.1 < Self.edgeReach }.min { $0.1 < $1.1 }
     return (nil, near?.0)
   }
   /// A small label in `colour` by the canvas point `at`, kept on the picture.
@@ -402,9 +405,10 @@ final class FilmCanvasView: NSView {
         cursor = position.map { NSCursor.frameResize(position: $0, directions: .all) }
       }
     } else if let p, let model, model.singleView, model.tool == .region, let frame = model.selected,
-      frame.adjustments.analysisRegion != nil, !model.isWorking, regionDrag == nil, imageRect.contains(p)
+      !model.isWorking, regionDrag == nil, imageRect.contains(p)
     {
-      let r = frame.adjustments.analysisRegion!.cg, hold = regionHold(r, at: p), c = pictureCorners(r)
+      // While none is set, the part read as the picture follows (`followRegion`) is held as one.
+      let r = frame.adjustments.analysisRegion?.cg ?? Self.followRegion, hold = regionHold(r, at: p), c = pictureCorners(r)
       let at: CGPoint? = hold.corner.map { c[$0] } ?? hold.edge.map { e in
         let (a, b) = (c[Self.edgeEnds[e].0], c[Self.edgeEnds[e].1])
         return CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
@@ -752,6 +756,11 @@ final class FilmCanvasView: NSView {
         return CGRect(
           x: s.minX * CGFloat(cg.width), y: s.minY * CGFloat(cg.height), width: s.width * CGFloat(cg.width),
           height: s.height * CGFloat(cg.height))
+      } ?? regionDraft.map { d -> CGRect in
+        // The de-masking region being dragged, from the picture's coordinates to the picture shown.
+        let c = pictureCorners(d).map { CGPoint(x: ($0.x - r.minX) / max(1, r.width) * CGFloat(cg.width), y: ($0.y - r.minY) / max(1, r.height) * CGFloat(cg.height)) }
+        let xs = c.map(\.x), ys = c.map(\.y)
+        return CGRect(x: xs.min() ?? 0, y: ys.min() ?? 0, width: (xs.max() ?? 0) - (xs.min() ?? 0), height: (ys.max() ?? 0) - (ys.min() ?? 0))
       }
       let dim = model.singleView ? (model.tool == .base ? 0.18 : 0.5) : 0
       let at = CGPoint(x: r.minX + lens.point.x * r.width, y: r.minY + lens.point.y * r.height)
@@ -1642,17 +1651,15 @@ final class FilmCanvasView: NSView {
     }
     if model.singleView {
       // The de-masking region: a corner, an edge or the box itself takes hold of it; elsewhere a new
-      // one is drawn. While none is set, what is read shows dashed and a drag draws one.
+      // one is drawn. While none is set, the part read as the picture follows (dashed) has its
+      // corners and edges held the same way, so they drag from where they follow the picture; a
+      // press inside it still draws a new one.
       if model.tool == .region, !model.isWorking, let frame = model.selected, let q = pictureNormal(p) {
-        if let set = frame.adjustments.analysisRegion?.cg {
-          let hold = regionHold(set, at: p)
-          let held = hold.corner != nil || hold.edge != nil || set.contains(q)
-          regionDrag = (q, held ? set : nil, hold.corner, hold.edge)
-          regionDraft = held ? set : nil
-        } else {
-          regionDrag = (q, nil, nil, nil)
-          regionDraft = nil
-        }
+        let own = frame.adjustments.analysisRegion?.cg, set = own ?? Self.followRegion
+        let hold = regionHold(set, at: p)
+        let held = hold.corner != nil || hold.edge != nil || own?.contains(q) == true
+        regionDrag = (q, held ? set : nil, hold.corner, hold.edge)
+        regionDraft = held ? set : nil
         return
       }
       if model.tool == .crop, model.canvasCrop != nil, !model.isWorking,
@@ -1721,6 +1728,8 @@ final class FilmCanvasView: NSView {
       } else {
         regionDraft = CGRect(x: min(drag.start.x, q.x), y: min(drag.start.y, q.y), width: abs(q.x - drag.start.x), height: abs(q.y - drag.start.y))
       }
+      // The loupe on the corner or edge being placed, as the crop's; not while the box moves whole.
+      if drag.original == nil || drag.corner != nil || drag.edge != nil { showLens(at: p) }
       needsDisplay = true
       return
     }
@@ -1786,6 +1795,7 @@ final class FilmCanvasView: NSView {
       if let draft = regionDraft, draft != regionDrag?.original { model?.setAnalysisRegion(NormalRect(draft)) }
       regionDrag = nil
       regionDraft = nil
+      releaseLens()
       return
     }
     if let clicked = clickedFrame {

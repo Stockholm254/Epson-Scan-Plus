@@ -116,6 +116,26 @@ enum AnalysisRegionTests {
     try check(drawn != nil && expected.map { e in abs(drawn!.x - e.minX) < 1e-6 && abs(drawn!.width - e.width) < 1e-6
       && abs(drawn!.y - e.minY) < 1e-6 && abs(drawn!.height - e.height) < 1e-6 } == true && r.width > 100,
       "a drag with the de-masking tool draws the region from where it went down to where it came up: \(drawn.map { "\($0.cg)" } ?? "none")")
+    // Following the picture, its box's edge drags from where it follows: the right edge pulled in.
+    model.setAnalysisRegion(nil)
+    for _ in 0..<60 where model.rendering { settle(0.1) }
+    let follow = canvas.pictureCorners(FilmCanvasView.followRegion)
+    let rightEdge = CGPoint(x: (follow[1].x + follow[3].x) / 2 + 9, y: (follow[1].y + follow[3].y) / 2)
+    let pulled = CGPoint(x: r.minX + r.width * 0.8, y: rightEdge.y)
+    let edgeHeld = canvas.regionHold(FilmCanvasView.followRegion, at: rightEdge).edge != nil
+    canvas.mouseDown(with: event(.leftMouseDown, rightEdge))
+    canvas.mouseDragged(with: event(.leftMouseDragged, pulled))
+    canvas.mouseUp(with: event(.leftMouseUp, pulled))
+    let narrowed = model.frames[0].adjustments.analysisRegion
+    try check(edgeHeld && narrowed.map { abs($0.x - 0.05) < 1e-6 && abs($0.y - 0.05) < 1e-6 && abs($0.height - 0.9) < 1e-6 && $0.width < 0.8 && $0.width > 0.6 } == true,
+      "while it follows the picture, the region's edge is taken 9 points off it and drags from where it follows: \(narrowed.map { "\($0.cg)" } ?? "none")")
+    // A corner is taken 15 points off, an edge 10, whatever the zoom.
+    let box = CGRect(x: 0.3, y: 0.3, width: 0.4, height: 0.4), corners = canvas.pictureCorners(box)
+    try check(canvas.regionHold(box, at: CGPoint(x: corners[0].x - 10, y: corners[0].y - 10)).corner == 0
+      && canvas.regionHold(box, at: CGPoint(x: (corners[0].x + corners[1].x) / 2, y: corners[0].y - 10)).edge != nil
+      && canvas.regionHold(box, at: CGPoint(x: (corners[0].x + corners[1].x) / 2, y: corners[0].y - 16)).edge == nil,
+      "a box's corner is taken from 15 points off and its edge from 10, not 16")
+    model.setAnalysisRegion(drawn)
     func cyan() -> Int {
       guard let rep = canvas.bitmapImageRepForCachingDisplay(in: canvas.bounds) else { return 0 }
       canvas.cacheDisplay(in: canvas.bounds, to: rep)

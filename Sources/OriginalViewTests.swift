@@ -37,6 +37,16 @@ enum OriginalViewTests {
         return RGB((0..<3).map { b.values[$0] * scale * pow(10, -d) })
       }
     }
+    // The base's balance across the channels, for setting the light: read in the base band (the
+    // brightest film) or where it was found, and which light to turn up how far.
+    let found = pipe.baseBalance(negative(base: base), areas: [CGRect(x: 0.1, y: 0, width: 0.8, height: 0.15)], source: "片边")
+    let brightest = pipe.baseBalance(negative(base: base, bare: true), areas: [], source: "最亮的胶片")
+    func near(_ b: BaseBalance?) -> Bool { b.map { zip($0.level.values, base.values).allSatisfy { abs($0 - $1) < 0.01 } } ?? false }
+    let evenLight = pipe.baseBalance(negative(base: RGB(r: 0.6, g: 0.58, b: 0.62)), areas: [], source: "最亮的胶片")
+    try check(near(found) && near(brightest) && abs((found?.red ?? 0) - log2(0.5 / 0.23)) < 0.05 && abs((found?.blue ?? 0) - log2(0.14 / 0.23)) < 0.05
+      && found?.isEven == false && found?.text.contains("蓝灯调亮约 1.8 档") == true && found?.text.contains("绿灯调亮约 1.1 档") == true
+      && evenLight?.isEven == true && evenLight?.text.contains("配比合适") == true,
+      "the base's balance is read where it was found, or as the brightest film past the bare light, and says which light to turn up how far: \(found?.short ?? "-")")
     let good = pipe.exposure(negative(base: base))
     try check(good?.verdict == .good && abs((good?.headroom ?? 0) - log2(0.98 / 0.5)) < 0.1 && (good?.clipped ?? 1) == 0,
       String(format: "a negative whose base reads half the range is exposed right, a stop to spare: %@", good?.short ?? "-"))
