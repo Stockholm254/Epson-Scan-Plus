@@ -29,18 +29,23 @@ struct ContentView: View {
     Binding(
       get: {
         switch m.page {
-        case .leak: return .detailOnly
+        case .library, .leak: return .detailOnly
         case .convert: return convertSidebarShown ? .all : .detailOnly
         case .capture: return captureSidebar
         }
       },
       set: { v in
         switch m.page {
-        case .leak: break
+        case .library, .leak: break
         case .convert: convertSidebarShown = v != .detailOnly
         case .capture: captureSidebar = v
         }
       })
+  }
+  /// The inspector, put away on the library, whose rolls take the window; shown or hidden as left
+  /// on the modules.
+  var inspectorShown: Binding<Bool> {
+    Binding(get: { m.page != .library && inspector }, set: { if m.page != .library { inspector = $0 } })
   }
   /// Module ②'s sidebar, opened on calibrating the preset.
   func openCalibration() {
@@ -70,8 +75,15 @@ struct ContentView: View {
         .navigationSplitViewColumnWidth(min: Preferences.leftWidths.lowerBound, ideal: m.preferences.leftWidth, max: Preferences.leftWidths.upperBound)
     } detail: {
       VStack(spacing: 0) {
-        if m.page == .leak { LeakPage(m: m, lab: m.leak) } else { workspace }
-        filmstrip
+        if m.page == .library {
+          LibraryPage(m: m, shelf: m.shelf)
+        } else if m.page == .leak {
+          LeakPage(m: m, lab: m.leak)
+        } else {
+          workspace
+        }
+        // The open roll's strip, under the modules that work on it; the library shows every roll.
+        if m.page != .library { filmstrip }
         if m.page == .leak {
           if m.leak.busy != nil { LeakStatus(lab: m.leak) }
         } else if footerShown {
@@ -79,11 +91,13 @@ struct ContentView: View {
         }
       }
       .animation(Liquid.flow, value: footerShown)
-      .inspector(isPresented: $inspector) {
+      .inspector(isPresented: inspectorShown) {
         Group { if m.page == .leak { LeakPanel(m: m, lab: m.leak) } else { rightPanel } }
           .inspectorColumnWidth(min: Preferences.rightWidths.lowerBound, ideal: m.preferences.rightWidth, max: Preferences.rightWidths.upperBound + 40)
       }
     }
+    // No sidebar on the library or ③: no key for one.
+    .toolbar(removing: m.page == .library || m.page == .leak ? .sidebarToggle : nil)
     .navigationTitle(windowTitle)
     .navigationSubtitle(windowSubtitle)
     .toolbar { toolbarContent }
@@ -109,7 +123,6 @@ struct ContentView: View {
       Text(m.errorText ?? "")
     }
     .sheet(isPresented: $showInfo) { profileInfo }
-    .sheet(isPresented: $m.showLibrary) { LibrarySheet(m: m) }
     .sheet(isPresented: $m.showPresets) { PresetManagerSheet(m: m) }
     .sheet(isPresented: $m.showUpdates) { UpdateSheet(m: m, updater: m.updater) }
     .onChange(of: m.tool) { m.refresh() }
@@ -139,24 +152,7 @@ struct ContentView: View {
       if m.page == .leak {
         LeakToolbar(lab: m.leak)
       } else {
-        Button {
-          m.showLibrary = true
-        } label: {
-          Label("库", systemImage: "archivebox")
-        }.help("所有扫描、翻拍和导入的胶卷（⇧⌘L）")
-        Button {
-          m.newProject()
-        } label: {
-          Label("新建", systemImage: "plus.rectangle.on.folder")
-        }.help("新建工程（⌘N）：这一卷存好留在库里，窗口清空；下一次预览、导入或拍摄存进新的一卷")
-          .disabled(m.isWorking || (m.frames.isEmpty && m.sessionURL == nil))
-        if m.page == .capture {
-          Button {
-            m.importImages()
-          } label: {
-            Label("导入", systemImage: "square.and.arrow.down")
-          }.help("导入 TIFF、PNG 或 JPEG（⌘O），复制到库里新的一卷，原文件不动；编码未知的按 Gamma 2.2 读，可以在 ② 去色罩的「输入设置」里改")
-        }
+        // The library, a new project and importing are the library tab's, the first in the switcher.
         if m.page == .convert {
           Button {
             if let id = m.selectedID { m.openInLeak(id) }
@@ -167,9 +163,11 @@ struct ContentView: View {
       }
     }
     ToolbarItem(placement: .principal) {
-      Picker("模块", selection: $m.page) {
-        ForEach(AppModel.Page.allCases, id: \.self) { p in Text("\(p.number) \(p.rawValue)").tag(p) }
-      }.pickerStyle(.segmented).labelsHidden().help("模块（⌥⌘1–3）")
+      // The modules open once there is a project; until then a click on one stays on the library.
+      // A refused pick is published all the same, so the switcher shows the library again.
+      Picker("模块", selection: Binding(get: { m.page }, set: { p in if p == .library || m.hasProject { m.page = p } else { m.objectWillChange.send() } })) {
+        ForEach(AppModel.Page.allCases, id: \.self) { p in Text(p.title).tag(p).disabled(p != .library && !m.hasProject) }
+      }.pickerStyle(.segmented).labelsHidden().help("库（⇧⌘L）：所有的卷，新建工程和导入；模块 ① 采集、② 去色罩、③ 去漏光（⌥⌘1–3）")
     }
     // The assistant by the modules, in the middle, clear of the inspector's part of the toolbar.
     ToolbarItem(placement: .status) { AssistantKey(m: m, panel: assistantPanel) }
@@ -204,11 +202,14 @@ struct ContentView: View {
       }
     }
     ToolbarItem(placement: .primaryAction) {
-      Button {
-        inspector.toggle()
-      } label: {
-        Label(inspector ? "隐藏检查器" : "显示检查器", systemImage: "sidebar.trailing")
-      }.help(inspector ? "隐藏右边的检查器" : "显示右边的检查器")
+      // The library has no inspector.
+      if m.page != .library {
+        Button {
+          inspector.toggle()
+        } label: {
+          Label(inspector ? "隐藏检查器" : "显示检查器", systemImage: "sidebar.trailing")
+        }.help(inspector ? "隐藏右边的检查器" : "显示右边的检查器")
+      }
     }
   }
   /// The batch's progress, frames counted with the one being scanned, on one line; while
@@ -1125,6 +1126,8 @@ struct ContentView: View {
             .background(FilmBase())
             .padding(.horizontal, 4).padding(.top, 4)
         }.frame(height: 114)
+          // Back from the library, the strip comes in on the frame shown.
+          .onAppear { if let id = m.selectedID { proxy.scrollTo(id, anchor: .center) } }
           .onChange(of: m.selectedID) { _, id in
             // The strip follows the frame shown. Not animated: an animated scrollTo leaves this
             // horizontal strip where it was, in the change or out of it.

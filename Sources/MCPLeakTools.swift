@@ -31,7 +31,7 @@ extension MCPTools {
   static let leakTools: [Tool] = [
     Tool(name: "leak_get_state", description: "读取去漏光页的状态：当前照片与来源、是否已有参考图（及生成记录）、是否已应用去漏光，场景判断（白天 / 夜晚 / 混合及把握）、去偏色强度、保护设置、基础调整，以及参考匹配的对齐方向、可靠度、样本数和留出样本误差。", properties: [:]),
     Tool(name: "leak_list_jobs", description: "列出保存过的去漏光任务：编号、名称、是否已有参考图、最后修改时间。", properties: [:]),
-    Tool(name: "leak_open", description: "切到去漏光页并打开一张照片：frame 为本卷画面编号（如 \"09\"，按它当前的调色），或 job 为 leak_list_jobs 里的任务编号。", properties: [
+    Tool(name: "leak_open", description: "切到去漏光页并打开一张照片（App 要先有工程：在库里新建、打开或导入过）：frame 为本卷画面编号（如 \"09\"，按它当前的调色），或 job 为 leak_list_jobs 里的任务编号。", properties: [
       "frame": ["type": "string", "description": "本卷画面编号"], "job": ["type": "string", "description": "任务编号"],
     ]),
     Tool(name: "leak_start", description: "开始去漏光（免费，不调用 API）：有参考图时按它在本地拟合并应用；没有参考图时只按启用的局部区域校正，区域外的像素不变。两样都没有时会提示先请用户生成或导入参考图，或先标出区域。", properties: [:]),
@@ -59,7 +59,7 @@ extension MCPTools {
     ]),
     Tool(name: "leak_reference_prompt", description: "取得给用户自己的图像模型（比如 ChatGPT 订阅里的改图）做参考图用的英文提示词（和 API 用的一样）、它按的场景，以及步骤。只读：不上传、不写文件、不计费；你不能替用户上传。", properties: [:]),
     Tool(name: "leak_export_upload", description: "请用户存下给图像模型的缩图：只在 App 里打开保存窗口（最长边 1536 px、无 EXIF 的 JPEG，和 API 上传的一样，提示词同时复制到剪贴板），由用户选位置；本工具自己不写文件、不上传。", properties: [:]),
-    Tool(name: "leak_import", description: "切到去漏光页，导入一张已去色罩、反相的正片文件（TIFF / PNG / JPEG，推荐带 ICC 的 16 位 TIFF），复制进一个新任务；原文件不改动。", properties: [
+    Tool(name: "leak_import", description: "切到去漏光页（App 要先有工程：在库里新建、打开或导入过），导入一张已去色罩、反相的正片文件（TIFF / PNG / JPEG，推荐带 ICC 的 16 位 TIFF），复制进一个新任务；原文件不改动。", properties: [
       "path": fileField,
     ], required: ["path"]),
     Tool(name: "leak_import_reference", description: "为当前照片导入参考图：同一张照片在别处去掉漏光的完整版本（TIFF / PNG / JPEG），复制进任务；免费，不调用 API。会清空之前的对应点；之后用 leak_start 在本地拟合。", properties: [
@@ -208,6 +208,13 @@ extension MCPTools {
   static func runLeak(_ name: String, _ arguments: [String: Any], _ model: AppModel) throws -> [[String: Any]] {
     let lab = lab(model)
     func say(_ text: String) -> [[String: Any]] { [["type": "text", "text": text]] }
+    // ③ opens once there is a project (`AppModel.hasProject`): a tool that would show it says so,
+    // rather than act behind the library and report a page that never opened.
+    func requireProject() throws {
+      guard onMain({ model.hasProject }) else {
+        throw DeskError.message("App 还在库里，没有工程，去漏光页打不开：请用户先在库里新建工程、打开一卷或导入照片。")
+      }
+    }
     switch name {
     case "leak_get_state":
       return text(onMain { () -> [String: Any] in
@@ -255,6 +262,7 @@ extension MCPTools {
       guard onMain({ lab.busy == nil }) else { throw DeskError.message("去漏光页正在处理（\(onMain { lab.busy ?? "" })），稍后再打开。") }
       if let id = arguments["job"] as? String {
         guard onMain({ lab.jobs().contains { $0.id == id } }) else { throw DeskError.message("没有编号为 \(id) 的任务。可用 leak_list_jobs 查看。") }
+        try requireProject()
         onMain {
           model.page = .leak
           lab.open(id)
@@ -384,6 +392,7 @@ extension MCPTools {
         "\(lab.notice)\n现有漏光区域 \(lab.params.regions.count) 个（启用 \(lab.params.regions.filter { $0.enabled != false }.count) 个），保护区 \(lab.params.protect.count) 个。"
       })
     case "leak_request_reference":
+      try requireProject()
       try requireBase(lab)
       try only(arguments, ["quality", "note"])
       let quality = try choice(arguments, "quality", ["high", "medium"])
@@ -406,6 +415,7 @@ extension MCPTools {
     case "leak_import":
       try only(arguments, ["path"])
       let url = try file(arguments, imageKinds, "正片")
+      try requireProject()
       try idle(lab)
       let before = onMain { lab.job?.id }
       onMain {
@@ -611,6 +621,7 @@ extension MCPTools {
         "steps": "1. 用户在 App 去漏光页点「导出缩图…」（或你调用 leak_export_upload）存下缩图；2. 在 ChatGPT 等能改图的应用里上传缩图、粘贴这段提示词；3. 下载生成的图；4. 用 leak_import_reference 导入，再 leak_start。不用 API Key，也不经 App 上传。",
       ])
     case "leak_export_upload":
+      try requireProject()
       try requireBase(lab)
       try only(arguments, [])
       try idle(lab)
@@ -620,6 +631,7 @@ extension MCPTools {
       }
       return say("已在 App 里打开保存缩图的窗口，由用户选位置；存好后提示词会复制到剪贴板。本工具没有写文件，也没有上传。")
     case "leak_save_preset", "leak_export":
+      try requireProject()
       try requireBase(lab)
       try only(arguments, [])
       let export = name == "leak_export"

@@ -197,15 +197,15 @@ struct ShotFailure: Error { let message: String }
     model.showSingle(false)
     settle()
 
-    // The library, a sheet over the window, of the shelf's rolls only; the library and the status
-    // line put back after.
+    // The library, the window's first tab, of the shelf's rolls only; the library, the module and
+    // the status line put back after.
     let status = model.status
     model.setLibrary(shelfURL)
-    model.showLibrary = true
+    model.page = .library
     settle(3)
-    guard let sheet = window.attachedSheet else { throw ShotFailure(message: "库没有打开") }
-    try save(try Picture.capture(sheet, work: work), "library.jpg", width: 1600)
-    model.showLibrary = false
+    guard model.page == .library else { throw ShotFailure(message: "库没有打开") }
+    try save(try Picture.capture(window, work: work), "library.jpg", width: 1600)
+    model.page = .convert
     model.setLibrary(library)
     model.status = status
     settle()

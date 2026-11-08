@@ -12,7 +12,7 @@ extension ContentView {
           Picker("来源", selection: $m.captureSource) {
             ForEach(AppModel.CaptureSource.allCases, id: \.self) { Text($0.short).tag($0).help($0.rawValue) }
           }
-        } else {
+        } else if m.page != .library {
           // Module ②'s film and its slopes are in the inspector; here, calibrating and exporting.
           Picker("面板", selection: $m.panelTab) {
             ForEach(AppModel.PanelTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
@@ -491,10 +491,10 @@ extension ContentView {
         }
         Divider()
         Button {
-          m.showLibrary = true
+          m.page = .library
         } label: {
-          Label("打开库…", systemImage: "archivebox").frame(maxWidth: .infinity)
-        }
+          Label("回到库", systemImage: "archivebox").frame(maxWidth: .infinity)
+        }.help("库（⇧⌘L）：所有的卷，新建工程和导入")
         Button {
           m.page = .convert
         } label: {

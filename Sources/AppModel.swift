@@ -162,7 +162,7 @@ final class AppModel: ObservableObject {
   @Published var captureToast: String?
   @Published var profile = FilmProfile.builtins[0]
   @Published var profiles = FilmProfile.builtins
-  @Published var status = "点击「预览」读取胶片"
+  @Published var status = "从库里开始：新建工程、打开一卷或导入照片"
   @Published var errorText: String?
   @Published var rendering = false
   @Published var detectingFrames = false
@@ -254,30 +254,58 @@ final class AppModel: ObservableObject {
   @Published var panelTab = PanelTab.calibration
   /// The main window's three modules, in the order a roll goes through them: capturing it (the
   /// scanner, the camera or files), taking the orange mask off, and repairing light leaks.
+  /// The library first, where rolls are kept and started; then the modules, numbered in the order
+  /// a roll goes through them.
   enum Page: String, CaseIterable {
-    case capture = "采集", convert = "去色罩", leak = "去漏光"
-    var number: String { ["①", "②", "③"][Self.allCases.firstIndex(of: self) ?? 0] }
+    case library = "库", capture = "采集", convert = "去色罩", leak = "去漏光"
+    var number: String {
+      switch self {
+      case .library: return ""
+      case .capture: return "①"
+      case .convert: return "②"
+      case .leak: return "③"
+      }
+    }
+    /// Its name with its number, as the switcher and the menu show it.
+    var title: String { number.isEmpty ? rawValue : "\(number) \(rawValue)" }
   }
-  /// The module a window opens on: ①, capturing. The self-test starts its models on ②, whose
-  /// conversion most of it looks at; ① shows the raw picture (`showsOriginal`).
-  static var firstPage = Page.capture
+  /// The page a window opens on: the library, to start a new project, open one or import; the
+  /// modules wait for one (`hasProject`). The self-test starts its models on ②, whose conversion
+  /// most of it looks at; ① shows the raw picture (`showsOriginal`).
+  static var firstPage = opensOn
+  /// Where the app opens, whatever a test starts its models on.
+  static let opensOn = Page.library
   @Published var page = AppModel.firstPage {
     didSet {
       // The pickers belong to taking the mask off.
+      // The modules work on a project: until one is new, opened or imported, the library it is.
+      if page != .library, !hasProject {
+        page = .library
+        return
+      }
       if page == .capture, [CanvasTool.base, .neutral, .region].contains(tool) { tool = .select }
+      // The library shows no picture: the canvas's look changes with the module it shows next,
+      // against the one it showed last, so ① → 库 → ① renders nothing again.
+      guard page != .library else { return }
+      let shown = canvasPage
+      canvasPage = page
       // Module ① shows the raw picture, ② the converted one: across, the picture is another.
-      if (oldValue == .capture) != (page == .capture) {
+      if (shown == .capture) != (page == .capture) {
         exposureReading = nil
         refresh()
         if showsOriginal { updateRawThumbnails() }
       }
       // Out of ①, the converted frame comes up (from the live view, the canvas with it).
-      if oldValue == .capture, page != .capture { announceAutoBase() }
+      if shown == .capture, page != .capture { announceAutoBase() }
     }
   }
+  /// The module the canvas showed last, the library passed over; what it shows while the library
+  /// is up, so a picture rendered then is the one to come back to.
+  /// Opening on the library, it is ②: what is opened from there is converted first.
+  private(set) var canvasPage = AppModel.firstPage == .library ? .convert : AppModel.firstPage
   /// Module ① shows each picture as it came, the raw file's readings in a linear response, nothing
   /// inverted or taken off; converting it is module ②'s (`ImagePipeline.original`).
-  var showsOriginal: Bool { page == .capture }
+  var showsOriginal: Bool { canvasPage == .capture }
   /// The picture is shown as read, not converted: the raw one in module ①, or the negative where
   /// chosen in ②.
   var showsNegative: Bool { showNegative || showsOriginal }
@@ -295,8 +323,16 @@ final class AppModel: ObservableObject {
     }
   }
   @Published var captureSource = CaptureSource.scanner
-  /// The library, the window's cabinet of rolls, is open.
-  @Published var showLibrary = false
+  /// The library tab's rolls, search and filter, kept while other modules are shown.
+  let shelf = LibraryShelf()
+  /// 新建工程 was chosen: a project with nothing in it yet, whose folder the first preview, picture
+  /// or import makes.
+  @Published private(set) var projectStarted = false
+  /// There is a project to work on, new, opened or imported (or begun by a picture or preview as it
+  /// came): the modules open only then, the window starting on the library.
+  var hasProject: Bool { projectStarted || sessionURL != nil || !frames.isEmpty }
+  /// The page shows the open roll's frames and works on them: ① or ②.
+  var onRollModule: Bool { page == .capture || page == .convert }
   /// The presets table is open.
   @Published var showPresets = false
   /// The preset the presets table selects when it opens next (the calibration panel's 「管理…」).
@@ -656,6 +692,14 @@ final class AppModel: ObservableObject {
   /// 新建工程: the open roll saved, staying in the library, and the window emptied; the next preview,
   /// import or camera picture starts a roll of its own, whose folder is made then, so a new project
   /// left unused leaves no empty roll behind.
+  /// 新建工程 from the library or the menu: the window emptied (`newProject`), and from the library
+  /// on to ① to preview or shoot the new roll.
+  func startNewProject() {
+    guard !isWorking else { return }
+    newProject()
+    projectStarted = true
+    if page == .library { page = .capture }
+  }
   func newProject() {
     guard !isWorking else { return }
     let had = sessionURL != nil && !frames.isEmpty
@@ -693,6 +737,8 @@ final class AppModel: ObservableObject {
   func requestPreview() {
     guard !isWorking else { return }
     cancelRequested = false
+    // From the library (⇧⌘P), the preview comes in on ①'s light table.
+    if page == .library { page = .capture }
     // The preview shows on the light table as it is read.
     if singleView { singleView = false }
     scanner.previewDPI = preferences.previewDPI
@@ -3115,7 +3161,15 @@ final class AppModel: ObservableObject {
     panel.allowedContentTypes = [.tiff, .png, .jpeg, .rawImage] + Self.rawExtensions.sorted().compactMap { UTType(filenameExtension: $0) }
     panel.allowsMultipleSelection = true
     guard panel.runModal() == .OK else { return }
-    importURLs(panel.urls)
+    importChosen(panel.urls)
+  }
+  /// Files chosen to import, from the panel.
+  func importChosen(_ urls: [URL]) {
+    let fromLibrary = page == .library, before = sessionURL
+    importURLs(urls)
+    // From the library the new roll opens as a roll from it does, in ②; from ① it stays there. An
+    // import refused (RAW mixed with others) leaves the roll that was open, and the library.
+    if fromLibrary, let now = sessionURL, now != before { page = .convert }
   }
   func importURLs(_ urls: [URL]) {
     guard let first = urls.first else { return }
@@ -3447,7 +3501,8 @@ final class AppModel: ObservableObject {
       && fm.fileExists(atPath: Preferences.legacyLibraryURL.path) ? Preferences.legacyLibraryURL : libraryURL
     guard panel.runModal() == .OK, let url = panel.url else { return }
     loadProject(url)
-    if sessionURL == url.deletingLastPathComponent(), page == .capture { page = .convert }
+    // Opened from ① or the library, it goes on to taking the mask off.
+    if sessionURL == url.deletingLastPathComponent(), page == .capture || page == .library { page = .convert }
   }
   /// The folders the library shows: the library, and while it is the default one, the folder
   /// versions before 0.4.9 kept their projects in.
@@ -3472,7 +3527,6 @@ final class AppModel: ObservableObject {
       loadProject(entry.project)
     }
     guard projectURL?.standardizedFileURL == entry.project.standardizedFileURL else { return }
-    showLibrary = false
     if page != .convert { page = .convert }
   }
   func loadProject(_ url: URL) {

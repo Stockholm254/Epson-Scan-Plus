@@ -44,19 +44,23 @@ struct EpsonScanPlusApp: App {
           CommandLine.arguments.count > i + 1
         {
           model.loadProject(URL(fileURLWithPath: CommandLine.arguments[i + 1]))
+          // Opened from the command line as from the library: on to taking the mask off.
+          if model.sessionURL != nil { model.page = .convert }
         } else if let i = CommandLine.arguments.firstIndex(of: "--image"),
           CommandLine.arguments.count > i + 1
         {
-          model.importURLs([URL(fileURLWithPath: CommandLine.arguments[i + 1])])
+          // As from the library: on to ② once it is a roll.
+          model.importChosen([URL(fileURLWithPath: CommandLine.arguments[i + 1])])
         }
       }
     }.defaultSize(width: 1320, height: 900).commands {
       CommandGroup(replacing: .appSettings) {
         // The scanner's and the camera's settings, in module ①'s left panel, opened if put away.
+        // They are in ①'s panel, open once a project is (`AppModel.hasProject`).
         Button("设置…") {
           model.page = .capture
           model.settingsRequests += 1
-        }.keyboardShortcut(",")
+        }.keyboardShortcut(",").disabled(!model.hasProject)
       }
       CommandGroup(after: .appInfo) {
         Button("检查更新…") {
@@ -65,7 +69,7 @@ struct EpsonScanPlusApp: App {
         }
       }
       CommandGroup(replacing: .newItem) {
-        Button("新建工程") { model.newProject() }.keyboardShortcut("n").disabled(model.isWorking)
+        Button("新建工程") { model.startNewProject() }.keyboardShortcut("n").disabled(model.isWorking)
         // On ③, the positive to repair, as its own key has it.
         Button(model.page == .leak ? "导入正片…" : "导入图像…") {
           if model.page == .leak { model.leak.chooseFile() } else { model.importImages() }
@@ -75,29 +79,32 @@ struct EpsonScanPlusApp: App {
       }
       CommandMenu("扫描") {
         // Only what the scanner can do now: ready, idle, and frames of the preview to scan.
+        // A preview needs a project to go into; scanning frames, a page with the roll's frames.
         Button("预览") { model.requestPreview() }.keyboardShortcut(
-          "p", modifiers: [.command, .shift]).disabled(!model.scanner.ready || model.isWorking)
+          "p", modifiers: [.command, .shift]).disabled(!model.scanner.ready || model.isWorking || !model.hasProject)
         Button("扫描当前画面") { model.requestScanSelected() }.keyboardShortcut(
           "s", modifiers: [.command, .shift])
-          .disabled(!model.scanner.ready || model.isWorking || model.selected == nil || model.selected?.sourcePath != nil)
+          .disabled(!model.scanner.ready || model.isWorking || model.selected == nil || model.selected?.sourcePath != nil || model.page == .library)
         Button("扫描勾选画面") { model.requestScanEnabled() }
-          .disabled(!model.scanner.ready || model.isWorking || !model.hasScanTargets)
+          .disabled(!model.scanner.ready || model.isWorking || !model.hasScanTargets || model.page == .library)
         Button("取消扫描") { model.cancel() }.keyboardShortcut(".")
           .disabled(!model.scanner.busy && !model.scanBatch.isActive && model.scanQueue.isEmpty)
       }
       CommandMenu("模块") {
-        ForEach(AppModel.Page.allCases, id: \.self) { page in
-          Button("\(page.number) \(page.rawValue)") { model.page = page }
-            .keyboardShortcut(KeyEquivalent(Character("\(AppModel.Page.allCases.firstIndex(of: page)! + 1)")), modifiers: [.command, .option])
+        // The library always; the modules once a project is new, opened or imported.
+        Button(AppModel.Page.library.title) { model.page = .library }.keyboardShortcut("l", modifiers: [.command, .shift])
+        ForEach(AppModel.Page.allCases.filter { $0 != .library }, id: \.self) { page in
+          Button(page.title) { model.page = page }
+            .keyboardShortcut(KeyEquivalent(Character("\(AppModel.Page.allCases.firstIndex(of: page)!)")), modifiers: [.command, .option])
+            .disabled(!model.hasProject)
         }
         Divider()
-        Button("库…") { model.showLibrary = true }.keyboardShortcut("l", modifiers: [.command, .shift])
         Button("管理预设…") { model.showPresets = true }
       }
       CommandMenu("画面") {
         Button("接触表 / 单张") {
           model.showSingle(!model.singleView)
-        }.keyboardShortcut("1").disabled(model.previewShowing && !model.singleView)
+        }.keyboardShortcut("1").disabled(model.previewShowing && !model.singleView || !model.onRollModule)
         Toggle("看片镜", isOn: Binding(get: { model.preferences.showLoupe }, set: { model.toggleLoupe($0) }))
           .keyboardShortcut("l")
         Picker(
@@ -113,30 +120,30 @@ struct EpsonScanPlusApp: App {
         // As the keys under the picture: the frame (or with it the roll, synced) in the single view,
         // the whole roll on the light table. ③ turns its own picture.
         Button("顺时针旋转") { model.singleView ? model.turn(clockwise: true) : model.turnRoll(clockwise: true) }
-          .keyboardShortcut("r").disabled(model.frames.isEmpty || model.page == .leak)
+          .keyboardShortcut("r").disabled(model.frames.isEmpty || !model.onRollModule)
         Button("逆时针旋转") { model.singleView ? model.turn(clockwise: false) : model.turnRoll(clockwise: false) }
-          .keyboardShortcut("r", modifiers: [.command, .shift]).disabled(model.frames.isEmpty || model.page == .leak)
+          .keyboardShortcut("r", modifiers: [.command, .shift]).disabled(model.frames.isEmpty || !model.onRollModule)
         Button("水平镜像") { model.singleView ? model.toggleMirror() : model.mirrorRoll() }
-          .disabled(model.frames.isEmpty || model.page == .leak)
+          .disabled(model.frames.isEmpty || !model.onRollModule)
         Button("在去漏光里打开") { if let id = model.selectedID { model.openInLeak(id) } }
-          .keyboardShortcut("l", modifiers: [.command, .option]).disabled(model.selected == nil || model.page == .leak)
+          .keyboardShortcut("l", modifiers: [.command, .option]).disabled(model.selected == nil || !model.onRollModule)
         Toggle("整卷一起转", isOn: $model.syncOrientation)
         Divider()
         // Which frames a batch scans and exports; on the light table's strip as well, by its menu.
         // ③ exports on its own, so its page ticks nothing.
         Button(model.selected?.enabled == true ? "取消勾选当前画面" : "勾选当前画面") {
           if let id = model.selectedID { model.setEnabled(id, enabled: model.selected?.enabled != true) }
-        }.disabled(model.selected == nil || model.isWorking || model.page == .leak)
-        Button("全部勾选") { model.setAllEnabled(true) }.disabled(model.frames.isEmpty || model.isWorking || model.page == .leak)
-        Button("全部不勾选") { model.setAllEnabled(false) }.disabled(model.enabledCount == 0 || model.isWorking || model.page == .leak)
+        }.disabled(model.selected == nil || model.isWorking || !model.onRollModule)
+        Button("全部勾选") { model.setAllEnabled(true) }.disabled(model.frames.isEmpty || model.isWorking || !model.onRollModule)
+        Button("全部不勾选") { model.setAllEnabled(false) }.disabled(model.enabledCount == 0 || model.isWorking || !model.onRollModule)
         Divider()
         // ②'s conversion; ③ exports its repair from its own bar.
         Button("导出当前…") { model.exportImages(all: false) }.keyboardShortcut("e")
-          .disabled(model.selected == nil || model.isWorking || model.page == .leak)
+          .disabled(model.selected == nil || model.isWorking || !model.onRollModule)
         Button("导出勾选的 \(model.enabledCount) 张…") { model.exportImages(all: true) }.keyboardShortcut(
-          "e", modifiers: [.command, .shift]).disabled(model.enabledCount == 0 || model.isWorking || model.page == .leak)
+          "e", modifiers: [.command, .shift]).disabled(model.enabledCount == 0 || model.isWorking || !model.onRollModule)
         Button("导出接触表…") { model.exportContactSheet() }.keyboardShortcut(
-          "e", modifiers: [.command, .option]).disabled(model.enabledCount == 0 || model.isWorking || model.page == .leak)
+          "e", modifiers: [.command, .option]).disabled(model.enabledCount == 0 || model.isWorking || !model.onRollModule)
       }
     }
   }

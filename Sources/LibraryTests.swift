@@ -179,20 +179,29 @@ enum LibraryTests {
     // MARK: The modules, and opening a roll
 
     // As the app opens, not as the self-test starts its models (on ②).
-    AppModel.firstPage = .capture
+    AppModel.firstPage = AppModel.opensOn
     let model = AppModel(libraryURL: lib)
     AppModel.firstPage = .convert
-    try check(model.page == .capture && model.libraryRoots.count == 1,
-      "the window opens on ① 采集 with the scanner's panel; a library chosen elsewhere lists only itself")
+    model.page = .capture
+    try check(AppModel.opensOn == .library && model.page == .library && !model.hasProject && model.libraryRoots.count == 1
+      && AppModel.Page.allCases.map(\.title) == ["库", "① 采集", "② 去色罩", "③ 去漏光"],
+      "the window opens on the library, the first tab and unnumbered, the modules ①②③ after it shut until there is a project; a library chosen elsewhere lists only itself")
+    let refusedLeak = MCPTools.call("leak_export_upload", [:], model: model)
+    try check(refusedLeak.isError && (refusedLeak.content.first?["text"] as? String ?? "").contains("新建工程") && model.page == .library,
+      "without a project an assistant's 去漏光 tools say the library comes first, and the window stays there")
+    model.startNewProject()
+    try check(model.hasProject && model.page == .capture && model.sessionURL == nil && model.frames.isEmpty,
+      "新建工程 opens the modules on ① 采集, the roll's folder left to its first preview, picture or import")
     model.page = .convert
     try check(model.panelTab == .calibration, "② 去色罩's sidebar opens on calibrating the preset")
     model.tool = .neutral
     model.page = .capture
     try check(model.tool == .select, "the pickers are put down on going back to capture")
+    model.page = .library
     model.openRoll(sea)
     for _ in 0..<40 where model.rendering { settle(0.1) }
     try check(model.sessionURL?.standardizedFileURL == scanned.standardizedFileURL && model.page == .convert
-      && model.rollName == "海边" && model.rollNotes == "Leica M6" && !model.showLibrary,
+      && model.rollName == "海边" && model.rollNotes == "Leica M6",
       "a roll opened from the library goes on to ② 去色罩 with its name and notes")
     model.rollName = "海边与天空"
     model.saveProject()
@@ -201,11 +210,13 @@ enum LibraryTests {
     model.rollName = "x"
     let png = folder.appendingPathComponent("library-import.png")
     try pipe.savePNG(green, to: png)
-    model.importURLs([png])
+    model.page = .library
+    model.importChosen([png])
     settle()
     let after = RollLibrary.scan([(lib, false)])
-    try check(model.rollName.isEmpty && after.count == 3 && after.contains { $0.source == .files && $0.frames.count == 1 && $0.folder != imported },
-      "imported pictures make a new roll of their own, unnamed, which the library lists")
+    try check(model.rollName.isEmpty && after.count == 3 && after.contains { $0.source == .files && $0.frames.count == 1 && $0.folder != imported }
+      && model.page == .convert,
+      "imported pictures make a new roll of their own, unnamed, which the library lists; imported from the library, it opens in ② 去色罩")
 
     // MARK: The bubble on the canvas
 
