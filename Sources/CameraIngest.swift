@@ -79,6 +79,8 @@ extension AppModel {
     _ = try makeSession()
     rollSource = .camera
     poolPictures = true
+    useCalibration = true
+    rollFlats = []
   }
   func decodeCapture(_ file: URL, root: URL) {
     let raw = Self.rawExtensions.contains(file.pathExtension.lowercased())
@@ -218,11 +220,15 @@ extension AppModel {
       // was last calibrated.
       let light = preferences.lightCalibration
       if let other = frames.first(where: { $0.sensorRead == true }) {
-        (f.crosstalk, f.flatField) = (other.crosstalk, other.flatField)
+        f.crosstalk = other.crosstalk
       } else if preferences.removeCrosstalk {
-        (f.crosstalk, f.flatField) = (light?.crosstalk ?? .measured, light?.flat)
+        f.crosstalk = light?.crosstalk ?? .measured
       }
     }
+    // The flat field of the roll's last picture of this size (after a new blank frame, that
+    // blank's); else the copy light's with the crosstalk out, or none.
+    if linear, let flat = flatForNext(width: info.width, height: info.height) { f.flatID = flat.id }
+    f.flatField = resolvedFlat(f.flatID, crosstalk: f.crosstalk)
     if overview == nil || overviewURL == nil {
       overviewURL = picture
       overview = try? ImagePipeline.shared.load(picture, maxDimension: 2200)
@@ -233,8 +239,9 @@ extension AppModel {
     }
     frames.append(f)
     selectedID = f.id
-    status = "第 \(f.name) 张已入库：\(original.lastPathComponent)"
-    toast("第 \(f.name) 张已入库")
+    let flatNote = flatProfile(of: f).map { " · 平场「\($0.name)」" } ?? ""
+    status = "第 \(f.name) 张已入库：\(original.lastPathComponent)" + flatNote
+    toast("第 \(f.name) 张已入库" + flatNote)
     updateRollBase()
     refresh()
     updateThumbnails()

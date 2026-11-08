@@ -124,6 +124,7 @@ struct ContentView: View {
     }
     .sheet(isPresented: $showInfo) { profileInfo }
     .sheet(isPresented: $m.showPresets) { PresetManagerSheet(m: m) }
+    .sheet(isPresented: $m.showFlats) { FlatManagerSheet(m: m) }
     .sheet(isPresented: $m.showUpdates) { UpdateSheet(m: m, updater: m.updater) }
     .onChange(of: m.tool) { m.refresh() }
     .onAppear {
@@ -652,6 +653,7 @@ struct ContentView: View {
             isOn: Binding(get: { m.crosstalkRemoved }, set: { m.removeCrosstalk($0) }), info: Self.crosstalkInfo)
             .disabled(m.isWorking)
         }
+        if m.hasLinearPictures { flatRow }
         if m.profile.offsets != nil {
           filmSwitch(calibrationSwitchTitle, isOn: Binding(get: { m.useCalibration }, set: { m.setUseCalibration($0) }),
             info: calibrationSwitchInfo)
@@ -666,6 +668,54 @@ struct ContentView: View {
       }
     }
   }
+  /// The flat field from a blank frame: what the selected frame is divided by, and the roll's; the
+  /// selected frame taken as a blank, the last flat used again, the flats table.
+  var flatRow: some View {
+    let selected = m.selected, blanks = m.blankFrameIDs
+    let isBlank = selected.map { blanks.contains($0.id) } ?? false
+    let kinds = Set(m.frames.compactMap(\.flatID)).count
+    // Pictures a blank's flat could divide that have none, once the roll has one.
+    let unflattened = kinds == 0 ? [] : m.frames.filter { $0.flatID == nil && !blanks.contains($0.id) && m.isLinearPicture($0) }
+    let blocked = m.flatsBlocked
+    let summary: String = {
+      guard let selected else { return kinds == 0 ? "这一卷没有" : "全卷 \(kinds) 种" }
+      let own = isBlank ? "这张是「\(m.rollFlats.first { $0.sourceFrame == selected.id }?.name ?? "")」的空白帧" : "这张：\(m.flatName(selected))"
+      return own + (kinds > 1 ? " · 全卷 \(kinds) 种" : "")
+    }()
+    return VStack(alignment: .leading, spacing: 4) {
+      HStack(spacing: 6) {
+        Text("平场").font(.system(size: 12))
+        Text(summary).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+        Spacer(minLength: 4)
+        InfoButton(text: Self.flatInfo, about: "平场")
+      }
+      HStack(spacing: 6) {
+        if !unflattened.isEmpty {
+          Button("\(unflattened.count) 张没有平场") {
+            m.flatsFocus = Set(unflattened.map(\.id))
+            m.showFlats = true
+          }.foregroundStyle(.orange).help("这些照片还没有按空白帧补平：打开平场表格，它们已经选好")
+        }
+        Spacer(minLength: 0)
+        if let selected, !isBlank, m.isLinearPicture(selected) {
+          Button("这张是空白帧") { m.makeFlat(from: selected) }
+            .help("把第 \(selected.name) 张当作空白帧（拿走底片，用同样的镜头、光圈、放大倍率和灯拍的）量平场，用到"
+              + m.scopeWords(m.blankScope(selected.id)) + "；这张随后取消勾选")
+            .disabled(blocked != nil)
+        }
+        if kinds == 0, let last = m.lastFittingFlat {
+          Button("用上次的") { m.useLastFlat() }
+            .help("用平场「\(last.name)」补平这一卷：\(last.source)。镜头、光圈、放大倍率和灯都没动过时才用")
+            .disabled(blocked != nil)
+        }
+        Button("管理…") {
+          m.flatsFocus = nil
+          m.showFlats = true
+        }.help("平场表格：所有平场、每张照片用哪一个，选一组照片换一个")
+      }
+    }.font(.system(size: 11)).controlSize(.small)
+  }
+  static let flatInfo = "平场去掉微距镜头的暗角和光源的不匀：四周比中间暗、边上偏色，翻拍时常见，转成正片以后边缘发亮、变色。\n\n做法：拿走底片，片夹或遮罩照旧，用和翻拍完全一样的镜头、光圈、放大倍率和灯拍一张空白帧，曝光到最亮处约 70%（看直方图），不要过曝；像素位移的照片也只要拍一张普通的。选中它，点「这张是空白帧」（胶片条上右键也有）。App 量出它的明暗，把对应的照片逐个颜色通道除一遍，四周就和中间一样亮、一样色。白光、RGB 光源都行；去串色开着关着都行，换的时候跟着换算。\n\n用到哪些：这一卷还没有空白帧时用到整卷；已经有了，就从这张空白帧到下一张空白帧之前（这张之后没有照片时，往前到上一张空白帧之后）。新拍进来的照片跟着最近的一张。空白帧自己不补，会取消勾选，也不算进整卷估计和片基；留着它做分界，或者删掉都行，平场跟着这一卷存着。\n\n换了光圈、对焦距离（放大倍率）、镜头或灯的位置，就再拍一张空白帧。「管理…」打开平场表格：所有平场在上面，这一卷的照片在下面，选一组照片（按住 Shift 或 Command 点选）换成另一个平场、不补，或回到光源标定的平场。下一卷设置没变时点「用上次的」。都可以撤销。\n\n片夹遮住的地方（不到最亮处四分之一）不补；尺寸和空白帧不同的照片（裁切模式、转了方向）不补，表格里标出来。扫描仪的扫描有它自己的校正，不用这个。"
   /// A switch of the roll's in the film section: its name, the switch lined up with the others', ⓘ.
   func filmSwitch(_ title: String, isOn: Binding<Bool>, info: String) -> some View {
     HStack(spacing: 6) {
@@ -685,7 +735,7 @@ struct ContentView: View {
     } ?? ""
     return "打开：按「\(p.name)」的标定转换：三个通道的斜率；标定时那种光下的中性，白平衡按它配平，开着自动也一样；取到很暗的点时还有暗部趾部。\n\n关掉：这一卷按标定之前的胶片 \(film) 转换：斜率先用整卷估计，没有时用数据表；白平衡回到自动（对齐各通道的黑）或你取的中性灰；不用趾部。预设本身不变，别的卷照旧用它；可以 ⌘Z 撤销，在胶片菜单里重新选这个预设也会打开。\n\n\(points)\(roll)点少、明暗没拉开，或标定和整卷估计差很多时，关掉比较一下。"
   }
-  static let crosstalkInfo = "翻拍时相机的红、绿、蓝滤色片和光源的三种灯光谱有重叠：蓝灯有 34% 读进绿通道，绿灯约 12% 和 11% 读进红、蓝。每个通道掺了别的灯的光，转出来颜色发灰，要把饱和度拉到 1.8 左右才像 Capture One。\n\n打开后，从传感器读出的 RAW（无压缩 ARW）在算片基和密度之前，先在线性读数上把串色去掉；在翻拍页做过「光源标定」的话，再除以平场，把灯照在四周偏暗的地方补平。没有标定时，矩阵用 2026-10-29 用 IT8 色卡测的，没有平场。矩阵属于这台 A7R IV 和这组 RGB 灯；换了相机或灯就要重新标定。白光翻拍时关掉。\n\n整卷一起开关，可以 ⌘Z 撤销；取过的片基、中性灰和高光跟着换算。下一卷沿用这里的选择。"
+  static let crosstalkInfo = "翻拍时相机的红、绿、蓝滤色片和光源的三种灯光谱有重叠：蓝灯有 34% 读进绿通道，绿灯约 12% 和 11% 读进红、蓝。每个通道掺了别的灯的光，转出来颜色发灰，要把饱和度拉到 1.8 左右才像 Capture One。\n\n打开后，从传感器读出的 RAW（无压缩 ARW）在算片基和密度之前，先在线性读数上把串色去掉；在翻拍页做过「光源标定」的话，再除以平场，把灯照在四周偏暗的地方补平。没有标定时，矩阵用 2026-10-29 用 IT8 色卡测的，没有平场。矩阵属于这台 A7R IV 和这组 RGB 灯；换了相机或灯就要重新标定。白光翻拍时关掉。\n\n整卷一起开关，可以 ⌘Z 撤销；取过的片基、中性灰和高光跟着换算。下一卷沿用这里的选择。\n\n「平场」一行里用空白帧量的平场，优先于光源标定的平场：用了它的照片，开关去串色时按同一张空白帧换算。"
   /// The film base: where it was read in a line, picking it or going back to the automatic one,
   /// and the fine adjustment folded under it.
   var baseSection: some View {
@@ -845,6 +895,7 @@ struct ContentView: View {
               $0.autoWhiteBalance = v
               $0.manualBalance = nil
               $0.neutralSample = nil
+              $0.neutralPicked = nil
             }
           })
       ).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
@@ -1106,6 +1157,9 @@ struct ContentView: View {
                       m.setEnabled(f.id, enabled: !f.enabled)
                     }.disabled(m.isWorking)
                     Button("在去漏光里打开", systemImage: "wand.and.rays") { m.openInLeak(f.id) }.disabled(m.isWorking)
+                    if m.isLinearPicture(f) && !m.blankFrameIDs.contains(f.id) {
+                      Button("这张是空白帧（量平场）", systemImage: "square.dashed") { m.makeFlat(from: f) }.disabled(m.flatsBlocked != nil)
+                    }
                     Button("删除这张", systemImage: "trash", role: .destructive) { m.remove(f.id) }.disabled(m.isWorking)
                   }
                 }

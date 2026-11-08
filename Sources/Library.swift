@@ -39,6 +39,9 @@ struct RollEntry: Identifiable, Equatable {
   let profile: FilmProfile
   /// In the folder versions before 0.4.9 used.
   let legacy: Bool
+  /// The flat fields from blank frames its frames are divided by, and the roll's copies of its flats.
+  var flatIDs: Set<String> = []
+  var flats: [FlatProfile] = []
 }
 
 /// The library: every roll in the library folder, each a project folder as the app has always
@@ -85,7 +88,7 @@ enum RollLibrary {
   }
   static func entry(_ projectURL: URL, legacy: Bool = false) -> RollEntry? {
     guard let data = try? Data(contentsOf: projectURL),
-      let p = try? JSONDecoder().decode(DeskProject.self, from: data), p.version == 1
+      let p = try? JSONDecoder().decode(DeskProject.self, from: data), (1...2).contains(p.version)
     else { return nil }
     let folder = projectURL.deletingLastPathComponent()
     let files = FileManager.default
@@ -109,7 +112,8 @@ enum RollLibrary {
       film: FilmCalibration.film(p.filmName), date: date, source: source, frames: frames,
       fullResolution: p.frames.filter(\.hasFullResolution).count, exported: exported,
       overview: files.fileExists(atPath: overview) ? URL(fileURLWithPath: overview) : nil,
-      notes: p.notes ?? "", profile: p.profile, legacy: legacy)
+      notes: p.notes ?? "", profile: p.profile, legacy: legacy,
+      flatIDs: Set(p.frames.compactMap(\.flatID)), flats: p.flats ?? [])
   }
   /// When a roll was started, from the folder name new rolls get (`2026-10-25_174913_…`).
   static func started(_ folderName: String) -> Date? {

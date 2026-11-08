@@ -49,6 +49,87 @@ extension ImagePipeline {
       .cropped(to: CGRect(origin: .zero, size: size))
   }
 
+  /// A blank frame's readings over the picture (no film; the copies' lens, aperture, magnification
+  /// and light), as `FlatProfile` keeps them: each channel's median over a grid of 48 × 32 cells,
+  /// linear as read. A cell the holder's mask covers or crosses (its darkest tenth under half its
+  /// median, or its median under a quarter of the brightest) takes the readings of the nearest cell
+  /// wholly lit: a mask edge's half-lit median would brighten the film beside it, and leaving it
+  /// alone would leave the edge dark. Too dark, clipped over more than a hundredth of it, too little
+  /// of it lit, or not blank (neighbouring cells differing more than a fall-off does: there is a
+  /// picture on it), it says so.
+  static let flatGrid = (width: 48, height: 32)
+  func blankCells(_ image: CGImage) throws -> [Float] {
+    let s = samples(image, maxDimension: 960)
+    func median(_ v: [Double]) -> Double {
+      guard !v.isEmpty else { return 0 }
+      let sorted = v.sorted()
+      return sorted[sorted.count / 2]
+    }
+    var clipped = 0
+    for y in 0..<s.height { for x in 0..<s.width { let p = s.pixel(x, y); if max(p.r, p.g, p.b) >= 0.98 { clipped += 1 } } }
+    guard clipped * 100 <= s.width * s.height else {
+      throw DeskError.message("空白帧过曝了：降低曝光，让最亮处约 70%（看直方图）再拍一张。")
+    }
+    let gw = Self.flatGrid.width, gh = Self.flatGrid.height, n = gw * gh
+    var medians = [[Double]](repeating: [Double](repeating: 0, count: n), count: 3)
+    var lit = [Bool](repeating: false, count: n)
+    for cy in 0..<gh {
+      for cx in 0..<gw {
+        var v = [[Double](), [Double](), [Double]()], level = [Double]()
+        for y in (cy * s.height / gh)..<max(cy * s.height / gh + 1, (cy + 1) * s.height / gh) {
+          for x in (cx * s.width / gw)..<max(cx * s.width / gw + 1, (cx + 1) * s.width / gw) {
+            let p = s.pixel(x, y)
+            level.append(max(p.r, p.g, p.b))
+            if max(p.r, p.g, p.b) < 0.98 { for c in 0..<3 { v[c].append(p.values[c]) } }
+          }
+        }
+        let i = cy * gw + cx
+        for c in 0..<3 { medians[c][i] = median(v[c]) }
+        let sorted = level.sorted()
+        lit[i] = !sorted.isEmpty && sorted[sorted.count / 10] > sorted[sorted.count / 2] / 2
+      }
+    }
+    let tops = (0..<3).map { c in (0..<n).filter { lit[$0] }.map { medians[c][$0] }.max() ?? 0 }
+    guard tops.allSatisfy({ $0 > 0.03 }) else {
+      throw DeskError.message("空白帧太暗：曝光到最亮处约 70%（看直方图）再拍一张。")
+    }
+    for i in 0..<n where lit[i] { lit[i] = (0..<3).allSatisfy { medians[$0][i] >= tops[$0] / 4 } }
+    // Most of a blank is lit well, its corners a vignetting's fall-off down; a negative's picture
+    // lies a density below the clear rebate around it.
+    let bright = (0..<n).filter { i in lit[i] && (0..<3).allSatisfy { medians[$0][i] > tops[$0] / 2 } }.count
+    guard bright * 2 >= n else {
+      throw DeskError.message("这张不像空白帧：大部分地方比最亮处暗一半以上（像底片的画面，或片夹挡住了太多）。拿走底片，用同样的镜头、光圈、放大倍率和灯拍一张，再用那张。")
+    }
+    for c in 0..<3 {
+      // A fall-off changes little from one cell to the next; a picture changes a lot.
+      var steps = [Double]()
+      for cy in 0..<gh {
+        for cx in 0..<gw {
+          let i = cy * gw + cx
+          for (nx, ny) in [(cx + 1, cy), (cx, cy + 1)] where nx < gw && ny < gh {
+            let j = ny * gw + nx
+            if lit[i] && lit[j] && min(medians[c][i], medians[c][j]) > tops[c] / 2 { steps.append(abs(log(medians[c][i] / medians[c][j]))) }
+          }
+        }
+      }
+      let sorted = steps.sorted()
+      guard sorted.count > 100, sorted[sorted.count * 9 / 10] < 0.06 else {
+        throw DeskError.message("这张不像空白帧：上面有画面或底片。拿走底片，用同样的镜头、光圈、放大倍率和灯拍一张，再用那张。")
+      }
+    }
+    // Each cell not wholly lit takes the nearest wholly lit cell's readings.
+    let litCells = (0..<n).filter { lit[$0] }
+    var cells = [Float](repeating: 0, count: n * 3)
+    for i in 0..<n {
+      let from = lit[i] ? i : litCells.min { a, b in
+        let (ax, ay, bx, by, ix, iy) = (a % gw, a / gw, b % gw, b / gw, i % gw, i / gw)
+        return (ax - ix) * (ax - ix) + (ay - iy) * (ay - iy) < (bx - ix) * (bx - ix) + (by - iy) * (by - iy)
+      } ?? i
+      for c in 0..<3 { cells[i * 3 + c] = Float(medians[c][from]) }
+    }
+    return cells
+  }
+
   /// The copy light from its red, green and blue lights each alone on a blank frame (no film), in any
   /// order: which light each frame shows is told by its brightest channel. Each light's column of the
   /// crosstalk is the median of the other channels against its own, over the frame where it is well

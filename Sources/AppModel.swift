@@ -106,6 +106,16 @@ final class AppModel: ObservableObject {
   /// The roll converts with its calibrated preset's slopes, neutral and toe; off, as the film the
   /// preset was calibrated from (`conversionProfile`), the preset itself kept.
   @Published var useCalibration = true
+  /// The flat fields from blank frames the roll's frames are divided by, and those made on it:
+  /// copies, kept with the roll (`FilmFrame.flatID`); undone with the frames.
+  @Published var rollFlats: [FlatProfile] = []
+  /// A blank frame is being measured (`makeFlat`).
+  @Published var measuringFlat = false
+  /// The flats table is shown, and the frames to select in it when it opens.
+  @Published var showFlats = false
+  @Published var flatsFocus: Set<UUID>?
+  /// Each picture's size as decoded, by path: whether a flat field fits it, read once.
+  var pictureSizes = [String: (width: Int, height: Int)]()
   /// Where the open roll's pictures came from, when the app knows: the camera's rolls say so.
   @Published var rollSource: RollSource?
   /// The camera on the copy stand.
@@ -231,7 +241,7 @@ final class AppModel: ObservableObject {
     defer { wantedLock.unlock() }
     return wantedRevision == token
   }
-  private let renderQueue = DispatchQueue(label: "epscan.render", qos: .userInitiated)
+  let renderQueue = DispatchQueue(label: "epscan.render", qos: .userInitiated)
   /// Exports, one frame after another, beside the previews: on the render queue a roll's export
   /// held every preview back until it was done, about 1.4 s a 61-megapixel frame.
   private let exportQueue = DispatchQueue(label: "epscan.export", qos: .userInitiated)
@@ -553,6 +563,7 @@ final class AppModel: ObservableObject {
       $0.autoWhiteBalance = !$0.isSlide
       $0.manualBalance = nil
       $0.neutralSample = nil
+      $0.neutralPicked = nil
     }
     status = settings.isSlide ? "已清除取样 · 回到反转片本来的颜色" : "已清除取样 · 回到自动白平衡"
   }
@@ -755,6 +766,7 @@ final class AppModel: ObservableObject {
       rollNotes = ""
       poolPictures = false
       useCalibration = true
+      rollFlats = []
       rollSource = nil
       clearEdits()
       let root = try makeSession()
@@ -1095,11 +1107,12 @@ final class AppModel: ObservableObject {
   /// The window's: edits to the frames and the film preset are undone from the Edit menu.
   weak var undoManager: UndoManager?
   private struct EditState {
-    var frames: [FilmFrame], selectedID: UUID?, profile: FilmProfile, filmName: String, useCalibration: Bool
+    var frames: [FilmFrame], selectedID: UUID?, profile: FilmProfile, filmName: String, useCalibration: Bool, rollFlats: [FlatProfile]
   }
   private var lastEdit: (key: String, at: Date)?
   private var editState: EditState { EditState(
-    frames: frames, selectedID: selectedID, profile: profile, filmName: filmName, useCalibration: useCalibration)
+    frames: frames, selectedID: selectedID, profile: profile, filmName: filmName, useCalibration: useCalibration,
+    rollFlats: rollFlats)
   }
   /// Called before an edit. Repeats of one control within a second, a fader being dragged, are one step.
   func recordEdit(_ name: String, key: String? = nil, filmName shown: String? = nil) {
@@ -1138,13 +1151,14 @@ final class AppModel: ObservableObject {
       if f.flatField != old.flatField { f.edgeBase = nil }
       f.crosstalk = old.crosstalk
       f.flatField = old.flatField
+      f.flatID = old.flatID
       f.dust = old.dust
       f.adjustments = old.adjustments
       (f.adjustments.rollBase, f.adjustments.rollSlopes) = (rollBase, rollSlopes)
       return f
     }
     selectedID = state.selectedID.flatMap { id in frames.contains { $0.id == id } ? id : nil } ?? frames.first?.id
-    (profile, filmName, useCalibration) = (state.profile, state.filmName, state.useCalibration)
+    (profile, filmName, useCalibration, rollFlats) = (state.profile, state.filmName, state.useCalibration, state.rollFlats)
     editRegionLock = nil
     status = (undoing ? "已撤销：" : "已重做：") + name
     updateRollBase()
@@ -1182,12 +1196,17 @@ final class AppModel: ObservableObject {
     for i in frames.indices where frames[i].adjustments.rollBasePicked != true {
       if let from = edgeBaseSource(i), let base = frames[from].edgeBase?.base { frames[i].adjustments.rollBase = base }
     }
+    // Shared only with the frames on the same flat field: another flat is another setup.
     for group in Self.rollGroups(frames, poolPictures: true) {
-      guard let shared = group.first(where: { $0.adjustments.rollBasePicked == true })?.adjustments.rollBase else { continue }
-      let ids = Set(group.map(\.id))
-      for i in frames.indices where ids.contains(frames[i].id) && frames[i].adjustments.rollBasePicked != true {
-        frames[i].adjustments.rollBase = shared
-        frames[i].adjustments.rollBasePicked = true
+      for flat in Set(group.map { $0.flatID ?? "" }) {
+        let alike = group.filter { ($0.flatID ?? "") == flat }
+        guard let picked = alike.first(where: { $0.adjustments.rollBasePicked == true }), let shared = picked.adjustments.rollBase else { continue }
+        let ids = Set(alike.map(\.id))
+        for i in frames.indices where ids.contains(frames[i].id) && frames[i].adjustments.rollBasePicked != true {
+          frames[i].adjustments.rollBase = shared
+          frames[i].adjustments.rollBasePicked = true
+          frames[i].adjustments.rollBaseFrom = picked.adjustments.rollBaseFrom
+        }
       }
     }
   }
@@ -1204,9 +1223,13 @@ final class AppModel: ObservableObject {
   func edgeBaseSource(_ i: Int) -> Int? {
     guard frames.indices.contains(i), isSinglePicture(frames[i]) else { return nil }
     let mine = frames[i]
+    // Read alike: the same encoding, crosstalk and flat field (edges are where flats differ most),
+    // and not a blank frame.
+    let blanks = blankFrameIDs
     let alike = frames.indices.filter {
       frames[$0].edgeBase?.base != nil && isSinglePicture(frames[$0])
         && frames[$0].adjustments.inputGamma == mine.adjustments.inputGamma && frames[$0].sourceBits == mine.sourceBits
+        && frames[$0].flatID == mine.flatID && frames[$0].crosstalk == mine.crosstalk && !blanks.contains(frames[$0].id)
     }
     func colour(_ j: Int) -> (Double, Double) {
       let b = frames[j].edgeBase?.base ?? .one
@@ -1357,7 +1380,8 @@ final class AppModel: ObservableObject {
   /// the main thread, then converts with what it found. `wait` looks before returning.
   func measureEdgeBases(wait: Bool = false) {
     // A slide has no mask to divide by: nothing at its edges to look for.
-    let pending = frames.filter { $0.edgeBase == nil && isSinglePicture($0) && $0.adjustments.inputIsNegative }
+    let blanks = blankFrameIDs
+    let pending = frames.filter { $0.edgeBase == nil && isSinglePicture($0) && $0.adjustments.inputIsNegative && !blanks.contains($0.id) }
     guard !pending.isEmpty else { return }
     let project = sessionURL
     let apply = { (looks: [EdgeLook]) in
@@ -1435,29 +1459,21 @@ final class AppModel: ObservableObject {
   /// at the edges are looked for again.
   func removeCrosstalk(_ on: Bool) {
     let light = preferences.lightCalibration
-    let to: Crosstalk? = on ? light?.crosstalk ?? .measured : nil, flatTo: FlatField? = on ? light?.flat : nil
-    let affected = frames.indices.filter { frames[$0].sensorRead == true && (frames[$0].crosstalk != to || frames[$0].flatField != flatTo) }
+    let to: Crosstalk? = on ? light?.crosstalk ?? .measured : nil
+    // A picture divided by a blank frame keeps it, read the new way; the rest take the light's flat
+    // field with its crosstalk, or none.
+    func flatTo(_ f: FilmFrame) -> FlatField? { resolvedFlat(f.flatID, crosstalk: to) }
+    let affected = frames.indices.filter { frames[$0].sensorRead == true && (frames[$0].crosstalk != to || frames[$0].flatField != flatTo(frames[$0])) }
     preferences.removeCrosstalk = on
     guard !affected.isEmpty, !isWorking else { return }
     recordEdit(on ? "去串色" : "保留串色")
+    var flattened = false
     for i in affected {
-      let from = frames[i].crosstalk, flatFrom = frames[i].flatField, crop = frames[i].rect
-      func inFile(_ p: CGPoint) -> CGPoint { CGPoint(x: crop.x + p.x * crop.width, y: crop.y + p.y * crop.height) }
-      func moved(_ v: RGB?, at p: CGPoint = CGPoint(x: 0.5, y: 0.5)) -> RGB? {
-        v.map { reading in
-          let lit = FlatField.moved(reading, at: inFile(p), from: flatFrom, to: nil)
-          return FlatField.moved(Crosstalk.moved(lit, from: from, to: to), at: inFile(p), from: nil, to: flatTo)
-        }
-      }
-      let picked = frames[i].adjustments.basePicked.map { CGPoint(x: $0.x + $0.width / 2, y: $0.y + $0.height / 2) } ?? CGPoint(x: 0.5, y: 0.5)
-      frames[i].adjustments.base = moved(frames[i].adjustments.base, at: picked)
-      frames[i].adjustments.rollBase = moved(frames[i].adjustments.rollBase)
-      frames[i].adjustments.neutralSample = moved(frames[i].adjustments.neutralSample)
-      frames[i].crosstalk = to
-      frames[i].flatField = flatTo
-      frames[i].edgeBase = nil
+      flattened = flattened || flatTo(frames[i]) != nil
+      relight(i, crosstalk: to, flatID: frames[i].flatID)
     }
-    status = on ? (flatTo == nil ? "已去掉翻拍光源的串色 · \(affected.count) 张" : "已去掉翻拍光源的串色和明暗不匀 · \(affected.count) 张")
+    reshareRollBases()
+    status = on ? (!flattened ? "已去掉翻拍光源的串色 · \(affected.count) 张" : "已去掉翻拍光源的串色和明暗不匀 · \(affected.count) 张")
       : "已保留串色 · \(affected.count) 张"
     updateRollBase()
     updateRollSlopes()
@@ -1465,6 +1481,48 @@ final class AppModel: ObservableObject {
     updateThumbnails()
     saveProject()
     measureEdgeBases()
+  }
+  /// Frame `i` read through `crosstalk` and the flat field `flatID` names (nil: the copy light's,
+  /// with its crosstalk, or none; `resolvedFlat`) from now on: the one place a frame's flat field is
+  /// set. What was read off it is read again as it now is: put back as it was lit (its old flat
+  /// field), mixed again, and taken through the new; a base picked where it was picked, a grey where
+  /// it was picked (the frame's middle when that is not known), the roll's base at the middle. Its
+  /// edges are looked at again.
+  func relight(_ i: Int, crosstalk to: Crosstalk?, flatID: String?) {
+    let flatTo = resolvedFlat(flatID, crosstalk: to)
+    let from = frames[i].crosstalk, flatFrom = frames[i].flatField
+    func moved(_ v: RGB?, at p: CGPoint) -> RGB? { v.map { Self.relit($0, at: p, from: (from, flatFrom), to: (to, flatTo)) } }
+    let a = frames[i].adjustments
+    frames[i].adjustments.base = moved(a.base, at: basePlace(frames[i]))
+    frames[i].adjustments.rollBase = moved(a.rollBase, at: cropMiddle(frames[i]))
+    frames[i].adjustments.neutralSample = moved(a.neutralSample, at: a.neutralPicked.map(Self.centre) ?? cropMiddle(frames[i]))
+    frames[i].crosstalk = to
+    frames[i].flatID = flatID
+    frames[i].flatField = flatTo
+    frames[i].edgeBase = nil
+  }
+  /// A reading taken at `inFile` (normalised in the frame's picture), read through `from`'s crosstalk
+  /// and flat field, as it reads through `to`'s.
+  static func relit(_ v: RGB, at inFile: CGPoint, from: (Crosstalk?, FlatField?), to: (Crosstalk?, FlatField?)) -> RGB {
+    let lit = FlatField.moved(v, at: inFile, from: from.1, to: nil)
+    return FlatField.moved(Crosstalk.moved(lit, from: from.0, to: to.0), at: inFile, from: nil, to: to.1)
+  }
+  static func centre(_ r: NormalRect) -> CGPoint { CGPoint(x: r.x + r.width / 2, y: r.y + r.height / 2) }
+  /// The middle of the frame as cropped, in its picture.
+  func cropMiddle(_ f: FilmFrame) -> CGPoint { Self.centre(f.rect) }
+  /// Where frame `f`'s base was picked, in its picture: picking shows a camera's or imported
+  /// picture whole (`contextSource`), a scan as cropped.
+  func basePlace(_ f: FilmFrame) -> CGPoint {
+    guard let picked = f.adjustments.basePicked else { return cropMiddle(f) }
+    if f.sourcePath != nil { return Self.centre(picked) }
+    let c = Self.centre(picked), crop = f.rect
+    return CGPoint(x: crop.x + c.x * crop.width, y: crop.y + c.y * crop.height)
+  }
+  /// The flat field a frame read through `crosstalk` is divided by: the roll's flat `flatID` names,
+  /// read alike; without one, the copy light's when the crosstalk is out, else none.
+  func resolvedFlat(_ flatID: String?, crosstalk: Crosstalk?) -> FlatField? {
+    if let flatID { return rollFlats.first { $0.id == flatID }?.variant(crosstalk) }
+    return crosstalk != nil ? preferences.lightCalibration?.flat : nil
   }
   /// The copy light measured from the roll's last three pictures read from the sensor: blank frames,
   /// the red, green and blue light each alone. Kept for the copies to come, and this roll's pictures
@@ -1515,11 +1573,14 @@ final class AppModel: ObservableObject {
   func shareFilmBase() {
     guard !isWorking, let f = selected, let base = f.adjustments.base else { return }
     recordEdit("整卷共用片基")
-    let group = Self.rollGroups(frames, poolPictures: true).first { $0.contains { $0.id == f.id } } ?? [f]
+    // The frames on the same flat field and crosstalk: another flat is another setup.
+    let group = (Self.rollGroups(frames, poolPictures: true).first { $0.contains { $0.id == f.id } } ?? [f])
+      .filter { $0.flatID == f.flatID && $0.crosstalk == f.crosstalk }
     let ids = Set(group.map(\.id))
     for i in frames.indices where ids.contains(frames[i].id) {
       frames[i].adjustments.rollBase = base
       frames[i].adjustments.rollBasePicked = true
+      frames[i].adjustments.rollBaseFrom = f.id
     }
     status = "第 \(f.name) 张取的片基已用于整卷 \(group.count) 张"
     refresh()
@@ -1534,6 +1595,7 @@ final class AppModel: ObservableObject {
     for i in frames.indices where frames[i].adjustments.rollBasePicked == true {
       frames[i].adjustments.rollBase = nil
       frames[i].adjustments.rollBasePicked = nil
+      frames[i].adjustments.rollBaseFrom = nil
     }
     updateRollBase()
     status = "已取消整卷片基"
@@ -1594,6 +1656,12 @@ final class AppModel: ObservableObject {
       frames[i].adjustments.rollBase = own.rollBase
       frames[i].adjustments.rollSlopes = own.rollSlopes
       frames[i].adjustments.rollBasePicked = own.rollBasePicked
+      frames[i].adjustments.rollBaseFrom = own.rollBaseFrom
+      // Readings of the picture are read through its flat field: a frame on another keeps its own.
+      if frames[i].flatID != s.flatID || frames[i].crosstalk != s.crosstalk {
+        (frames[i].adjustments.base, frames[i].adjustments.basePicked) = (own.base, own.basePicked)
+        (frames[i].adjustments.neutralSample, frames[i].adjustments.neutralPicked) = (own.neutralSample, own.neutralPicked)
+      }
       // Where each frame's de-masking reads lies on its own picture, as its crop does.
       frames[i].adjustments.analysisRegion = own.analysisRegion
     }
@@ -1683,13 +1751,15 @@ final class AppModel: ObservableObject {
   /// Estimates channel slopes across each roll (`rollGroups`) and shares them with its frames.
   /// They are the fallback when the preset is not calibrated.
   func updateRollSlopes(completion: (() -> Void)? = nil) {
-    let snapshot = frames, film = conversionProfile, green = film.slopes.g, toe = film.toe, pool = poolPictures
+    let snapshot = frames, film = conversionProfile, green = film.slopes.g, toe = film.toe, pool = poolPictures, blanks = blankFrameIDs
     rollSlopesRevision += 1
     let token = rollSlopesRevision
     renderQueue.async {
       var result = [UUID: RGB?]()
       // Slides have no layers' contrast to estimate: their dyes are the picture.
-      for members in Self.rollGroups(snapshot, poolPictures: pool).map({ $0.filter(\.adjustments.inputIsNegative) }) where !members.isEmpty {
+      // Blank frames have no film on them: no layers' contrast to measure.
+      for members in Self.rollGroups(snapshot, poolPictures: pool).map({ $0.filter { $0.adjustments.inputIsNegative && !blanks.contains($0.id) } })
+      where !members.isEmpty {
         let inputs = members.compactMap { f in
           (try? self.source(for: f, maxDimension: 600)).map { (image: $0, settings: f.adjustments) }
         }
@@ -1748,7 +1818,7 @@ final class AppModel: ObservableObject {
   }
   /// The print of every roll printed as one, from its frames together, apart from the main thread.
   func updateRollPrint(completion: (() -> Void)? = nil) {
-    let snapshot = frames, p = conversionProfile, pool = poolPictures
+    let snapshot = frames, p = conversionProfile, pool = poolPictures, blanks = blankFrameIDs
     rollPrintRevision += 1
     let token = rollPrintRevision
     guard snapshot.contains(where: { $0.adjustments.printsWithRoll }) else {
@@ -1757,7 +1827,10 @@ final class AppModel: ObservableObject {
     }
     renderQueue.async {
       var result = [UUID: RollPrint?]()
-      for members in Self.rollGroups(snapshot, poolPictures: pool) where members.contains(where: { $0.adjustments.printsWithRoll }) {
+      for group in Self.rollGroups(snapshot, poolPictures: pool) where group.contains(where: { $0.adjustments.printsWithRoll }) {
+        // Blank frames print as nothing: left out of the roll's print.
+        let members = group.filter { !blanks.contains($0.id) }
+        guard !members.isEmpty else { continue }
         let inputs = members.compactMap { f in
           (try? self.source(for: f, maxDimension: 600)).map { (image: $0, settings: f.adjustments) }
         }
@@ -2022,6 +2095,7 @@ final class AppModel: ObservableObject {
   func dustFreeSource(for frame: FilmFrame, full: Bool, maxDimension: Int? = nil) throws -> CGImage {
     var mixed = frame
     mixed.crosstalk = nil
+    mixed.flatField = nil
     return try uncorrectedSource(for: mixed, full: full, maxDimension: maxDimension)
   }
   /// Whether a frame's pixels come from its own scan, rather than the preview or an imported file.
@@ -2249,7 +2323,8 @@ final class AppModel: ObservableObject {
     var settings = frame.adjustments
     if original { (settings.base, settings.rollBase) = (nil, nil) }
     renderQueue.async {
-      let source = [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", frame.sourcePath ?? "", frame.dust?.signature ?? "", "\(original)"].joined(separator: "|")
+      let source = [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", frame.sourcePath ?? "", frame.dust?.signature ?? "", "\(original)",
+        frame.flatField.map { "flat\($0.width)x\($0.height)-\($0.values.reduce(0, +))" } ?? "-", frame.crosstalk.map { "\($0.m)" } ?? "-"].joined(separator: "|")
       if self.detailSource?.key != source {
         self.detailSource = nil
         self.detailSource = (try? original ? self.dustFreeSource(for: frame, full: true) : self.source(for: frame, full: true)).map { (source, $0) }
@@ -2273,7 +2348,8 @@ final class AppModel: ObservableObject {
     encoder.outputFormatting = .sortedKeys
     let settings = (try? encoder.encode(frame.adjustments)).map { $0.base64EncodedString() } ?? ""
     let shown = (single ? "single " : "table ") + "\(!showNegative) \(showsOriginal)"
-    return [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", shown, conversionProfile.id, settings, frame.dust?.signature ?? ""]
+    return [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", shown, conversionProfile.id, settings, frame.dust?.signature ?? "",
+      frame.flatField.map { "flat\($0.values.reduce(0, +))" } ?? "-", frame.crosstalk.map { "\($0.m)" } ?? "-"]
       .joined(separator: "|")
   }
   /// How far the picture's render has got, while it runs: the share done and the step under way.
@@ -2841,7 +2917,12 @@ final class AppModel: ObservableObject {
         : nil
       setFilmBase(color, at: at)
     } else if tool == .neutral {
-      setNeutral(color)
+      // Where in the picture: the grey is picked on the frame as cropped.
+      let crop = frames[i].rect
+      setNeutral(color, at: singleView
+        ? NormalRect(x: crop.x + (pt.x - Double(radius) / Double(r.width)) * crop.width, y: crop.y + (pt.y - Double(radius) / Double(r.height)) * crop.height,
+          width: Double(2 * radius + 1) / Double(r.width) * crop.width, height: Double(2 * radius + 1) / Double(r.height) * crop.height)
+        : nil)
     }
     tool = .select
     refresh()
@@ -2855,6 +2936,7 @@ final class AppModel: ObservableObject {
       $0.baseFine = nil
       $0.manualBalance = nil
       $0.neutralSample = nil
+      $0.neutralPicked = nil
       $0.autoWhiteBalance = false
     }
     status = "已取片基 · 自动白平衡已关闭以保留取样；要回到自动，打开「自动」"
@@ -2862,10 +2944,11 @@ final class AppModel: ObservableObject {
   }
   /// Auto white balance on a reading of something that should be grey: the grey sets the
   /// balance, and auto stays on to fit each channel's contrast where the preset leaves that to it.
-  func setNeutral(_ color: RGB) {
+  func setNeutral(_ color: RGB, at place: NormalRect? = nil) {
     change("中性点") {
       $0.manualBalance = nil
       $0.neutralSample = color
+      $0.neutralPicked = place
       $0.autoWhiteBalance = true
     }
     status = "已按中性点自动白平衡"
@@ -3188,6 +3271,7 @@ final class AppModel: ObservableObject {
       rollNotes = ""
       poolPictures = false
       useCalibration = true
+      rollFlats = []
       rollSource = nil
       let root = try makeSession()
       let src = root.appendingPathComponent("Originals")
@@ -3469,9 +3553,16 @@ final class AppModel: ObservableObject {
   func saveProject() {
     guard !readOnly, let root = sessionURL, let overviewURL else { return }
     var saved = frames
+    var stripped = false
     for i in saved.indices {
       saved[i].scanFile = saved[i].scanPath.flatMap { ProjectFiles.relative($0, to: root) }
       saved[i].sourceFile = saved[i].sourcePath.flatMap { ProjectFiles.relative($0, to: root) }
+      // A blank frame's flat field is kept once, with the roll's flats, not in every frame: only
+      // where it reads back exactly as it is (else the frame keeps its own grid).
+      if let id = saved[i].flatID, let flat = saved[i].flatField, resolvedFlat(id, crosstalk: saved[i].crosstalk) == flat {
+        saved[i].flatField = nil
+        stripped = true
+      }
     }
     var project = DeskProject(
       overviewPath: overviewURL.path, overviewDPI: overviewDPI, physicalWidthMM: physicalMM.width,
@@ -3483,6 +3574,10 @@ final class AppModel: ObservableObject {
     project.notes = rollNotes.isEmpty ? nil : rollNotes
     project.poolPictures = poolPictures ? true : nil
     project.useCalibration = useCalibration ? nil : false
+    project.flats = rollFlats.isEmpty ? nil : rollFlats
+    // Older versions would open a roll whose frames lack their grids as if not flattened: they
+    // refuse it instead.
+    if stripped { project.version = 2 }
     project.source = rollSource?.rawValue
     do {
       let e = JSONEncoder()
@@ -3532,7 +3627,7 @@ final class AppModel: ObservableObject {
   func loadProject(_ url: URL) {
     do {
       let p = try JSONDecoder().decode(DeskProject.self, from: Data(contentsOf: url))
-      guard p.version == 1 else { throw DeskError.message("不支持的工程版本。") }
+      guard (1...2).contains(p.version) else { throw DeskError.message("不支持的工程版本。") }
       try p.profile.validate()
       // Files are found where the project folder is now, wherever it was saved.
       let folder = url.deletingLastPathComponent()
@@ -3562,6 +3657,19 @@ final class AppModel: ObservableObject {
       rollNotes = p.notes ?? ""
       poolPictures = p.poolPictures ?? false
       useCalibration = p.useCalibration ?? true
+      // A frame's blank-frame flat field, kept once with the roll, read back as the frame reads; a
+      // frame that kept its own grid keeps it. One whose flat is not in the roll is left unflattened.
+      rollFlats = p.flats ?? []
+      pictureSizes = [:]
+      var lostFlats = 0
+      for i in frames.indices where frames[i].flatID != nil && frames[i].flatField == nil {
+        if let flat = resolvedFlat(frames[i].flatID, crosstalk: frames[i].crosstalk) {
+          frames[i].flatField = flat
+        } else {
+          frames[i].flatID = nil
+          lostFlats += 1
+        }
+      }
       rollSource = p.source.flatMap(RollSource.init(rawValue:))
       dpi = p.scanDPI
       overviewDPI = p.overviewDPI
@@ -3575,6 +3683,7 @@ final class AppModel: ObservableObject {
       refresh()
       updateThumbnails()
       status = overviewPath == p.overviewPath ? "已打开工程" : "已打开工程 · 工程文件夹已移动，按新位置读取文件"
+      if lostFlats > 0 { status += " · \(lostFlats) 张的平场在工程里找不到，没有补平" }
       if !renamed.isEmpty {
         status += " · 重名的" + renamed.map { "第 \($0.from) 张" }.joined(separator: "、") + "（后拍的）改成了 "
           + renamed.map(\.to).joined(separator: "、")

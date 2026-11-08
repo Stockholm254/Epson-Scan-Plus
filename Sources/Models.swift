@@ -47,6 +47,117 @@ struct FlatField: Codable, Equatable {
   }
 }
 
+/// A flat field made from a blank frame: no film, shot with the copies' macro lens, aperture,
+/// magnification and light, so how it falls off across the picture is the lens's vignetting and the
+/// light's unevenness together, each channel's own. It keeps the blank's own readings, cell by cell,
+/// and gives the field for a picture read either way (`variant`), with the crosstalk out or as the
+/// sensor read it, so the grid never changes under its id. Several make a library; a roll keeps a
+/// copy of each its frames use.
+struct FlatProfile: Codable, Identifiable, Equatable {
+  var id: String
+  var name: String
+  /// When the blank was taken (its file's capture time), else when it was measured.
+  var date: Date
+  /// Where it was measured: the roll, the frame and the original file, as words.
+  var source: String
+  /// The blank frame, in the roll it was made on.
+  var sourceFrame: UUID
+  /// The blank's picture, as decoded.
+  var width: Int
+  var height: Int
+  /// The aperture the blank was taken at, when its file says (an f-number).
+  var aperture: Double?
+  var notes: String = ""
+  /// Each cell's median reading per channel, linear and as the sensor read it, row by row from the
+  /// top left: `gridWidth` × `gridHeight` cells of red, green and blue.
+  var gridWidth: Int
+  var gridHeight: Int
+  var cells: [Float]
+
+  /// The field a picture read through `crosstalk` (nil: as the sensor read it) is divided by: each
+  /// cell's reading unmixed alike, every channel against its brightest cell; cells under a quarter
+  /// of it (a holder's mask) are left alone.
+  func variant(_ crosstalk: Crosstalk?) -> FlatField {
+    let n = gridWidth * gridHeight
+    var read = [RGB]()
+    read.reserveCapacity(n)
+    for i in 0..<n {
+      let v = RGB(r: Double(cells[i * 3]), g: Double(cells[i * 3 + 1]), b: Double(cells[i * 3 + 2]))
+      read.append(crosstalk.map { $0.unmixed(v) } ?? v)
+    }
+    var values = [Float](repeating: 1, count: n * 3)
+    for c in 0..<3 {
+      let top = read.map { $0.values[c] }.max() ?? 0
+      guard top > 0 else { continue }
+      for i in 0..<n {
+        let share = read[i].values[c] / top
+        values[i * 3 + c] = Float(share >= 0.25 ? share : 1)
+      }
+    }
+    return FlatField(width: gridWidth, height: gridHeight, values: values)
+  }
+  /// Whether a picture of `width` × `height` was taken as the blank was: the same size, or twice it
+  /// each way (a 16-shot pixel-shift composite), within a hundredth. A crop mode, a picture turned
+  /// or another camera does not fit.
+  func fits(width w: Int, height h: Int) -> Bool {
+    guard width > 0, height > 0 else { return false }
+    func near(_ a: Int, _ b: Int, _ k: Double) -> Bool { abs(Double(a) / (Double(b) * k) - 1) < 0.01 }
+    let same = near(w, width, 1) && near(h, height, 1)
+    return same || near(w, width, 2) && near(h, height, 2)
+  }
+  /// Each channel's darkest share, as the sensor read it: how far it falls off.
+  var falloff: RGB { variant(nil).falloff }
+
+  private enum CodingKeys: String, CodingKey {
+    case id, name, date, source, sourceFrame, width, height, aperture, notes, gridWidth, gridHeight, cells
+  }
+  init(
+    id: String = UUID().uuidString, name: String, date: Date, source: String, sourceFrame: UUID, width: Int, height: Int,
+    aperture: Double? = nil, notes: String = "", gridWidth: Int, gridHeight: Int, cells: [Float]
+  ) {
+    (self.id, self.name, self.date, self.source, self.sourceFrame) = (id, name, date, source, sourceFrame)
+    (self.width, self.height, self.aperture, self.notes) = (width, height, aperture, notes)
+    (self.gridWidth, self.gridHeight, self.cells) = (gridWidth, gridHeight, cells)
+  }
+  // The cells as little-endian Float32 in base64: a fifth of the JSON numbers, and read back bit for bit.
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    id = try c.decode(String.self, forKey: .id)
+    name = try c.decode(String.self, forKey: .name)
+    date = try c.decode(Date.self, forKey: .date)
+    source = try c.decode(String.self, forKey: .source)
+    sourceFrame = try c.decode(UUID.self, forKey: .sourceFrame)
+    width = try c.decode(Int.self, forKey: .width)
+    height = try c.decode(Int.self, forKey: .height)
+    aperture = try c.decodeIfPresent(Double.self, forKey: .aperture)
+    notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
+    gridWidth = try c.decode(Int.self, forKey: .gridWidth)
+    gridHeight = try c.decode(Int.self, forKey: .gridHeight)
+    let data = Data(base64Encoded: try c.decode(String.self, forKey: .cells)) ?? Data()
+    cells = data.withUnsafeBytes { raw in (0..<(data.count / 4)).map { Float(bitPattern: UInt32(littleEndian: raw.loadUnaligned(fromByteOffset: $0 * 4, as: UInt32.self))) } }
+    guard cells.count == gridWidth * gridHeight * 3 else {
+      throw DecodingError.dataCorruptedError(forKey: .cells, in: c, debugDescription: "flat field cells do not fill the grid")
+    }
+  }
+  func encode(to encoder: Encoder) throws {
+    var c = encoder.container(keyedBy: CodingKeys.self)
+    try c.encode(id, forKey: .id)
+    try c.encode(name, forKey: .name)
+    try c.encode(date, forKey: .date)
+    try c.encode(source, forKey: .source)
+    try c.encode(sourceFrame, forKey: .sourceFrame)
+    try c.encode(width, forKey: .width)
+    try c.encode(height, forKey: .height)
+    try c.encodeIfPresent(aperture, forKey: .aperture)
+    if !notes.isEmpty { try c.encode(notes, forKey: .notes) }
+    try c.encode(gridWidth, forKey: .gridWidth)
+    try c.encode(gridHeight, forKey: .gridHeight)
+    var data = Data(capacity: cells.count * 4)
+    for v in cells { withUnsafeBytes(of: v.bitPattern.littleEndian) { data.append(contentsOf: $0) } }
+    try c.encode(data.base64EncodedString(), forKey: .cells)
+  }
+}
+
 /// A copy stand's light, measured from its red, green and blue lights each alone on a blank frame:
 /// how the camera's channels mix them, and how each falls off across the frame.
 struct LightCalibration: Codable, Equatable {
@@ -306,6 +417,8 @@ struct Adjustments: Codable, Equatable {
   /// The roll base was picked by hand once, on the leader or a frame's edge, and shared with the
   /// roll, rather than measured between the frames: the gaps do not replace it.
   var rollBasePicked: Bool? = nil
+  /// The frame a base picked for the roll was picked on, so it is read again where it was picked.
+  var rollBaseFrom: UUID? = nil
   /// The roll's channel slopes, estimated by the app across all its frames; used unless the
   /// preset is calibrated for this scanner.
   var rollSlopes: RGB? = nil
@@ -330,6 +443,9 @@ struct Adjustments: Codable, Equatable {
   /// still comes from where it was read.
   var analysisRegion: NormalRect? = nil
   var neutralSample: RGB? = nil  // Encoded negative values, recalculated if the film/base changes.
+  /// Where `neutralSample` was picked, normalised in the frame's picture (not its crop); nil when
+  /// not known.
+  var neutralPicked: NormalRect? = nil
   // The white picked as the densest highlight (`highlightSample`, Dmax) is gone (2026-11-07): it
   // fitted each channel's contrast to a point on the film's shoulder in place of the roll's or the
   // calibration's slopes. A project saved with one opens without it, the key not read.
@@ -481,6 +597,9 @@ struct FilmFrame: Identifiable, Codable {
   /// The copy light's flat field divided out of the picture after its crosstalk, so every part of
   /// the frame reads as if lit as its brightest; nil leaves it as lit.
   var flatField: FlatField? = nil
+  /// The flat field from a blank frame the picture is divided by (`FlatProfile.id`, kept with the
+  /// roll); nil for the copy light's, or none.
+  var flatID: String? = nil
   /// Dust found on the film or marked by hand, filled as the frame is read; nil until looked for.
   var dust: DustState? = nil
   var captureRect: NormalRect { scanRect ?? rect }
@@ -513,6 +632,8 @@ struct DeskProject: Codable {
   var poolPictures: Bool? = nil
   /// False: its calibrated preset converts as the film it was calibrated from; nil, with it.
   var useCalibration: Bool? = nil
+  /// The flat fields its frames are divided by (`FilmFrame.flatID`), and those made on it.
+  var flats: [FlatProfile]? = nil
 }
 
 /// A project names its files by absolute path, which older versions read, and relative to its

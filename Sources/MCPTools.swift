@@ -29,7 +29,7 @@ enum MCPTools {
   ]
   static let tools: [Tool] = conversionTools + leakTools
   private static let conversionTools: [Tool] = [
-    Tool(name: "get_state", description: "读取当前工程和选中画面的转换状态：胶片预设与各通道斜率、片基 RGB 及来源、整卷估计、白平衡、色阶、影调、扫描与对齐信息，以及负片密度和正片各通道的百分位与溢出比例；sdr_range 给出进入两端之前（色阶黑点为 0、白点为 1）白点以上的比例、最亮 0.1% 的位置和高出白点几档、屏幕上从哪里起是纯白或纯黑，以及屏幕上纯白、纯黑的比例。还有：画面的裁切、拉直、来源文件、是否从传感器读出和去串色、手动取过哪些点；预设的类型和说明（适用条件写在里面），这一卷关了「用标定」时 preset 是转换实际用的胶片，roll_preset 是这一卷选的标定预设；slopes_in_use 是转换实际用的斜率和它来自哪里（标定预设、整卷估计或预设）；analysis 是自动分析实际定出的片基、白平衡、色阶两端（对数曝光）和高光伸到多远；tone 里的高光、阴影、去色噪；roll 是整卷同一白平衡 / 色阶、去串色和标定点数。调整前先调用。", properties: [:]),
+    Tool(name: "get_state", description: "读取当前工程和选中画面的转换状态：胶片预设与各通道斜率、片基 RGB 及来源、整卷估计、白平衡、色阶、影调、扫描与对齐信息，以及负片密度和正片各通道的百分位与溢出比例；sdr_range 给出进入两端之前（色阶黑点为 0、白点为 1）白点以上的比例、最亮 0.1% 的位置和高出白点几档、屏幕上从哪里起是纯白或纯黑，以及屏幕上纯白、纯黑的比例。还有：画面的裁切、拉直、来源文件、是否从传感器读出和去串色、手动取过哪些点；预设的类型和说明（适用条件写在里面），这一卷关了「用标定」时 preset 是转换实际用的胶片，roll_preset 是这一卷选的标定预设；frame.flat_field 是这张除的平场（来自哪张空白帧或光源标定、名字、最暗处的比例）；slopes_in_use 是转换实际用的斜率和它来自哪里（标定预设、整卷估计或预设）；analysis 是自动分析实际定出的片基、白平衡、色阶两端（对数曝光）和高光伸到多远；tone 里的高光、阴影、去色噪；roll 是整卷同一白平衡 / 色阶、去串色和标定点数。调整前先调用。", properties: [:]),
     Tool(name: "list_frames", description: "列出本卷所有画面：编号、是否勾选、是否已正式扫描及 dpi、方向、镜像、拉直、裁切、来源文件，和手动取过的片基、中性灰、高光。", properties: [:]),
     Tool(name: "list_presets", description: "列出所有胶片预设：名称、类型（内置 / V850 标定 / 翻拍标定 / 导入 / 只在卷里）、通道斜率、来源和说明，这一卷是否在用，图库里有几卷在用及是哪几卷，能否删除。「只在卷里」是已从列表删除、只有卷里还留着的预设。只读，删除和恢复在 App 的「预设…」表格里做。", properties: [:]),
     Tool(name: "list_rolls", description: "列出图库里的卷（只读）：标题、文件夹、开始时间、来源（扫描 / 翻拍 / 导入）、胶片、用的预设、画面数、全分辨率张数、已导出的文件数、备注，以及哪一卷是打开的。", properties: [:]),
@@ -291,6 +291,22 @@ enum MCPTools {
       if let l = frame.levels { framePart["aligned_to_preview"] = ["used": l.usable, "fit": round(l.fit, 10000), "gain": rgb(l.gain)] }
       framePart.merge(geometry(frame)) { a, _ in a }
       if frame.sensorRead == true { framePart["read_from_sensor"] = true; framePart["crosstalk_removed"] = frame.crosstalk != nil }
+      // How the light falling off across the picture (the lens's vignetting, the light's unevenness) is taken out.
+      let flatPart: [String: Any]? = onMain {
+        guard let flat = frame.flatField else { return nil }
+        var part: [String: Any] = ["darkest_share": rgb(flat.falloff), "variant": frame.crosstalk != nil ? "crosstalk removed" : "as the sensor read it"]
+        if let p = model.flatProfile(of: frame) {
+          part["from"] = "blank frame flat"
+          part["id"] = p.id
+          part["name"] = p.name
+          part["source"] = p.source
+          if let f = p.aperture { part["aperture"] = f }
+        } else {
+          part["from"] = "the copy light's calibration"
+        }
+        return part
+      }
+      if let flatPart { framePart["flat_field"] = flatPart }
       var preset: [String: Any] = ["name": profile.name, "id": profile.id, "source": profile.publication, "channel_slopes": rgb(profile.slopes),
         "kind": PresetTable.kind(profile, builtin: FilmProfile.builtins.contains { $0.id == profile.id }).rawValue, "notes": profile.notes]
       if let toe = profile.toe { preset["toe"] = rgb(toe) }
@@ -474,11 +490,19 @@ enum MCPTools {
     case "pick_film_base", "pick_neutral":
       let p = try coordinate(arguments)
       let (frame, _) = try selected(model)
-      let v = reading(pipe.raster(try model.source(for: frame, maxDimension: 2000), maxDimension: 2000), at: p, settings: frame.adjustments)
+      let raster = pipe.raster(try model.source(for: frame, maxDimension: 2000), maxDimension: 2000)
+      let v = reading(raster, at: p, settings: frame.adjustments)
+      // Where it was read, in the frame's picture: the point on the frame as cropped, unturned.
+      let raw = ImageGeometry.raw(p, settings: frame.adjustments, aspect: Double(raster.width) / Double(max(1, raster.height)))
+      let crop = frame.rect
+      let place = NormalRect(x: crop.x + (raw.x - 0.005) * crop.width, y: crop.y + (raw.y - 0.005) * crop.height,
+        width: 0.01 * crop.width, height: 0.01 * crop.height)
       onMain {
         switch name {
-        case "pick_film_base": model.setFilmBase(v)
-        default: model.setNeutral(v)
+        // A base is picked on a camera's or imported picture whole, a scan as cropped (`basePlace`).
+        case "pick_film_base":
+          model.setFilmBase(v, at: frame.sourcePath != nil ? place : NormalRect(x: raw.x - 0.005, y: raw.y - 0.005, width: 0.01, height: 0.01))
+        default: model.setNeutral(v, at: place)
         }
       }
       let reading = "负片线性 RGB \(String(format: "%.4f %.4f %.4f", v.r, v.g, v.b))"

@@ -149,6 +149,11 @@ final class Preferences: ObservableObject {
   @Published var lightCalibration: LightCalibration? {
     didSet { defaults?.set(lightCalibration.flatMap { try? JSONEncoder().encode($0) }, forKey: "lightCalibration") }
   }
+  /// The flat fields made from blank frames, newest last: the library the flats table lists and
+  /// the next rolls take one from. A roll keeps its own copy of those its frames use.
+  @Published var flatProfiles: [FlatProfile] {
+    didSet { defaults?.set(try? JSONEncoder().encode(flatProfiles), forKey: "flatProfiles") }
+  }
   /// The scanner's measured MTF; sharpening stays off until a target has been measured.
   @Published var sharpening: SharpeningProfile? {
     didSet { defaults?.set(sharpening.flatMap { try? JSONEncoder().encode($0) }, forKey: "sharpening") }
@@ -192,6 +197,7 @@ final class Preferences: ObservableObject {
     removeFlare = defaults?.object(forKey: "removeFlare") as? Bool ?? true
     removeCrosstalk = defaults?.object(forKey: "removeCrosstalk") as? Bool ?? true
     lightCalibration = defaults?.data(forKey: "lightCalibration").flatMap { try? JSONDecoder().decode(LightCalibration.self, from: $0) }
+    flatProfiles = defaults?.data(forKey: "flatProfiles").flatMap { try? JSONDecoder().decode([FlatProfile].self, from: $0) } ?? []
     customProfiles = defaults?.data(forKey: "customProfiles").flatMap { try? JSONDecoder().decode([FilmProfile].self, from: $0) } ?? []
     autoExport = defaults.map { $0.object(forKey: "autoExport") as? Bool ?? true } ?? false
     let dpi = defaults?.integer(forKey: "previewDPI") ?? 0
