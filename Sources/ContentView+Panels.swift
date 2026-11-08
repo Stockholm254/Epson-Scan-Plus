@@ -208,12 +208,13 @@ extension ContentView {
   /// (`conversionBasis`) behind its ⓘ.
   var conversionBasisShort: String {
     if m.settings.isSlide { return "反转片 · 扫描的读数就是画面，不用通道斜率" }
-    let p = m.profile.slopes
-    if m.profile.offsets != nil {
-      return String(format: "%@ · R %.3f · G %.3f · B %.3f", m.profile.id.contains("-copy-") ? "翻拍标定" : "本机标定", p.r, p.g, p.b)
+    // With the calibration switched off, what the film it was calibrated from comes to.
+    let film = m.conversionProfile, p = film.slopes
+    if film.offsets != nil {
+      return String(format: "%@ · R %.3f · G %.3f · B %.3f", film.id.contains("-copy-") ? "翻拍标定" : "本机标定", p.r, p.g, p.b)
     }
     if let s = m.settings.rollSlopes { return String(format: "整卷估计 · R %.3f · G %.3f · B %.3f", s.r, s.g, s.b) }
-    if m.profile.setsChannelContrast {
+    if film.setsChannelContrast {
       return String(format: "数据表 · R %.3f · G %.3f · B %.3f", p.r, p.g, p.b)
         + (m.hasSinglePictures && !m.poolPictures ? "（单张各自估计不了）" : "")
     }
@@ -250,7 +251,11 @@ extension ContentView {
     if m.settings.isSlide {
       return "反转片：扫描的线性读数本身就是画面，不去色罩，也不用预设的通道斜率。按白平衡和色阶把线性的光配好，再按 Gamma 2.2 编码到屏幕，像在看片台上看片子。预设和胶片名只用来命名和记录。在 ① 采集 · 扫描仪的「胶片」里切回负片。"
     }
-    if m.profile.offsets != nil {
+    let film = m.conversionProfile
+    // The roll's calibrated preset, switched off: what it converts as instead, then how.
+    let off = film.id == m.profile.id ? ""
+      : "「\(calibrationSwitchTitle)」关着：这一卷按标定之前的胶片 \(film.name) 转换，预设「\(m.profile.name)」本身不变。"
+    if film.offsets != nil {
       let own = m.profile.slopes
       guard let s = m.settings.rollSlopes else { return "本机标定预设 · \(m.profile.publication)" }
       // On the copy stand the roll's estimate follows what the pictures hold (much foliage puts its
@@ -262,12 +267,20 @@ extension ContentView {
       return String(format: "本机标定预设 · %@。对照：本卷按明暗过渡估计为 R %.3f · B %.3f（预设 R %.3f · B %.3f），相差很大时，这卷可能与标定时的胶片或冲洗不同。",
         m.profile.publication, s.r, s.b, own.r, own.b)
     }
+    if !off.isEmpty {
+      if let s = m.settings.rollSlopes {
+        return off + String(format: "斜率按整卷画面里的明暗过渡自动估计：R %.3f · G %.3f · B %.3f。", s.r, s.g, s.b)
+      }
+      return off + (film.setsChannelContrast
+        ? String(format: "本卷画面太少，估计不了斜率，按数据表：R %.3f · G %.3f · B %.3f。", film.slopes.r, film.slopes.g, film.slopes.b)
+        : "本卷画面太少，估计不了斜率，每张按自己的画面拉伸各通道。")
+    }
     if let s = m.settings.rollSlopes {
       return m.copyStandRoll
         ? String(format: "这一卷没有用翻拍标定的预设，按整卷画面里的明暗过渡自动估计通道斜率：R %.3f · G %.3f · B %.3f。这个估计会随画面内容偏（树叶多时蓝偏低，亮的灰越亮越蓝）。同一次翻拍已经标定过的话，在检查器最上面的胶片菜单里选那一次的预设；没有的话，在白牌子、灰水泥这类本来中性的东西上取几个中性点，生成翻拍预设就准了。", s.r, s.g, s.b)
         : String(format: "这种胶片还没有本机标定，按整卷画面里的明暗过渡自动估计通道斜率：R %.3f · G %.3f · B %.3f。画面越多越准；拍一张灰卡可以标定。", s.r, s.g, s.b)
     }
-    if m.profile.setsChannelContrast {
+    if film.setsChannelContrast {
       return m.hasSinglePictures && !m.poolPictures
         ? "按 Kodak 数据表斜率：一张一个文件的画面各自估计不了。它们是同一卷、同样设置的话，打开下面的「单张一起做整卷估计」。"
         : "按 Kodak 数据表斜率（本卷画面太少，未能自动估计）。"

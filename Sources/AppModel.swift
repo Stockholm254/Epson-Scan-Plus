@@ -101,6 +101,9 @@ final class AppModel: ObservableObject {
   /// The roll's pictures that are a file each are measured together as one roll: asked for, as
   /// files from elsewhere need not have been scanned alike.
   @Published var poolPictures = false
+  /// The roll converts with its calibrated preset's slopes, neutral and toe; off, as the film the
+  /// preset was calibrated from (`conversionProfile`), the preset itself kept.
+  @Published var useCalibration = true
   /// Where the open roll's pictures came from, when the app knows: the camera's rolls say so.
   @Published var rollSource: RollSource?
   /// The camera on the copy stand.
@@ -640,6 +643,7 @@ final class AppModel: ObservableObject {
       rollName = ""
       rollNotes = ""
       poolPictures = false
+      useCalibration = true
       rollSource = nil
       clearEdits()
       let root = try makeSession()
@@ -977,10 +981,12 @@ final class AppModel: ObservableObject {
   /// The window's: edits to the frames and the film preset are undone from the Edit menu.
   weak var undoManager: UndoManager?
   private struct EditState {
-    var frames: [FilmFrame], selectedID: UUID?, profile: FilmProfile, filmName: String
+    var frames: [FilmFrame], selectedID: UUID?, profile: FilmProfile, filmName: String, useCalibration: Bool
   }
   private var lastEdit: (key: String, at: Date)?
-  private var editState: EditState { EditState(frames: frames, selectedID: selectedID, profile: profile, filmName: filmName) }
+  private var editState: EditState { EditState(
+    frames: frames, selectedID: selectedID, profile: profile, filmName: filmName, useCalibration: useCalibration)
+  }
   /// Called before an edit. Repeats of one control within a second, a fader being dragged, are one step.
   func recordEdit(_ name: String, key: String? = nil, filmName shown: String? = nil) {
     guard let undoManager, !undoManager.isUndoing, !undoManager.isRedoing else { return }
@@ -1024,7 +1030,7 @@ final class AppModel: ObservableObject {
       return f
     }
     selectedID = state.selectedID.flatMap { id in frames.contains { $0.id == id } ? id : nil } ?? frames.first?.id
-    (profile, filmName) = (state.profile, state.filmName)
+    (profile, filmName, useCalibration) = (state.profile, state.filmName, state.useCalibration)
     editRegionLock = nil
     status = (undoing ? "已撤销：" : "已重做：") + name
     updateRollBase()
@@ -1443,6 +1449,35 @@ final class AppModel: ObservableObject {
     recordEdit("胶片预设")
     filmName = p.name
     profile = p
+    // A preset chosen is used whole, its calibration with it.
+    useCalibration = true
+    updateRollSlopes()
+    refresh()
+    updateThumbnails()
+    saveProject()
+  }
+  /// What the roll converts with: its preset, or with the preset's calibration switched off the
+  /// film it was calibrated from (`uncalibrated`).
+  var conversionProfile: FilmProfile {
+    useCalibration || profile.offsets == nil ? profile : Self.uncalibrated(profile, among: profiles)
+  }
+  /// The film a calibrated preset was made from, as the presets hold it: its data sheet's slopes
+  /// when it has one, with no neutral and no toe, so the roll's own estimate comes first again and
+  /// auto white balance meets the channels' blacks. The generic preset when that film is gone.
+  static func uncalibrated(_ p: FilmProfile, among profiles: [FilmProfile]) -> FilmProfile {
+    guard p.offsets != nil else { return p }
+    let root = FilmCalibration.calibratedFrom(p)
+    let generic = FilmProfile.builtins.first { $0.id == "generic" }!
+    return (profiles + FilmProfile.builtins).first { $0.id == root.id && $0.offsets == nil } ?? generic
+  }
+  /// Converts the roll with its calibrated preset, or as the film it was calibrated from; the
+  /// preset stays as it is, chosen for the roll.
+  func setUseCalibration(_ on: Bool) {
+    guard on != useCalibration, profile.offsets != nil else { return }
+    recordEdit(on ? "用标定" : "不用标定")
+    useCalibration = on
+    let film = Self.uncalibrated(profile, among: profiles)
+    status = on ? "按「\(profile.name)」的标定转换" : "这一卷先不用标定：按 \(film.name) 转换，有整卷估计时按整卷估计的斜率"
     updateRollSlopes()
     refresh()
     updateThumbnails()
@@ -1451,7 +1486,7 @@ final class AppModel: ObservableObject {
   /// Estimates channel slopes across each roll (`rollGroups`) and shares them with its frames.
   /// They are the fallback when the preset is not calibrated.
   func updateRollSlopes(completion: (() -> Void)? = nil) {
-    let snapshot = frames, green = profile.slopes.g, toe = profile.toe, pool = poolPictures
+    let snapshot = frames, film = conversionProfile, green = film.slopes.g, toe = film.toe, pool = poolPictures
     rollSlopesRevision += 1
     let token = rollSlopesRevision
     renderQueue.async {
@@ -1516,7 +1551,7 @@ final class AppModel: ObservableObject {
   }
   /// The print of every roll printed as one, from its frames together, apart from the main thread.
   func updateRollPrint(completion: (() -> Void)? = nil) {
-    let snapshot = frames, p = profile, pool = poolPictures
+    let snapshot = frames, p = conversionProfile, pool = poolPictures
     rollPrintRevision += 1
     let token = rollPrintRevision
     guard snapshot.contains(where: { $0.adjustments.printsWithRoll }) else {
@@ -1940,7 +1975,7 @@ final class AppModel: ObservableObject {
   /// shows it, positive or raw (its scan, or the full-resolution preview); over the single frame
   /// as that view shows it, turned and mirrored, at full resolution.
   func loupeDetail(for frame: FilmFrame, single: Bool = false, pixels: Int = 2400, completion: @escaping (CGImage?) -> Void) {
-    let positive = !showNegative, p = profile
+    let positive = !showNegative, p = conversionProfile
     // A page laid out from files of their own shows each positive as the film strip has it,
     // turned, mirrored and straightened; the holder's preview, as the frame lies under its box.
     let asLaidOut = onSheetPage && sheetPageFrames.contains { $0.id == frame.id }
@@ -2004,7 +2039,7 @@ final class AppModel: ObservableObject {
   func renderDetail(_ frame: FilmFrame, region: NormalRect, completion: @escaping (Detail?) -> Void) {
     // Never answered at once: an asker that asks again on an answer would never stop.
     guard let analysis = toneAnalysis else { return DispatchQueue.main.async { completion(nil) } }
-    let negative = showNegative || tool == .base, p = profile, key = loupeDetailKey(frame, single: true)
+    let negative = showNegative || tool == .base, p = conversionProfile, key = loupeDetailKey(frame, single: true)
     renderQueue.async {
       let source = [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", frame.sourcePath ?? "", frame.dust?.signature ?? ""].joined(separator: "|")
       if self.detailSource?.key != source {
@@ -2030,7 +2065,7 @@ final class AppModel: ObservableObject {
     encoder.outputFormatting = .sortedKeys
     let settings = (try? encoder.encode(frame.adjustments)).map { $0.base64EncodedString() } ?? ""
     let shown = (single ? "single " : "table ") + "\(!showNegative)"
-    return [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", shown, profile.id, settings, frame.dust?.signature ?? ""]
+    return [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", shown, conversionProfile.id, settings, frame.dust?.signature ?? ""]
       .joined(separator: "|")
   }
   /// How far the picture's render has got, while it runs: the share done and the step under way.
@@ -2145,7 +2180,7 @@ final class AppModel: ObservableObject {
         let index = contactPage
         displayed = tablePrint.flatMap { $0.page == index && $0.positive && $0.image.width == overview.width && $0.image.height == overview.height ? $0.image : nil } ?? overview
       }
-      let p = profile
+      let p = conversionProfile
       rendering = true
       let work = DispatchWorkItem { [weak self] in
         self?.step(0.3, "冲印接触表", token)
@@ -2168,7 +2203,7 @@ final class AppModel: ObservableObject {
     if !edit { editRegionLock = nil }
     rendering = true
     let request = SingleRender(
-      token: token, frame: frame, profile: profile, edit: edit, negative: showNegative || tool == .base,
+      token: token, frame: frame, profile: conversionProfile, edit: edit, negative: showNegative || tool == .base,
       sharpening: preferences.sharpening, previewDPI: Int(overviewDPI), analysisKey: analysisKey(frame),
       overview: overview)
     wantedLock.lock()
@@ -2265,7 +2300,7 @@ final class AppModel: ObservableObject {
     encoder.outputFormatting = .sortedKeys
     // Unencodable, it matches nothing.
     let frameKey = (try? encoder.encode(f)).map { String(decoding: $0, as: UTF8.self) } ?? UUID().uuidString
-    let profileKey = (try? encoder.encode(profile)).map { String(decoding: $0, as: UTF8.self) } ?? UUID().uuidString
+    let profileKey = (try? encoder.encode(conversionProfile)).map { String(decoding: $0, as: UTF8.self) } ?? UUID().uuidString
     let flare = flareOffset(frame).map { "\($0.values)" } ?? "-"
     let preview = overview.map { "\(ObjectIdentifier($0).hashValue)" } ?? "-"
     return [frameKey, flat, profileKey, flare, overviewURL?.path ?? "-", preview].joined(separator: "|")
@@ -2400,7 +2435,7 @@ final class AppModel: ObservableObject {
     guard overview != nil else { return }
     thumbnailRevision += 1
     let request = ThumbnailPass(
-      token: thumbnailRevision, frames: frames, profile: profile,
+      token: thumbnailRevision, frames: frames, profile: conversionProfile,
       keys: Dictionary(frames.map { ($0.id, analysisKey($0, everything: true)) }, uniquingKeysWith: { a, _ in a }))
     wantedLock.lock()
     wantedThumbnails = request
@@ -2851,6 +2886,7 @@ final class AppModel: ObservableObject {
       rollName = ""
       rollNotes = ""
       poolPictures = false
+      useCalibration = true
       rollSource = nil
       let root = try makeSession()
       let src = root.appendingPathComponent("Originals")
@@ -2925,7 +2961,8 @@ final class AppModel: ObservableObject {
   }
   func export(items: [FilmFrame], to directory: URL, completion: (() -> Void)? = nil) {
     beginExport()
-    let p = profile
+    // Named after the roll's preset; converted, and recorded, with what the roll converts with.
+    let p = profile, film = conversionProfile
     let format = ExportFormat(rawValue: exportType) ?? .tiff
     let quality = preferences.jpegQuality
     let sharpening = preferences.sharpening
@@ -2962,10 +2999,10 @@ final class AppModel: ObservableObject {
             scanner: f.sourcePath == nil ? ("EPSON", "Perfection V800/V850") : nil, scanned: scanned,
             software: "Epson Scan plus" + (version.map { " " + $0 } ?? ""))
           try ImagePipeline.shared.export(
-            image, settings: f.adjustments, profile: p, url: url, format: format, dpi: dpi,
+            image, settings: f.adjustments, profile: film, url: url, format: format, dpi: dpi,
             quality: quality, sharpener: sharpener, colorSpace: space, metadata: metadata)
           let sidecar = ExportRecord(
-            profile: p, frame: f, source: source, isPreview: !f.hasFullResolution, colorSpace: space.title)
+            profile: film, frame: f, source: source, isPreview: !f.hasFullResolution, colorSpace: space.title)
           let encoder = JSONEncoder()
           encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
           try encoder.encode(sidecar).write(
@@ -3046,7 +3083,7 @@ final class AppModel: ObservableObject {
     ids: [UUID], to url: URL, format: ExportFormat, fromPreview: Bool = false, completion: ((Error?) -> Void)? = nil
   ) {
     let items = ids.compactMap { id in frames.first { $0.id == id } }
-    let p = profile, layout = preferences.sheet, quality = preferences.jpegQuality
+    let p = conversionProfile, layout = preferences.sheet, quality = preferences.jpegQuality
     let previewDPI = overviewDPI
     let title = "\(filmName) · \(Date().formatted(.iso8601.year().month().day())) · \(items.count) 张"
     let filmCode = filmName.uppercased()
@@ -3115,6 +3152,7 @@ final class AppModel: ObservableObject {
     project.rollName = name.isEmpty ? nil : name
     project.notes = rollNotes.isEmpty ? nil : rollNotes
     project.poolPictures = poolPictures ? true : nil
+    project.useCalibration = useCalibration ? nil : false
     project.source = rollSource?.rawValue
     do {
       let e = JSONEncoder()
@@ -3193,6 +3231,7 @@ final class AppModel: ObservableObject {
       rollName = p.rollName ?? ""
       rollNotes = p.notes ?? ""
       poolPictures = p.poolPictures ?? false
+      useCalibration = p.useCalibration ?? true
       rollSource = p.source.flatMap(RollSource.init(rawValue:))
       dpi = p.scanDPI
       overviewDPI = p.overviewDPI

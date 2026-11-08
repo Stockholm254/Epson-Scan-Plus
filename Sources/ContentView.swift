@@ -571,27 +571,45 @@ struct ContentView: View {
             Button("应用") { m.matchFilm() }.controlSize(.small).help("按胶片名换成收录的预设；没有收录的用通用配置")
           }
         }
-        Text(conversionBasisShort).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
-          .fixedSize(horizontal: false, vertical: true)
+        // The roll's switches in the order they act: how the pixels are read, then where the
+        // channel slopes come from; under them, the slopes they come to.
         if m.hasSensorPictures {
-          HStack {
-            Toggle(m.preferences.lightCalibration == nil ? "去串色 · RGB 光源" : "去串色和平场 · RGB 光源",
-              isOn: Binding(get: { m.crosstalkRemoved }, set: { m.removeCrosstalk($0) }))
-              .toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 12)).disabled(m.isWorking)
-            Spacer()
-            InfoButton(text: Self.crosstalkInfo)
-          }
+          filmSwitch(m.preferences.lightCalibration == nil ? "去串色 · RGB 光源" : "去串色和平场 · RGB 光源",
+            isOn: Binding(get: { m.crosstalkRemoved }, set: { m.removeCrosstalk($0) }), info: Self.crosstalkInfo)
+            .disabled(m.isWorking)
+        }
+        if m.profile.offsets != nil {
+          filmSwitch(calibrationSwitchTitle, isOn: Binding(get: { m.useCalibration }, set: { m.setUseCalibration($0) }),
+            info: calibrationSwitchInfo)
+            .disabled(m.isWorking || m.selected == nil)
         }
         if m.hasSinglePictures {
-          HStack {
-            Toggle("单张一起做整卷估计", isOn: Binding(get: { m.poolPictures }, set: { m.setPoolPictures($0) }))
-              .toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 12))
-            Spacer()
-            InfoButton(text: "一张一个文件的画面（翻拍，或一张张导入的扫描）一起估计通道斜率。只在它们是同一卷、用同样的设备和设置拍或扫时打开；读法不同（Gamma、位深）的文件不会混在一起。")
-          }
+          filmSwitch("单张一起做整卷估计", isOn: Binding(get: { m.poolPictures }, set: { m.setPoolPictures($0) }),
+            info: "一张一个文件的画面（翻拍，或一张张导入的扫描）算作一卷：一起估计通道斜率，「整卷同一白平衡 / 色阶」也把它们当一卷。只在它们是同一卷、用同样的设备和设置拍或扫时打开；读法不同（Gamma、位深）的文件不会混在一起。App 里翻拍的卷自动打开。\n\n它不管标定：用着标定时，斜率按标定，整卷估计只在 ⓘ 里作对照。")
         }
+        Text(conversionBasisShort).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+          .fixedSize(horizontal: false, vertical: true)
       }
     }
+  }
+  /// A switch of the roll's in the film section: its name, the switch lined up with the others', ⓘ.
+  func filmSwitch(_ title: String, isOn: Binding<Bool>, info: String) -> some View {
+    HStack(spacing: 6) {
+      Text(title).font(.system(size: 12)).lineLimit(1)
+      Spacer(minLength: 4)
+      Toggle(title, isOn: isOn).labelsHidden().toggleStyle(.switch).tint(Hardware.accent)
+      InfoButton(text: info, about: title)
+    }
+  }
+  var calibrationSwitchTitle: String { m.profile.id.contains("-copy-") ? "用翻拍标定" : "用本机标定" }
+  /// What the calibration switch does, with this preset's own numbers.
+  var calibrationSwitchInfo: String {
+    let p = m.profile, film = AppModel.uncalibrated(p, among: m.profiles).name
+    let points = PresetTable.pointCount(p).map { "这个预设用了 \($0) 个中性点，" } ?? ""
+    let roll = m.settings.rollSlopes.map {
+      String(format: "本卷整卷估计 R %.3f · B %.3f，标定 R %.3f · B %.3f。", $0.r, $0.b, p.slopes.r, p.slopes.b)
+    } ?? ""
+    return "打开：按「\(p.name)」的标定转换：三个通道的斜率；标定时那种光下的中性，白平衡按它配平，开着自动也一样；取到很暗的点时还有暗部趾部。\n\n关掉：这一卷按标定之前的胶片 \(film) 转换：斜率先用整卷估计，没有时用数据表；白平衡回到自动（对齐各通道的黑）或你取的中性灰；不用趾部。预设本身不变，别的卷照旧用它；可以 ⌘Z 撤销，在胶片菜单里重新选这个预设也会打开。\n\n\(points)\(roll)点少、明暗没拉开，或标定和整卷估计差很多时，关掉比较一下。"
   }
   static let crosstalkInfo = "翻拍时相机的红、绿、蓝滤色片和光源的三种灯光谱有重叠：蓝灯有 34% 读进绿通道，绿灯约 12% 和 11% 读进红、蓝。每个通道掺了别的灯的光，转出来颜色发灰，要把饱和度拉到 1.8 左右才像 Capture One。\n\n打开后，从传感器读出的 RAW（无压缩 ARW）在算片基和密度之前，先在线性读数上把串色去掉；在翻拍页做过「光源标定」的话，再除以平场，把灯照在四周偏暗的地方补平。没有标定时，矩阵用 2026-10-29 用 IT8 色卡测的，没有平场。矩阵属于这台 A7R IV 和这组 RGB 灯；换了相机或灯就要重新标定。白光翻拍时关掉。\n\n整卷一起开关，可以 ⌘Z 撤销；取过的片基、中性灰和高光跟着换算。下一卷沿用这里的选择。"
   /// The film base: where it was read in a line, picking it or going back to the automatic one,

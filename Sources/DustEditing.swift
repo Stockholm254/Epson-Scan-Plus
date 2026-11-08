@@ -27,7 +27,7 @@ extension AppModel {
   /// Green over red that a spot's excess may reach and still be dust: between 1 and the film's grey
   /// (its green slope over its red), nearer 1.
   func dustGreenOverRed(_ frame: FilmFrame) -> Double {
-    let s = ImagePipeline.slopes(frame.adjustments, profile).slopes.values
+    let s = ImagePipeline.slopes(frame.adjustments, conversionProfile).slopes.values
     let grey = s[0] > 0 ? s[1] / s[0] : 1.28
     return min(1.15, max(1.04, 1 + 0.3 * (grey - 1)))
   }

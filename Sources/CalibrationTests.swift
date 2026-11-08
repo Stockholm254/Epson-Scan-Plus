@@ -199,6 +199,47 @@ enum CalibrationTests {
     try check(copying.profile == grown && copying.calibrationPoints.count == 4 && copying.tool == .calibrate,
       "taking it up from the table puts the roll on it, brings its points back and turns the picker on")
     copying.clearCalibration()
+    // The roll's calibration switched off: it converts as the film the preset came from (its roll
+    // estimate first, then the data sheet, no neutral, no toe), the preset itself still the roll's.
+    let edits = UndoManager()
+    edits.groupsByEvent = false
+    copying.undoManager = edits
+    copying.setUseCalibration(false)
+    let plain = copying.conversionProfile
+    var estimated = Adjustments()
+    estimated.rollSlopes = RGB(r: 0.8, g: 0.55, b: 0.7)
+    try check(copying.profile == grown && !copying.useCalibration && plain.id == "portra160" && plain.offsets == nil && plain.toe == nil
+      && ImagePipeline.slopes(Adjustments(), plain).slopes == portra.slopes && ImagePipeline.slopes(estimated, plain).slopes == estimated.rollSlopes
+      && ImagePipeline.slopes(estimated, grown).slopes == grown.slopes && copying.status.contains("先不用标定"),
+      "with the calibration off the roll converts as its film: the roll's estimate, else the data sheet; the preset stays chosen")
+    edits.undo()
+    try check(copying.useCalibration && copying.conversionProfile == grown, "turning the calibration off is undone with ⌘Z")
+    copying.setUseCalibration(false)
+    copying.chooseProfile(grown)
+    try check(copying.useCalibration && copying.conversionProfile == grown, "choosing a calibrated preset again uses its calibration")
+    var fromGeneric = grown, orphan = grown
+    fromGeneric.id = "generic-v850-0a1b2c"
+    orphan.id = "gone-copy-0a1b2c"
+    try check(AppModel.uncalibrated(fromGeneric, among: copying.profiles).id == "generic"
+      && AppModel.uncalibrated(orphan, among: copying.profiles).id == "generic" && AppModel.uncalibrated(portra, among: copying.profiles) == portra,
+      "a preset calibrated from the generic one, or from a film no longer listed, converts as the generic preset when switched off")
+    // Kept with the roll: a project saved with it off opens with it off; one from before, on.
+    let switchRoot = folder.appendingPathComponent("calibration-switch")
+    try FileManager.default.createDirectory(at: switchRoot, withIntermediateDirectories: true)
+    try ImagePipeline.shared.savePNG(ramp, to: switchRoot.appendingPathComponent("overview.png"))
+    var saved = DeskProject(
+      overviewPath: switchRoot.appendingPathComponent("overview.png").path, overviewDPI: 150, physicalWidthMM: 36, physicalHeightMM: 24,
+      filmName: grown.name, profile: grown, scanDPI: 2400, frames: [FilmFrame(name: "01", rect: .full, format: "135")])
+    saved.useCalibration = false
+    try JSONEncoder().encode(saved).write(to: switchRoot.appendingPathComponent("off.epscan"))
+    saved.useCalibration = nil
+    try JSONEncoder().encode(saved).write(to: switchRoot.appendingPathComponent("before.epscan"))
+    let reopened = AppModel(libraryURL: switchRoot, preferences: Preferences(defaults: copyDefaults))
+    reopened.loadProject(switchRoot.appendingPathComponent("off.epscan"))
+    let wasOff = !reopened.useCalibration && reopened.conversionProfile.id == "portra160" && reopened.profile == grown
+    reopened.loadProject(switchRoot.appendingPathComponent("before.epscan"))
+    try check(wasOff && reopened.useCalibration && reopened.conversionProfile == grown,
+      "the switch is kept with the roll; rolls saved before it convert with their calibration")
     let notes = [true, false, nil].map { FilmCalibration.profile(from: fit, basedOn: portra, points: 3, scanner: "A7R IV", copyStand: true, unmixed: $0).notes }
     try check(notes[0].contains("标定时去串色是开着的") && notes[1].contains("标定时没有去串色") && notes[2].contains("有的去了串色、有的没有"),
       "a copy-stand preset says how its points were read, crosstalk taken out or not, as its slopes hold for that")

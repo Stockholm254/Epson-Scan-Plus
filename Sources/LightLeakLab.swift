@@ -1017,7 +1017,7 @@ extension AppModel {
   }
   /// What a light-leak job keeps of a frame of the open roll: its conversion as it is now.
   func leakOrigin(_ frame: FilmFrame) -> LeakJob.Origin? {
-    projectPath.map { LeakJob.Origin(project: $0, frame: frame.id, frameName: frame.name, adjustments: frame.adjustments, profile: profile) }
+    projectPath.map { LeakJob.Origin(project: $0, frame: frame.id, frameName: frame.name, adjustments: frame.adjustments, profile: conversionProfile) }
   }
   /// A frame of the open roll at full resolution, converted as `origin` says and as an export
   /// would convert it.

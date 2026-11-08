@@ -493,6 +493,8 @@ struct DeskProject: Codable {
   var source: String? = nil
   /// Its pictures that are a file each are estimated together, as one roll; nil, apart.
   var poolPictures: Bool? = nil
+  /// False: its calibrated preset converts as the film it was calibrated from; nil, with it.
+  var useCalibration: Bool? = nil
 }
 
 /// A project names its files by absolute path, which older versions read, and relative to its

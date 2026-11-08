@@ -29,7 +29,7 @@ enum MCPTools {
   ]
   static let tools: [Tool] = conversionTools + leakTools
   private static let conversionTools: [Tool] = [
-    Tool(name: "get_state", description: "读取当前工程和选中画面的转换状态：胶片预设与各通道斜率、片基 RGB 及来源、整卷估计、白平衡、色阶、影调、扫描与对齐信息，以及负片密度和正片各通道的百分位与溢出比例；sdr_range 给出进入两端之前（色阶黑点为 0、白点为 1）白点以上的比例、最亮 0.1% 的位置和高出白点几档、屏幕上从哪里起是纯白或纯黑，以及屏幕上纯白、纯黑的比例。还有：画面的裁切、拉直、来源文件、是否从传感器读出和去串色、手动取过哪些点；预设的类型和说明（适用条件写在里面）；slopes_in_use 是转换实际用的斜率和它来自哪里（标定预设、整卷估计或预设）；analysis 是自动分析实际定出的片基、白平衡、色阶两端（对数曝光）和高光伸到多远；tone 里的高光、阴影、去色噪；roll 是整卷同一白平衡 / 色阶、去串色和标定点数。调整前先调用。", properties: [:]),
+    Tool(name: "get_state", description: "读取当前工程和选中画面的转换状态：胶片预设与各通道斜率、片基 RGB 及来源、整卷估计、白平衡、色阶、影调、扫描与对齐信息，以及负片密度和正片各通道的百分位与溢出比例；sdr_range 给出进入两端之前（色阶黑点为 0、白点为 1）白点以上的比例、最亮 0.1% 的位置和高出白点几档、屏幕上从哪里起是纯白或纯黑，以及屏幕上纯白、纯黑的比例。还有：画面的裁切、拉直、来源文件、是否从传感器读出和去串色、手动取过哪些点；预设的类型和说明（适用条件写在里面），这一卷关了「用标定」时 preset 是转换实际用的胶片，roll_preset 是这一卷选的标定预设；slopes_in_use 是转换实际用的斜率和它来自哪里（标定预设、整卷估计或预设）；analysis 是自动分析实际定出的片基、白平衡、色阶两端（对数曝光）和高光伸到多远；tone 里的高光、阴影、去色噪；roll 是整卷同一白平衡 / 色阶、去串色和标定点数。调整前先调用。", properties: [:]),
     Tool(name: "list_frames", description: "列出本卷所有画面：编号、是否勾选、是否已正式扫描及 dpi、方向、镜像、拉直、裁切、来源文件，和手动取过的片基、中性灰、高光。", properties: [:]),
     Tool(name: "list_presets", description: "列出所有胶片预设：名称、类型（内置 / V850 标定 / 翻拍标定 / 导入 / 只在卷里）、通道斜率、来源和说明，这一卷是否在用，图库里有几卷在用及是哪几卷，能否删除。「只在卷里」是已从列表删除、只有卷里还留着的预设。只读，删除和恢复在 App 的「预设…」表格里做。", properties: [:]),
     Tool(name: "list_rolls", description: "列出图库里的卷（只读）：标题、文件夹、开始时间、来源（扫描 / 翻拍 / 导入）、胶片、用的预设、画面数、全分辨率张数、已导出的文件数、备注，以及哪一卷是打开的。", properties: [:]),
@@ -143,7 +143,7 @@ enum MCPTools {
   private static func selected(_ model: AppModel) throws -> (FilmFrame, FilmProfile) {
     try onMain {
       guard let frame = model.selected else { throw DeskError.message("没有选中的画面。先在 App 里预览或打开工程，或用 select_frame。") }
-      return (frame, model.profile)
+      return (frame, model.conversionProfile)
     }
   }
   private static func coordinate(_ arguments: [String: Any]) throws -> CGPoint {
@@ -291,6 +291,13 @@ enum MCPTools {
         "kind": PresetTable.kind(profile, builtin: FilmProfile.builtins.contains { $0.id == profile.id }).rawValue, "notes": profile.notes]
       if let toe = profile.toe { preset["toe"] = rgb(toe) }
       if let offsets = profile.offsets { preset["calibrated_neutral_offsets"] = rgb(offsets) }
+      // The roll's calibrated preset switched off: it converts as the film above.
+      let chosen: FilmProfile? = onMain { model.conversionProfile.id == model.profile.id ? nil : model.profile }
+      if let chosen {
+        preset["roll_preset"] = ["name": chosen.name, "id": chosen.id, "channel_slopes": rgb(chosen.slopes),
+          "calibration_in_use": false,
+          "note": "这一卷选的是这个标定预设，但在 App 里关了「用标定」，所以按上面这种胶片转换。要用标定，请用户在胶片一节打开「用翻拍标定」或「用本机标定」。"]
+      }
       let fromEdges: String? = onMain {
         guard let i = model.frames.firstIndex(where: { $0.id == frame.id }), let from = model.edgeBaseSource(i) else { return nil }
         return from == i ? "the unexposed film at this frame's edges" : "the unexposed film at the edges of frame \(model.frames[from].name)"
