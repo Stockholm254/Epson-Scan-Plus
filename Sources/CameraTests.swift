@@ -412,6 +412,32 @@ enum CameraTests {
       && near(at(2, 2), [1000, 2001, 4000]) && near(at(3, 2), [1000, 2000, 4000]) && near(at(2, 3), [1000, 2002, 4000])
       && near(at(3, 3), [1000, 2001, 4000]),
       "an uncompressed ARW is read at the sensor's full size, each photosite's own colour as measured less the black level, the others interpolated, no colour matrix: \(at(2, 2)) \(at(3, 2)) \(at(2, 3)) \(at(3, 3))")
+    // RAWs from elsewhere (a card, another program's tethered captures), imported: a new copy roll,
+    // each read from the sensor as the camera's are, numbered in name order; RAWs and other
+    // pictures together are refused.
+    let importLib = folder.appendingPathComponent("camera-import", isDirectory: true)
+    try? FileManager.default.removeItem(at: importLib)
+    let card = importLib.appendingPathComponent("card", isDirectory: true)
+    try FileManager.default.createDirectory(at: card, withIntermediateDirectories: true)
+    let rawNames = ["Pro-Capture One 8064.ARW", "Pro-Capture One 8063.ARW"]
+    for name in rawNames { try arw(orientation: 1).write(to: card.appendingPathComponent(name)) }
+    let snapshot = card.appendingPathComponent("print.jpg")
+    try jpeg(picture(24, 16), snapshot)
+    let importing = AppModel(libraryURL: importLib.appendingPathComponent("library", isDirectory: true))
+    importing.importURLs([card.appendingPathComponent(rawNames[0]), snapshot])
+    let mixedRefused = importing.errorText?.contains("分开导入") == true && importing.frames.isEmpty && importing.sessionURL == nil
+    importing.errorText = nil
+    importing.importURLs(rawNames.map { card.appendingPathComponent($0) })
+    for _ in 0..<120 where importing.frames.count < 2 { settle(0.05) }
+    let captured = importing.sessionURL.map { $0.appendingPathComponent("Captures") }
+    let firstFrom = importing.frames.first?.sourcePath.map { URL(fileURLWithPath: $0) }
+    try check(mixedRefused && importing.errorText == nil && importing.rollSource == .camera && importing.copyStandRoll
+      && importing.frames.map(\.name) == ["01", "02"]
+      && importing.frames.allSatisfy { $0.sensorRead == true && $0.format == "翻拍" && $0.adjustments.inputGamma == 1 }
+      && firstFrom?.deletingLastPathComponent().lastPathComponent == "Decoded" && firstFrom?.lastPathComponent == "Pro-Capture One 8063.tif"
+      && rawNames.allSatisfy { name in captured.map { FileManager.default.fileExists(atPath: $0.appendingPathComponent(name).path) } ?? false }
+      && FileManager.default.fileExists(atPath: card.appendingPathComponent(rawNames[0]).path),
+      "imported RAWs make a copy roll read from the sensor, in name order, the originals copied into Captures and left where they were; mixed with other pictures they are refused: \(importing.frames.map(\.name)) \(firstFrom?.lastPathComponent ?? "-") \(importing.errorText ?? "")")
     // Fine grey detail, a zone plate, stays grey: little false colour where the rings are close.
     func plate(_ n: Int) -> Data {
       var d = Data()

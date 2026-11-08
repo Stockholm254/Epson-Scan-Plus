@@ -374,7 +374,8 @@ extension ContentView {
           HStack {
             Text("JPEG 质量").font(.system(size: 12)).foregroundStyle(.secondary)
             Spacer()
-            Text("\(Int((m.preferences.jpegQuality * 100).rounded()))").readout()
+            ValueField(title: "JPEG 质量", text: "\(Int((m.preferences.jpegQuality * 100).rounded()))", value: m.preferences.jpegQuality,
+              range: 0.6...1, scale: 100) { m.preferences.jpegQuality = $0 }
           }
           Fader(title: "JPEG 质量", value: Binding(get: { m.preferences.jpegQuality }, set: { m.preferences.jpegQuality = $0 }),
             range: 0.6...1, detent: 0.97)

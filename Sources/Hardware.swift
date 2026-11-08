@@ -206,6 +206,67 @@ struct Fader: View {
   }
 }
 
+/// A slider's figure that can be typed into: shown as its readout, a click makes it a field.
+/// Return, or clicking elsewhere, sets what was typed, within the slider's `range`; Escape keeps
+/// the value as it was. `scale` is how much bigger the figure is than the value (100 for a
+/// percentage); units and signs around the number (°, %, ‰, a full-width minus) may stay.
+struct ValueField: View {
+  let title: String
+  /// The readout as the slider shows it.
+  let text: String
+  let value: Double
+  let range: ClosedRange<Double>
+  var scale: Double = 1
+  let set: (Double) -> Void
+  @Environment(\.isEnabled) private var enabled
+  @State private var editing = false
+  @State private var draft = ""
+  @FocusState private var focused: Bool
+  var body: some View {
+    if editing {
+      TextField(title, text: $draft)
+        .textFieldStyle(.roundedBorder).font(.system(size: 11, design: .monospaced)).multilineTextAlignment(.trailing)
+        .frame(width: 72).controlSize(.small).focused($focused)
+        .onSubmit(commit)
+        .onExitCommand { editing = false }
+        .onChange(of: focused) { _, now in if !now { commit() } }
+        .onAppear { DispatchQueue.main.async { focused = true } }
+        .accessibilityLabel(title)
+    } else {
+      Text(text).readout()
+        .padding(.horizontal, 3).contentShape(Rectangle())
+        .onTapGesture {
+          guard enabled else { return }
+          draft = Self.figure(text) ?? Self.plain(value * scale)
+          editing = true
+        }
+        .help(enabled ? "点一下输入数值" : "")
+        .accessibilityLabel(title).accessibilityValue(text)
+        .accessibilityAddTraits(enabled ? .isButton : [])
+    }
+  }
+  private func commit() {
+    guard editing else { return }
+    editing = false
+    guard let typed = Self.number(draft) else { return }
+    set(min(range.upperBound, max(range.lowerBound, typed / scale)))
+  }
+  /// The number in what was typed: units and spaces dropped, full-width figures and minus signs,
+  /// and a decimal comma, read as ASCII. Nil when there is none.
+  static func number(_ typed: String) -> Double? {
+    var t = typed.applyingTransform(.fullwidthToHalfwidth, reverse: false) ?? typed
+    for (from, to) in [("−", "-"), ("–", "-"), ("，", "."), (",", "."), ("。", ".")] { t = t.replacingOccurrences(of: from, with: to) }
+    let kept = t.filter { "0123456789.+-".contains($0) }
+    return kept.isEmpty ? nil : Double(kept)
+  }
+  /// The readout's figure, its units dropped, to start the field from; nil when it has none ("关").
+  static func figure(_ text: String) -> String? {
+    let kept = text.filter { "0123456789.+-".contains($0) }
+    return kept.contains(where: \.isNumber) ? kept : nil
+  }
+  static func plain(_ v: Double) -> String { String(format: "%g", v) }
+}
+
 /// 135 film base behind the thumbnails, perforated along both edges.
 struct FilmBase: View {
   @Environment(\.colorScheme) private var scheme

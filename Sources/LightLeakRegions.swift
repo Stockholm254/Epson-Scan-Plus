@@ -98,7 +98,7 @@ struct LeakRegionsSection: View {
         HStack {
           Text("画笔").font(.system(size: 12)).foregroundStyle(.secondary)
           Fader(title: "画笔大小", value: $lab.brush, range: 0.005...0.08)
-          Text("\(Int((lab.brush * 1000).rounded()))‰").readout()
+          ValueField(title: "画笔大小", text: "\(Int((lab.brush * 1000).rounded()))‰", value: lab.brush, range: 0.005...0.08, scale: 1000) { lab.brush = $0 }
         }
       }
       Toggle("在照片上显示区域", isOn: $lab.showMasks).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
@@ -106,7 +106,9 @@ struct LeakRegionsSection: View {
         Button("自动检测") { lab.detect() }
         Text("灵敏度").font(.system(size: 12)).foregroundStyle(.secondary)
         Fader(title: "检测灵敏度", value: $lab.sensitivity, range: 0.1...1, detent: 0.5)
-        Text("\(Int((lab.sensitivity * 100).rounded()))%").readout()
+        ValueField(title: "检测灵敏度", text: "\(Int((lab.sensitivity * 100).rounded()))%", value: lab.sensitivity, range: 0.1...1, scale: 100) {
+          lab.sensitivity = $0
+        }
       }
       Text("漏光区域 \(lab.params.regions.count)").font(.system(size: 11, weight: .medium))
       if lab.params.regions.isEmpty {
@@ -189,7 +191,7 @@ struct LeakRegionsSection: View {
     HStack {
       Text(title).font(.system(size: 12)).foregroundStyle(.secondary)
       Fader(title: title, value: Binding(get: { value }, set: { set(($0 * 100).rounded() / 100) }), range: 0...1)
-      Text("\(Int((value * 100).rounded()))%").readout()
+      ValueField(title: title, text: "\(Int((value * 100).rounded()))%", value: value, range: 0...1, scale: 100) { set(($0 * 100).rounded() / 100) }
     }
   }
 }
@@ -295,14 +297,8 @@ struct LeakCropSheet: View {
       row("高", \.h, 0.1...1)
       HStack {
         Text("拉直").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 24, alignment: .leading)
-        Fader(title: "拉直", value: Binding(get: { crop.angle ?? 0 }, set: { v in
-          let a = (v * 100).rounded() / 100
-          crop.angle = abs(a) < 0.005 ? nil : a
-          turning += 1
-          let mark = turning
-          DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { if turning == mark { turning = 0 } }
-        }), range: -15...15, detent: 0)
-        Text(String(format: "%+.2f°", crop.angle ?? 0)).readout()
+        Fader(title: "拉直", value: Binding(get: { crop.angle ?? 0 }, set: turn), range: -15...15, detent: 0)
+        ValueField(title: "拉直", text: String(format: "%+.2f°", crop.angle ?? 0), value: crop.angle ?? 0, range: -15...15, set: turn)
       }
       HStack {
         Button("不裁切") { crop = LeakCrop() }
@@ -319,11 +315,21 @@ struct LeakCropSheet: View {
         lab.uncutPreview { picture = $0 }
       }
   }
+  /// The crop turned to `v` degrees, to the hundredth; the grid shown while it turns.
+  func turn(_ v: Double) {
+    let a = (v * 100).rounded() / 100
+    crop.angle = abs(a) < 0.005 ? nil : a
+    turning += 1
+    let mark = turning
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { if turning == mark { turning = 0 } }
+  }
   func row(_ title: String, _ key: WritableKeyPath<LeakCrop, Double>, _ range: ClosedRange<Double>) -> some View {
     HStack {
       Text(title).font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 24, alignment: .leading)
       Fader(title: "裁切" + title, value: Binding(get: { crop[keyPath: key] }, set: { crop[keyPath: key] = ($0 * 1000).rounded() / 1000 }), range: range)
-      Text(String(format: "%.3f", crop[keyPath: key])).readout()
+      ValueField(title: "裁切" + title, text: String(format: "%.3f", crop[keyPath: key]), value: crop[keyPath: key], range: range) {
+        crop[keyPath: key] = ($0 * 1000).rounded() / 1000
+      }
     }
   }
 }

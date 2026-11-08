@@ -2874,13 +2874,23 @@ final class AppModel: ObservableObject {
   func importImages() {
     guard !isWorking else { return }
     let panel = NSOpenPanel()
-    panel.allowedContentTypes = [.tiff, .png, .jpeg]
+    // Camera RAWs too (Sony's ARW and the others the camera path reads), by type and by extension.
+    panel.allowedContentTypes = [.tiff, .png, .jpeg, .rawImage] + Self.rawExtensions.sorted().compactMap { UTType(filenameExtension: $0) }
     panel.allowsMultipleSelection = true
     guard panel.runModal() == .OK else { return }
     importURLs(panel.urls)
   }
   func importURLs(_ urls: [URL]) {
     guard let first = urls.first else { return }
+    let raws = urls.filter { Self.rawExtensions.contains($0.pathExtension.lowercased()) }
+    if !raws.isEmpty {
+      guard raws.count == urls.count else {
+        errorText = "RAW 和 TIFF、PNG、JPEG 请分开导入：RAW 会导成一卷翻拍，像相机联机拍的一样读；其余的导成一卷导入的照片。"
+        return
+      }
+      importRAWs(urls)
+      return
+    }
     do {
       sessionURL = nil
       rollName = ""
@@ -2922,6 +2932,35 @@ final class AppModel: ObservableObject {
       updateRollSlopes()
       saveProject()
       measureEdgeBases()
+    } catch { errorText = error.localizedDescription }
+  }
+  /// Camera RAWs from elsewhere (a card, another program's tethered captures) as a new copy roll,
+  /// read as the camera's own pictures are: copied into the roll's Captures folder in name order,
+  /// then each decoded into Decoded, an uncompressed ARW straight from the sensor with the copy
+  /// light's crosstalk taken out as last chosen, and added as the roll's next frame.
+  func importRAWs(_ urls: [URL]) {
+    do {
+      try startCameraRoll()
+      guard let root = sessionURL else { return }
+      singleView = true
+      showNegative = false
+      let folder = root.appendingPathComponent("Captures")
+      try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+      let ordered = urls.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+      status = "导入 \(ordered.count) 张 RAW：正在复制…"
+      // Off the main thread: a hundred megabytes each, from another disk perhaps. Each decode is
+      // queued after the copies, in order, so the frames are numbered as the files are.
+      Self.captureQueue.async {
+        for url in ordered {
+          let dest = Self.unused(folder.appendingPathComponent(url.lastPathComponent))
+          do {
+            try FileManager.default.copyItem(at: url, to: dest)
+            DispatchQueue.main.async { self.decodeCapture(dest, root: root) }
+          } catch {
+            DispatchQueue.main.async { self.errorText = "复制不了 \(url.lastPathComponent)：\(error.localizedDescription)" }
+          }
+        }
+      }
     } catch { errorText = error.localizedDescription }
   }
   func exportImages(all: Bool) {

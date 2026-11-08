@@ -178,6 +178,13 @@ enum RegressionTests {
       && repeats.map(\.name) == ["03", "04", "05", "06"] && renamed.map(\.from) == ["03", "04"] && renamed.map(\.to) == ["05", "06"]
       && AppModel.renumberRepeats(&distinct).isEmpty && distinct.map(\.name) == ["01", "02", "05"],
       "a new frame is numbered past the roll's highest, and repeated names are renumbered in the roll's order")
+    // A slider's figure typed in: the number read past units, full-width figures and a decimal
+    // comma; the field starts from the readout's figure, or the value where it shows a word.
+    try check(ValueField.number("+0.25°") == 0.25 && ValueField.number("－１，５") == -1.5 && ValueField.number(" 85 % ") == 85
+      && ValueField.number("−0.120") == -0.12 && ValueField.number("关") == nil && ValueField.number("1.2.3") == nil
+      && ValueField.figure("+1.20°") == "+1.20" && ValueField.figure("97") == "97" && ValueField.figure("关") == nil
+      && ValueField.plain(0.35 * 100) == "35",
+      "a slider's typed figure is read past its units, in full-width figures, with a decimal comma")
     let rawRect = NormalRect(x: 0.15, y: 0.22, width: 0.6, height: 0.51)
     let point = CGPoint(x: 0.19, y: 0.67)
     let orientationFixture = makeImage(80, 60) { x, y in

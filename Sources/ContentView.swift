@@ -701,7 +701,9 @@ struct ContentView: View {
           HStack {
             Text("拉直").font(.system(size: 12)).foregroundStyle(.secondary)
             Spacer()
-            Text(String(format: "%+.2f°", m.screenAngle)).readout()
+            ValueField(title: "拉直", text: String(format: "%+.2f°", m.screenAngle), value: m.screenAngle, range: -15...15) {
+              m.straighten($0)
+            }
             Button("画线") {
               m.useTool(.crop)
               m.levelling = true
@@ -847,7 +849,13 @@ struct ContentView: View {
       ? "在 ① 采集 · V850 的「扫描仪锐化」导入一张分辨率标靶的扫描，测出这台扫描仪的 MTF 后可用。"
       : "按扫描仪实测的 MTF 在线性扫描数据上反卷积；默认温和，推到 0 关闭。导入的图像默认不锐化，它们可能来自其他扫描仪或相机。"
     ) {
-      Text(m.preferences.sharpening == nil ? "未配置" : strength == 0 ? "关" : "\(Int((strength * 100).rounded()))%").readout()
+      if m.preferences.sharpening == nil {
+        Text("未配置").readout()
+      } else {
+        ValueField(title: "锐化强度", text: strength == 0 ? "关" : "\(Int((strength * 100).rounded()))%", value: strength, range: 0...1, scale: 100) { v in
+          m.change("锐化") { $0.sharpening = v }
+        }.disabled(m.selected == nil)
+      }
     } content: {
       if m.preferences.sharpening != nil {
         Fader(
@@ -879,7 +887,10 @@ struct ContentView: View {
       HStack {
         Text(names[channel]).font(.system(size: 12)).foregroundStyle(.secondary)
         Spacer()
-        Text(String(format: "%+.3f", (m.settings.baseFine ?? .zero).values[channel])).readout()
+        let fine = (m.settings.baseFine ?? .zero).values[channel]
+        ValueField(title: "片基微调 " + names[channel], text: String(format: "%+.3f", fine), value: fine, range: -0.5...0.5) {
+          m.adjustBase(channel, value: $0)
+        }
       }
       Fader(
         title: "片基微调 " + names[channel],
@@ -1070,7 +1081,9 @@ struct ContentView: View {
       HStack {
         Text(title).font(.system(size: 12)).foregroundStyle(.secondary)
         Spacer()
-        Text(String(format: format, m.settings[keyPath: key])).readout()
+        ValueField(title: title, text: String(format: format, m.settings[keyPath: key]), value: m.settings[keyPath: key], range: range) { v in
+          m.change(title) { $0[keyPath: key] = v }
+        }
       }
       Fader(
         title: title,

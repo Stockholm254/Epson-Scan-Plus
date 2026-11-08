@@ -308,7 +308,13 @@ struct LeakPanel: View {
         HStack {
           Text("去偏色强度").font(.system(size: 12)).foregroundStyle(.secondary)
           Spacer()
-          Text(lab.model.map { "\(Int(($0.strength * 100).rounded()))%" } ?? "未应用").readout()
+          if let model = lab.model {
+            ValueField(title: "去偏色强度", text: "\(Int((model.strength * 100).rounded()))%", value: model.strength, range: 0...1, scale: 100) {
+              lab.setStrength($0)
+            }.disabled(lab.busy != nil)
+          } else {
+            Text("未应用").readout()
+          }
         }
         Fader(
           title: "去偏色强度", value: Binding(get: { lab.model?.strength ?? 0 }, set: { lab.setStrength($0) }), range: 0...1, detent: 1
@@ -376,16 +382,17 @@ struct LeakPanel: View {
     }.disabled(!lab.hasBase || lab.busy != nil)
   }
   func fader(_ title: String, _ format: String, _ key: WritableKeyPath<LeakParams, Double>, _ range: ClosedRange<Double>) -> some View {
-    VStack(spacing: 3) {
+    let set: (Double) -> Void = { v in
+      let step = range.upperBound - range.lowerBound > 10 ? 1.0 : 0.05
+      lab.change(title) { $0[keyPath: key] = (v / step).rounded() * step }
+    }
+    return VStack(spacing: 3) {
       HStack {
         Text(title).font(.system(size: 12)).foregroundStyle(.secondary)
         Spacer()
-        Text(String(format: format, lab.params[keyPath: key])).readout()
+        ValueField(title: title, text: String(format: format, lab.params[keyPath: key]), value: lab.params[keyPath: key], range: range, set: set)
       }
-      Fader(title: title, value: Binding(get: { lab.params[keyPath: key] }, set: { v in
-        let step = range.upperBound - range.lowerBound > 10 ? 1.0 : 0.05
-        lab.change(title) { $0[keyPath: key] = (v / step).rounded() * step }
-      }), range: range, detent: 0)
+      Fader(title: title, value: Binding(get: { lab.params[keyPath: key] }, set: set), range: range, detent: 0)
     }
   }
 }

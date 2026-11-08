@@ -80,7 +80,7 @@ extension AppModel {
     rollSource = .camera
     poolPictures = true
   }
-  private func decodeCapture(_ file: URL, root: URL) {
+  func decodeCapture(_ file: URL, root: URL) {
     let raw = Self.rawExtensions.contains(file.pathExtension.lowercased())
     status = raw ? "正在解码 \(file.lastPathComponent)…" : "已收到 \(file.lastPathComponent)"
     Self.captureQueue.async {
