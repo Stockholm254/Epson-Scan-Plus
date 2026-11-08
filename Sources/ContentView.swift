@@ -144,6 +144,12 @@ struct ContentView: View {
         } label: {
           Label("库", systemImage: "archivebox")
         }.help("所有扫描、翻拍和导入的胶卷（⇧⌘L）")
+        Button {
+          m.newProject()
+        } label: {
+          Label("新建", systemImage: "plus.rectangle.on.folder")
+        }.help("新建工程（⌘N）：这一卷存好留在库里，窗口清空；下一次预览、导入或拍摄存进新的一卷")
+          .disabled(m.isWorking || (m.frames.isEmpty && m.sessionURL == nil))
         if m.page == .capture {
           Button {
             m.importImages()
@@ -285,12 +291,14 @@ struct ContentView: View {
   /// The canvas tools, and fitting the picture.
   @ViewBuilder var toolControls: some View {
       // Capturing places the frames; the pickers belong to taking the mask off.
-      ForEach(m.page == .capture ? [CanvasTool.select, .crop] : [CanvasTool.select, .crop, .base, .neutral], id: \.self) { t in
+      ForEach(m.page == .capture ? [CanvasTool.select, .crop] : [CanvasTool.select, .crop, .region, .base, .neutral], id: \.self) { t in
         Button {
           m.useTool(t)
         } label: {
           HStack(spacing: 4) {
+            // The two crops' keys in their colours on the picture: amber the picture, cyan the de-masking region.
             Image(systemName: t.symbol).frame(width: 16, height: 14)
+              .foregroundStyle(t.colour.map { Color(red: $0.red, green: $0.green, blue: $0.blue) } ?? Color.primary)
             if let label = t.label { Text(label).font(.system(size: 11)) }
           }
         }.buttonStyle(KeyStyle(latched: m.tool == t)).controlSize(.small).help(t.help)
@@ -347,6 +355,7 @@ struct ContentView: View {
       } label: {
         Image(systemName: "chevron.right")
       }.buttonStyle(.borderless).disabled(!m.canNavigate(1)).help("下一张 · →").accessibilityLabel("下一张")
+      if let f = m.selected { PhotoInfoButton(frame: f) }
     } else {
       Text("\(m.frames.count) 个画面").font(.system(size: 12, weight: .medium, design: .monospaced))
     }
@@ -439,6 +448,29 @@ struct ContentView: View {
   /// What floats over the picture: the render in progress, the frame's resolution, the tool's hint.
   @ViewBuilder var canvasOverlays: some View {
       if m.rendering { RenderProgress(step: m.renderStep, pictureShownAt: { m.pictureShownAt }).padding(14) }
+      // The film base and the white balance the single frame converts with, at its top left; the
+      // base's numbers on hover.
+      // Not over ①'s raw picture, which nothing converts.
+      if m.singleView, !m.showsOriginal, let f = m.selected, f.adjustments.inputIsNegative {
+        HStack(spacing: 12) {
+          HStack(spacing: 5) { Text("片基").foregroundStyle(.secondary); Text(m.baseShort(f)) }
+          HStack(spacing: 5) { Text("白平衡").foregroundStyle(.secondary); Text(m.balanceShort(f)) }
+          if let region = f.adjustments.analysisRegion {
+            HStack(spacing: 5) {
+              Image(systemName: CanvasTool.region.symbol)
+                .foregroundStyle(CanvasTool.region.colour.map { Color(red: $0.red, green: $0.green, blue: $0.blue) } ?? .primary)
+              Text(String(format: "去色罩区域 %.0f%%", region.width * region.height * 100))
+            }
+          }
+        }.font(.system(size: 11)).lineLimit(1)
+          .padding(.horizontal, 9).padding(.vertical, 5)
+          .floatingPlate(RoundedRectangle(cornerRadius: 5), text: Color(white: 0.92), opacity: 0.65)
+          .help(m.baseSource(f) + (m.toneAnalysis.map { a in
+            "\n片基 " + zip(["R", "G", "B"], a.base.values).map { String(format: "%@ %.3f", $0, $1) }.joined(separator: " · ")
+          } ?? "") + "\n白平衡按这个顺序定：取样中性灰 → 手动配平 → 标定预设的中性 → 自动；冷暖、绿洋红和阴影冷暖在它之后")
+          .accessibilityElement(children: .combine).accessibilityLabel("片基和白平衡")
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(12)
+      }
       if m.singleView && !m.rendering {
         VStack(alignment: .trailing, spacing: 6) {
           if let frame = m.selected, !frame.hasFullResolution {
@@ -461,6 +493,18 @@ struct ContentView: View {
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom).padding(Self.barInset + 4)
           .allowsHitTesting(false).accessibilityLabel("工具提示")
       }
+      // A line about the picture for a few seconds (`AppModel.noteOnCanvas`), a little below its
+      // middle, fading in and out.
+      GeometryReader { g in
+        ZStack {
+          if let note = m.canvasNote {
+            Text(note).font(.system(size: 12, weight: .medium))
+              .padding(.horizontal, 14).padding(.vertical, 7)
+              .floatingPlate(Capsule(), text: Color(white: 0.92), opacity: 0.72)
+              .transition(.opacity)
+          }
+        }.position(x: g.size.width / 2, y: g.size.height * 0.62)
+      }.allowsHitTesting(false).animation(.easeInOut(duration: 0.4), value: m.canvasNote)
   }
   /// Module ① with the camera: the live view takes the canvas's place.
   var cameraStage: Bool { m.page == .capture && m.captureSource == .camera }
@@ -657,6 +701,7 @@ struct ContentView: View {
             $0.basePicked = nil
             $0.baseFine = nil
           }
+          m.announceAutoBase()
         }.help("回到自动片基：片间或片边测到的")
       }.font(.system(size: 11))
     } content: {
@@ -710,7 +755,7 @@ struct ContentView: View {
     PanelSection("画面范围", key: "frame", open: false, info: m.selected?.scanPath != nil
       ? "标题旁的「裁切」和画面上方工具条里的一样：按下后在画面上拖动边和角，这里可以逐边微调、还原范围，再按一次结束。\n\n在原扫描范围内无损裁切。要扩大扫描区域，请回接触表调整画框并重扫。\n\n「拉直」让画面绕中心转动（正数顺时针，⌥ 拖动更细），裁去转出的空角，拖动时显示网格线；裁切时按 [ ] 每次 0.1°，加 ⇧ 每次 1°。「画线」后沿地平线、墙边或建筑竖线拖一条线，松手就按它拉直（裁切时按住 ⌥ 拖也一样）。接触表上的画框仍按胶片原样显示，拉直后保留的部分用虚线框标出。"
       : "画框周围保留了片基，可在单张中细调裁切，不会跳回接触表。\n\n标题旁的「裁切」和画面上方工具条里的一样：按下后在画面上拖动边和角，这里可以逐边微调、还原范围，再按一次结束。\n\n翻拍的照片可以「自动裁切」：找出片框的四条边（片边或片间的片基转入画面的地方），裁到画面以内一点，并按边拉直；「本张」只裁这一张，「整卷」整卷一起裁。同一卷翻拍时放大倍率不变，每张的画面大小差不多：哪张的一条边找错了（比如画面底部有一大片和片基一样淡的阴影，它的直边被当成了片框），就按其他张的画面大小改正。片框的边伸出照片的那一侧，裁在照片的边上。\n\n「拉直」让画面绕中心转动（正数顺时针，⌥ 拖动更细），裁去转出的空角，拖动时显示网格线；裁切时按 [ ] 每次 0.1°，加 ⇧ 每次 1°。「画线」后沿地平线、墙边或建筑竖线拖一条线，松手就按它拉直（裁切时按住 ⌥ 拖也一样）。接触表上的画框仍按胶片原样显示，拉直后保留的部分用虚线框标出。",
-      forced: m.tool == .crop
+      forced: m.tool == .crop || m.tool == .region
     ) {
       // In the title, open or not: the crop key, which opens the section while cropping.
       cropKey
@@ -746,7 +791,31 @@ struct ContentView: View {
           ForEach(0..<4, id: \.self) { edge in cropStepper(edge, crop: crop) }
           Button("还原范围") { m.resetCrop() }.font(.system(size: 11))
         }
+        if m.page != .capture { regionRow }
       }
+    }
+  }
+  /// The de-masking region, under the picture's crop: what it is, its key, and back to following
+  /// the picture.
+  var regionRow: some View {
+    let region = m.settings.analysisRegion, cyan = CanvasTool.region.colour.map { Color(red: $0.red, green: $0.green, blue: $0.blue) }
+    return VStack(alignment: .leading, spacing: 4) {
+      Divider()
+      HStack(spacing: 6) {
+        Label("去色罩区域", systemImage: CanvasTool.region.symbol).font(.system(size: 12)).foregroundStyle(cyan ?? .primary)
+        Spacer()
+        Button {
+          m.useTool(m.tool == .region ? .select : .region)
+        } label: {
+          Text(m.tool == .region ? "完成" : "框选").lineLimit(1).fixedSize()
+        }.buttonStyle(KeyStyle(latched: m.tool == .region)).font(.system(size: 11)).disabled(m.selected == nil)
+          .help("在画面上拖出青色的框：片基估计、白平衡和色阶只看框里 · M")
+        Button("跟随画面") { m.setAnalysisRegion(nil) }.font(.system(size: 11)).disabled(region == nil)
+          .help("不再单独框选：按画面裁切，去掉四边 5%")
+      }
+      Text(region.map { String(format: "框选了画面的 %.0f%%：片基估计、白平衡、色阶和高光只看青色框里，显示和导出仍按琥珀色的画面裁切", $0.width * $0.height * 100) }
+        ?? "跟随画面裁切（去掉四边 5%）。要避开漏光、片夹或一大片天空，框选只想让去色罩看的地方")
+        .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
   }
   /// The crop tool, as on the bar over the picture: latched while cropping, pressed again to finish.
@@ -754,14 +823,18 @@ struct ContentView: View {
     Button {
       m.useTool(m.tool == .crop ? .select : .crop)
     } label: {
-      Label("裁切", systemImage: CanvasTool.crop.symbol).lineLimit(1).fixedSize()
+      Label {
+        Text("裁切")
+      } icon: {
+        Image(systemName: CanvasTool.crop.symbol).foregroundStyle(CanvasTool.crop.colour.map { Color(red: $0.red, green: $0.green, blue: $0.blue) } ?? .primary)
+      }.lineLimit(1).fixedSize()
     }
     .buttonStyle(KeyStyle(latched: m.tool == .crop)).font(.system(size: 11)).disabled(m.selected == nil)
     .help(m.tool == .crop ? "结束裁切 · C" : "在画面上裁切：拖动边和角，边栏里可以逐边微调 · C")
   }
   /// White balance: automatic or by hand, the roll as one, and the points picked on the frame.
   var balanceSection: some View {
-    PanelSection("白平衡", key: "balance", info: "自动白平衡按画面估计，忽略外缘 5%（不改变导出范围）。用本机或翻拍标定的预设时不按画面估计，按标定时记下的中性配平，开不开「自动」都一样；这个中性是在标定时的光下定的（比如阳光），阴天、树荫、室内的照片会带上光的颜色，用「中性灰」或冷暖、绿 / 洋红调。\n\n「阴影冷暖」只动暗部，越亮作用越小，阳光下的灰不变：晴天的阴影由蓝天照亮，本来就偏蓝，往右拨把它暖回来。\n\n「中性灰」用滴管点画面中应为灰色的地方，按这一点自动白平衡（「自动」保持开着）；滴管也在画面上方的工具条里（N）。取过点以后旁边出现「清除取样」：放弃取样点，打开「自动」，按画面估计，标定预设回到标定的中性；冷暖、绿 / 洋红和片基不动。\n\n反转片：片子本来的颜色就是画面，默认不自动白平衡，透过片子最亮处的光就是白。打开「自动」时每个通道各自从最暗拉到最亮，适合褪色、偏色的片子。「中性灰」把那一点配成灰。「清除取样」放弃取样点，回到片子本来的颜色。") {
+    PanelSection("白平衡", key: "balance", info: "自动白平衡按画面估计，忽略外缘 5%（不改变导出范围）；在「画面范围」里框选了去色罩区域时，只按青色框里估计。用本机或翻拍标定的预设时不按画面估计，按标定时记下的中性配平，开不开「自动」都一样；这个中性是在标定时的光下定的（比如阳光），阴天、树荫、室内的照片会带上光的颜色，用「中性灰」或冷暖、绿 / 洋红调。\n\n「阴影冷暖」只动暗部，越亮作用越小，阳光下的灰不变：晴天的阴影由蓝天照亮，本来就偏蓝，往右拨把它暖回来。\n\n「中性灰」用滴管点画面中应为灰色的地方，按这一点自动白平衡（「自动」保持开着）；滴管也在画面上方的工具条里（N）。取过点以后旁边出现「清除取样」：放弃取样点，打开「自动」，按画面估计，标定预设回到标定的中性；冷暖、绿 / 洋红和片基不动。\n\n反转片：片子本来的颜色就是画面，默认不自动白平衡，透过片子最亮处的光就是白。打开「自动」时每个通道各自从最暗拉到最亮，适合褪色、偏色的片子。「中性灰」把那一点配成灰。「清除取样」放弃取样点，回到片子本来的颜色。") {
       Toggle(
         "自动",
         isOn: Binding(

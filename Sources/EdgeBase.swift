@@ -11,6 +11,20 @@ struct EdgeBase: Codable, Equatable {
   var areas: [NormalRect]
 }
 
+/// The automatic film base marked on the single frame for a moment, as an uncropped picture comes
+/// up (`AppModel.announceAutoBase`): which frame, and since when (`CACurrentMediaTime`).
+struct BaseFlash: Equatable {
+  var id: UUID
+  var start: Double
+  static let hold = 3.0, fade = 0.6
+  /// How strongly the marks show `t` seconds in: fully for three seconds, then easing out.
+  static func opacity(_ t: Double) -> Double {
+    guard t >= hold else { return 1 }
+    let x = min(1, (t - hold) / fade)
+    return 1 - x * x * (3 - 2 * x)
+  }
+}
+
 extension ImagePipeline {
   /// The unexposed film along `image`'s edges. Along each side, the frame's own edge first: the
   /// straight line where, across a good part of the side, the film turns denser going in. Only the

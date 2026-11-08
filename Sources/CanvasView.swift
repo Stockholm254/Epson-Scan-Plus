@@ -130,6 +130,11 @@ final class FilmCanvasView: NSView {
   var lensDrawn: (key: String, image: CGImage, frame: CGRect)?
   var lensFading: (image: CGImage, frame: CGRect, since: CFTimeInterval)?
   private var lensTimer: Timer?
+  private var baseFlashTimer: Timer?
+  /// The de-masking region being drawn (no `original`) or changed by a corner, an edge or the box
+  /// itself, in the picture's own coordinates (`pictureNormal`); and the box as it is dragged.
+  private var regionDrag: (start: CGPoint, original: CGRect?, corner: Int?, edge: Int?)?
+  private(set) var regionDraft: CGRect?
   var pan = CGPoint.zero
   var panStart: CGPoint?
   /// A frame clicked on the light table, and where: it opens if the mouse comes up there.
@@ -287,6 +292,94 @@ final class FilmCanvasView: NSView {
       .filter { $0.1 < 8 }.min { $0.1 < $1.1 }
     return (nil, near?.0)
   }
+  /// The two crops' colours on the picture: the picture's amber, the de-masking region's cyan.
+  static func colour(_ tool: CanvasTool) -> NSColor {
+    let c = tool.colour ?? (1, 1, 1)
+    return NSColor(calibratedRed: c.red, green: c.green, blue: c.blue, alpha: 1)
+  }
+  /// The part of the picture the de-masking reads while no region is set: all but its outer 5%.
+  static let followRegion = CGRect(x: 0.05, y: 0.05, width: 0.9, height: 0.9)
+  /// A canvas point in the single frame's picture as cropped, unturned and not straightened: where
+  /// the de-masking region lives.
+  func pictureNormal(_ p: CGPoint) -> CGPoint? {
+    guard let model, let frame = model.selected else { return nil }
+    let q = ImageGeometry.raw(shownNormal(p), settings: frame.adjustments, aspect: model.shownAspect(frame))
+    return CGPoint(x: clamp(Double(q.x)), y: clamp(Double(q.y)))
+  }
+  /// A rect of the picture (`pictureNormal`) on the canvas, by its corners in `corners` order.
+  func pictureCorners(_ r: CGRect) -> [CGPoint] {
+    guard let model, let frame = model.selected else { return [] }
+    let b = imageRect, aspect = model.shownAspect(frame)
+    return [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.minX, y: r.maxY), CGPoint(x: r.maxX, y: r.maxY)]
+      .map { n in
+        let d = ImageGeometry.display(n, settings: frame.adjustments, aspect: aspect)
+        return CGPoint(x: b.minX + d.x * b.width, y: b.minY + d.y * b.height)
+      }
+  }
+  /// What a press at `p` takes hold of on the de-masking region `r`, as `cropHold` does on the crop.
+  func regionHold(_ r: CGRect, at p: CGPoint) -> (corner: Int?, edge: Int?) {
+    let c = pictureCorners(r)
+    guard c.count == 4 else { return (nil, nil) }
+    if let i = c.firstIndex(where: { hypot($0.x - p.x, $0.y - p.y) < 13 }) { return (i, nil) }
+    func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat {
+      let d = CGPoint(x: b.x - a.x, y: b.y - a.y), length = d.x * d.x + d.y * d.y
+      let t = length > 0 ? max(0, min(1, ((p.x - a.x) * d.x + (p.y - a.y) * d.y) / length)) : 0
+      return hypot(p.x - (a.x + t * d.x), p.y - (a.y + t * d.y))
+    }
+    let near = Self.edgeEnds.indices.map { ($0, distance(c[Self.edgeEnds[$0].0], c[Self.edgeEnds[$0].1])) }
+      .filter { $0.1 < 8 }.min { $0.1 < $1.1 }
+    return (nil, near?.0)
+  }
+  /// A small label in `colour` by the canvas point `at`, kept on the picture.
+  private func drawTag(_ text: String, at: CGPoint, colour: NSColor) {
+    let r = imageRect, font = NSFont.systemFont(ofSize: 11, weight: .medium)
+    let size = (text as NSString).size(withAttributes: [.font: font])
+    let label = NSRect(
+      x: min(max(r.minX + 4, at.x + 4), r.maxX - size.width - 16), y: min(max(r.minY + 4, at.y + 4), r.maxY - size.height - 10),
+      width: size.width + 12, height: size.height + 6)
+    colour.setFill()
+    NSBezierPath(roundedRect: label, xRadius: 4, yRadius: 4).fill()
+    (text as NSString).draw(at: CGPoint(x: label.minX + 6, y: label.minY + 3), withAttributes: [.font: font, .foregroundColor: NSColor.black])
+  }
+  /// The de-masking region on the single frame, cyan: dashed while it only shows, and with its own
+  /// tool up drawn with corners, the rest of the picture dimmed and the picture's crop outlined in
+  /// amber, each labelled. With no region set the tool shows what is read instead, dashed.
+  private func drawAnalysisRegion(_ frame: FilmFrame) {
+    guard let model else { return }
+    let editing = model.tool == .region, set = regionDraft ?? frame.adjustments.analysisRegion?.cg
+    let c = pictureCorners(set ?? Self.followRegion), whole = pictureCorners(CGRect(x: 0, y: 0, width: 1, height: 1))
+    guard c.count == 4, whole.count == 4 else { return }
+    let box = [c[0], c[1], c[3], c[2]], picture = [whole[0], whole[1], whole[3], whole[2]]
+    let cyan = Self.colour(.region), amber = Self.colour(.crop)
+    if editing {
+      let mask = NSBezierPath()
+      mask.appendPolygon(picture)
+      mask.appendPolygon(box)
+      mask.windingRule = .evenOdd
+      NSColor.black.withAlphaComponent(set == nil ? 0.25 : 0.45).setFill()
+      mask.fill()
+      let outline = NSBezierPath()
+      outline.appendPolygon(picture)
+      outline.lineWidth = 2
+      amber.setStroke()
+      outline.stroke()
+    }
+    let line = NSBezierPath()
+    line.appendPolygon(box)
+    line.lineWidth = editing && set != nil ? 2 : 1.5
+    if !editing || set == nil { line.setLineDash([6, 4], count: 2, phase: 0) }
+    cyan.setStroke()
+    line.stroke()
+    guard editing else { return }
+    if set != nil {
+      cyan.setFill()
+      for p in c { NSBezierPath(roundedRect: CGRect(x: p.x - 5, y: p.y - 5, width: 10, height: 10), xRadius: 2, yRadius: 2).fill() }
+    }
+    let topLeft = { (points: [CGPoint]) in points.min { $0.x + $0.y < $1.x + $1.y }! }
+    drawTag("画面裁切", at: topLeft(picture), colour: amber)
+    let first = topLeft(box)
+    drawTag(set == nil ? "去色罩区域 · 跟随画面" : "去色罩区域", at: CGPoint(x: first.x, y: first.y + 24), colour: cyan)
+  }
   /// Over the single frame's crop, the pointer shows what a press there would resize: a corner or
   /// an edge, at the side of the box it is on the screen.
   private func updateCropCursor(at p: CGPoint?) {
@@ -303,6 +396,23 @@ final class FilmCanvasView: NSView {
         // The view is flipped: the smaller y is the top.
         let left = at.x < r.midX - r.width / 4, right = at.x > r.midX + r.width / 4
         let top = at.y < r.midY - r.height / 4, bottom = at.y > r.midY + r.height / 4
+        let position: NSCursor.FrameResizePosition? =
+          top && left ? .topLeft : top && right ? .topRight : bottom && left ? .bottomLeft : bottom && right ? .bottomRight
+          : top ? .top : bottom ? .bottom : left ? .left : right ? .right : nil
+        cursor = position.map { NSCursor.frameResize(position: $0, directions: .all) }
+      }
+    } else if let p, let model, model.singleView, model.tool == .region, let frame = model.selected,
+      frame.adjustments.analysisRegion != nil, !model.isWorking, regionDrag == nil, imageRect.contains(p)
+    {
+      let r = frame.adjustments.analysisRegion!.cg, hold = regionHold(r, at: p), c = pictureCorners(r)
+      let at: CGPoint? = hold.corner.map { c[$0] } ?? hold.edge.map { e in
+        let (a, b) = (c[Self.edgeEnds[e].0], c[Self.edgeEnds[e].1])
+        return CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
+      }
+      if let at {
+        let xs = c.map(\.x), ys = c.map(\.y), midX = (xs.min()! + xs.max()!) / 2, midY = (ys.min()! + ys.max()!) / 2
+        let w = xs.max()! - xs.min()!, h = ys.max()! - ys.min()!
+        let left = at.x < midX - w / 4, right = at.x > midX + w / 4, top = at.y < midY - h / 4, bottom = at.y > midY + h / 4
         let position: NSCursor.FrameResizePosition? =
           top && left ? .topLeft : top && right ? .topRight : bottom && left ? .bottomLeft : bottom && right ? .bottomRight
           : top ? .top : bottom ? .bottom : left ? .left : right ? .right : nil
@@ -432,6 +542,18 @@ final class FilmCanvasView: NSView {
       outline.lineWidth = kept == nil ? 2 : 1
       if kept != nil { outline.setLineDash([5, 4], count: 2, phase: 0) }
       outline.stroke()
+      // The de-masking region, cyan, where it lies on the film, inside the crop as it is dragged.
+      if let frame = model.selected, let region = frame.adjustments.analysisRegion, let context = model.canvasRegion {
+        let shown = ImageGeometry.transform(region.mapped(into: frame.rect).relative(to: context), settings: frame.adjustments).cg
+          .intersection(draft ?? crop.cg)
+        if !shown.isNull {
+          let box = NSBezierPath(rect: screen(shown))
+          box.lineWidth = 1.5
+          box.setLineDash([6, 4], count: 2, phase: 0)
+          Self.colour(.region).setStroke()
+          box.stroke()
+        }
+      }
       if let line = levelLine {
         let amber = NSColor(calibratedRed: 0.95, green: 0.71, blue: 0.38, alpha: 1)
         let path = NSBezierPath()
@@ -535,6 +657,20 @@ final class FilmCanvasView: NSView {
         drawBasePick(picked, settings: s, aspect: model.shownAspect(frame))
       }
     }
+    // The de-masking region, cyan, over the picture as cropped.
+    if model.singleView, !model.editingSingle, !model.showsOriginal, let frame = model.selected,
+      frame.adjustments.analysisRegion != nil || model.tool == .region
+    {
+      drawAnalysisRegion(frame)
+    }
+    // The automatic base marked for a moment as an uncropped picture comes up, unless shown already.
+    if model.singleView, let frame = model.selected, let flash = model.baseFlash, flash.id == frame.id,
+      model.tool != .base, !model.showBaseAreas, let found = frame.edgeBase, found.base != nil
+    {
+      let opacity = BaseFlash.opacity(CACurrentMediaTime() - flash.start)
+      if opacity > 0 { drawBaseAreas(found.areas, frame: frame, aspect: model.shownAspect(frame), opacity: opacity) }
+      animateBaseFlash()
+    }
     // The neutral points picked for a calibration on this frame, or those of the preset in use.
     if model.singleView, let frame = model.selected {
       let marks = model.neutralMarks(on: frame)
@@ -567,6 +703,21 @@ final class FilmCanvasView: NSView {
     }
     lens = nil
     lensDrawn = nil
+  }
+  /// Redraws while the base's marks fade out; through the three seconds they hold, nothing moves.
+  private func animateBaseFlash() {
+    guard baseFlashTimer == nil else { return }
+    let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] t in
+      guard let self else { return t.invalidate() }
+      let elapsed = self.model?.baseFlash.map { CACurrentMediaTime() - $0.start } ?? .infinity
+      if elapsed >= BaseFlash.hold { self.needsDisplay = true }
+      if elapsed >= BaseFlash.hold + BaseFlash.fade {
+        t.invalidate()
+        self.baseFlashTimer = nil
+      }
+    }
+    RunLoop.main.add(timer, forMode: .common)
+    baseFlashTimer = timer
   }
   /// Redraws while the bubble swells in or fades out; dragging redraws it otherwise.
   private func animateLens() {
@@ -776,8 +927,11 @@ final class FilmCanvasView: NSView {
   }
   /// The cells of the frame's edges read as its film base, filled over the picture through its
   /// crop, turn and mirror, with a note at the largest.
-  private func drawBaseAreas(_ areas: [NormalRect], frame: FilmFrame, aspect: Double?) {
+  private func drawBaseAreas(_ areas: [NormalRect], frame: FilmFrame, aspect: Double?, opacity: Double = 1) {
     guard !areas.isEmpty else { return }
+    NSGraphicsContext.saveGraphicsState()
+    defer { NSGraphicsContext.restoreGraphicsState() }
+    NSGraphicsContext.current?.cgContext.setAlpha(CGFloat(opacity))
     let r = imageRect, crop = frame.rect
     func onScreen(_ p: CGPoint) -> CGPoint {
       let q = CGPoint(x: (p.x - crop.x) / max(1e-6, crop.width), y: (p.y - crop.y) / max(1e-6, crop.height))
@@ -1487,6 +1641,20 @@ final class FilmCanvasView: NSView {
       return
     }
     if model.singleView {
+      // The de-masking region: a corner, an edge or the box itself takes hold of it; elsewhere a new
+      // one is drawn. While none is set, what is read shows dashed and a drag draws one.
+      if model.tool == .region, !model.isWorking, let frame = model.selected, let q = pictureNormal(p) {
+        if let set = frame.adjustments.analysisRegion?.cg {
+          let hold = regionHold(set, at: p)
+          let held = hold.corner != nil || hold.edge != nil || set.contains(q)
+          regionDrag = (q, held ? set : nil, hold.corner, hold.edge)
+          regionDraft = held ? set : nil
+        } else {
+          regionDrag = (q, nil, nil, nil)
+          regionDraft = nil
+        }
+        return
+      }
       if model.tool == .crop, model.canvasCrop != nil, !model.isWorking,
         model.levelling || event.modifierFlags.contains(.option)
       {
@@ -1528,6 +1696,31 @@ final class FilmCanvasView: NSView {
     let p = convert(event.locationInWindow, from: nil)
     if let line = levelLine {
       levelLine = (line.from, p)
+      needsDisplay = true
+      return
+    }
+    if let drag = regionDrag, let q = pictureNormal(p) {
+      if let o = drag.original {
+        if let corner = drag.corner {
+          let opposite = CGPoint(x: corner % 2 == 0 ? o.maxX : o.minX, y: corner < 2 ? o.maxY : o.minY)
+          regionDraft = CGRect(x: min(q.x, opposite.x), y: min(q.y, opposite.y), width: abs(q.x - opposite.x), height: abs(q.y - opposite.y))
+        } else if let edge = drag.edge {
+          var (x0, x1, y0, y1) = (o.minX, o.maxX, o.minY, o.maxY)
+          switch edge {
+          case 0: y0 = q.y
+          case 1: y1 = q.y
+          case 2: x0 = q.x
+          default: x1 = q.x
+          }
+          regionDraft = CGRect(x: min(x0, x1), y: min(y0, y1), width: abs(x1 - x0), height: abs(y1 - y0))
+        } else {
+          regionDraft = CGRect(
+            x: clamp(Double(o.minX + q.x - drag.start.x), 0, Double(1 - o.width)),
+            y: clamp(Double(o.minY + q.y - drag.start.y), 0, Double(1 - o.height)), width: o.width, height: o.height)
+        }
+      } else {
+        regionDraft = CGRect(x: min(drag.start.x, q.x), y: min(drag.start.y, q.y), width: abs(q.x - drag.start.x), height: abs(q.y - drag.start.y))
+      }
       needsDisplay = true
       return
     }
@@ -1587,6 +1780,13 @@ final class FilmCanvasView: NSView {
       panStart = nil
       levelLine = nil
       needsDisplay = true
+    }
+    if regionDrag != nil {
+      // A click, or a box too small to read, changes nothing.
+      if let draft = regionDraft, draft != regionDrag?.original { model?.setAnalysisRegion(NormalRect(draft)) }
+      regionDrag = nil
+      regionDraft = nil
+      return
     }
     if let clicked = clickedFrame {
       clickedFrame = nil
@@ -1711,7 +1911,7 @@ final class FilmCanvasView: NSView {
       let key = event.charactersIgnoringModifiers?.lowercased(),
       let tool = CanvasTool.allCases.first(where: { $0.shortcut == key }),
       // The pickers belong to taking the mask off; capturing has only the frame tools.
-      model?.page != .capture || ![CanvasTool.base, .neutral].contains(tool)
+      model?.page != .capture || ![CanvasTool.base, .neutral, .region].contains(tool)
     {
       model?.useTool(tool)
     } else {

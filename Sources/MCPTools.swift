@@ -134,6 +134,10 @@ enum MCPTools {
     let s = f.adjustments
     var g: [String: Any] = ["mirrored": s.flipHorizontal == true,
       "crop": ["x": round(f.rect.x), "y": round(f.rect.y), "width": round(f.rect.width), "height": round(f.rect.height)],
+      "analysis_region": f.adjustments.analysisRegion.map { r -> Any in
+        ["x": round(r.x), "y": round(r.y), "width": round(r.width), "height": round(r.height),
+         "note": "in the crop, 0-1 from its top left, unturned; the base estimate, white balance, levels and highlight reach read only here"]
+      } ?? "follows the crop (its outer 5% left out)",
       "picked": ["film_base": s.base != nil, "neutral": s.neutralSample != nil]]
     if let angle = s.angle { g["straighten_degrees"] = angle }
     if let path = f.sourcePath { g["file"] = URL(fileURLWithPath: path).lastPathComponent }

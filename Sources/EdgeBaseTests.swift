@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 
@@ -95,6 +96,89 @@ enum EdgeBaseTests {
       "the panel says where each frame's base came from: \(model.baseSource(f[1]))")
     let pipeBase = pipe.densities(try model.source(for: model.frames[2], maxDimension: 300), settings: model.frames[2].adjustments).base
     try check(close(pipeBase, balanced), "the conversion divides by the base found at the edges")
+    // An uncropped picture with the automatic base, come up on its own: where the base was read is
+    // marked for three seconds and fades; where its edges showed none, a note says whose it uses.
+    // Waiting for its edges to be looked at, cropped, or its base picked by hand, nothing is said.
+    model.frames[0].edgeBase = nil
+    model.select(model.frames[0].id)
+    model.singleView = true
+    let waiting = model.baseFlash == nil && model.canvasNote == nil
+    model.measureEdgeBases(wait: true)
+    let marked = model.baseFlash?.id == model.frames[0].id && model.canvasNote == nil
+    model.select(model.frames[1].id)
+    let borrowed = model.baseFlash == nil ? model.canvasNote ?? "" : ""
+    model.frames[2].rect = NormalRect(x: 0.15, y: 0.15, width: 0.7, height: 0.7)
+    model.select(model.frames[2].id)
+    let cropped = model.baseFlash == nil && model.canvasNote == nil
+    model.frames[2].rect = .full
+    model.frames[0].adjustments.base = orange
+    model.select(model.frames[0].id)
+    let pickedQuiet = model.baseFlash == nil && model.canvasNote == nil
+    model.frames[0].adjustments.base = nil
+    model.select(model.frames[1].id)
+    model.singleView = false
+    let fades = BaseFlash.opacity(0) == 1 && BaseFlash.opacity(2.9) == 1 && BaseFlash.opacity(3.3) > 0.1
+      && BaseFlash.opacity(3.3) < 0.9 && BaseFlash.opacity(3.7) == 0
+    try check(waiting && marked && borrowed == "这张片边上没找到片基，用第 01 张片边的" && cropped && pickedQuiet && fades
+      && model.canvasNote == nil,
+      "an uncropped picture on its own marks where its automatic base was read, for three seconds and fading, once its edges are looked at; one whose edges show none says whose it uses: \(borrowed)")
+    // Drawn: the amber cells and their label while marked, gone once faded.
+    func settle(_ seconds: Double) { RunLoop.current.run(until: Date().addingTimeInterval(seconds)) }
+    let canvas = FilmCanvasView(frame: NSRect(x: 0, y: 0, width: 900, height: 600))
+    let window = NSWindow(contentRect: NSRect(x: -9000, y: -9000, width: 900, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+    window.contentView = canvas
+    canvas.model = model
+    model.preferences.showLoupe = false
+    model.select(model.frames[0].id)
+    model.singleView = true
+    model.refresh()
+    for _ in 0..<60 where model.displayed == nil || model.rendering { settle(0.1) }
+    // The marks' amber, filled or laid over the dark rebate; the test picture is grey and cyan.
+    func amber() -> Int {
+      guard let rep = canvas.bitmapImageRepForCachingDisplay(in: canvas.bounds) else { return 0 }
+      canvas.cacheDisplay(in: canvas.bounds, to: rep)
+      var n = 0
+      for y in stride(from: 0, to: rep.pixelsHigh, by: 3) {
+        for x in stride(from: 0, to: rep.pixelsWide, by: 3) {
+          guard let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { continue }
+          let (r, g, b) = (c.redComponent, c.greenComponent, c.blueComponent)
+          if r > 0.3 && r > g + 0.05 && g > b + 0.05 && g / r > 0.6 && g / r < 0.85 { n += 1 }
+        }
+      }
+      return n
+    }
+    let shown = model.baseFlash != nil ? amber() : 0
+    model.baseFlash = model.baseFlash.map { BaseFlash(id: $0.id, start: $0.start - 10) }
+    let faded = amber()
+    model.singleView = false
+    try check(shown > 40 && faded * 10 < shown,
+      "on the single view the marks are drawn while they hold (\(shown) amber samples) and gone once faded (\(faded))")
+    // The strip over the single frame: where each base comes from, and how the balance is set.
+    let strip = (model.baseShort(model.frames[0]), model.baseShort(model.frames[1]))
+    model.frames[0].adjustments.base = orange
+    model.frames[0].adjustments.baseFine = RGB(r: 0.1, g: 0, b: 0)
+    let pickedStrip = model.baseShort(model.frames[0])
+    let autoStrip = model.balanceShort(model.frames[0])
+    model.frames[0].adjustments.neutralSample = RGB(r: 0.1, g: 0.3, b: 0.2)
+    model.frames[0].adjustments.warmth = 0.2
+    model.frames[0].adjustments.shadowWarmth = -0.1
+    let greyStrip = model.balanceShort(model.frames[0])
+    (model.frames[0].adjustments.base, model.frames[0].adjustments.baseFine) = (nil, nil)
+    (model.frames[0].adjustments.neutralSample, model.frames[0].adjustments.warmth, model.frames[0].adjustments.shadowWarmth) = (nil, 0, nil)
+    try check(strip == ("本张片边", "第 01 张片边") && pickedStrip == "手动取样 · 微调" && autoStrip == "自动"
+      && greyStrip == "取样中性灰 · 冷暖 +0.20 · 阴影冷暖 -0.10",
+      "the strip over the single frame says in a few words where its base comes from and how its balance is set: \(strip.1) / \(pickedStrip) / \(greyStrip)")
+    // A roll whose only picture shows no base at its edges: the picture's clearest film stands in.
+    let lone = AppModel(libraryURL: root.appendingPathComponent("library-lone"), preferences: Preferences(defaults: defaults))
+    lone.addCapturedFrame(urls[1], original: urls[1], linear: true)
+    lone.measureEdgeBases(wait: true)
+    lone.select(lone.frames[0].id)
+    lone.singleView = true
+    let none = lone.canvasNote ?? ""
+    lone.singleView = false
+    try check(none == "片边上没找到片基，按画面里最透的地方估计 · 可按 B 手动取" && lone.baseFlash == nil
+      && lone.baseShort(lone.frames[0]) == "本张最透处估计",
+      "where no picture of the roll shows a base at its edges, the note says the picture's clearest film stands in")
     // The crosstalk turned off and on again while the edges were looked at: the look at the reading
     // with it in comes back after the picture has it out again. It is let go, and the look at the
     // picture as it reads now gives the base, the base as unmixed as the picture.

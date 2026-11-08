@@ -323,6 +323,12 @@ struct Adjustments: Codable, Equatable {
   var flipHorizontal: Bool? = nil
   // EV per channel; applied AFTER automatic estimation, never cancelled by it.
   var baseFine: RGB? = nil
+  /// The de-masking region: the part of the picture the base estimate, white balance, levels and
+  /// highlight reach are read from (`ImagePipeline.analysisPart`), in the picture's own crop
+  /// normalised from its top left, unturned. Nil follows the picture, less its outer 5%. Where the
+  /// picture is shown and exported is the crop's alone; a base picked or found at the film's edges
+  /// still comes from where it was read.
+  var analysisRegion: NormalRect? = nil
   var neutralSample: RGB? = nil  // Encoded negative values, recalculated if the film/base changes.
   // The white picked as the densest highlight (`highlightSample`, Dmax) is gone (2026-11-07): it
   // fitted each channel's contrast to a point on the film's shoulder in place of the roll's or the
@@ -434,7 +440,19 @@ struct FilmProfile: Codable, Identifiable, Equatable {
 struct FilmFrame: Identifiable, Codable {
   var id = UUID()
   var name: String
-  var rect: NormalRect
+  var rect: NormalRect {
+    // The de-masking region stays where it lay on the film as the crop changes, cut to the new
+    // crop; it follows the picture again once less than 2% of it is left inside.
+    didSet {
+      guard rect != oldValue, let region = adjustments.analysisRegion, rect.width > 0, rect.height > 0 else { return }
+      let onFilm = region.mapped(into: oldValue).cg.intersection(rect.cg)
+      guard !onFilm.isNull, onFilm.width > rect.width * 0.02, onFilm.height > rect.height * 0.02 else {
+        adjustments.analysisRegion = nil
+        return
+      }
+      adjustments.analysisRegion = NormalRect(onFilm).relative(to: rect)
+    }
+  }
   var format: String
   var enabled = true
   var adjustments = Adjustments()
@@ -536,6 +554,7 @@ enum DeskError: LocalizedError {
 enum CanvasTool: String, CaseIterable {
   case select = "选择"
   case crop = "画框"
+  case region = "去色罩区域"
   case base = "片基"
   case neutral = "中性灰"
   case calibrate = "标定中性点"
@@ -551,6 +570,7 @@ enum CanvasTool: String, CaseIterable {
     switch self {
     case .select: return "cursorarrow"
     case .crop: return "crop"
+    case .region: return "camera.metering.matrix"
     case .base: return "eyedropper.full"
     case .neutral: return "eyedropper"
     case .calibrate: return "target"
@@ -561,8 +581,19 @@ enum CanvasTool: String, CaseIterable {
   /// Shown next to the symbol in the toolbar.
   var label: String? {
     switch self {
+    case .crop: return "画面"
+    case .region: return "去色罩"
     case .base: return "片基"
     case .neutral: return "中性灰"
+    default: return nil
+    }
+  }
+  /// The colour each of the two crops is drawn in on the picture, and its key tinted with: the
+  /// picture's crop amber, the de-masking region cyan.
+  var colour: (red: Double, green: Double, blue: Double)? {
+    switch self {
+    case .crop: return (0.95, 0.71, 0.38)
+    case .region: return (0.36, 0.84, 0.96)
     default: return nil
     }
   }
@@ -571,6 +602,7 @@ enum CanvasTool: String, CaseIterable {
     switch self {
     case .select: return "v"
     case .crop: return "c"
+    case .region: return "m"
     case .base: return "b"
     case .neutral: return "n"
     case .calibrate, .it8, .dust: return nil
@@ -580,7 +612,8 @@ enum CanvasTool: String, CaseIterable {
     let what: String
     switch self {
     case .select: what = "选择：点接触表上的画面进入单张；单张放大时拖动平移"
-    case .crop: what = "画框：在接触表上拖出新画框；单张中裁切"
+    case .crop: what = "画面裁切（琥珀色）：在接触表上拖出新画框；单张中裁切显示和导出的范围"
+    case .region: what = "去色罩区域（青色）：在画面里框出算片基、白平衡和色阶用的地方，显示和导出不变"
     case .base: what = "取片基：点未曝光的橙色片基，作为去色罩的基准"
     case .neutral: what = "取中性灰：点画面中应为灰色的地方，校正白平衡"
     case .calibrate: what = "标定中性点：点选灰卡等中性灰，生成这台扫描仪或这次翻拍的预设"

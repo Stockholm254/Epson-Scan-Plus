@@ -10,6 +10,7 @@ final class AppModel: ObservableObject {
     // The light table turns to the page the frame selected lies on.
     didSet {
       if let id = selectedID, id != oldValue, let page = contactPageIndex(of: id), page != contactPage { contactPage = page }
+      if selectedID != oldValue { announceAutoBase() }
     }
   }
   /// The light table's page shown: the holder's preview, or one laid out from frames of their own.
@@ -86,6 +87,7 @@ final class AppModel: ObservableObject {
         return
       }
       if !singleView, zoom != 1 { fitView() }
+      if singleView != oldValue { announceAutoBase() }
     }
   }
   /// The scanner's preview shows on the light table as it is read.
@@ -262,13 +264,15 @@ final class AppModel: ObservableObject {
   @Published var page = AppModel.firstPage {
     didSet {
       // The pickers belong to taking the mask off.
-      if page == .capture, [CanvasTool.base, .neutral].contains(tool) { tool = .select }
+      if page == .capture, [CanvasTool.base, .neutral, .region].contains(tool) { tool = .select }
       // Module ① shows the raw picture, ② the converted one: across, the picture is another.
       if (oldValue == .capture) != (page == .capture) {
         exposureReading = nil
         refresh()
         if showsOriginal { updateRawThumbnails() }
       }
+      // Out of ①, the converted frame comes up (from the live view, the canvas with it).
+      if oldValue == .capture, page != .capture { announceAutoBase() }
     }
   }
   /// Module ① shows each picture as it came, the raw file's readings in a linear response, nothing
@@ -413,6 +417,8 @@ final class AppModel: ObservableObject {
     case .crop:
       if singleView && levelling { return "沿地平线、墙边或建筑竖线拖一条线，松手即按它拉直 · Esc 退出" }
       return singleView ? "拖动四角裁切 · 方向键微调 · [ ] 拉直 0.1°（⇧ 1°） · ⌥ 拖一条线拉直 · 回车完成 · Esc 退出" : "在接触表上拖出新的画框 · Esc 退出"
+    case .region:
+      return singleView ? "在画面里拖出青色的去色罩区域：片基估计、白平衡和色阶只看这里 · 拖边、角或框内调整 · ⌫ 跟随画面 · Esc 退出" : "进入单张后框选去色罩区域 · Esc 退出"
     case .base: return "点未曝光的橙色片基（片间或片边），不要点景物或片夹；琥珀色是自动找到的片基 · Esc 退出"
     case .neutral: return "点画面中应为中性灰的地方：灰卡、白墙、水泥 · Esc 退出"
     case .calibrate:
@@ -449,13 +455,29 @@ final class AppModel: ObservableObject {
     select(frames[i + offset].id)
     focusCanvas()
   }
+  /// The de-masking region of the selected frame (`Adjustments.analysisRegion`), in its picture's
+  /// crop; nil follows the picture. Too small a box to read (under 3% either way) is left out.
+  func setAnalysisRegion(_ region: NormalRect?) {
+    guard selected != nil else { return }
+    if let r = region, r.width < 0.03 || r.height < 0.03 { return }
+    // Kept as given inside the picture; cut to it only where it reaches past.
+    let r = region.map { NormalRect.full.contains($0) ? $0 : NormalRect($0.cg) }
+    guard r != settings.analysisRegion else { return }
+    change(r == nil ? "去色罩区域跟随画面" : "去色罩区域") { $0.analysisRegion = r }
+    updateRollSlopes()
+    updateThumbnails()
+    // A roll printed as one reads every frame's region.
+    if settings.printsWithRoll { updateRollPrint() }
+    status = r.map { String(format: "去色罩区域：画面的 %.0f%%，片基估计、白平衡和色阶只看这里", $0.width * $0.height * 100) }
+      ?? "去色罩区域跟随画面：去掉四边 5%"
+  }
   func useTool(_ value: CanvasTool) {
     let editing = editingSingle, willEdit = singleView && (value == .crop || value == .base)
     if editing != willEdit { viewWillChange?(.edit(entering: willEdit)) }
     if value != tool { editRegionLock = nil }
     if value != .crop { levelling = false }
     tool = value
-    if value == .neutral || value == .calibrate || value == .it8 || value == .dust { singleView = selected != nil }
+    if value == .neutral || value == .calibrate || value == .it8 || value == .dust || value == .region { singleView = selected != nil }
     if value == .base || value == .crop { fitView() }
     focusCanvas()
     refresh()
@@ -631,6 +653,32 @@ final class AppModel: ObservableObject {
   /// older `Session.filmdesk` is kept up to date rather than joined by a second copy.
   static let projectFile = "Session.epscan"
   private(set) var projectFileName = AppModel.projectFile
+  /// 新建工程: the open roll saved, staying in the library, and the window emptied; the next preview,
+  /// import or camera picture starts a roll of its own, whose folder is made then, so a new project
+  /// left unused leaves no empty roll behind.
+  func newProject() {
+    guard !isWorking else { return }
+    let had = sessionURL != nil && !frames.isEmpty
+    saveProject()
+    sessionURL = nil
+    rollName = ""
+    rollNotes = ""
+    rollSource = nil
+    singleView = false
+    frames = []
+    thumbnails = [:]
+    tablePrint = nil
+    selectedID = nil
+    clearEdits()
+    overview = nil
+    overviewURL = nil
+    overviewBackendID = nil
+    overviewInputGamma = 1
+    pendingShift = []
+    sourceSummary = ""
+    status = (had ? "上一卷已存进库 · " : "") + "新建工程：下一次预览、导入或拍摄存进新的一卷"
+    refresh()
+  }
   func makeSession() throws -> URL {
     if let sessionURL { return sessionURL }
     projectFileName = Self.projectFile
@@ -917,6 +965,7 @@ final class AppModel: ObservableObject {
   /// the frame they are picked on.
   func deletePressed() {
     switch tool {
+    case .region: setAnalysisRegion(nil)
     case .it8: undoIT8Mark()
     case .calibrate:
       guard !calibrationPoints.isEmpty else { return }
@@ -986,6 +1035,8 @@ final class AppModel: ObservableObject {
       $0.rotation = kept.rotation
       $0.flipHorizontal = kept.flipHorizontal
       $0.angle = kept.angle
+      // Part of the picture, as the crop is: reset on its own (跟随画面).
+      $0.analysisRegion = kept.analysisRegion
       // How the picture was read, not a setting: a copy shot keeps its colour noise reduction.
       $0.colourNoise = kept.colourNoise
       // The roll's print is the roll's, not this frame's.
@@ -1131,8 +1182,86 @@ final class AppModel: ObservableObject {
     if f.adjustments.rollBase != nil { return "片基来自整卷片间未曝光区" }
     return isSinglePicture(f) && f.edgeBase != nil ? "片边没找到未曝光片基，按本张最薄的片区估计" : "片基按本张最薄的片区估计"
   }
+  /// Where the frame's film base comes from, in a few words: the strip over the single frame.
+  func baseShort(_ f: FilmFrame) -> String {
+    let s = f.adjustments
+    var text: String
+    if s.base != nil {
+      text = "手动取样"
+    } else if s.rollBasePicked == true {
+      text = "整卷共用的手动取样"
+    } else if let i = frames.firstIndex(where: { $0.id == f.id }), let from = edgeBaseSource(i) {
+      text = from == i ? "本张片边" : "第 \(frames[from].name) 张片边"
+    } else if s.rollBase != nil {
+      text = "整卷片间"
+    } else {
+      text = "本张最透处估计"
+    }
+    if let fine = s.baseFine, fine.values.contains(where: { abs($0) > 0.005 }) { text += " · 微调" }
+    return text
+  }
+  /// How the frame's white balance is set, in a few words, as the conversion takes them (a picked
+  /// grey, a balance set by hand, a calibrated preset's neutral, auto, the roll's), and the colour
+  /// laid over it after.
+  func balanceShort(_ f: FilmFrame) -> String {
+    let s = f.adjustments
+    var parts = [String]()
+    if s.neutralSample != nil {
+      parts.append("取样中性灰")
+    } else if s.manualBalance != nil {
+      parts.append("手动配平")
+    } else if profile.offsets != nil {
+      parts.append("标定预设的中性")
+    } else if s.autoWhiteBalance {
+      parts.append(s.sharedBalance == true ? "自动 · 整卷同一" : "自动")
+    } else {
+      parts.append("不配平")
+    }
+    if abs(s.warmth) > 0.005 { parts.append(String(format: "冷暖 %+.2f", s.warmth)) }
+    if abs(s.tint) > 0.005 { parts.append(String(format: "绿洋红 %+.2f", s.tint)) }
+    if abs(s.shadowWarmthAmount) > 0.005 { parts.append(String(format: "阴影冷暖 %+.2f", s.shadowWarmthAmount)) }
+    return parts.joined(separator: " · ")
+  }
   /// Shows on the single frame where its film base was read at its edges.
   @Published var showBaseAreas = false
+  /// The frame whose automatic base is marked on the single view for a moment (`announceAutoBase`).
+  @Published var baseFlash: BaseFlash?
+  /// A line over the picture for a few seconds (`noteOnCanvas`).
+  @Published var canvasNote: String?
+  /// Shows `text` over the picture for `seconds`, unless another note takes its place.
+  func noteOnCanvas(_ text: String, seconds: Double = 4) {
+    canvasNote = text
+    DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+      if self?.canvasNote == text { self?.canvasNote = nil }
+    }
+  }
+  /// As an uncropped picture with the automatic base comes up on its own (opened, its edges just
+  /// looked at, back from the live view, or set back to 自动): where the base was read at its
+  /// edges, marked for three seconds and faded; or, where its edges showed none, a note saying
+  /// whose it uses instead, or that the picture's own clearest film stands in. What was shown for
+  /// the frame before goes, so nothing lingers over another frame or the light table.
+  func announceAutoBase() {
+    baseFlash = nil
+    canvasNote = nil
+    let r = selected?.rect
+    guard singleView, !(page == .capture && captureSource == .camera), let f = selected,
+      let i = frames.firstIndex(where: { $0.id == f.id }), isSinglePicture(f), f.adjustments.inputIsNegative,
+      f.adjustments.base == nil, f.adjustments.rollBasePicked != true, let look = f.edgeBase, let r,
+      abs(r.x) < 1e-3, abs(r.y) < 1e-3, abs(r.width - 1) < 1e-3, abs(r.height - 1) < 1e-3
+    else { return }
+    guard let from = edgeBaseSource(i) else {
+      return noteOnCanvas("片边上没找到片基，按画面里最透的地方估计 · 可按 B 手动取")
+    }
+    guard from == i else {
+      let why = look.base == nil ? "这张片边上没找到片基" : "这张片边上的片基和别的张颜色对不上"
+      return noteOnCanvas("\(why)，用第 \(frames[from].name) 张片边的")
+    }
+    let flash = BaseFlash(id: f.id, start: CACurrentMediaTime())
+    baseFlash = flash
+    DispatchQueue.main.asyncAfter(deadline: .now() + BaseFlash.hold + BaseFlash.fade) { [weak self] in
+      if self?.baseFlash == flash { self?.baseFlash = nil }
+    }
+  }
   /// The frame's dust marked on the single view: filled spots ringed, kept ones dotted.
   @Published var showDust = true
   /// What the dust search is doing, while it runs.
@@ -1176,6 +1305,7 @@ final class AppModel: ObservableObject {
     refresh()
     updateThumbnails()
     saveProject()
+    if let id = selectedID, looks.contains(where: { $0.id == id }) { announceAutoBase() }
   }
   /// Looks for the unexposed film at the edges of the roll's pictures not yet looked at, apart from
   /// the main thread, then converts with what it found. `wait` looks before returning.
@@ -1418,6 +1548,8 @@ final class AppModel: ObservableObject {
       frames[i].adjustments.rollBase = own.rollBase
       frames[i].adjustments.rollSlopes = own.rollSlopes
       frames[i].adjustments.rollBasePicked = own.rollBasePicked
+      // Where each frame's de-masking reads lies on its own picture, as its crop does.
+      frames[i].adjustments.analysisRegion = own.analysisRegion
     }
     refresh()
     updateThumbnails()
