@@ -9,6 +9,14 @@ struct EpsonScanPlusApp: App {
     let args = CommandLine.arguments
     // Started by an assistant: a stdio MCP server that talks to the running app, never a window.
     if args.contains("--mcp") { MCPBridge.run() }
+    // No window restoration, here or in the self-test and the other runs below (this app too, by
+    // bundle id). A self-test's windows, left saved since it ends in exit(), were what the next
+    // launch restored: nothing, and no window opened until the Dock icon was clicked again. The
+    // one window is made fresh each launch (restoration never brought back a project); its frame
+    // comes back from its autosave.
+    var defaults = UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)
+    defaults["ApplePersistence"] = false
+    UserDefaults.standard.setVolatileDomain(defaults, forName: UserDefaults.argumentDomain)
     // The camera's pixel shift read or set over PTP, in a process of its own (SonyPTP.inChild).
     if args.contains("--sony-ptp") { SonyPTP.runChild() }
     // The camera driven over its own PTP instead of Sony's SDK, in a process of its own.
