@@ -46,7 +46,8 @@ stage="$(mktemp -d "${TMPDIR:-/tmp}/epscan-release.XXXXXX")"
 placed=()
 finish() {
   local status=$?
-  if [ "$status" != 0 ]; then for out in "${placed[@]}"; do rm -f "$out"; done; fi
+  # Spelled so an empty list passes `set -u` in macOS's bash 3.2.
+  if [ "$status" != 0 ]; then for out in ${placed[@]+"${placed[@]}"}; do rm -f "$out"; done; fi
   rm -rf "$stage"
 }
 trap finish EXIT

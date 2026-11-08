@@ -45,7 +45,9 @@ enum PhotoInfoTests {
     alone.sourcePath = decoded.appendingPathComponent("EPS00009.tif").path
     var scanned = FilmFrame(name: "01", rect: .full, format: "135")
     scanned.scanPath = "/scans/01.tif"
-    try check(PhotoInfo.file(for: frame) == raw && PhotoInfo.file(for: alone)?.lastPathComponent == "EPS00009.tif"
+    // Compared as files: under /var/folders the listing gives /private/var's path, the same file.
+    try check(PhotoInfo.file(for: frame)?.resolvingSymlinksInPath() == raw.resolvingSymlinksInPath()
+      && PhotoInfo.file(for: alone)?.lastPathComponent == "EPS00009.tif"
       && PhotoInfo.file(for: scanned)?.path == "/scans/01.tif" && PhotoInfo.file(for: FilmFrame(name: "02", rect: .full, format: "135")) == nil,
       "the EXIF comes from the camera's RAW beside the decoded picture, else the picture's own file or its scan")
   }
