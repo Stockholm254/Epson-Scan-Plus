@@ -144,21 +144,25 @@ struct ToneRangeView: View {
       .frame(height: 64)
       .padding(4).background(PlotScreen())
       .accessibilityElement().accessibilityLabel("直方图 · SDR 范围").accessibilityValue(lines.joined(separator: "；"))
+      // As many lines as the frame has, each one line: the sliders under them stay where they are
+      // while one of them is dragged and the figures change.
       VStack(alignment: .leading, spacing: 1) {
-        ForEach(lines, id: \.self) { Text($0) }
-      }.font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        ForEach(Array(lines.enumerated()), id: \.offset) { Text($0.element).lineLimit(1).minimumScaleFactor(0.7) }
+      }.font(.system(size: 11)).foregroundStyle(.secondary)
     }
   }
   private func percent(_ v: Double) -> String {
     v < 0.0001 ? "0" : v < 0.01 ? String(format: "%.2f%%", v * 100) : String(format: "%.1f%%", v * 100)
   }
-  /// How far past white the frame goes, and what shows white or black.
+  /// How far past white the frame goes, where its brightest lie (a negative's, on the scale of
+  /// print exposure), and what shows white or black: the same lines whatever the figures.
   var lines: [String] {
-    var past = "白点以上 \(percent(range.pastWhite))"
-    if let stop = range.stop, range.brightest > 1 {
-      past += String(format: "，最亮的 0.1%% 在白点以上 %.1f 档", (range.brightest - 1) / stop)
+    var lines = ["白点以上 \(percent(range.pastWhite))"]
+    if let stop = range.stop {
+      lines.append(range.brightest > 1
+        ? String(format: "最亮的 0.1%% 在白点以上 %.1f 档", (range.brightest - 1) / stop) : "最亮的 0.1% 不到白点")
     }
-    return [past, "屏幕上纯白 \(percent(range.atWhite))，纯黑 \(percent(range.atBlack))"]
+    return lines + ["屏幕上纯白 \(percent(range.atWhite))，纯黑 \(percent(range.atBlack))"]
   }
 }
 

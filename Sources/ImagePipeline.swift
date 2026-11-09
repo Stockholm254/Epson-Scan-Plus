@@ -50,6 +50,14 @@ final class ImagePipeline {
   ])
   let outputSpace = CGColorSpace(name: CGColorSpace.sRGB)!
   static let shared = ImagePipeline()
+  /// The presets the app holds, where a calibrated preset's film is looked up (`analyze`); the
+  /// built-in ones are always there.
+  var films: [FilmProfile] {
+    get { filmsLock.withLock { knownFilms } }
+    set { filmsLock.withLock { knownFilms = newValue } }
+  }
+  private var knownFilms = [FilmProfile]()
+  private let filmsLock = NSLock()
   /// The ends run out as on paper (`Adjustments.softEnds`): under `softToe` the blacks fall smoothly
   /// towards nothing instead of being cut, the darkest 0.5% of a frame coming out a little above
   /// black (t/e), so their channels still differ and keep their colour; over `softShoulder` the
@@ -537,9 +545,58 @@ final class ImagePipeline {
   /// so none of them changes; NexFilm's 0.8 D would have reached into ordinary overcast frames.
   static let shortestEnds = 1.2
   /// A frame's balance and ends from its densities above `base`; `shortestEnds` as above.
+  ///
+  /// With a calibrated preset the automatic ends are set so the frame prints as light as it does
+  /// with the calibration off. Calibrating sets how the channels meet, so a grey stays grey from
+  /// dark to light; it does not set how light the frame prints. Left to itself it would: a fitted
+  /// toe takes the thinnest densities further down and the black with them (a roll of Portra on
+  /// the copy stand printed 20/255 lighter), and a steeper blue slope brings blue's brightest down
+  /// and the white with it.
+  ///
+  /// Set by green, sample by sample (`matched`): where each lies between black and white without
+  /// the calibration, it lies with it, as near as two ends can put it.
   func analyze(
     base: RGB, density: [[Double]], settings: Adjustments, profile: FilmProfile, shortestEnds: Double = ImagePipeline.shortestEnds
   ) -> ToneAnalysis {
+    let calibrated = settings.autoLevels && profile.offsets != nil
+    var (a, green) = measure(base: base, density: density, settings: settings, profile: profile, shortestEnds: shortestEnds, green: calibrated)
+    guard calibrated, let green else { return a }
+    let film = AppModel.uncalibrated(profile, among: films)
+    var plain = settings
+    // The roll's estimate, made on the preset's green slope, as it is made on the film's.
+    plain.rollSlopes = settings.rollSlopes.map { s in RGB(s.values.map { $0 * film.slopes.g / max(1e-6, s.g) }) }
+    let (without, plainGreen) = measure(base: base, density: density, settings: plain, profile: film, shortestEnds: shortestEnds, green: true)
+    if let plainGreen, let ends = Self.matched(green, to: plainGreen, low: without.low, high: without.high) {
+      (a.low, a.high) = ends
+    }
+    return a
+  }
+  /// The ends that put the samples `green` where `plain`, the same samples read another way,
+  /// lies between `low` and `high`: a straight line through the pairs by least squares, over the
+  /// samples that show between black and white, past the darkest tenth. There a fitted toe and the
+  /// fade of the balance towards the base (`unexposedFade`) bend the two readings apart, and the
+  /// print's soft toe holds those tones close to black anyway; taken in, they lift the frame's
+  /// middle by up to 7/255 to make up for them (12 frames of a roll on the copy stand). Nil for too
+  /// few samples.
+  static func matched(_ green: [Double], to plain: [Double], low: Double, high: Double) -> (low: Double, high: Double)? {
+    guard green.count == plain.count, high > low else { return nil }
+    var n = 0.0, st = 0.0, sx = 0.0, stt = 0.0, stx = 0.0
+    for i in 0..<green.count {
+      let t = (plain[i] - low) / (high - low)
+      guard t >= 0.1, t <= 1 else { continue }
+      n += 1; st += t; sx += green[i]; stt += t * t; stx += t * green[i]
+    }
+    let spread = n * stt - st * st
+    guard n >= 100, spread > 1e-9 else { return nil }
+    let span = (n * stx - st * sx) / spread, black = (sx - span * st) / n
+    guard span > 0.05 else { return nil }
+    return (black, black + span)
+  }
+  /// `analyze` as the preset alone has it, and, asked for, green's readings through the balance,
+  /// sample by sample, which the ends are read from.
+  private func measure(
+    base: RGB, density: [[Double]], settings: Adjustments, profile: FilmProfile, shortestEnds: Double, green wanted: Bool
+  ) -> (ToneAnalysis, [Double]?) {
     let (slopes, fixed) = Self.slopes(settings, profile)
     let toe = Self.toe(settings, profile)
     func exposure(_ density: Double, _ c: Int) -> Double { FilmToe.exposure(density / slopes.values[c], width: toe.values[c]) }
@@ -596,13 +653,16 @@ final class ImagePipeline {
       ? (0..<e[0].count).map { i in min(1, fadedIn([e[0][i], e[1][i], e[2][i]]) / fadeAtGrey) } : nil
     var lows = [Double]()
     var highs = [Double]()
+    var green: [Double]?
     for c in 0..<3 {
       if let weight {
         let x = (0..<e[c].count).map { e[c][$0] * gain.values[c] + balance.values[c] * weight[$0] }
         let q = quantiles(x, [0.005, 0.995])
         lows.append(q[0])
         highs.append(q[1])
+        if wanted, c == 1 { green = x }
       } else {
+        if wanted, c == 1 { green = e[c].map { $0 * gain.values[c] + balance.values[c] } }
         let q = [at(sorted[c], 0.005), at(sorted[c], 0.995)].map { $0 * gain.values[c] + balance.values[c] }
         lows.append(q[0])
         highs.append(q[1])
@@ -619,8 +679,8 @@ final class ImagePipeline {
     }
     let reach = settings.autoLevels
       ? self.reach(e, gain: gain, balance: balance, weight: weight, saturation: settings.saturation) : nil
-    return ToneAnalysis(
-      base: base, balance: balance, low: low, high: high, gain: gain, fade: fade, fadeAtGrey: fadeAtGrey, reach: reach)
+    return (ToneAnalysis(
+      base: base, balance: balance, low: low, high: high, gain: gain, fade: fade, fadeAtGrey: fadeAtGrey, reach: reach), green)
   }
 
   /// `sharpener` deconvolves the scan in linear light first; tone statistics use the scan as is.

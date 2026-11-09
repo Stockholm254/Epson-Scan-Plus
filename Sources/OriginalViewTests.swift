@@ -103,8 +103,9 @@ enum OriginalViewTests {
     model.refresh()
     settle { !model.rendering && model.exposureReading != first }
     try check(model.exposureReading?.verdict == .under, "the next frame, a darker copy, reads underexposed: \(model.exposureReading?.short ?? "-")")
-    // A camera's raw picture is balanced for the screen, its base shown a negative's orange on a
-    // white light table, red as read; 原样 shows it as the sensor read it. The readings stay.
+    // A camera's raw picture is shown as the sensor read it (a base the light made even looks
+    // grey); 配平 shows its base a negative's orange on a white light table, red as read. The
+    // readings stay.
     let sensorURL = decoded.appendingPathComponent("COPY0003.tif")
     let greenBase = RGB(r: 0.3, g: 0.62, b: 0.2)
     try pipe.saveTIFF(negative(base: greenBase), to: sensorURL, dpi: 2400)
@@ -113,19 +114,24 @@ enum OriginalViewTests {
     model.select(sensorFrame.id)
     model.refresh()
     settle { !model.rendering && model.baseBalance.map { abs($0.level.g - 0.62) < 0.01 } == true }
-    let balancedPixel = model.displayed.map { pipe.raster($0) }?.pixel(5, 5)
+    let asReadPixel = model.displayed.map { pipe.raster($0) }?.pixel(5, 5)
     let mask = AppModel.shownMask
     let balancedWant = RGB((0..<3).map { srgb(0.3 * mask.values[$0] / mask.r) })
-    let wasBalanced = model.preferences.balanceRawView
-    let balancedShown = model.displayed, balancedExposure = model.exposureReading
-    model.setBalanceRawView(false)
-    settle { !model.rendering && model.displayed !== balancedShown }
-    let asReadPixel = model.displayed.map { pipe.raster($0) }?.pixel(5, 5)
-    func close(_ a: RGB?, _ b: RGB) -> Bool { a.map { zip($0.values, b.values).allSatisfy { abs($0 - $1) < 0.02 } } ?? false }
-    try check(wasBalanced && close(balancedPixel, balancedWant) && close(asReadPixel, RGB(greenBase.values.map(srgb)))
-      && balancedExposure != nil && model.exposureReading == balancedExposure,
-      "a camera's raw picture shows balanced for the screen, its base orange (\(balancedPixel.map { String(format: "%.2f %.2f %.2f", $0.r, $0.g, $0.b) } ?? "-")), and as read with 原样 (\(asReadPixel.map { String(format: "%.2f %.2f %.2f", $0.r, $0.g, $0.b) } ?? "-"), redrawn \(model.displayed !== balancedShown)); the exposure reading the same either way")
+    let wasAsRead = !model.preferences.balanceRawView
+    let asReadShown = model.displayed, asReadExposure = model.exposureReading
     model.setBalanceRawView(true)
+    settle { !model.rendering && model.displayed !== asReadShown }
+    let balancedPixel = model.displayed.map { pipe.raster($0) }?.pixel(5, 5)
+    func close(_ a: RGB?, _ b: RGB) -> Bool { a.map { zip($0.values, b.values).allSatisfy { abs($0 - $1) < 0.02 } } ?? false }
+    try check(wasAsRead && close(asReadPixel, RGB(greenBase.values.map(srgb))) && close(balancedPixel, balancedWant)
+      && asReadExposure != nil && model.exposureReading == asReadExposure,
+      "a camera's raw picture shows as the sensor read it (\(asReadPixel.map { String(format: "%.2f %.2f %.2f", $0.r, $0.g, $0.b) } ?? "-")), and with 配平 its base orange (\(balancedPixel.map { String(format: "%.2f %.2f %.2f", $0.r, $0.g, $0.b) } ?? "-")); the exposure reading the same either way")
+    // The camera page's reading of the last picture: the base as the sensor read it.
+    // (What the edges found on this made-up picture is not its base band: the two agree, whatever they read.)
+    settle { model.lastShotBalance != nil }
+    try check(model.lastShotBalance.map { s in s.frame == sensorFrame.name && model.baseBalance.map { zip(s.balance.level.values, $0.level.values).allSatisfy { abs($0 - $1) < 0.02 } } == true } == true,
+      "the camera page reads the last picture's base: \(model.lastShotBalance.map { "第 \($0.frame) 张 " + $0.balance.short } ?? "-")")
+    model.setBalanceRawView(false)
     model.page = .convert
     settle { !model.rendering }
     let converted = model.displayed.map { pipe.raster($0) }?.pixel(5, 5)

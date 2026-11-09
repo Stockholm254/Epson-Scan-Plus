@@ -329,6 +329,17 @@ struct FocusCheck: View {
           .help("这块原图的清晰度：三个通道差得多时，说明有色差，红和蓝的焦点不在同一处")
       }
       if let histogram { LastHistogram(histogram: histogram) }
+      // The base's balance in the last picture, for setting the narrowband light by.
+      if let shot = m.lastShotBalance {
+        VStack(alignment: .leading, spacing: 4) {
+          Text("第 \(shot.frame) 张 · 片基偏色").font(.system(size: 11, weight: .medium))
+          HStack(spacing: 6) {
+            BaseSwatch(level: shot.balance.level)
+            Text(shot.balance.short).fixedSize().readout(10)
+            InfoButton(text: shot.balance.text, about: "片基偏色")
+          }
+        }.help(shot.balance.isEven ? "三个通道的片基一样亮：灯的配比消掉了片基的颜色" : "三个通道的片基不一样亮：点 ⓘ 看哪盏灯调多少，调完再拍一张")
+      }
       if let url = m.lastCapture {
         Text(url.lastPathComponent).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
         Button("按对焦点重新取") { load(url) }.font(.system(size: 11))

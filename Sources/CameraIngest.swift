@@ -248,6 +248,8 @@ extension AppModel {
     updateRollSlopes()
     saveProject()
     measureEdgeBases()
+    // The base's balance for the camera page, while the light is set.
+    if linear { updateLastShotBalance(f.id) }
   }
   /// Shows `text` over the live view for three seconds, unless another note takes its place.
   func toast(_ text: String) {

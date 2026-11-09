@@ -118,7 +118,8 @@ final class Preferences: ObservableObject {
   /// The loupe on the picture, and which one. Put away until its key is pressed; a new key, since
   /// the loupe that lay beside the film by default now lies on it.
   @Published var showLoupe: Bool { didSet { defaults?.set(showLoupe, forKey: "loupeShown") } }
-  /// ① shows a camera's raw picture balanced for the screen (`AppModel.rawGains`), else as read.
+  /// ① shows a camera's raw picture balanced for the screen (`AppModel.rawGains`), else as read:
+  /// as read by default, where a base the light has made even looks grey.
   @Published var balanceRawView: Bool { didSet { defaults?.set(balanceRawView, forKey: "balanceRawView") } }
   @Published var loupeStyle: LoupeStyle { didSet { defaults?.set(loupeStyle.rawValue, forKey: "loupeStyle") } }
   /// Looked into, filling a share of the canvas, or lying on the table at the film's scale.
@@ -205,7 +206,7 @@ final class Preferences: ObservableObject {
     let dpi = defaults?.integer(forKey: "previewDPI") ?? 0
     previewDPI = Self.previewResolutions.contains(dpi) ? dpi : 600
     showLoupe = defaults?.object(forKey: "loupeShown") as? Bool ?? false
-    balanceRawView = defaults?.object(forKey: "balanceRawView") as? Bool ?? true
+    balanceRawView = defaults?.object(forKey: "balanceRawView") as? Bool ?? false
     loupeStyle = defaults?.string(forKey: "loupeStyle").flatMap(LoupeStyle.init(rawValue:)) ?? .pentax
     loupeField = defaults?.string(forKey: "loupeField").flatMap(LoupeField.init(rawValue:)) ?? .large
     contactLandscape = defaults?.object(forKey: "contactLandscape") as? Bool ?? true

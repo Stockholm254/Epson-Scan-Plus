@@ -99,5 +99,35 @@ enum FilmCurveTests {
     try check(preset.toe == bracket.toe && preset.notes.contains("趾部"), "and the preset converts with them")
     let midtones = try FilmCalibration.fit(neutrals([0.5, 0.9, 1.4]), greenSlope: truth.g, curve: sheet)
     try check(midtones.toe == nil, "three mid-tone neutrals calibrate the straight line, as before")
+
+    // The calibration sets colour, not how light the frame prints: a grey ramp under the
+    // calibrated light, from below the base's toe to the highlights, with the preset and without.
+    let lit: CGImage = {
+      let w = 240, h = 20
+      var samples = [UInt16](repeating: 65535, count: w * h * 4)
+      for y in 0..<h {
+        for x in 0..<w {
+          let l = -0.1 + 1.6 * Double(x) / Double(w - 1)
+          for c in 0..<3 {
+            let v = base.values[c] * pow(10, -truth.values[c] * FilmToe.density(l + offsets.values[c], width: widths.values[c]))
+            samples[(y * w + x) * 4 + c] = UInt16(max(0, min(1, v)) * 65535)
+          }
+        }
+      }
+      return CGImage(
+        width: w, height: h, bitsPerComponent: 16, bitsPerPixel: 64, bytesPerRow: w * 8,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!,
+        bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder16Little.rawValue),
+        provider: CGDataProvider(data: Data(bytes: samples, count: samples.count * 2) as CFData)!, decode: nil,
+        shouldInterpolate: false, intent: .defaultIntent)!
+    }()
+    let calibratedOut = pipe.raster(try pipe.preview(lit, settings: measured, profile: preset), maxDimension: 240)
+    let plainOut = pipe.raster(try pipe.preview(lit, settings: measured, profile: portra), maxDimension: 240)
+    func meanGreen(_ r: Raster) -> Double { (0..<r.width).map { r.pixel($0, 10).g }.reduce(0, +) / Double(r.width) * 255 }
+    let mids = (60..<200).map { abs(calibratedOut.pixel($0, 10).g - plainOut.pixel($0, 10).g) * 255 }.max()!
+    let cast = (40..<220).map { x -> Double in let p = calibratedOut.pixel(x, 10).values; return (p.max()! - p.min()!) * 255 }.max()!
+    try check(abs(meanGreen(calibratedOut) - meanGreen(plainOut)) < 2.5 && mids < 6 && cast < 2,
+      String(format: "with its calibration the ramp prints as light as without (mean %.1f against %.1f, the middle within %.1f levels) and stays grey (%.1f levels)",
+        meanGreen(calibratedOut), meanGreen(plainOut), mids, cast))
   }
 }

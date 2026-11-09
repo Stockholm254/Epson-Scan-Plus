@@ -1,5 +1,6 @@
 import CoreGraphics
 import CoreImage
+import SwiftUI
 import Foundation
 
 /// How a picture was exposed, read off its pixels as they came from the sensor or the scanner,
@@ -91,6 +92,26 @@ struct BaseBalance: Equatable {
     }
     said += "\n\n目的：片基是负片上最亮的地方，三个通道都把它放在接近满量程、又不到顶的地方，每个通道的读数范围都用满，密的地方离噪点最远。读的是传感器原样的读数（不去串色、不除平场）：蓝灯有约三分之一读进绿通道，调蓝灯时绿也会跟着变一点，调完再拍一张看。整体太亮或太暗用曝光调，看左边的曝光指示。"
     return said
+  }
+}
+
+/// The base's colour as the sensor read it, brightened to its brightest channel, beside a neutral
+/// grey as light: alike when the light's three colours make the base even.
+struct BaseSwatch: View {
+  let level: RGB
+  static func encoded(_ v: Double) -> Double { v <= 0.0031308 ? 12.92 * v : 1.055 * pow(v, 1 / 2.4) - 0.055 }
+  var body: some View {
+    let top = max(level.values.max() ?? 1, 1e-4)
+    let c = level.values.map { Self.encoded($0 / top * 0.8) }
+    let luma = Self.encoded(0.2126 * level.r / top * 0.8 + 0.7152 * level.g / top * 0.8 + 0.0722 * level.b / top * 0.8)
+    HStack(spacing: 0) {
+      Rectangle().fill(Color(.sRGB, red: c[0], green: c[1], blue: c[2]))
+      Rectangle().fill(Color(.sRGB, white: luma))
+    }
+    .frame(width: 30, height: 14).clipShape(RoundedRectangle(cornerRadius: 3))
+    .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.primary.opacity(0.3), lineWidth: 0.5))
+    .help("左：片基在传感器里的颜色（按最亮的通道提亮）；右：一样亮的中性灰。两半一样时，窄带灯三种颜色的配比消掉了片基的颜色")
+    .accessibilityHidden(true)
   }
 }
 

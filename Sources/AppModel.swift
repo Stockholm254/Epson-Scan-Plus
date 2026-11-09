@@ -183,7 +183,8 @@ final class AppModel: ObservableObject {
   /// A note floating up over the live view for a moment: a picture filed, a group complete.
   @Published var captureToast: String?
   @Published var profile = FilmProfile.builtins[0]
-  @Published var profiles = FilmProfile.builtins
+  /// The pipeline finds a calibrated preset's film among them (`ImagePipeline.analyze`).
+  @Published var profiles = FilmProfile.builtins { didSet { ImagePipeline.shared.films = profiles } }
   @Published var status = "从库里开始：新建工程、打开一卷或导入照片"
   @Published var errorText: String?
   @Published var rendering = false
@@ -605,6 +606,7 @@ final class AppModel: ObservableObject {
     self.preferences = preferences
     exportType = preferences.exportFormat.rawValue
     profiles = FilmProfile.builtins + preferences.customProfiles
+    ImagePipeline.shared.films = profiles
     preferences.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(
       in: &cancellables)
     scanner.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(
@@ -2841,6 +2843,28 @@ final class AppModel: ObservableObject {
     guard preferences.balanceRawView, frame.sensorRead == true, let level = balance?.level, level.values.allSatisfy({ $0 > 1e-4 }) else { return nil }
     let target = frame.adjustments.isSlide ? RGB(r: 1, g: 1, b: 1) : Self.shownMask
     return RGB((0..<3).map { c in min(16, max(1.0 / 16, (target.values[c] / target.r) * (level.r / level.values[c]))) })
+  }
+  /// The film base's balance in the last picture taken, for the camera page, where ① shows the
+  /// live view: read once the picture's edges have been looked at.
+  @Published private(set) var lastShotBalance: LastShotBalance?
+  struct LastShotBalance: Equatable {
+    var frame: String
+    var balance: BaseBalance
+  }
+  /// After the edges of frame `id` are looked at (on the render queue) and what they found is set
+  /// (on the main thread), its base read on the render queue.
+  func updateLastShotBalance(_ id: UUID) {
+    renderQueue.async {
+      DispatchQueue.main.async {
+        guard let f = self.frames.first(where: { $0.id == id }), f.adjustments.inputGamma == 1 else { return }
+        self.renderQueue.async {
+          let balance = (try? self.dustFreeSource(for: f, full: false, maxDimension: 800)).flatMap { self.baseBalance(of: f, raw: $0) }
+          DispatchQueue.main.async {
+            if let balance { self.lastShotBalance = LastShotBalance(frame: f.name, balance: balance) }
+          }
+        }
+      }
+    }
   }
   /// 原样 or 配平 for ①'s raw pictures; the strip's made again.
   func setBalanceRawView(_ on: Bool) {

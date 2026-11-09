@@ -393,7 +393,7 @@ struct ContentView: View {
         Text("原样").tag(false)
         Text("配平").tag(true)
       }.pickerStyle(.segmented).labelsHidden().frame(width: 96)
-        .help("相机的原片：原样是传感器读到的（不配平，偏绿）；配平只为看着顺眼，把负片的片基显示成灯箱上的橙色、反转片的最亮处显示成白，不改存下的数据，也不改曝光和片基的读数。扫描仪的扫描本来就按灯配平，两样一样")
+        .help("相机的原片：原样是传感器读到的，用来检查窄带灯的配比，片基三个通道一样亮时看起来是中性灰，偏绿就是绿灯相对太亮。配平只为看着顺眼，把负片的片基显示成灯箱上的橙色、反转片的最亮处显示成白，片基的偏色就看不出来了；存下的数据和读数都不变。扫描仪的扫描本来就按灯配平，两样一样")
       if m.singleView, let e = m.exposureReading {
         HStack(spacing: 6) {
           Circle().fill(e.verdict == .over ? Color.red : e.verdict == .under ? Color.orange : Color.green).frame(width: 7, height: 7)
@@ -402,7 +402,7 @@ struct ContentView: View {
           // The base's balance across the channels, for setting the narrowband light.
           if let b = m.baseBalance {
             Divider().frame(height: 12)
-            Circle().fill(b.isEven ? Color.green : Color.orange).frame(width: 7, height: 7)
+            BaseSwatch(level: b.level)
             Text(b.short).font(.system(size: 11, weight: .medium)).monospacedDigit().lineLimit(1)
               .help(b.isEven ? "三个通道的片基一样亮" : "三个通道的片基不一样亮：点 ⓘ 看哪盏灯调多少")
             InfoButton(text: b.text, about: "片基偏色")
@@ -418,7 +418,7 @@ struct ContentView: View {
       conversionDisplayControls
     }
   }
-  static let originalInfo = "① 采集显示原片：raw 文件里的读数，按线性响应显示（光多一倍，读数就大一倍，再编码到屏幕），不反相、不去色罩、不去串色，也不加曲线。相机的传感器绿通道比红、蓝灵敏一倍左右，文件又没有配平，原样看是绿的；选「配平」时只为显示，每个通道乘一个数，让负片的片基显示成灯箱上的橙色、反转片的最亮处显示成白，存下的数据、曝光和片基的读数都不变。扫描仪的扫描本来就按灯配平，不受影响。这里先不提供调整；去色罩和调整在 ②。\n\n曝光指示看的是胶片最亮的地方：负片是最薄的片基和暗部，反转片是最亮处。有通道到顶的胶片超过 0.5% 算过曝，最亮处不到满量程的 25%（还差两档以上）算欠曝。三个通道都到顶的裸光（灯箱、空片框）不算在内；没到顶的裸光会被当成胶片，翻拍时把画面裁到胶片上判断更准。"
+  static let originalInfo = "① 采集显示原片：raw 文件里的读数，按线性响应显示（光多一倍，读数就大一倍，再编码到屏幕），不反相、不去色罩、不去串色，也不加曲线。相机的传感器绿通道比红、蓝灵敏一倍左右，文件又没有配平，原样看是绿的；这正是检查窄带灯配比用的：片基三个通道一样亮时，原样里的片基是中性灰，片基偏色旁边的色块左右两半一样。选「配平」时只为显示，每个通道乘一个数，让负片的片基显示成灯箱上的橙色、反转片的最亮处显示成白，存下的数据、曝光和片基的读数都不变。扫描仪的扫描本来就按灯配平，不受影响。这里先不提供调整；去色罩和调整在 ②。\n\n曝光指示看的是胶片最亮的地方：负片是最薄的片基和暗部，反转片是最亮处。有通道到顶的胶片超过 0.5% 算过曝，最亮处不到满量程的 25%（还差两档以上）算欠曝。三个通道都到顶的裸光（灯箱、空片框）不算在内；没到顶的裸光会被当成胶片，翻拍时把画面裁到胶片上判断更准。"
   /// Module ②'s: the negative or the positive, and the single frame's zoom.
   @ViewBuilder var conversionDisplayControls: some View {
     Picker("显示", selection: $m.showNegative) {
