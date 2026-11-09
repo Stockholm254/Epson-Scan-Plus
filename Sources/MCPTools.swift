@@ -486,7 +486,7 @@ enum MCPTools {
       }
       _ = try selected(model)
       onMain {
-        model.change("AI 调整") { a in
+        model.change("AI 调整", separate: true) { a in
           for (key, v) in values { a[keyPath: key] = v }
           if let b = arguments["auto_white_balance"] as? Bool {
             // Turned on from off it starts over from the picture; already on, a neutral pick stays.
@@ -546,7 +546,7 @@ enum MCPTools {
       }
       _ = try selected(model)
       let curves: ToneCurves? = onMain {
-        model.change("AI 曲线") { a in
+        model.change("AI 曲线", separate: true) { a in
           guard let index = channels[channel] else { a.curves = nil; return }
           var curves = a.curves ?? ToneCurves()
           curves[index] = points.isEmpty ? ToneCurve() : ToneCurve(points: points)

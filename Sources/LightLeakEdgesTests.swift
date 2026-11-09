@@ -29,8 +29,13 @@ enum LightLeakEdgesTests {
         // A little grain everywhere, as on film.
         let grain = 0.012 * sin(Double(x * 37 + y * 91))
         var p = inPicture(x, y) ? sky * (0.9 + 0.1 * Double(y) / Double(h)) : black
+        // An arrow of the edge print run into the photograph, over its sky: the yellow ink with
+        // the sky's blue added.
+        if x >= 52 && x < 64 && y >= 500 && y < 530 && x - 52 < (530 - y) / 2 { p = SIMD3(0.95, 0.8, 0.55) }
         if !inPicture(x, y) {
           if isDigit(x, y) { p = yellow }
+          // The tab a camera's gate exposes at a corner, up into the edge.
+          if x >= 860 && x < 866 && y < 36 { p = sky * 0.9 }
           if x >= 3 && x < 6 && y > 300 { p = SIMD3(0.8, 0.9, 0.3) }       // the side's leak line
           if x >= 882 { p = SIMD3(0.75, 0.78, 0.25) * (0.8 + 0.2 * Double(y) / Double(h)) }  // a glow
         }
@@ -55,7 +60,12 @@ enum LightLeakEdgesTests {
     try check(far(line, black) < 0.05 && far(glow, black) < 0.06 && far(base, black) < 0.04,
       String(format: "the leak's line along the side and the glow over the strip go back to the film's black: %.2f, %.2f (black %.2f)",
         line.y, glow.y, black.y))
-    try check(far(inside, SIMD3(repeating: 30000.0 / 65535)) < 0.002, "the photograph is the repair's, as it was")
+    try check(far(inside, SIMD3(repeating: 30000.0 / 65535)) < 0.002 && far(at(58, 600), SIMD3(repeating: 30000.0 / 65535)) < 0.002,
+      "the photograph is the repair's, as it was, by its sides too")
+    let arrow = at(55, 505), tab = at(863, 15)
+    try check(far(arrow, SIMD3(0.95, 0.8, 0.55)) < 0.04 && far(tab, sky * 0.9) < 0.06,
+      String(format: "edge print run into the photograph keeps its colour (%.2f %.2f %.2f), and a corner's tab its shape (%.2f %.2f %.2f)",
+        arrow.x, arrow.y, arrow.z, tab.x, tab.y, tab.z))
     // No film's edge found, nothing changes.
     try check(LeakEngine.cleanedEdges(greyed, original: original, picture: [nil, nil, nil, nil]).data == greyed.data,
       "where no film's edge is found the repair is left as it is")

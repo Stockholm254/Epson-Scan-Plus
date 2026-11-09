@@ -379,18 +379,26 @@ final class LeakLab: ObservableObject {
     next.referenceModel = nil
     rebuild(j, next)
   }
-  /// The frame converted as it is now, for a job begun before its conversion changed.
+  /// The frame converted as it is now, for a job begun before its conversion changed. A repair
+  /// fitted on the old conversion is fitted again on the new one, from the same reference, free.
   func reload(origin: LeakJob.Origin) {
     guard var j = job, j.origin?.frame == origin.frame, busy == nil else { return }
+    let refit = params.referenceModel != nil && hasReference
     j.origin = origin
     var next = params
     next.referenceModel = nil
     // The framing is the same, so the landmarks still match.
-    rebuild(j, next, pairs: j.pairs, name: "按当前调色重新载入")
+    rebuild(j, next, pairs: j.pairs, name: "按当前调色重新载入") { if refit { self.fit() } }
+  }
+  /// Whether the job open is `origin`'s frame, converted otherwise than it is now.
+  func stale(for origin: LeakJob.Origin) -> Bool {
+    guard let o = job?.origin, o.frame == origin.frame, o.project == origin.project else { return false }
+    return o.adjustments != origin.adjustments || o.profile != origin.profile
   }
   private static let rebuildLabel = "重建正片预览"
   private var rebuilding: Bool { busy == Self.rebuildLabel }
-  private func rebuild(_ j: LeakJob, _ next: LeakParams, pairs: [LeakPair]? = nil, name: String = "旋转 / 裁切", notice told: String? = nil) {
+  private func rebuild(_ j: LeakJob, _ next: LeakParams, pairs: [LeakPair]? = nil, name: String = "旋转 / 裁切", notice told: String? = nil,
+                       then: (() -> Void)? = nil) {
     run(Self.rebuildLabel) {
       let full = try self.original(j)
       let base = Self.base(full, next)
@@ -406,6 +414,7 @@ final class LeakLab: ObservableObject {
       return {
         self.place(j, base: base, params: next, name: name)
         if !self.hasReference { self.notice = told ?? "方向 / 裁切已更新。点击「开始去漏光」。" }
+        then?()
       }
     }
   }

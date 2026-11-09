@@ -7,6 +7,8 @@ enum SmokeTests {
   static func run() {
     // The models made here start on ② 去色罩, whose conversion they look at; a test of ① goes there.
     AppModel.firstPage = .convert
+    // No test reads the OpenAI key saved in the Keychain (`LeakKeychain.defaultService`).
+    LeakKeychain.defaultService = "local.epscan.test.\(UUID().uuidString)"
     do {
       let pipe = ImagePipeline.shared
       let folder = URL(
@@ -17,6 +19,8 @@ enum SmokeTests {
         guard success else { throw DeskError.message("FAIL: " + message) }
         print("PASS: " + message)
       }
+      try check(LeakCredentials().store.service.hasPrefix("local.epscan.test."),
+        "the self-test reads no key saved in the Keychain: its leak labs look under a service of its own")
       let w = 256
       let h = 128
       var pixels = [UInt8](repeating: 255, count: w * h * 4)

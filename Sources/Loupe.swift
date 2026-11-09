@@ -650,9 +650,10 @@ final class LoupeView: NSView {
     let pose = LoupeRenderer.Pose(
       style: style, center: center, radius: view?.radius ?? radius, lift: view.map { lift / max(1, radius) * $0.radius } ?? lift,
       eye: eye, magnification: magnification, cut: view.map { $0.lens * Self.rim })
-    // While it is carried, one ray a pixel keeps up with the mouse; set down, it is antialiased.
+    // While it is carried, or the frame under it zoomed, one ray a pixel keeps up with the hand;
+    // set down, it is antialiased.
     image = LoupeRenderer.shared.render(
-      frame: frame, scale: window?.backingScaleFactor ?? 2, pose: pose, scene: canvas.loupeScene(), samples: grab == nil ? 4 : 1)
+      frame: frame, scale: window?.backingScaleFactor ?? 2, pose: pose, scene: canvas.loupeScene(), samples: grab == nil && !canvas.zooming ? 4 : 1)
     needsDisplay = true
   }
   override func draw(_ dirtyRect: NSRect) {

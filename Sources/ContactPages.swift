@@ -133,9 +133,10 @@ extension AppModel {
     return (size, cells, stripRects)
   }
 
-  /// The page as the light table shows it: each strip of dark film, its perforations open to the
-  /// table's light, the frames in it as they are (positives, or the negatives as they came), each
-  /// filling its frame, of its `aspect`, its number printed on the rebate above.
+  /// The page as the light table shows it: only the pictures, laid out as on strips of film but
+  /// without the film (pictures of their own files, a copy stand's or imported, have no strip of
+  /// sprocket holes to show), each as it is (positives, or the negatives as they came), filling its
+  /// frame of its `aspect`. Its number is the canvas's, on the label above it.
   static func composeSheet(_ tiles: [(name: String, image: CGImage?, aspect: CGFloat)], pages: Int) -> CGImage? {
     let layout = sheetLayout(aspects: tiles.map(\.aspect), pages: pages)
     let w = Int(layout.size.width), h = Int(layout.size.height)
@@ -145,21 +146,6 @@ extension AppModel {
     else { return nil }
     // Top-left origin, as the layout is.
     func flip(_ r: CGRect) -> CGRect { CGRect(x: r.minX, y: CGFloat(h) - r.maxY, width: r.width, height: r.height) }
-    for strip in layout.strips {
-      ctx.setFillColor(CGColor(srgbRed: 0.13, green: 0.075, blue: 0.045, alpha: 0.97))
-      ctx.addPath(CGPath(roundedRect: flip(strip), cornerWidth: 6, cornerHeight: 6, transform: nil))
-      ctx.fillPath()
-      // The perforations: holes the table's light comes through.
-      ctx.setBlendMode(.clear)
-      for y in [strip.minY + 7, strip.maxY - 7 - 10] {
-        for x in stride(from: strip.minX + 14, to: strip.maxX - 24, by: 26) {
-          ctx.addPath(CGPath(roundedRect: flip(CGRect(x: x, y: y, width: 14, height: 10)), cornerWidth: 2.5, cornerHeight: 2.5, transform: nil))
-        }
-      }
-      ctx.fillPath()
-      ctx.setBlendMode(.normal)
-    }
-    let font = CTFontCreateWithName("Menlo-Bold" as CFString, 15, nil)
     for (i, tile) in tiles.enumerated() where i < layout.cells.count {
       let cell = layout.cells[i]
       ctx.setFillColor(CGColor(srgbRed: 0.05, green: 0.04, blue: 0.035, alpha: 1))
@@ -177,16 +163,6 @@ extension AppModel {
         ctx.draw(image, in: flip(fit))
         ctx.restoreGState()
       }
-      // The frame's number on the rebate above it, as the film's edge print: above where a 3:2
-      // frame's top is, for a lower one too.
-      let text = NSAttributedString(string: "▸ " + tile.name, attributes: [
-        NSAttributedString.Key(kCTFontAttributeName as String): font,
-        NSAttributedString.Key(kCTForegroundColorAttributeName as String): CGColor(srgbRed: 0.98, green: 0.71, blue: 0.4, alpha: 0.9),
-      ])
-      let line = CTLineCreateWithAttributedString(text)
-      let top = layout.strips.first { $0.minY <= cell.minY && cell.maxY <= $0.maxY }.map { $0.midY - sheetCell.height / 2 } ?? cell.minY
-      ctx.textPosition = CGPoint(x: cell.minX + 4, y: CGFloat(h) - (top - 7))
-      CTLineDraw(line, ctx)
     }
     return ctx.makeImage()
   }

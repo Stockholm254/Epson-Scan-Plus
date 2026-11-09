@@ -12,6 +12,7 @@ enum RegressionTests {
     try StraightenTests.run(folder: folder)
     try ToneTests.run(folder: folder)
     try HighlightTests.run(folder: folder)
+    try AutoAdjustTests.run(folder: folder)
     try ContactSheetTests.run(folder: folder)
     try SharpeningTests.run(folder: folder)
     try FilmBaseTests.run(folder: folder)

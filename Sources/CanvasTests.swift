@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 
 /// The canvas from the keyboard and mouse: tool keys, delete while picking points, and the light
@@ -389,5 +390,41 @@ enum CanvasTests {
     zoomCanvas.setZoom(1, anchor: CGPoint(x: 450, y: 300))
     zoomCanvas.display()
     try check(zoomCanvas.zoomDetail == nil, "and back at the whole frame it is let go")
+    // Zoomed past the picture shown but short of the frame's own pixels: the part has as many as
+    // the screen shows, a tenth more, not the frame's own; zoomed further, a finer one.
+    let backing = Double(zoomWindow.backingScaleFactor), fitPixels = Double(zoomCanvas.imageRect.width) * backing
+    func screenAcross() -> Double { Double(zoomCanvas.imageRect.width) * backing }
+    func density(_ d: AppModel.Detail?) -> Double { d.map { Double($0.image.width) / ($0.region.width * screenAcross()) } ?? 0 }
+    func waitForPart(_ ok: (AppModel.Detail) -> Bool) {
+      for _ in 0..<600 where !(zoomCanvas.zoomDetail.map(ok) ?? false) { zoomCanvas.display(); settle(0.05) }
+    }
+    let low = 1.2 * shownWidth / fitPixels
+    zoomCanvas.setZoom(low, anchor: CGPoint(x: 450, y: 300))
+    waitForPart { _ in true }
+    let coarse = zoomCanvas.zoomDetail, coarseDensity = density(coarse), coarseAcross = screenAcross()
+    zoomCanvas.setZoom(low * 1.3, anchor: CGPoint(x: 450, y: 300))
+    waitForPart { $0.scale > (coarse?.scale ?? 1) + 0.01 }
+    let finer = zoomCanvas.zoomDetail, finerDensity = density(finer)
+    // Finer, up to the frame's own pixels, then as many as it has.
+    try check(coarseAcross * 1.1 < 4000 && (coarse?.scale ?? 1) < 0.9 && coarseDensity > 0.98 && coarseDensity < 1.3
+      && (finer?.scale ?? 0) > (coarse?.scale ?? 1) * 1.1 && ((finer?.scale ?? 0) >= 0.999 || finerDensity > 0.98 && finerDensity < 1.3),
+      "zoomed short of the frame's own pixels, the part in view has as many as the screen shows: scale \(coarse.map { String(format: "%.2f", $0.scale) } ?? "none"), \(String(format: "%.2f", coarseDensity)) a screen pixel, then \(finer.map { String(format: "%.2f", $0.scale) } ?? "none"), \(String(format: "%.2f", finerDensity)) zoomed a third again (fit \(Int(fitPixels)) px, shown \(Int(shownWidth)))")
+    zoomCanvas.setZoom(1, anchor: CGPoint(x: 450, y: 300))
+    zoomCanvas.display()
+    // A pinch's every step and 「适合」 change the canvas alone: nothing is published, so the window
+    // is neither updated nor measured again for them, and the zoom's figure follows on its own. The
+    // loupe and the scan head are placed by their frames, out of Auto Layout.
+    zoomed.zoomChanged = { [weak zoomCanvas] in zoomCanvas?.zoomChanged() }
+    var published = 0
+    let watch = zoomed.objectWillChange.sink { _ in published += 1 }
+    let fitted = zoomCanvas.imageRect
+    for k in 1...11 { zoomCanvas.setZoom(1 + Double(k) * 0.3, anchor: CGPoint(x: 600, y: 200)) }
+    let pinched = zoomCanvas.imageRect, figure = zoomed.zoomReadout.text, panned = zoomCanvas.pan
+    zoomed.fitView()
+    watch.cancel()
+    try check(published == 0 && pinched.width > fitted.width * 4 && figure == "4.3×" && panned != .zero
+      && zoomCanvas.imageRect == fitted && zoomCanvas.pan == .zero && zoomed.zoomReadout.text == "1.0×"
+      && !zoomCanvas.loupe.translatesAutoresizingMaskIntoConstraints && !zoomCanvas.scanHead.translatesAutoresizingMaskIntoConstraints,
+      "a pinch and 「适合」 change the canvas alone, publishing nothing (\(published) published, \(figure) shown at 4.3×, back to \(zoomCanvas.imageRect) from \(fitted))")
   }
 }

@@ -11,6 +11,7 @@ struct ScanCanvas: NSViewRepresentable {
     model.frameOpener = { [weak v] id in v?.open(id) }
     model.viewWillChange = { [weak v] change in v?.viewWillChange(change) }
     model.pictureChanged = { [weak v] in v?.modelChanged() }
+    model.zoomChanged = { [weak v] in v?.zoomChanged() }
     return v
   }
   func updateNSView(_ view: FilmCanvasView, context: Context) {
@@ -70,6 +71,10 @@ final class FilmCanvasView: NSView {
     scanHead.canvas = self
     scanHead.isHidden = true
     addSubview(scanHead, positioned: .below, relativeTo: loupe)
+    // Placed by their frames, out of Auto Layout: a frame of theirs changed, the window was laid
+    // out again for the constraints it stood for, 27 ms for each step of a zoom with the loupe out.
+    loupe.translatesAutoresizingMaskIntoConstraints = false
+    scanHead.translatesAutoresizingMaskIntoConstraints = false
   }
   override var wantsDefaultClipping: Bool { true }
   /// Follows the model: on every update of the window, and by itself for each new picture of the
@@ -501,20 +506,21 @@ final class FilmCanvasView: NSView {
         NSColor.black.setFill()
         rect.insetBy(dx: -1, dy: -1).fill()
       } else {
-        let plate = shadowPlate(for: rect.size)
-        plate.draw(
-          in: CGRect(x: rect.minX - Self.plateMargin, y: rect.minY - Self.plateMargin, width: plate.size.width, height: plate.size.height),
-          from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        drawShadowPlate(around: rect)
       }
     }
-    let image = NSImage(cgImage: cg, size: CGSize(width: cg.width, height: cg.height))
-    // A laid-out page's strips lie on the table, its perforations open to the light.
-    image.draw(
-      in: rect, from: .zero, operation: sheet ? .sourceOver : .copy, fraction: 1, respectFlipped: true,
-      hints: [.interpolation: NSImageInterpolation.high])
     // Zoomed in past the picture shown, the part in view from the frame's own pixels over it:
-    // square, once each is two pixels of the screen or more, so a pixel shows as one.
-    if let (detail, area) = zoomDetailInView() {
+    // square, once each is two pixels of the screen or more, so a pixel shows as one. Under one
+    // that covers all of the picture in view the picture shown is not drawn: nothing of it is seen.
+    let zoomed = zoomDetailInView()
+    if zoomed.map({ !$0.1.insetBy(dx: -0.5, dy: -0.5).contains(rect.intersection(visibleRect)) }) ?? true {
+      let image = NSImage(cgImage: cg, size: CGSize(width: cg.width, height: cg.height))
+      // A laid-out page's strips lie on the table, its perforations open to the light.
+      image.draw(
+        in: rect, from: .zero, operation: sheet ? .sourceOver : .copy, fraction: 1, respectFlipped: true,
+        hints: [.interpolation: NSImageInterpolation.high])
+    }
+    if let (detail, area) = zoomed {
       let pixelsPerPixel = area.width * (window?.backingScaleFactor ?? 2) / CGFloat(max(1, detail.width))
       NSImage(cgImage: detail, size: CGSize(width: detail.width, height: detail.height)).draw(
         in: area, from: .zero, operation: .copy, fraction: 1, respectFlipped: true,
@@ -778,30 +784,82 @@ final class FilmCanvasView: NSView {
       if look.opacity > 0 { paintLens(fading.image, in: fading.frame, look) }
     }
   }
-  /// The single frame's black plate and its drop shadow, drawn once for its size. Blurred afresh
-  /// at every draw, the shadow was a good part of the main thread's time for each picture shown,
-  /// and the picture's size stays while a slider moves.
-  private var keptPlate: (size: CGSize, image: NSImage)?
+  /// The single frame's black plate and its drop shadow, made once and stretched to the picture's
+  /// size: away from the corners the shadow is the same all along an edge. Blurred afresh at every
+  /// draw it was a good part of the main thread's time for each picture shown; made once for each
+  /// size, every step of a zoom blurred a new plate as large as the picture, a gigabyte at 8×.
   static let plateMargin: CGFloat = 48
-  func shadowPlate(for size: CGSize) -> NSImage {
-    if let kept = keptPlate, kept.size == size { return kept.image }
-    let m = Self.plateMargin
-    let image = NSImage(size: CGSize(width: size.width + 2 * m, height: size.height + 2 * m), flipped: isFlipped) { _ in
-      NSGraphicsContext.saveGraphicsState()
-      let shadow = NSShadow()
-      shadow.shadowColor = NSColor.black.withAlphaComponent(0.55)
-      shadow.shadowBlurRadius = 18
-      // Drawn into the image the other way up from the view: 5 points up on the screen, as the
-      // view drew it, is down here.
-      shadow.shadowOffset = CGSize(width: 0, height: -5)
-      shadow.set()
-      NSColor.black.setFill()
-      CGRect(x: m, y: m, width: size.width, height: size.height).insetBy(dx: -1, dy: -1).fill()
-      NSGraphicsContext.restoreGraphicsState()
-      return true
+  /// How far along an edge from the picture's corner its shadow still changes.
+  static let plateCorner: CGFloat = 40
+  /// The plate about a small square, for the screen's scale, in nine parts, by rows from the top:
+  /// the corners drawn as they are, the parts between them stretched.
+  private(set) var shadowPlate: (scale: CGFloat, parts: [NSImage])?
+  private func plateParts(scale: CGFloat) -> [NSImage]? {
+    if let kept = shadowPlate, kept.scale == scale { return kept.parts }
+    let m = Self.plateMargin, cap = m + Self.plateCorner, side = 2 * cap + 2
+    let pixels = Int((side * scale).rounded()), capPixels = Int((cap * scale).rounded())
+    guard pixels > 2 * capPixels,
+      let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: pixels, pixelsHigh: pixels, bitsPerSample: 8, samplesPerPixel: 4,
+        hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+    else { return nil }
+    // In points, before the context is made from it.
+    rep.size = CGSize(width: side, height: side)
+    guard let context = NSGraphicsContext(bitmapImageRep: rep) else { return nil }
+    // Drawn the way up the canvas draws, so the shadow falls as it does there.
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(cgContext: context.cgContext, flipped: true)
+    context.cgContext.translateBy(x: 0, y: side)
+    context.cgContext.scaleBy(x: 1, y: -1)
+    Self.paintPlate(CGRect(x: m, y: m, width: side - 2 * m, height: side - 2 * m))
+    NSGraphicsContext.restoreGraphicsState()
+    guard let whole = rep.cgImage else { return nil }
+    let cuts = [0, capPixels, pixels - capPixels, pixels]
+    var parts = [NSImage]()
+    for row in 0..<3 {
+      for column in 0..<3 {
+        let r = CGRect(x: cuts[column], y: cuts[row], width: cuts[column + 1] - cuts[column], height: cuts[row + 1] - cuts[row])
+        guard let part = whole.cropping(to: r) else { return nil }
+        parts.append(NSImage(cgImage: part, size: CGSize(width: r.width / scale, height: r.height / scale)))
+      }
     }
-    keptPlate = (size, image)
-    return image
+    shadowPlate = (scale, parts)
+    return parts
+  }
+  /// The plate and its shadow as they are drawn about `rect`.
+  private static func paintPlate(_ rect: CGRect) {
+    NSGraphicsContext.saveGraphicsState()
+    let shadow = NSShadow()
+    shadow.shadowColor = NSColor.black.withAlphaComponent(0.55)
+    shadow.shadowBlurRadius = 18
+    shadow.shadowOffset = CGSize(width: 0, height: 5)
+    shadow.set()
+    NSColor.black.setFill()
+    rect.insetBy(dx: -1, dy: -1).fill()
+    NSGraphicsContext.restoreGraphicsState()
+  }
+  /// The plate and its shadow under a picture filling `rect`, at the drawing's own scale.
+  func drawShadowPlate(around rect: CGRect) {
+    let m = Self.plateMargin, cap = m + Self.plateCorner
+    let device = NSGraphicsContext.current?.cgContext.userSpaceToDeviceSpaceTransform ?? .identity
+    let scale = max(1, (hypot(device.a, device.b) * 4).rounded() / 4)
+    // Too small to stretch the plate to, it is cheap to blur as it is.
+    guard rect.width >= 2 * Self.plateCorner + 2, rect.height >= 2 * Self.plateCorner + 2, let parts = plateParts(scale: scale) else {
+      return Self.paintPlate(rect)
+    }
+    let xs = [rect.minX - m, rect.minX - m + cap, rect.maxX + m - cap, rect.maxX + m]
+    let ys = [rect.minY - m, rect.minY - m + cap, rect.maxY + m - cap, rect.maxY + m]
+    for row in 0..<3 {
+      for column in 0..<3 {
+        let r = CGRect(x: xs[column], y: ys[row], width: xs[column + 1] - xs[column], height: ys[row + 1] - ys[row])
+        if row == 1 && column == 1 {
+          // The middle is the plate's black, under the picture.
+          NSColor.black.setFill()
+          r.fill()
+        } else {
+          parts[row * 3 + column].draw(in: r, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        }
+      }
+    }
   }
   private func paintLens(_ image: CGImage, in frame: CGRect, _ look: (scale: CGFloat, opacity: CGFloat)) {
     let size = CGSize(width: frame.width * look.scale, height: frame.height * look.scale)
@@ -1364,7 +1422,8 @@ final class FilmCanvasView: NSView {
     if !scanHead.isHidden { scanHead.setNeedsRender() }
   }
   /// The canvas as drawn, without the loupe or the scan head: what they stand on and look through.
-  func tableSnapshot() -> CGImage? {
+  func tableSnapshot(keptWhileZooming: Bool = false) -> CGImage? {
+    if keptWhileZooming, zooming, let kept = snapshot { return kept.image }
     let key = tableKey
     if snapshot?.key != key, bounds.width >= 1, bounds.height >= 1,
       let rep = bitmapImageRepForCachingDisplay(in: bounds)
@@ -1440,7 +1499,7 @@ final class FilmCanvasView: NSView {
   }
   /// The table as drawn, without the loupe: what its skirt and lens look through.
   func loupeScene() -> LoupeRenderer.Scene {
-    var scene = LoupeRenderer.Scene(table: tableSnapshot(), canvas: bounds.size)
+    var scene = LoupeRenderer.Scene(table: tableSnapshot(keptWhileZooming: true), canvas: bounds.size)
     if let shown {
       scene.film = shown
       scene.filmRect = imageRect
@@ -1559,9 +1618,10 @@ final class FilmCanvasView: NSView {
       if let frame = self.model?.selected, self.model?.singleView == true { self.askLoupeRegion(frame) }
     }
   }
-  /// The part of the single frame in view at its full resolution, while zoomed in past the
-  /// picture shown, and where it goes on the canvas; asked for, a moment after the view settles,
-  /// when what there is does not cover the view or is of the frame as it was.
+  /// The part of the single frame in view at its full resolution, or as much of it as the screen
+  /// shows, while zoomed in past the picture shown, and where it goes on the canvas; asked for, a
+  /// moment after the view settles, when what there is does not cover the view, is coarser than
+  /// the screen now or is of the frame as it was.
   private(set) var zoomDetail: AppModel.Detail?
   private var zoomDetailAsked: String?
   private var zoomDetailWait: (key: String, view: NormalRect, work: DispatchWorkItem)?
@@ -1582,11 +1642,16 @@ final class FilmCanvasView: NSView {
     let inView = NormalRect(x: (view.minX - r.minX) / r.width, y: (view.minY - r.minY) / r.height, width: view.width / r.width, height: view.height / r.height)
     let key = model.loupeDetailKey(frame, single: true)
     let current = zoomDetail.flatMap { $0.key == key ? $0 : nil }
-    if current.map({ !$0.region.covers(inView) }) ?? true { askZoomDetail(frame, key: key, around: inView) }
+    // The screen's pixels across the whole picture as it is shown. The part was made with a tenth
+    // more, at most the frame's own: a 61-megapixel frame zoomed to half again its fit rendered
+    // all 61 for a screen of 4, and every draw took them down to it.
+    let across = Double(r.width * (window?.backingScaleFactor ?? 2))
+    let sharp = current.map { $0.scale >= 0.999 || Double($0.image.width) / max(1, $0.region.width * across) >= 0.9 } ?? false
+    if current.map({ !$0.region.covers(inView) }) ?? true || !sharp { askZoomDetail(frame, key: key, around: inView, across: across * 1.1) }
     guard let d = current else { return nil }
     return (d.image, CGRect(x: r.minX + d.region.x * r.width, y: r.minY + d.region.y * r.height, width: d.region.width * r.width, height: d.region.height * r.height))
   }
-  private func askZoomDetail(_ frame: FilmFrame, key: String, around inView: NormalRect) {
+  private func askZoomDetail(_ frame: FilmFrame, key: String, around inView: NormalRect, across: Double) {
     // Redraws that leave the view as it is keep the wait as it is; a moved view starts it again.
     if let w = zoomDetailWait, w.key == key, w.view == inView { return }
     zoomDetailWait?.work.cancel()
@@ -1604,7 +1669,7 @@ final class FilmCanvasView: NSView {
         width: min(1, inView.x + inView.width * (1 + m)) - max(0, inView.x - inView.width * m),
         height: min(1, inView.y + inView.height * (1 + m)) - max(0, inView.y - inView.height * m))
       self.zoomDetailAsked = key
-      model.renderDetail(frame, region: region) { [weak self] detail in
+      model.renderDetail(frame, region: region, across: across) { [weak self] detail in
         guard let self else { return }
         self.zoomDetailAsked = nil
         if let detail { self.zoomDetail = detail }
@@ -1875,13 +1940,53 @@ final class FilmCanvasView: NSView {
     guard old.width > 0, old.height > 0 else { return }
     let n = CGPoint(x: (anchor.x - old.minX) / old.width, y: (anchor.y - old.minY) / old.height)
     // Far enough that a pixel of a 60-megapixel frame is several of the screen's.
+    settingZoom = true
     model?.zoom = clamp(zoom, 0.5, 32)
+    settingZoom = false
     let new = imageRect
     pan.x += anchor.x - (new.minX + n.x * new.width)
     pan.y += anchor.y - (new.minY + n.y * new.height)
     clampPan()
-    needsDisplay = true
+    viewZoomed()
   }
+  /// While `setZoom` sets the model's zoom, which tells the canvas; it follows once the anchor is kept.
+  private var settingZoom = false
+  /// The model's zoom changed, or 「适合」 was asked for (another frame, a test): the canvas follows
+  /// by itself, as the window no longer updates for either.
+  func zoomChanged() {
+    guard !settingZoom, let model else { return }
+    // 「适合」: back in the middle.
+    if lastViewportRevision != model.viewportRevision {
+      pan = .zero
+      lastViewportRevision = model.viewportRevision
+    }
+    clampPan()
+    viewZoomed()
+  }
+  /// What follows the picture's size on the canvas, as an update of the window did when the zoom
+  /// was published: the sampler's cursor, the loupe grown with the frame, the scan head.
+  private func viewZoomed() {
+    zoomingUntil = CACurrentMediaTime() + Self.zoomSettles
+    refreshCursorArea()
+    needsDisplay = true
+    updateLoupe()
+    updateScanHead()
+    if !loupe.isHidden {
+      // Once the zoom stops, the loupe looks through the table as it is then, and sharp.
+      zoomSettle?.cancel()
+      let settle = DispatchWorkItem { [weak self] in self?.loupe.setNeedsRender() }
+      zoomSettle = settle
+      DispatchQueue.main.asyncAfter(deadline: .now() + Self.zoomSettles + 0.01, execute: settle)
+    }
+  }
+  /// While a zoom is under way, and a moment after its last step: the loupe looks through the
+  /// table as it was last taken, one ray a pixel. Taken again for every step, the canvas drawn
+  /// whole once more and sent to the graphics card, a step with the loupe out took four times one
+  /// without; the lens itself shows the frame as it is now all the same.
+  private static let zoomSettles: CFTimeInterval = 0.15
+  private var zoomingUntil: CFTimeInterval = 0
+  private var zoomSettle: DispatchWorkItem?
+  var zooming: Bool { CACurrentMediaTime() < zoomingUntil }
   override func keyDown(with event: NSEvent) {
     if model?.singleView == true, model?.tool == .crop,
       [123, 124, 125, 126].contains(event.keyCode), let crop = model?.canvasCrop

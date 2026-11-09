@@ -126,6 +126,9 @@ struct EpsonScanPlusApp: App {
           .keyboardShortcut("r", modifiers: [.command, .shift]).disabled(model.frames.isEmpty || !model.onRollModule)
         Button("水平镜像") { model.singleView ? model.toggleMirror() : model.mirrorRoll() }
           .disabled(model.frames.isEmpty || !model.onRollModule)
+        // The wand by the title: ②'s, as the capture page shows the raw reading.
+        Button("自动调整") { model.autoAdjust() }.keyboardShortcut("a", modifiers: [.command, .shift])
+          .disabled(model.selected == nil || model.isWorking || model.page != .convert)
         Button("在去漏光里打开") { if let id = model.selectedID { model.openInLeak(id) } }
           .keyboardShortcut("l", modifiers: [.command, .option]).disabled(model.selected == nil || !model.onRollModule)
         Toggle("整卷一起转", isOn: $model.syncOrientation)

@@ -77,12 +77,57 @@ struct StatusLED: View {
       .frame(width: size, height: size)
       .shadow(color: color.opacity(0.8), radius: size * 0.5)
     if lamp == .busy {
-      led.phaseAnimator([1.0, 0.35]) { content, level in content.opacity(level) } animation: { _ in
-        .easeInOut(duration: 0.6)
-      }
+      // Blinked by Core Animation, in the window server. SwiftUI's phase animator updated the
+      // window for it on every frame, in the toolbar laying the toolbar out again each time: two
+      // thirds of the main thread's time while the assistant's lamp waited for one to connect, and
+      // a zoom or a slider waited behind it.
+      BlinkingLamp(lamp: led, size: size).frame(width: size, height: size)
     } else {
       led
     }
+  }
+}
+
+/// A lamp drawn once by SwiftUI, its opacity going from 1 to 0.35 and back every 1.2 s.
+private struct BlinkingLamp<Lamp: View>: NSViewRepresentable {
+  var lamp: Lamp
+  var size: CGFloat
+  final class Host: NSView {
+    let hosting: NSHostingView<Lamp>
+    init(_ lamp: Lamp, size: CGFloat) {
+      hosting = NSHostingView(rootView: lamp)
+      super.init(frame: CGRect(x: 0, y: 0, width: size, height: size))
+      hosting.wantsLayer = true
+      addSubview(hosting)
+      place(size)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+    /// Room round the lamp for its glow, which reaches past it.
+    func place(_ size: CGFloat) {
+      hosting.frame = CGRect(x: 0, y: 0, width: size, height: size).insetBy(dx: -size, dy: -size)
+    }
+    override func viewDidMoveToWindow() {
+      super.viewDidMoveToWindow()
+      blink()
+    }
+    /// Again whenever the view comes into a window: AppKit may take a layer's animations away.
+    func blink() {
+      guard let layer = hosting.layer, layer.animation(forKey: "blink") == nil else { return }
+      let blink = CABasicAnimation(keyPath: "opacity")
+      blink.fromValue = 1.0
+      blink.toValue = 0.35
+      blink.duration = 0.6
+      blink.autoreverses = true
+      blink.repeatCount = .infinity
+      blink.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+      layer.add(blink, forKey: "blink")
+    }
+  }
+  func makeNSView(context: Context) -> Host { Host(lamp, size: size) }
+  func updateNSView(_ view: Host, context: Context) {
+    view.hosting.rootView = lamp
+    view.place(size)
+    view.blink()
   }
 }
 

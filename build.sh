@@ -13,5 +13,17 @@ cp "$project_dir/Info.plist" "$app_dir/Contents/Info.plist"
 # The icon, compiled from Icon/AppIcon.icon by Icon/build-icon.sh.
 cp "$project_dir/Icon/Assets.car" "$project_dir/Icon/AppIcon.icns" "$app_dir/Contents/Resources/"
 xattr -d com.apple.FinderInfo "$app_dir" 2>/dev/null || true
-codesign --force --sign - "$app_dir"
+# Signed with a fixed identity where this Mac has one (Keychain Access → Certificate Assistant →
+# a self-signed root for code signing, named as below): macOS then knows each version as the same
+# app, and the Keychain's 始终允许 for the OpenAI key holds across updates. An ad hoc signature is
+# the build's own hash, a new app to the Keychain every version; it is the fallback.
+identity="${EPSON_SCAN_PLUS_SIGNING_IDENTITY:-Epson Scan plus Signing}"
+if security find-identity -p codesigning 2>/dev/null | grep -qF "\"$identity\""; then
+  codesign --force --sign "$identity" "$app_dir" || {
+    echo "signing with \"$identity\" failed: signed ad hoc instead" >&2
+    codesign --force --sign - "$app_dir"
+  }
+else
+  codesign --force --sign - "$app_dir"
+fi
 printf '%s\n' "$app_dir"
