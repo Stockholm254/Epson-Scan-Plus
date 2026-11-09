@@ -42,10 +42,17 @@ enum OriginalViewTests {
     let found = pipe.baseBalance(negative(base: base), areas: [CGRect(x: 0.1, y: 0, width: 0.8, height: 0.15)], source: "片边")
     let brightest = pipe.baseBalance(negative(base: base, bare: true), areas: [], source: "最亮的胶片")
     func near(_ b: BaseBalance?) -> Bool { b.map { zip($0.level.values, base.values).allSatisfy { abs($0 - $1) < 0.01 } } ?? false }
-    let evenLight = pipe.baseBalance(negative(base: RGB(r: 0.6, g: 0.58, b: 0.62)), areas: [], source: "最亮的胶片")
-    try check(near(found) && near(brightest) && abs((found?.red ?? 0) - log2(0.5 / 0.23)) < 0.05 && abs((found?.blue ?? 0) - log2(0.14 / 0.23)) < 0.05
-      && found?.isEven == false && found?.text.contains("蓝灯调亮约 1.8 档") == true && found?.text.contains("绿灯调亮约 1.1 档") == true
-      && evenLight?.isEven == true && evenLight?.text.contains("配比合适") == true,
+    // Judged in daylight white balance: red and blue as the camera's live view and Capture One
+    // multiply them; a base grey there is right.
+    let daylight = BaseBalance.daylight
+    let evenLight = pipe.baseBalance(negative(base: RGB(r: 0.6 / daylight.r, g: 0.6, b: 0.6 / daylight.b)), areas: [], source: "最亮的胶片")
+    let inDaylight: [Double] = [base.r * daylight.r, base.g, base.b * daylight.b]
+    let top = inDaylight.max()!
+    let turnGreen = String(format: "绿灯调亮约 %.1f 档", log2(top / inDaylight[1])), turnBlue = String(format: "蓝灯调亮约 %.1f 档", log2(top / inDaylight[2]))
+    let readsRight = abs((found?.red ?? 0) - log2(inDaylight[0] / inDaylight[1])) < 0.05 && abs((found?.blue ?? 0) - log2(inDaylight[2] / inDaylight[1])) < 0.05
+    let saysTurns = found?.isEven == false && found?.text.contains(turnBlue) == true && found?.text.contains(turnGreen) == true
+    let evenSaid = evenLight?.isEven == true && evenLight?.text.contains("配比合适") == true
+    try check(near(found) && near(brightest) && readsRight && saysTurns && evenSaid,
       "the base's balance is read where it was found, or as the brightest film past the bare light, and says which light to turn up how far: \(found?.short ?? "-")")
     let good = pipe.exposure(negative(base: base))
     try check(good?.verdict == .good && abs((good?.headroom ?? 0) - log2(0.98 / 0.5)) < 0.1 && (good?.clipped ?? 1) == 0,
@@ -103,9 +110,9 @@ enum OriginalViewTests {
     model.refresh()
     settle { !model.rendering && model.exposureReading != first }
     try check(model.exposureReading?.verdict == .under, "the next frame, a darker copy, reads underexposed: \(model.exposureReading?.short ?? "-")")
-    // A camera's raw picture is shown as the sensor read it (a base the light made even looks
-    // grey); 配平 shows its base a negative's orange on a white light table, red as read. The
-    // readings stay.
+    // A camera's raw picture is shown in daylight white balance by default, as the camera's live
+    // view and Capture One show it (a base the light made grey in daylight looks grey); 原样 shows
+    // it as the sensor read it, green. The readings stay.
     let sensorURL = decoded.appendingPathComponent("COPY0003.tif")
     let greenBase = RGB(r: 0.3, g: 0.62, b: 0.2)
     try pipe.saveTIFF(negative(base: greenBase), to: sensorURL, dpi: 2400)
@@ -114,24 +121,30 @@ enum OriginalViewTests {
     model.select(sensorFrame.id)
     model.refresh()
     settle { !model.rendering && model.baseBalance.map { abs($0.level.g - 0.62) < 0.01 } == true }
+    let daylightPixel = model.displayed.map { pipe.raster($0) }?.pixel(5, 5)
+    let day = BaseBalance.daylight
+    let daylightWant = RGB((0..<3).map { min(1, greenBase.values[$0] * day.values[$0]) }.map(srgb))
+    let wasDaylight = model.preferences.balanceRawView
+    let daylightShown = model.displayed, daylightExposure = model.exposureReading
+    model.setBalanceRawView(false)
+    settle { !model.rendering && model.displayed !== daylightShown }
     let asReadPixel = model.displayed.map { pipe.raster($0) }?.pixel(5, 5)
-    let mask = AppModel.shownMask
-    let balancedWant = RGB((0..<3).map { srgb(0.3 * mask.values[$0] / mask.r) })
-    let wasAsRead = !model.preferences.balanceRawView
-    let asReadShown = model.displayed, asReadExposure = model.exposureReading
-    model.setBalanceRawView(true)
-    settle { !model.rendering && model.displayed !== asReadShown }
-    let balancedPixel = model.displayed.map { pipe.raster($0) }?.pixel(5, 5)
     func close(_ a: RGB?, _ b: RGB) -> Bool { a.map { zip($0.values, b.values).allSatisfy { abs($0 - $1) < 0.02 } } ?? false }
-    try check(wasAsRead && close(asReadPixel, RGB(greenBase.values.map(srgb))) && close(balancedPixel, balancedWant)
-      && asReadExposure != nil && model.exposureReading == asReadExposure,
-      "a camera's raw picture shows as the sensor read it (\(asReadPixel.map { String(format: "%.2f %.2f %.2f", $0.r, $0.g, $0.b) } ?? "-")), and with 配平 its base orange (\(balancedPixel.map { String(format: "%.2f %.2f %.2f", $0.r, $0.g, $0.b) } ?? "-")); the exposure reading the same either way")
+    try check(wasDaylight && close(daylightPixel, daylightWant) && close(asReadPixel, RGB(greenBase.values.map(srgb)))
+      && daylightExposure != nil && model.exposureReading == daylightExposure,
+      "a camera's raw picture shows in daylight white balance (\(daylightPixel.map { String(format: "%.2f %.2f %.2f", $0.r, $0.g, $0.b) } ?? "-")), and with 原样 as the sensor read it (\(asReadPixel.map { String(format: "%.2f %.2f %.2f", $0.r, $0.g, $0.b) } ?? "-")); the exposure reading the same either way")
+    // The base is judged in daylight: grey there is right, whatever the sensor's own balance.
+    let rightLight = BaseBalance(level: RGB(r: 0.62 / day.r, g: 0.62, b: 0.62 / day.b), source: "片边")
+    let thisLight = BaseBalance(level: greenBase, source: "片边")
+    try check(rightLight.isEven && abs(rightLight.red) < 0.01 && !thisLight.isEven && abs(thisLight.red - log2(0.3 * day.r / 0.62)) < 0.01
+      && rightLight.text.contains("日光下是灰"),
+      String(format: "the base is judged in daylight white balance: a base reading red %.2f stops under green is grey there; this one reads %@", log2(1 / day.r), thisLight.short))
     // The camera page's reading of the last picture: the base as the sensor read it.
     // (What the edges found on this made-up picture is not its base band: the two agree, whatever they read.)
     settle { model.lastShotBalance != nil }
     try check(model.lastShotBalance.map { s in s.frame == sensorFrame.name && model.baseBalance.map { zip(s.balance.level.values, $0.level.values).allSatisfy { abs($0 - $1) < 0.02 } } == true } == true,
       "the camera page reads the last picture's base: \(model.lastShotBalance.map { "第 \($0.frame) 张 " + $0.balance.short } ?? "-")")
-    model.setBalanceRawView(false)
+    model.setBalanceRawView(true)
     model.page = .convert
     settle { !model.rendering }
     let converted = model.displayed.map { pipe.raster($0) }?.pixel(5, 5)

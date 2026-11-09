@@ -81,6 +81,9 @@ struct LeakParams: Codable, Equatable {
   var protect: [LeakRegion] = []
   var sceneInfo: LeakScene?
   var referenceModel: LeakModel?
+  /// The film's edge around a frame of the roll cleaned on its own (`LeakEngine.cleanedEdges`):
+  /// nil or true, false to leave it to the reference with the photograph.
+  var filmEdges: Bool?
   init() {}
   init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -97,6 +100,7 @@ struct LeakParams: Codable, Equatable {
     sceneInfo = try c.decodeIfPresent(LeakScene.self, forKey: .sceneInfo)
     // Models from FilmLightLab's earlier revisions are left out; starting again refits them, free.
     referenceModel = (try? c.decodeIfPresent(LeakModel.self, forKey: .referenceModel)).flatMap { $0 }
+    filmEdges = try c.decodeIfPresent(Bool.self, forKey: .filmEdges)
   }
   var hasGlobalColor: Bool { exposure != 0 || temperature != 0 || tint != 0 || contrast != 0 }
 }
@@ -1416,9 +1420,13 @@ extension LeakEngine {
   }
   /// The repaired picture: regions compiled on the base (they are resolution-free), then applied
   /// with the model to `image`, the base for a preview or the full-resolution original for export.
-  static func result(_ image: LeakImage, base: LeakImage, params: LeakParams) throws -> LeakImage {
+  /// With `picture`, about where the photograph lies (`LeakLab.pictureHint`), the film's edge
+  /// found around it on the base is cleaned on its own (`cleanedEdges`).
+  static func result(_ image: LeakImage, base: LeakImage, params: LeakParams, picture: [Double]? = nil) throws -> LeakImage {
     let out = render(image, params, compile(base, params))
-    return try apply(out, params.referenceModel, params)
+    let repaired = try apply(out, params.referenceModel, params)
+    guard params.filmEdges != false, let picture else { return repaired }
+    return cleanedEdges(repaired, original: image, picture: pictureEdges(base, near: picture))
   }
 }
 

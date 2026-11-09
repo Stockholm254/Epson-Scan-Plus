@@ -5,6 +5,31 @@ import SwiftUI
 /// floating over it on glass the camera's focus magnifier and the sharpness above and the focus
 /// controls and the shutter below. On the picture the focus box (click to move it). The last
 /// picture's focus check is in the right panel.
+/// Module ① with the camera: the live view, or the pictures taken as a contact sheet or one at a
+/// time, as the scanner's are shown. The sheet and the frame show each picture in daylight white
+/// balance (日光) or as read (原样), with its exposure.
+struct CaptureViewPicker: View {
+  @ObservedObject var m: AppModel
+  enum Way: Hashable { case live, sheet, single }
+  var body: some View {
+    Picker("视图", selection: Binding(
+      get: { !m.reviewingShots ? Way.live : m.singleView ? .single : .sheet },
+      set: { way in
+        switch way {
+        case .live: m.reviewingShots = false
+        case .sheet: m.reviewingShots = true; m.showSingle(false)
+        case .single: m.reviewingShots = true; m.showSingle(true)
+        }
+      })) {
+      Text("取景").tag(Way.live)
+      Text("接触表").tag(Way.sheet)
+      Text("单张").tag(Way.single)
+    }.pickerStyle(.segmented).labelsHidden().frame(width: 200)
+      .disabled(m.frames.isEmpty && !m.reviewingShots)
+      .help(m.frames.isEmpty ? "拍了照片以后，可以在接触表或单张里看拍好的照片" : "实时取景，或看拍好的照片：接触表 / 单张（⌘1 在两者间切换）")
+  }
+}
+
 struct CameraStage: View {
   @ObservedObject var m: AppModel
   @ObservedObject var camera: CameraController
@@ -74,6 +99,8 @@ struct CameraStage: View {
   /// The camera's focus magnifier, the histogram, and the sharpness.
   @ViewBuilder func topRow(strip: Bool) -> some View {
     HStack(spacing: 10) {
+      // To the pictures taken, on the light table or one at a time, and back.
+      if Liquid.available { drop(CaptureViewPicker(m: m)) } else { CaptureViewPicker(m: m) }
       // The camera's own magnifier: the live view is then that part of the sensor, pixel for pixel.
       if !camera.magnifications.isEmpty {
         let viewing = Picker("对焦放大", selection: Binding(get: { camera.magnification }, set: { camera.magnify($0) })) {
@@ -334,11 +361,11 @@ struct FocusCheck: View {
         VStack(alignment: .leading, spacing: 4) {
           Text("第 \(shot.frame) 张 · 片基偏色").font(.system(size: 11, weight: .medium))
           HStack(spacing: 6) {
-            BaseSwatch(level: shot.balance.level)
+            BaseSwatch(level: shot.balance.balanced)
             Text(shot.balance.short).fixedSize().readout(10)
             InfoButton(text: shot.balance.text, about: "片基偏色")
           }
-        }.help(shot.balance.isEven ? "三个通道的片基一样亮：灯的配比消掉了片基的颜色" : "三个通道的片基不一样亮：点 ⓘ 看哪盏灯调多少，调完再拍一张")
+        }.help(shot.balance.isEven ? "片基在日光白平衡下是灰的：灯的配比消掉了片基的颜色，和取景里看到的一样" : "片基在日光白平衡下还偏色：点 ⓘ 看哪盏灯调多少，调完再拍一张")
       }
       if let url = m.lastCapture {
         Text(url.lastPathComponent).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)

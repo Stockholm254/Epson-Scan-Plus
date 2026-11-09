@@ -103,7 +103,8 @@ struct EpsonScanPlusApp: App {
       }
       CommandMenu("画面") {
         Button("接触表 / 单张") {
-          model.showSingle(!model.singleView)
+          // From the live view, to the pictures taken as they were last looked at.
+          if model.liveViewShown { model.reviewingShots = true } else { model.showSingle(!model.singleView) }
         }.keyboardShortcut("1").disabled(model.previewShowing && !model.singleView || !model.onRollModule)
         Toggle("看片镜", isOn: Binding(get: { model.preferences.showLoupe }, set: { model.toggleLoupe($0) }))
           .keyboardShortcut("l")

@@ -64,16 +64,22 @@ struct BaseBalance: Equatable {
   /// Where it was read, in words: the film at the frame's edges, a base picked by hand, or the
   /// brightest film.
   var source: String
+  /// The white balance the base is to come out grey under: daylight, as the camera's live view at
+  /// its daylight colour temperature and Capture One show the A7R IV's files (Capture One's
+  /// multipliers). A light whose colours make the base grey so is the one the copy is judged by.
+  static let daylight = RGB(r: 2.605, g: 1, b: 1.602)
+  /// The reading under daylight white balance.
+  var balanced: RGB { RGB(r: level.r * Self.daylight.r, g: level.g * Self.daylight.g, b: level.b * Self.daylight.b) }
   /// Channels this close in stops count as even.
   static let even = 0.15
-  /// Stops each channel lies under the brightest of the three.
+  /// Stops each channel lies under the brightest of the three, in daylight.
   var under: [Double] {
-    let top = level.values.max() ?? 1
-    return level.values.map { log2(top / max($0, 1e-4)) }
+    let b = balanced, top = b.values.max() ?? 1
+    return b.values.map { log2(top / max($0, 1e-4)) }
   }
-  /// Red's and blue's stops against green.
-  var red: Double { log2(max(level.r, 1e-4) / max(level.g, 1e-4)) }
-  var blue: Double { log2(max(level.b, 1e-4) / max(level.g, 1e-4)) }
+  /// Red's and blue's stops against green, in daylight.
+  var red: Double { log2(max(balanced.r, 1e-4) / max(balanced.g, 1e-4)) }
+  var blue: Double { log2(max(balanced.b, 1e-4) / max(balanced.g, 1e-4)) }
   var isEven: Bool { (under.max() ?? 0) < Self.even }
   /// In a line, for the bar under the picture.
   var short: String { String(format: "片基 红 %+.1f · 蓝 %+.1f 档", red, blue) }
@@ -82,21 +88,22 @@ struct BaseBalance: Equatable {
     let names = ["红", "绿", "蓝"]
     let levels = (0..<3).map { String(format: "%@ %.0f%%", names[$0], level.values[$0] * 100) }.joined(separator: " · ")
     let room = (0..<3).map { String(format: "%@ %.1f", names[$0], max(0, log2(ExposureReading.top / max(level.values[$0], 1e-4)))) }.joined(separator: " · ")
-    var said = "片基（\(source)）的读数，占满量程：\(levels)；离到顶：\(room) 档。"
-      + String(format: "对绿：红 %+.2f 档，蓝 %+.2f 档。", red, blue)
+    var said = "片基（\(source)）在传感器里的读数，占满量程：\(levels)；离到顶：\(room) 档。"
+      + String(format: "按日光白平衡（红 ×%.2f、蓝 ×%.2f，和相机的取景、C1 打开时一样），对绿：红 %+.2f 档，蓝 %+.2f 档。", Self.daylight.r, Self.daylight.b, red, blue)
     if isEven {
-      said += "三个通道差不到 \(String(format: "%.2f", Self.even)) 档，灯的配比合适。"
+      said += "差不到 \(String(format: "%.2f", Self.even)) 档，片基在日光下是灰的，灯的配比合适。"
     } else {
       let turns = (0..<3).filter { under[$0] >= Self.even }.map { String(format: "%@灯调亮约 %.1f 档", names[$0], under[$0]) }
-      said += "要让三个通道一样亮：" + turns.joined(separator: "、") + "（或把最亮的那盏调暗同样多），再拍一张看。"
+      said += "要让片基在日光下是灰：" + turns.joined(separator: "、") + "（或把最亮的那盏调暗同样多），再拍一张看。"
     }
-    said += "\n\n目的：片基是负片上最亮的地方，三个通道都把它放在接近满量程、又不到顶的地方，每个通道的读数范围都用满，密的地方离噪点最远。读的是传感器原样的读数（不去串色、不除平场）：蓝灯有约三分之一读进绿通道，调蓝灯时绿也会跟着变一点，调完再拍一张看。整体太亮或太暗用曝光调，看左边的曝光指示。"
+    said += "\n\n目的：灯的三种颜色合起来像日光，片基在相机的取景、C1 和这里都是灰的，片基的颜色被灯消掉。读的是传感器原样的读数（不去串色、不除平场），再按日光白平衡算：蓝灯有约三分之一读进绿通道，调蓝灯时绿也会跟着变一点，调完再拍一张看。整体太亮或太暗用曝光调，看左边的曝光指示，它看的是传感器原样的读数。"
     return said
   }
 }
 
-/// The base's colour as the sensor read it, brightened to its brightest channel, beside a neutral
-/// grey as light: alike when the light's three colours make the base even.
+/// The base's colour under daylight white balance (`BaseBalance.balanced`), brightened to its
+/// brightest channel, beside a neutral grey as light: alike when the light's three colours make
+/// the base grey in daylight.
 struct BaseSwatch: View {
   let level: RGB
   static func encoded(_ v: Double) -> Double { v <= 0.0031308 ? 12.92 * v : 1.055 * pow(v, 1 / 2.4) - 0.055 }
@@ -110,7 +117,7 @@ struct BaseSwatch: View {
     }
     .frame(width: 30, height: 14).clipShape(RoundedRectangle(cornerRadius: 3))
     .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.primary.opacity(0.3), lineWidth: 0.5))
-    .help("左：片基在传感器里的颜色（按最亮的通道提亮）；右：一样亮的中性灰。两半一样时，窄带灯三种颜色的配比消掉了片基的颜色")
+    .help("左：片基在日光白平衡下的颜色（按最亮的通道提亮），和相机取景、C1 里看到的一样；右：一样亮的中性灰。两半一样时，窄带灯三种颜色的配比消掉了片基的颜色")
     .accessibilityHidden(true)
   }
 }

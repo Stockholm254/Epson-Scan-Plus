@@ -88,8 +88,11 @@ struct LeakViewer: View {
             .onLongPressGesture(minimumDuration: .infinity, maximumDistance: 60, perform: {}, onPressingChanged: { lab.holdOriginal = $0 })
             .accessibilityAddTraits(.isButton).help("按住时显示原片，松开回到当前对比")
         }
-        Text(lab.notice).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-          .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+        // At most three lines, the whole of it under the pointer. Left to take its full height, it
+        // is measured for the window's minimum at no width, a character to a line: a repair's
+        // 72-character notice made the page taller than the window, the strip pushed out of it.
+        Text(lab.notice).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1...3)
+          .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled).help(lab.notice)
       }.padding(.horizontal, 16).padding(.vertical, 10)
     }.background(Hardware.adaptive(NSColor(red: 0.105, green: 0.11, blue: 0.115, alpha: 1), NSColor(white: 0.93, alpha: 1)).opacity(Hardware.glass ? 0.45 : 1))
   }
@@ -304,6 +307,15 @@ struct LeakPanel: View {
         "保留灯光红晕和真实红色物体",
         isOn: Binding(get: { lab.params.protectHighlights }, set: { v in lab.change("保留灯光红晕") { $0.protectHighlights = v } })
       ).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11)).disabled(!lab.hasBase || lab.busy != nil)
+      // A frame of the roll, whose de-masking region says where the photograph is: the film's edge
+      // around it is cleaned on its own.
+      if LeakLab.pictureHint(lab.job, lab.params) != nil {
+        Toggle(
+          "片边去漏光，边字保留",
+          isOn: Binding(get: { lab.params.filmEdges != false }, set: { v in lab.change("片边去漏光") { $0.filmEdges = v ? nil : false } })
+        ).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11)).disabled(!lab.hasBase || lab.busy != nil)
+          .help("照片外一圈片边单独处理：参考图里没有片边，不按它校正；片边压回片基的黑，贴着胶片边的亮线和整条的漏光去掉，边字保留原来的颜色。照片和片边的分界在这张的去色罩区域附近找，找不到的那一边不动。")
+      }
       VStack(spacing: 3) {
         HStack {
           Text("去偏色强度").font(.system(size: 12)).foregroundStyle(.secondary)

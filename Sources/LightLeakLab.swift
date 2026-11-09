@@ -92,7 +92,7 @@ final class LeakLab: ObservableObject {
   private var generation = 0
   /// The preview asked for last, not yet begun (`previewLock`): a fader dragged asks for one each
   /// step, and the queue takes the newest when its turn comes.
-  private var wantedPreview: (id: Int, base: LeakImage, baseRevision: Int, params: LeakParams)?
+  private var wantedPreview: (id: Int, base: LeakImage, baseRevision: Int, params: LeakParams, picture: [Double]?)?
   private var previewQueued = false
   private let previewLock = NSLock()
   /// The newest preview shown, and the oldest that may be: a fit or a generation sets it past the
@@ -237,6 +237,37 @@ final class LeakLab: ObservableObject {
     notice = repaired ? "已应用去漏光。拖动对比滑杆检查效果。"
       : j.guide != nil ? "已有参考图，点击「开始去漏光」在本地免费修复。" : "确认照片方向后，点击「开始去漏光」。"
     preview()
+  }
+  /// About where the photograph lies in the job's picture, as left, top, right, bottom (0–1): the
+  /// frame's de-masking region, drawn on the roll about the photograph, turned as its positive is,
+  /// then as the job turns and crops it. Nil for an imported file, or a frame without one.
+  static func pictureHint(_ job: LeakJob?, _ params: LeakParams) -> [Double]? {
+    guard let origin = job?.origin, let r = origin.adjustments.analysisRegion, let meta = job?.meta else { return nil }
+    let s = origin.adjustments
+    // The positive is turned; straightening reads the unturned picture's shape.
+    let turned = Double(meta.width) / Double(max(1, meta.height))
+    let aspect = (((s.rotation % 4) + 4) % 4) % 2 == 1 ? 1 / turned : turned
+    let corners = [(r.x, r.y), (r.x + r.width, r.y), (r.x, r.y + r.height), (r.x + r.width, r.y + r.height)].map { c -> (Double, Double) in
+      let d = ImageGeometry.display(CGPoint(x: c.0, y: c.1), settings: s, aspect: aspect)
+      var (u, v) = (Double(d.x), Double(d.y))
+      // As `LeakEngine.cropped` turns the positive (degrees clockwise) and cuts it.
+      switch ((params.rotation % 360) + 360) % 360 {
+      case 90: (u, v) = (1 - v, u)
+      case 180: (u, v) = (1 - u, 1 - v)
+      case 270: (u, v) = (v, 1 - u)
+      default: break
+      }
+      let c = params.crop
+      u = (u - c.x) / max(1e-6, c.w)
+      v = (v - c.y) / max(1e-6, c.h)
+      if let degrees = c.angle, abs(degrees) > 0.0001 {
+        let k = ImageGeometry.keep(degrees, aspect: c.w * turned / max(1e-6, c.h))
+        (u, v) = (0.5 + (u - 0.5) / k, 0.5 + (v - 0.5) / k)
+      }
+      return (u, v)
+    }
+    let xs = corners.map(\.0), ys = corners.map(\.1)
+    return [xs.min()!, ys.min()!, xs.max()!, ys.max()!]
   }
   static func base(_ full: LeakImage, _ params: LeakParams) -> LeakImage {
     LeakEngine.resized(LeakEngine.cropped(full, rotation: params.rotation, crop: params.crop), width: 1800)
@@ -687,7 +718,7 @@ final class LeakLab: ObservableObject {
     updating = false
     run("拟合原片引导的边缘感知匹配") {
       let fitted = try LeakEngine.fitReference(base: base, guide: guide, params: input, pairs: j.pairs ?? [], baseID: baseID)
-      let out = try LeakEngine.result(base, base: base, params: fitted)
+      let out = try LeakEngine.result(base, base: base, params: fitted, picture: Self.pictureHint(j, fitted))
       return {
         let next = self.merged(fitted, over: input)
         if recorded { self.set(next, name: "开始去漏光", step: nil) } else { self.params = next }
@@ -853,7 +884,7 @@ final class LeakLab: ObservableObject {
     } catch {
       warning = "参考图已生成并保存，但未自动应用：\(error.localizedDescription)。请检查后在本地重新应用，无需再次调用 API。"
     }
-    let out = try LeakEngine.result(base, base: base, params: params)
+    let out = try LeakEngine.result(base, base: base, params: params, picture: Self.pictureHint(j, params))
     DispatchQueue.main.async {
       self.dropPreviews()
       self.updating = false
@@ -898,7 +929,7 @@ final class LeakLab: ObservableObject {
     generation += 1
     updating = true
     previewLock.lock()
-    wantedPreview = (generation, base, baseRevision, params)
+    wantedPreview = (generation, base, baseRevision, params, Self.pictureHint(job, params))
     let queued = previewQueued
     previewQueued = true
     previewLock.unlock()
@@ -912,7 +943,7 @@ final class LeakLab: ObservableObject {
     previewLock.unlock()
     guard let w = wanted else { return }
     var out: LeakImage?, failure: String?
-    do { out = try LeakEngine.result(w.base, base: w.base, params: w.params) } catch { failure = error.localizedDescription }
+    do { out = try LeakEngine.result(w.base, base: w.base, params: w.params, picture: w.picture) } catch { failure = error.localizedDescription }
     let picture = out.map { $0.cgImage() }
     DispatchQueue.main.async {
       guard w.id >= self.previewFloor, w.id > self.shownPreview, w.baseRevision == self.baseRevision else { return }
@@ -940,7 +971,7 @@ final class LeakLab: ObservableObject {
     run("读取全分辨率像素") {
       let full = LeakEngine.cropped(try self.original(j), rotation: input.rotation, crop: input.crop)
       self.onMain { self.busy = "应用去漏光到全分辨率" }
-      let out = try LeakEngine.result(full, base: base, params: input)
+      let out = try LeakEngine.result(full, base: base, params: input, picture: Self.pictureHint(j, input))
       try out.saveTIFF(to: url)
       let folder = url.deletingLastPathComponent(), stem = url.deletingPathExtension().lastPathComponent
       var jpg = folder.appendingPathComponent(stem + ".jpg"), n = 1

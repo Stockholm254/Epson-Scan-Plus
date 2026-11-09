@@ -349,6 +349,11 @@ final class AppModel: ObservableObject {
     }
   }
   @Published var captureSource = CaptureSource.scanner
+  /// Module ① with the camera: the pictures taken looked at, as a contact sheet or one at a time
+  /// as the scanner's are, instead of the live view.
+  @Published var reviewingShots = false
+  /// Module ① shows the camera's live view.
+  var liveViewShown: Bool { page == .capture && captureSource == .camera && !reviewingShots }
   /// The library tab's rolls, search and filter, kept while other modules are shown.
   let shelf = LibraryShelf()
   /// 新建工程 was chosen: a project with nothing in it yet, whose folder the first preview, picture
@@ -1375,7 +1380,7 @@ final class AppModel: ObservableObject {
     baseFlash = nil
     canvasNote = nil
     let r = selected?.rect
-    guard singleView, !(page == .capture && captureSource == .camera), let f = selected,
+    guard singleView, !liveViewShown, let f = selected,
       let i = frames.firstIndex(where: { $0.id == f.id }), isSinglePicture(f), f.adjustments.inputIsNegative,
       f.adjustments.base == nil, f.adjustments.rollBasePicked != true, let look = f.edgeBase, let r,
       abs(r.x) < 1e-3, abs(r.y) < 1e-3, abs(r.width - 1) < 1e-3, abs(r.height - 1) < 1e-3
@@ -2501,7 +2506,7 @@ final class AppModel: ObservableObject {
           self.step(0.2, "排接触表", token)
           let tiles = zip(page, aspects).map { f, aspect -> (name: String, image: CGImage?, aspect: CGFloat) in
             (f.name, positive ? positives[f.id]
-              : original ? (try? self.dustFreeSource(for: f, full: false, maxDimension: 480)).flatMap { ImagePipeline.shared.original($0, settings: f.adjustments, oriented: false, gains: self.rawGains(f, balance: self.baseBalance(of: f, raw: $0))) }
+              : original ? (try? self.dustFreeSource(for: f, full: false, maxDimension: 480)).flatMap { ImagePipeline.shared.original($0, settings: f.adjustments, oriented: false, gains: self.rawGains(f)) }
               : (try? self.source(for: f, maxDimension: 480)).map { ImagePipeline.shared.neutralNegative($0, settings: f.adjustments) }, aspect)
           }
           let sheet = Self.composeSheet(tiles, pages: pages)
@@ -2790,7 +2795,7 @@ final class AppModel: ObservableObject {
       var shown = frame.adjustments
       if edit { shown.angle = nil }
       let balance = baseBalance(of: frame, raw: raw)
-      guard let output = ImagePipeline.shared.original(context?.image ?? raw, settings: shown, oriented: true, gains: rawGains(frame, balance: balance)) else {
+      guard let output = ImagePipeline.shared.original(context?.image ?? raw, settings: shown, oriented: true, gains: rawGains(frame)) else {
         throw DeskError.message("无法生成预览")
       }
       let exposure = ImagePipeline.shared.exposure(raw)
@@ -2830,19 +2835,15 @@ final class AppModel: ObservableObject {
       ? ImagePipeline.shared.baseBalance(raw, areas: picked.map { [$0.insetBy(dx: -0.004, dy: -0.004)] } ?? [], source: picked == nil ? "最亮的胶片" : "手动取样")
       : ImagePipeline.shared.baseBalance(raw, areas: edges, source: "片边")
   }
-  /// What a colour negative's base looks like on a white light table, in linear light against its
-  /// red: the orange of a C-41 mask, green about 0.4 D and blue about 0.65 D denser than red. Only
-  /// for the screen, so a typical mask rather than this film's.
-  static let shownMask = RGB(r: 1, g: 0.4, b: 0.22)
-  /// The gains ① shows a camera's raw picture with, for the screen only: a sensor reads green about
-  /// twice as strongly as red and blue, and its file is not white balanced, so the raw picture as
-  /// read is green. The base is shown as a negative's orange on a white light table, a slide's
-  /// brightest film white; red kept as read. Nil for scans (the scanner balances to its lamp),
-  /// imports, or with 原样 chosen. The exposure and the base readings stay the sensor's own.
-  func rawGains(_ frame: FilmFrame, balance: BaseBalance?) -> RGB? {
-    guard preferences.balanceRawView, frame.sensorRead == true, let level = balance?.level, level.values.allSatisfy({ $0 > 1e-4 }) else { return nil }
-    let target = frame.adjustments.isSlide ? RGB(r: 1, g: 1, b: 1) : Self.shownMask
-    return RGB((0..<3).map { c in min(16, max(1.0 / 16, (target.values[c] / target.r) * (level.r / level.values[c]))) })
+  /// The gains ① shows a camera's raw picture with, for the screen only: its file is not white
+  /// balanced, and a sensor reads green about twice as strongly as red and blue, so the raw
+  /// picture as read is green. 日光 shows it in daylight white balance (`BaseBalance.daylight`),
+  /// as the camera's live view and Capture One show it, green as read: a base the light makes grey
+  /// in daylight looks grey. Nil for scans (the scanner balances to its lamp), imports, or with
+  /// 原样 chosen. The exposure and the base readings stay the sensor's own.
+  func rawGains(_ frame: FilmFrame) -> RGB? {
+    guard preferences.balanceRawView, frame.sensorRead == true else { return nil }
+    return BaseBalance.daylight
   }
   /// The film base's balance in the last picture taken, for the camera page, where ① shows the
   /// live view: read once the picture's edges have been looked at.
@@ -2866,7 +2867,7 @@ final class AppModel: ObservableObject {
       }
     }
   }
-  /// 原样 or 配平 for ①'s raw pictures; the strip's made again.
+  /// 原样 or 日光 for ①'s raw pictures; the strip's made again.
   func setBalanceRawView(_ on: Bool) {
     guard preferences.balanceRawView != on else { return }
     preferences.balanceRawView = on
@@ -2917,7 +2918,7 @@ final class AppModel: ObservableObject {
       guard let self else { return }
       let made = wanted.compactMap { f -> (UUID, String, CGImage)? in
         guard let raw = try? self.dustFreeSource(for: f, full: false, maxDimension: 320),
-          let small = ImagePipeline.shared.original(raw, settings: f.adjustments, oriented: true, gains: self.rawGains(f, balance: self.baseBalance(of: f, raw: raw)))
+          let small = ImagePipeline.shared.original(raw, settings: f.adjustments, oriented: true, gains: self.rawGains(f))
         else { return nil }
         return (f.id, Self.rawThumbnailKey(f, balanced: balanced), small)
       }
