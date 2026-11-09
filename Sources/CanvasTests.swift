@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import SwiftUI
 import Foundation
 
 /// The canvas from the keyboard and mouse: tool keys, delete while picking points, and the light
@@ -426,5 +427,23 @@ enum CanvasTests {
       && zoomCanvas.imageRect == fitted && zoomCanvas.pan == .zero && zoomed.zoomReadout.text == "1.0×"
       && !zoomCanvas.loupe.translatesAutoresizingMaskIntoConstraints && !zoomCanvas.scanHead.translatesAutoresizingMaskIntoConstraints,
       "a pinch and 「适合」 change the canvas alone, publishing nothing (\(published) published, \(figure) shown at 4.3×, back to \(zoomCanvas.imageRect) from \(fitted))")
+    // The zoom's figure keeps its own size in the bars under the picture, however much room they
+    // are given: an AppKit view hugs loosely, and stretched, it took the glass bar round it up over
+    // half the picture (0.16.0).
+    let bars = NSHostingView(rootView: ContentView(m: zoomed).bottomBars(compact: false).frame(width: 1500, height: 900))
+    let barWindow = NSWindow(contentRect: NSRect(x: -9000, y: -9000, width: 1500, height: 900), styleMask: [.borderless], backing: .buffered, defer: false)
+    barWindow.contentView = bars
+    bars.layoutSubtreeIfNeeded()
+    settle(0.2)
+    func zoomFigure(in view: NSView) -> ZoomFigure? {
+      if let found = view as? ZoomFigure { return found }
+      return view.subviews.lazy.compactMap { zoomFigure(in: $0) }.first
+    }
+    let barFigure = zoomFigure(in: bars)
+    let own: CGSize = barFigure?.intrinsicContentSize ?? .zero, given: CGSize = barFigure?.frame.size ?? .zero
+    let keepsOwn = barFigure != nil && abs(given.width - own.width) < 0.5 && abs(given.height - own.height) < 0.5
+    try check(keepsOwn,
+      "the zoom's figure keeps its own size in the bars under the picture: \(barFigure == nil ? "not shown" : "\(given)") for \(own) (single \(zoomed.singleView), original \(zoomed.showsOriginal))")
+    barWindow.contentView = nil
   }
 }

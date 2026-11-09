@@ -3969,10 +3969,19 @@ struct ZoomReadoutLabel: NSViewRepresentable {
   func makeNSView(context: Context) -> ZoomFigure {
     let figure = ZoomFigure()
     figure.toolTip = "相对适合窗口的缩放倍率"
+    for axis in [NSLayoutConstraint.Orientation.horizontal, .vertical] {
+      figure.setContentHuggingPriority(.required, for: axis)
+      figure.setContentCompressionResistancePriority(.required, for: axis)
+    }
     return figure
   }
   func updateNSView(_ figure: ZoomFigure, context: Context) {
     readout.figure = figure
     figure.text = readout.text
+  }
+  /// Its own size, whatever room it is offered: an AppKit view hugs loosely, so SwiftUI stretched
+  /// it over the free room under the picture, and the glass bar round it with it.
+  func sizeThatFits(_ proposal: ProposedViewSize, nsView: ZoomFigure, context: Context) -> CGSize? {
+    nsView.intrinsicContentSize
   }
 }
