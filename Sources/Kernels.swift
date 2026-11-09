@@ -75,7 +75,7 @@ enum Kernels {
   /// The conversion the `negative` kernels share, up to its final clip: the tones (`graded`) and the
   /// saturation, in one order or the other.
   private static let conversion = """
-    #define NEGATIVE_ARGS float3 base, float3 slope, float3 toe, float3 gain, float3 balance, float4 levels, float4 tone, float4 color, float4 ends, float inverted, float2 fade, float4 lights, float4 shoulder, float encode
+    #define NEGATIVE_ARGS float3 base, float3 slope, float3 toe, float3 gain, float3 balance, float4 levels, float4 tone, float4 color, float4 ends, float inverted, float4 fade, float4 lights, float4 shoulder, float encode
     #define NEGATIVE_PASS base, slope, toe, gain, balance, levels, tone, color, ends, inverted, fade, lights, shoulder, encode
 
     // Saturation (tone.w) about each pixel's lightness, more in the shadows (ends.z).
@@ -113,12 +113,23 @@ enum Kernels {
       // Shadow warmth (color.z): red up and blue down by up to 0.2 in the dark tones, all of it at a
       // lightness of 0.2 and none over 0.55, so the sunlit greys keep their balance; none at black
       // either, which took no light to colour and would only turn red.
+      // Shadow tint (fade.z), in the same tones: green up and red and blue down (negative), or the
+      // other way, by up to 0.2 in green, the shape of the overall tint doubled. It only takes out
+      // the opposite cast: green goes where green lies under red and blue's mean (violet haze,
+      // magenta shade), by 0.05 in full, so grass and neutral sand stay as they are; magenta
+      // where green lies over it. The cast is read as shown, warmth and tint included; shadow
+      // warmth moves red and blue alike either way, so it leaves the cast as it was.
+      // `ImagePipeline.shadowBalance` solves the two for a picked grey in shadow; keep them alike.
       float l = dot(q, float3(0.2126, 0.7152, 0.0722));
       float dark = smoothstep(0.03, 0.2, l) * (1.0 - smoothstep(0.2, 0.55, l));
-      q += float3(color.z * 0.2 * dark, 0.0, -color.z * 0.2 * dark);
       // Warmth (color.x) and tint (color.y), white balance as much as the picked grey's: they fade
       // in with it, so film that took no light stays a neutral black in a warm or a cool print.
-      q += faded * float3(color.x * 0.12 + color.y * 0.05, -color.y * 0.10, -color.x * 0.12 + color.y * 0.05);
+      float3 balanced = faded * float3(color.x * 0.12 + color.y * 0.05, -color.y * 0.10, -color.x * 0.12 + color.y * 0.05);
+      float violet = (q.r + q.b) * 0.5 - q.g + (balanced.r + balanced.b) * 0.5 - balanced.g;
+      float opposite = smoothstep(0.0, 0.05, fade.z < 0.0 ? violet : -violet);
+      q += float3(color.z * 0.2 * dark, 0.0, -color.z * 0.2 * dark);
+      q += float3(fade.z * 0.1, -fade.z * 0.2, fade.z * 0.1) * dark * opposite;
+      q += balanced;
       q = (q - float3(0.5)) * tone.z + float3(0.5);
       if (first) { q = saturated(q, tone, ends); }
       return q;

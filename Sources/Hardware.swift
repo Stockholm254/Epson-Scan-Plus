@@ -279,6 +279,7 @@ struct Fader: View {
     "冷 ↔ 暖": [cool, grey(0.62), warm],
     "绿 / 洋红": [green, grey(0.62), magenta],
     "阴影冷暖": [Color(red: 0.12, green: 0.22, blue: 0.48), grey(0.25), Color(red: 0.48, green: 0.3, blue: 0.1)],
+    "阴影色调": [Color(red: 0.14, green: 0.4, blue: 0.18), grey(0.25), Color(red: 0.42, green: 0.14, blue: 0.38)],
     "曝光 · EV": [grey(0.06), grey(0.5), grey(0.95)],
     "曝光": [grey(0.06), grey(0.5), grey(0.95)],
     "高光": [grey(0.62), grey(1)],

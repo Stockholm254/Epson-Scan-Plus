@@ -158,7 +158,7 @@ final class FilmCanvasView: NSView {
   var samplingCursor: NSCursor? {
     switch model?.tool {
     case .base: return Self.filledDropper
-    case .neutral, .calibrate: return Self.dropper
+    case .neutral, .shadowNeutral, .calibrate: return Self.dropper
     case .it8, .dust: return .crosshair
     default: return nil
     }
@@ -1922,7 +1922,7 @@ final class FilmCanvasView: NSView {
       let key = event.charactersIgnoringModifiers?.lowercased(),
       let tool = CanvasTool.allCases.first(where: { $0.shortcut == key }),
       // The pickers belong to taking the mask off; capturing has only the frame tools.
-      model?.page != .capture || ![CanvasTool.base, .neutral, .region].contains(tool)
+      model?.page != .capture || ![CanvasTool.base, .neutral, .shadowNeutral, .region].contains(tool)
     {
       model?.useTool(tool)
     } else {

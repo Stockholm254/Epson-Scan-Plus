@@ -516,7 +516,7 @@ final class ImagePipeline {
     let scale = min(1, Double(Self.reachDimension) / Double(max(image.width, image.height)))
     let ci = CIImage(cgImage: image, options: [.colorSpace: NSNull()]).transformed(by: CGAffineTransform(scaleX: scale, y: scale))
     var plain = s
-    (plain.exposure, plain.contrast, plain.warmth, plain.tint, plain.shadowWarmth, plain.black, plain.white) = (0, 1, 0, 0, nil, 0, 1)
+    (plain.exposure, plain.contrast, plain.warmth, plain.tint, plain.shadowWarmth, plain.shadowTint, plain.black, plain.white) = (0, 1, 0, 0, nil, nil, 0, 1)
     guard let tones = toned.apply(extent: ci.extent, arguments: Self.arguments(ci, plain, profile, a)) else { return nil }
     // Each pixel's brightest channel, counted in `n` steps from `lo` to `lo + span`, past them in the end steps.
     let n = 2048, lo = -1.0, span = 4.0
@@ -724,7 +724,7 @@ final class ImagePipeline {
       s.softEndsOn && s.inputIsNegative
         ? CIVector(x: Self.softToe, y: Self.softShoulder, z: Self.shadowColour, w: Self.highlightColour) : CIVector(x: 0, y: 2, z: 0, w: 0),
       s.inputIsNegative ? 1.0 : 0.0,
-      CIVector(x: a.fade, y: a.fadeAtGrey),
+      CIVector(x: a.fade, y: a.fadeAtGrey, z: s.shadowTintAmount, w: 0),
       CIVector(x: s.shadowsAmount, y: s.highlightsAmount, z: s.pressHighlightsAmount, w: Self.highlightLightness),
       Self.shoulder(s, a),
       s.inputIsNegative ? 1.0 : 1 / (s.isSlide ? Self.slideEncoding : max(s.inputGamma, 0.1)),
@@ -733,6 +733,51 @@ final class ImagePipeline {
   /// The power a slide's linear light is encoded with for the screen: its picture as it lies on a
   /// light box, in the output's gamma.
   static let slideEncoding = 2.2
+  /// The shadow warmth and shadow tint that make `reading`, a point of `s`'s film as read (the
+  /// neutral picker's reading), come out grey: the kernel's tones up to its dark-tone controls,
+  /// worked out here for the one point, then the two solved so red, green and blue meet there.
+  /// Contrast and saturation after them keep a grey grey. Nil where the dark tones' weight there is
+  /// under 0.15, too dark or too light for the controls to reach; each clamped to −1…1, `reached`
+  /// false when one had to be.
+  static func shadowBalance(_ reading: RGB, settings s: Adjustments, profile: FilmProfile, analysis a: ToneAnalysis)
+    -> (warmth: Double, tint: Double, reached: Bool)?
+  {
+    let span = max(a.high - a.low, 0.000001)
+    var q = [Double](repeating: 0, count: 3)
+    var faded = 1.0
+    if s.inputIsNegative {
+      let fine = s.baseFine ?? .zero
+      let (slopes, toe) = (Self.slopes(s, profile).slopes, Self.toe(s, profile))
+      let e = (0..<3).map { c -> Double in
+        let base = max(0.0001, a.base.values[c]) * pow(2, fine.values[c])
+        let u = log(max(base, 0.000001) / max(reading.values[c], 0.000001)) * (s.inputGamma / 2.302585093) / slopes.values[c]
+        return FilmToe.exposure(u, width: toe.values[c])
+      }
+      if a.fade > 0 { faded = min((1 - exp(-max(e.reduce(0, +) / 3, 0) / a.fade)) / a.fadeAtGrey, 1) }
+      q = (0..<3).map { (e[$0] * a.gain.values[$0] + a.balance.values[$0] * faded + s.exposure * 0.30103 - a.low) / max(span, 0.001) }
+    } else {
+      let encode = 1 / (s.isSlide ? Self.slideEncoding : max(s.inputGamma, 0.1))
+      q = (0..<3).map { c in
+        let t = (pow(max(reading.values[c], 0.000001), s.inputGamma) * a.gain.values[c] + a.balance.values[c] - a.low) / span * pow(2, s.exposure)
+        return (t < 0 ? -1 : 1) * pow(abs(t), encode)
+      }
+    }
+    q = q.map { ($0 - s.black) / max(s.white - s.black, 0.01) }
+    func smooth(_ from: Double, _ to: Double, _ x: Double) -> Double { let t = clamp((x - from) / (to - from)); return t * t * (3 - 2 * t) }
+    let l = 0.2126 * q[0] + 0.7152 * q[1] + 0.0722 * q[2]
+    let dark = smooth(0.03, 0.2, l) * (1 - smooth(0.2, 0.55, l))
+    guard dark >= 0.15 else { return nil }
+    // Warmth and tint come after the dark-tone controls, all of them added, so where they leave it.
+    let c = [q[0] + faded * (s.warmth * 0.12 + s.tint * 0.05), q[1] - faded * s.tint * 0.10, q[2] + faded * (-s.warmth * 0.12 + s.tint * 0.05)]
+    // Warmth moves red and blue apart by 0.4 per unit of `dark`; tint green from their mean by 0.3,
+    // as far as the point's own cast lets it (the kernel's `opposite`): green only where green is
+    // under red and blue's mean, magenta only where it is over.
+    let violet = (c[0] + c[2]) / 2 - c[1]
+    let opposite = smooth(0, 0.05, abs(violet))
+    // Within a level of grey in green already, it is left: the gate there would ask for any amount.
+    let warmth = (c[2] - c[0]) / (0.4 * dark), tint = abs(violet) < 0.004 ? 0 : -violet / (0.3 * dark * max(opposite, 0.001))
+    return (clamp(warmth, -1, 1), clamp(tint, -1, 1), abs(warmth) <= 1 && abs(tint) <= 1)
+  }
   /// A slide's white balance and ends, in its linear light, as the kernel's positive path takes them
   /// (each channel's gain and black, then the ends; `Adjustments.reversal`). The slide's colour is
   /// its picture, so with nothing picked and auto white balance off it stays as it is, the light

@@ -29,7 +29,7 @@ enum MCPTools {
   ]
   static let tools: [Tool] = conversionTools + leakTools
   private static let conversionTools: [Tool] = [
-    Tool(name: "get_state", description: "读取当前工程和选中画面的转换状态：胶片预设与各通道斜率、片基 RGB 及来源、整卷估计、白平衡、色阶、影调、扫描与对齐信息，以及负片密度和正片各通道的百分位与溢出比例；sdr_range 给出进入两端之前（色阶黑点为 0、白点为 1）白点以上的比例、最亮 0.1% 的位置和高出白点几档、屏幕上从哪里起是纯白或纯黑，以及屏幕上纯白、纯黑的比例。还有：画面的裁切、拉直、来源文件、是否从传感器读出和去串色、手动取过哪些点；预设的类型和说明（适用条件写在里面），这一卷关了「用标定」时 preset 是转换实际用的胶片，roll_preset 是这一卷选的标定预设；frame.flat_field 是这张除的平场（来自哪张空白帧或光源标定、名字、最暗处的比例）；slopes_in_use 是转换实际用的斜率和它来自哪里（标定预设、整卷估计或预设）；analysis 是自动分析实际定出的片基、白平衡、色阶两端（对数曝光）和高光伸到多远；tone 里的高光、阴影、去色噪；roll 是整卷同一白平衡 / 色阶、去串色和标定点数。调整前先调用。", properties: [:]),
+    Tool(name: "get_state", description: "读取当前工程和选中画面的转换状态：胶片预设与各通道斜率、片基 RGB 及来源、整卷估计、白平衡、色阶、影调、扫描与对齐信息，以及负片密度和正片各通道的百分位与溢出比例；sdr_range 给出进入两端之前（色阶黑点为 0、白点为 1）白点以上的比例、最亮 0.1% 的位置和高出白点几档、屏幕上从哪里起是纯白或纯黑，以及屏幕上纯白、纯黑的比例。还有：画面的裁切、拉直、来源文件、是否从传感器读出和去串色、手动取过哪些点；预设的类型和说明（适用条件写在里面），这一卷关了「用标定」时 preset 是转换实际用的胶片，roll_preset 是这一卷选的标定预设；frame.flat_field 是这张除的平场（来自哪张空白帧或光源标定、名字、最暗处的比例）；slopes_in_use 是转换实际用的斜率和它来自哪里（标定预设、整卷估计或预设）；analysis 是自动分析实际定出的片基、白平衡、色阶两端（对数曝光）和高光伸到多远；tone 里的高光、阴影、去色噪；curves 是现有的色调曲线（有改动的通道和它们的控制点，空表示没有曲线）；roll 是整卷同一白平衡 / 色阶、去串色和标定点数。调整前先调用。", properties: [:]),
     Tool(name: "list_frames", description: "列出本卷所有画面：编号、是否勾选、是否已正式扫描及 dpi、方向、镜像、拉直、裁切、来源文件，和手动取过的片基、中性灰、高光。", properties: [:]),
     Tool(name: "list_presets", description: "列出所有胶片预设：名称、类型（内置 / V850 标定 / 翻拍标定 / 导入 / 只在卷里）、通道斜率、来源和说明，这一卷是否在用，图库里有几卷在用及是哪几卷，能否删除。「只在卷里」是已从列表删除、只有卷里还留着的预设。只读，删除和恢复在 App 的「预设…」表格里做。", properties: [:]),
     Tool(name: "list_rolls", description: "列出图库里的卷（只读）：标题、文件夹、开始时间、来源（扫描 / 翻拍 / 导入）、胶片、用的预设、画面数、全分辨率张数、已导出的文件数、备注，以及哪一卷是打开的。", properties: [:]),
@@ -45,6 +45,7 @@ enum MCPTools {
     Tool(name: "adjust", description: "调整选中画面的转换参数，只改给出的项；可用 ⌘Z 撤销。", properties: [
       "warmth": number("冷暖，-1 到 1", -1...1), "tint": number("绿 / 洋红，-1 到 1", -1...1),
       "shadow_warmth": number("阴影冷暖：只动暗部，越亮作用越小，阳光下的灰不变；正数暖，-1 到 1", -1...1),
+      "shadow_tint": number("阴影色调：和阴影冷暖动同样的暗部，负数绿、正数洋红；阴影蓝里带紫时往负拨，-1 到 1", -1...1),
       "exposure": number("曝光 EV", -2...2), "contrast": number("对比度", 0.5...1.6), "saturation": number("饱和度", 0...1.8),
       "black": number("黑点（关闭自动色阶时生效）", 0...0.4), "white": number("白点（关闭自动色阶时生效）", 0.6...1),
       "midtone": number("中间调", 0.4...2),
@@ -64,6 +65,12 @@ enum MCPTools {
     ]),
     Tool(name: "auto_film_base", description: "放弃手动片基，改用自动片基：扫描的卷用整卷片间测得的，翻拍和单张照片用片边的未曝光片基，都没有时按本张最薄处估计。", properties: [:]),
     Tool(name: "pick_neutral", description: "把指定位置作为中性灰，按它自动白平衡（灰卡、白墙、水泥等）。", properties: point, required: ["x", "y"]),
+    Tool(name: "pick_shadow_neutral", description: "把阴影里的指定位置作为中性灰，设定阴影冷暖和阴影色调让它变灰（背光的水泥、路面、石头）；亮处和整体白平衡不变。这一点太暗或太亮时不改，并说明。", properties: point, required: ["x", "y"]),
+    Tool(name: "set_curve", description: "设定选中画面的一条色调曲线，和 App 里「曲线」一节的一样：channel 是 rgb、red、green 或 blue（各通道曲线在 RGB 曲线之后生效）；points 是 [[x, y], …]，都在 0 到 1 之间，x 是转换后的输出值，y 是曲线给它的新值。两端 x=0 和 x=1 不给时按 (0, 0)、(1, 1) 补上，相邻两点的 x 至少相隔 0.01，最多 16 个点；中间按单调三次样条连起来，不会过冲。points 省略或为空时把这条曲线恢复成直线；channel 为 all 时清掉全部曲线。曲线在转换之后按通道查表，从黑到白所有影调都受影响：偏色先用白平衡、阴影冷暖和阴影色调，曲线用来做它们做不到的。get_state 的 curves 列出现有曲线。可用 undo 撤销。", properties: [
+      "channel": ["type": "string", "enum": ["rgb", "red", "green", "blue", "all"], "description": "哪条曲线；all 只用来清掉全部曲线"],
+      "points": ["type": "array", "maxItems": 16, "items": ["type": "array", "minItems": 2, "maxItems": 2, "items": ["type": "number", "minimum": 0, "maximum": 1]],
+        "description": "[[x, y], …]，0 到 1；省略或为空时恢复成直线"],
+    ], required: ["channel"]),
     Tool(name: "choose_preset", description: "选用胶片预设（按名称，部分匹配，如 \"Portra 160\"）。", properties: ["name": ["type": "string"]], required: ["name"]),
     Tool(name: "apply_to_roll", description: "把选中画面的调整同步到本卷所有画面（保留各张的方向和裁切）。", properties: [:]),
     Tool(name: "reset_adjustments", description: "把选中画面的调整恢复默认（保留输入 Gamma、方向和整卷估计）。", properties: [:]),
@@ -85,7 +92,7 @@ enum MCPTools {
   static let instructions = """
     Epson Scan plus 是彩色负片扫描与转换程序。转换的顺序：负片的线性读数除以片基（橙色色罩），换算成各通道高于片基的密度；按胶片预设或整卷估计的各通道斜率把三层的反差拉齐；再做白平衡、色阶和影调。
     - 先用 get_state 和 preview 看当前结果，用 sample 在可能是中性灰的地方取点：中性灰在正片里 R、G、B 应接近，在负片里三个通道高于片基的密度之比应接近通道斜率之比。
-    - 偏色先查片基（get_state 里的 film_base 和来源）；片基可疑时用 pick_film_base 点未曝光的片间，或 base_fine_ev 微调。再用 pick_neutral 或 warmth / tint。晴天的阴影由蓝天照亮，本来就比阳光下蓝；阳光下的灰已经是灰、只有暗部偏蓝时，用 shadow_warmth，不要动整体的 warmth。
+    - 偏色先查片基（get_state 里的 film_base 和来源）；片基可疑时用 pick_film_base 点未曝光的片间，或 base_fine_ev 微调。再用 pick_neutral 或 warmth / tint。晴天的阴影由蓝天照亮，本来就比阳光下蓝；阳光下的灰已经是灰、只有暗部偏蓝时，用 shadow_warmth，不要动整体的 warmth；暗部蓝里带紫（常见于远处雾气、只有蓝层曝了光的阴影）时配合 shadow_tint 往负（绿），阴影里有中性的东西时用 pick_shadow_neutral 一次定两个。色调曲线（set_curve）在转换之后按通道查表，从黑到白都受影响，只在上面这些做不到时用；用之前看 get_state 的 curves，有人调过的曲线（比如把一条通道整体抬高）常常就是整张偏色的原因，用 set_curve 不给 points 把它恢复成直线。
     - 坐标是单张视图里画面的相对位置，0–1，左上为原点。
     - 翻拍的照片四周带着片基、漏光或片夹时，先用 auto_crop 裁到画面（whole_roll 整卷一起），再看和取样：自动白平衡和色阶只看裁切以内。
     - 每次调整都能在 App 里用 ⌘Z 撤销，也可以调用 undo。转换的工具不会扫描、删除或导出文件。
@@ -245,6 +252,15 @@ enum MCPTools {
     } }
     return RGB(sum.map { $0 / n })
   }
+  /// The curves that bend the picture, channel by channel, as control points: none, an empty table.
+  private static func curvesState(_ curves: ToneCurves?) -> [String: Any] {
+    guard let curves else { return [:] }
+    var out: [String: Any] = [:]
+    for (i, name) in ["rgb", "red", "green", "blue"].enumerated() where !curves[i].isIdentity {
+      out[name] = curves[i].points.map { [($0.x * 10000).rounded() / 10000, ($0.y * 10000).rounded() / 10000] }
+    }
+    return out
+  }
   private static func percentiles(_ values: [Double]) -> [String: Double] {
     let s = values.sorted()
     guard !s.isEmpty else { return [:] }
@@ -347,10 +363,11 @@ enum MCPTools {
         if model.hasSinglePictures { roll["pool_single_pictures"] = model.poolPictures }
         return roll
       }
-      var balance: [String: Any] = ["auto": s.autoWhiteBalance, "warmth": s.warmth, "tint": s.tint, "shadow_warmth": s.shadowWarmthAmount]
+      var balance: [String: Any] = ["auto": s.autoWhiteBalance, "warmth": s.warmth, "tint": s.tint, "shadow_warmth": s.shadowWarmthAmount, "shadow_tint": s.shadowTintAmount]
       if let neutral = s.neutralSample { balance["neutral_sample"] = rgb(neutral) }
       state["white_balance"] = balance
       state["levels"] = ["auto": s.autoLevels, "black": s.black, "white": s.white, "midtone": s.midtone]
+      state["curves"] = curvesState(s.curves)
       state["tone"] = ["exposure": s.exposure, "contrast": s.contrast, "saturation": s.saturation, "curves": s.curves != nil,
         "highlights": s.highlightsAmount, "press_highlights": s.pressHighlightsAmount, "shadows": s.shadowsAmount, "colour_noise": s.colourNoiseAmount, "soft_ends": s.softEndsOn]
       state["input"] = ["negative": s.inputIsNegative, "reversal": s.isSlide, "gamma": s.inputGamma]
@@ -446,7 +463,7 @@ enum MCPTools {
         return ["x": p.x, "y": p.y, "negative_linear": rgb(v), "density_above_base": rgb(d), "positive_srgb": rgb(out)]
       })
     case "adjust":
-      let known: Set = ["warmth", "tint", "shadow_warmth", "exposure", "contrast", "saturation", "black", "white", "midtone", "highlights", "shadows", "press_highlights", "auto_white_balance", "auto_levels", "base_fine_ev", "angle", "shared_balance", "shared_levels"]
+      let known: Set = ["warmth", "tint", "shadow_warmth", "shadow_tint", "exposure", "contrast", "saturation", "black", "white", "midtone", "highlights", "shadows", "press_highlights", "auto_white_balance", "auto_levels", "base_fine_ev", "angle", "shared_balance", "shared_levels"]
       let unknown = Set(arguments.keys).subtracting(known)
       guard unknown.isEmpty else { throw DeskError.message("不认识的参数：\(unknown.sorted().joined(separator: ", "))") }
       guard !arguments.isEmpty else { throw DeskError.message("没有要改的参数。") }
@@ -456,7 +473,7 @@ enum MCPTools {
         return min(range.upperBound, max(range.lowerBound, v))
       }
       let numbers: [(WritableKeyPath<Adjustments, Double>, String, ClosedRange<Double>)] = [
-        (\.warmth, "warmth", -1...1), (\.tint, "tint", -1...1), (\.shadowWarmthAmount, "shadow_warmth", -1...1), (\.exposure, "exposure", -2...2), (\.contrast, "contrast", 0.5...1.6),
+        (\.warmth, "warmth", -1...1), (\.tint, "tint", -1...1), (\.shadowWarmthAmount, "shadow_warmth", -1...1), (\.shadowTintAmount, "shadow_tint", -1...1), (\.exposure, "exposure", -2...2), (\.contrast, "contrast", 0.5...1.6),
         (\.saturation, "saturation", 0...1.8), (\.black, "black", 0...0.4), (\.white, "white", 0.6...1), (\.midtone, "midtone", 0.4...2),
         (\.highlightsAmount, "highlights", -1...1), (\.shadowsAmount, "shadows", -1...1), (\.pressHighlightsAmount, "press_highlights", 0...1),
       ]
@@ -508,6 +525,46 @@ enum MCPTools {
       let reading = "负片线性 RGB \(String(format: "%.4f %.4f %.4f", v.r, v.g, v.b))"
       let said = ["pick_film_base": "已取片基：\(reading)；自动白平衡已关闭。"]
       return [["type": "text", "text": said[name] ?? "已按中性点自动白平衡：\(reading)。"]]
+    case "set_curve":
+      let channels = ["rgb": 0, "red": 1, "green": 2, "blue": 3]
+      guard let channel = arguments["channel"] as? String, channel == "all" || channels[channel] != nil else {
+        throw DeskError.message("channel 应为 rgb、red、green、blue 或 all。")
+      }
+      guard arguments["points"] == nil || arguments["points"] is [[Any]] else { throw DeskError.message("points 是 [[x, y], …]。") }
+      var points = try ((arguments["points"] as? [[Any]]) ?? []).map { p -> CurvePoint in
+        guard p.count == 2, let x = (p[0] as? NSNumber)?.doubleValue, let y = (p[1] as? NSNumber)?.doubleValue,
+          (0...1).contains(x), (0...1).contains(y)
+        else { throw DeskError.message("每个点是 [x, y]，都在 0 到 1 之间。") }
+        return CurvePoint(x: x, y: y)
+      }.sorted { $0.x < $1.x }
+      guard points.count <= 16 else { throw DeskError.message("一条曲线最多 16 个点。") }
+      guard channel != "all" || points.isEmpty else { throw DeskError.message("channel 为 all 时只能清掉全部曲线，不能给 points。") }
+      if let first = points.first, first.x > 0 { points.insert(CurvePoint(x: 0, y: 0), at: 0) }
+      if let last = points.last, last.x < 1 { points.append(CurvePoint(x: 1, y: 1)) }
+      guard zip(points, points.dropFirst()).allSatisfy({ $1.x - $0.x >= 0.01 - 1e-9 }) else {
+        throw DeskError.message("相邻两点的 x 至少相隔 0.01（两端补上的 (0, 0)、(1, 1) 也算）。")
+      }
+      _ = try selected(model)
+      let curves: ToneCurves? = onMain {
+        model.change("AI 曲线") { a in
+          guard let index = channels[channel] else { a.curves = nil; return }
+          var curves = a.curves ?? ToneCurves()
+          curves[index] = points.isEmpty ? ToneCurve() : ToneCurve(points: points)
+          a.curves = curves.isIdentity ? nil : curves
+        }
+        return model.settings.curves
+      }
+      let said = channel == "all" ? "已清掉全部曲线" : points.isEmpty ? "已把 \(channel) 曲线恢复成直线" : "已设定 \(channel) 曲线"
+      return text(["message": said + "。可用 ⌘Z 或 undo 撤销。", "curves": curvesState(curves)])
+    case "pick_shadow_neutral":
+      let p = try coordinate(arguments)
+      let (frame, _) = try selected(model)
+      let raster = pipe.raster(try model.source(for: frame, maxDimension: 2000), maxDimension: 2000)
+      let v = reading(raster, at: p, settings: frame.adjustments)
+      let set = onMain { model.setShadowNeutral(v) }
+      guard set else { throw DeskError.message("这一点太暗或太亮（亮度在暗部到中间调之间时才够得着），没有改。换一处阴影里的中性物体。") }
+      let after = onMain { model.settings }
+      return [["type": "text", "text": String(format: "已按阴影中性点配平阴影：阴影冷暖 %+.2f、阴影色调 %+.2f。可用 ⌘Z 或 undo 撤销。", after.shadowWarmthAmount, after.shadowTintAmount)]]
     case "calibration_add_points":
       guard let list = arguments["points"] as? [[Any]], !list.isEmpty else { throw DeskError.message("需要 points：[[x, y], …]。") }
       let (frame, profile) = try selected(model)

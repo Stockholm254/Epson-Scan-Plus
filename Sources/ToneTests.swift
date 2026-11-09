@@ -152,6 +152,48 @@ enum ToneTests {
       && meanDifference(try render(none, portra), try render(straight, portra)) == 0,
       String(format: "shadow warmth +1 warms the dark greys (red over blue +%.0f levels) and leaves the light ones (%+.1f) and black (%+.1f); at 0 it changes nothing",
         warmDark, warmLight, warmBlack))
+    // Shadow tint −1 greens dark greys with a magenta cast and leaves the light ones and black;
+    // dark greys already green, and neutral ones, it leaves: it only takes out the opposite cast.
+    func greener(_ s: Adjustments, _ share: Double) throws -> Double {
+      let p = try render(s, portra).pixel(Int(Double(w - 1) * share), 4)
+      return (p.g - (p.r + p.b) / 2) * 255
+    }
+    var magentaCast = straight
+    magentaCast.tint = 0.5
+    var greened = magentaCast
+    greened.shadowTint = -1
+    var greenCast = straight
+    greenCast.tint = -0.5
+    var greenOnGreen = greenCast, greenOnGrey = straight
+    (greenOnGreen.shadowTint, greenOnGrey.shadowTint) = (-1, -1)
+    var untinted = straight
+    untinted.shadowTintAmount = 0
+    let greenDark = try greener(greened, dark) - greener(magentaCast, dark), greenLight = try greener(greened, light) - greener(magentaCast, light)
+    let greenBlack = try greener(greened, 0) - greener(magentaCast, 0)
+    let onGreen = try greener(greenOnGreen, dark) - greener(greenCast, dark), onGrey = try greener(greenOnGrey, dark) - greener(straight, dark)
+    try check(greenDark > 25 && abs(greenLight) < 1.5 && abs(greenBlack) < 1.5 && abs(onGreen) < 1.5 && abs(onGrey) < 3
+      && untinted.shadowTint == nil && meanDifference(try render(untinted, portra), try render(straight, portra)) == 0,
+      String(format: "shadow tint −1 greens magenta dark greys (+%.0f levels) and leaves the light ones (%+.1f), black (%+.1f), green dark greys (%+.1f) and grey ones (%+.1f); at 0 it changes nothing",
+        greenDark, greenLight, greenBlack, onGreen, onGrey))
+    // The shadow neutral picker: a dark grey cast by warmth and tint comes back to grey with the
+    // shadow warmth and tint it solves from the point's reading; a light grey is out of its reach.
+    var castDark = straight
+    (castDark.warmth, castDark.tint) = (0.35, -0.3)
+    let darkX = Int(Double(w - 1) * dark), readings = pipe.samples(negative, maxDimension: w)
+    let solved = ImagePipeline.shadowBalance(
+      readings.pixel(darkX, 4), settings: castDark, profile: portra, analysis: pipe.analyze(negative, settings: castDark, profile: portra))
+    var balanced = castDark
+    if let solved { (balanced.shadowWarmth, balanced.shadowTint) = (solved.warmth, solved.tint) }
+    func spread(_ s: Adjustments, _ x: Int) throws -> Double {
+      let v = try render(s, portra).pixel(x, 4).values.map { $0 * 255 }
+      return v.max()! - v.min()!
+    }
+    let castSpread = try spread(castDark, darkX), balancedSpread = try spread(balanced, darkX)
+    let tooLight = ImagePipeline.shadowBalance(
+      readings.pixel(w - 3, 4), settings: castDark, profile: portra, analysis: pipe.analyze(negative, settings: castDark, profile: portra))
+    try check(solved?.reached == true && castSpread > 10 && balancedSpread < 3 && tooLight == nil,
+      String(format: "the shadow neutral picker takes a cast dark grey (%.0f levels apart) back to grey (%.1f) with shadow warmth %+.2f and tint %+.2f, and leaves a light grey alone",
+        castSpread, balancedSpread, solved?.warmth ?? .nan, solved?.tint ?? .nan))
     // Pressing the highlights lowers the light greys and white with them, leaves the dark ones, and
     // keeps a bright red as far from green as it was.
     var pressed = defaults

@@ -357,6 +357,15 @@ struct Adjustments: Codable, Equatable {
     get { shadowWarmth ?? 0 }
     set { shadowWarmth = newValue == 0 ? nil : newValue }
   }
+  /// The same dark tones made greener (negative) or more magenta, as shadow warmth moves them
+  /// between red and blue: the two together take a shade to neutral whichever way it leans, such
+  /// as haze in shadow that only the blue layer took, coming out violet. It only takes out the
+  /// opposite cast: green where the shadow is violet, never on grass already green. −1 to 1, nil as it is.
+  var shadowTint: Double? = nil
+  var shadowTintAmount: Double {
+    get { shadowTint ?? 0 }
+    set { shadowTint = newValue == 0 ? nil : newValue }
+  }
   var black = 0.0
   var white = 1.0
   var midtone = 1.0
@@ -678,12 +687,13 @@ enum CanvasTool: String, CaseIterable {
   case region = "去色罩区域"
   case base = "片基"
   case neutral = "中性灰"
+  case shadowNeutral = "阴影中性"
   case calibrate = "标定中性点"
   case it8 = "IT8 色卡"
   case dust = "灰尘"
 
   /// The tools a click reads a point of the picture with.
-  var picksPoint: Bool { self == .base || self == .neutral || self == .calibrate || self == .it8 || self == .dust }
+  var picksPoint: Bool { self == .base || self == .neutral || self == .shadowNeutral || self == .calibrate || self == .it8 || self == .dust }
 
   /// Each tool's SF Symbol. The two samplers differ in glyph and carry a label as well: the
   /// film base is the orange mask, the neutral a grey in the picture.
@@ -694,6 +704,7 @@ enum CanvasTool: String, CaseIterable {
     case .region: return "camera.metering.matrix"
     case .base: return "eyedropper.full"
     case .neutral: return "eyedropper"
+    case .shadowNeutral: return "eyedropper.halffull"
     case .calibrate: return "target"
     case .it8: return "squareshape.split.3x3"
     case .dust: return "aqi.medium"
@@ -726,7 +737,7 @@ enum CanvasTool: String, CaseIterable {
     case .region: return "m"
     case .base: return "b"
     case .neutral: return "n"
-    case .calibrate, .it8, .dust: return nil
+    case .shadowNeutral, .calibrate, .it8, .dust: return nil
     }
   }
   var help: String {
@@ -737,6 +748,7 @@ enum CanvasTool: String, CaseIterable {
     case .region: what = "去色罩区域（青色）：在画面里框出算片基、白平衡和色阶用的地方，显示和导出不变"
     case .base: what = "取片基：点未曝光的橙色片基，作为去色罩的基准"
     case .neutral: what = "取中性灰：点画面中应为灰色的地方，校正白平衡"
+    case .shadowNeutral: what = "阴影中性：点阴影里应为灰色的地方，设定阴影冷暖和阴影色调，亮处不变"
     case .calibrate: what = "标定中性点：点选灰卡等中性灰，生成这台扫描仪或这次翻拍的预设"
     case .it8: what = "IT8 色卡：按提示点色卡上的 6 个点"
     case .dust: what = "点选灰尘：在单张上点一处灰尘去掉它，点标出的圆圈改成留下或去掉"

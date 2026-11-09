@@ -62,6 +62,24 @@ enum MCPTests {
     try check(!call("undo").isError && model.settings.warmth == 0 && model.settings.exposure == 0, "and undo takes it back, as ⌘Z does")
     try check(!call("adjust", ["shadow_warmth": 0.4]).isError && model.settings.shadowWarmth == 0.4 && model.settings.warmth == 0
       && !call("undo").isError && model.settings.shadowWarmth == nil, "adjust warms the shadows alone, and undo takes it back")
+    try check(!call("adjust", ["shadow_tint": -0.3]).isError && model.settings.shadowTint == -0.3 && model.settings.tint == 0
+      && (json(call("get_state")) as? [String: Any]).flatMap { ($0["white_balance"] as? [String: Any])?["shadow_tint"] as? Double } == -0.3
+      && !call("undo").isError && model.settings.shadowTint == nil, "adjust greens the shadows alone, get_state reads it, and undo takes it back")
+    // Curves: one channel bent through a point, listed by get_state, straightened without points;
+    // a point off the range or too close refused; undo brings it back; all clears every curve.
+    func listedCurves() -> [String: Any]? { (json(call("get_state")) as? [String: Any])?["curves"] as? [String: Any] }
+    let bent = call("set_curve", ["channel": "blue", "points": [[0.45, 0.4]]])
+    let bentBlue = model.settings.curves?.blue
+    try check(!bent.isError && bentBlue?.points.count == 3 && (bentBlue?.value(0.45) ?? 1) < 0.41 && model.settings.curves?.red.isIdentity == true
+      && (listedCurves()?["blue"] as? [[Double]])?.count == 3 && listedCurves()?["red"] == nil,
+      "set_curve bends the blue curve through a point, the ends added, and get_state lists it")
+    try check(call("set_curve", ["channel": "red", "points": [[0.5, 1.4]]]).isError && call("set_curve", ["channel": "red", "points": [[0.5, 0.5], [0.505, 0.6]]]).isError
+      && call("set_curve", ["channel": "all", "points": [[0.5, 0.5]]]).isError && call("set_curve", ["channel": "hue"]).isError
+      && model.settings.curves?.blue == bentBlue, "a point off the range, two points too close, points for all and an unknown channel are refused, and nothing changes")
+    try check(!call("set_curve", ["channel": "blue"]).isError && model.settings.curves == nil && listedCurves()?.isEmpty == true
+      && !call("undo").isError && model.settings.curves?.blue == bentBlue
+      && !call("set_curve", ["channel": "all"]).isError && model.settings.curves == nil,
+      "set_curve without points straightens the curve, undo brings it back, and all clears every curve")
     try check(call("adjust", ["warmth": 0.3, "rotation": 1]).isError && model.settings.warmth == 0, "an unknown setting is refused, and nothing changes")
     try check(!call("adjust", ["angle": 3]).isError && model.settings.angle == 3 && !call("undo").isError && model.settings.angle == nil,
       "adjust straightens the frame by an angle, and undo takes it back")

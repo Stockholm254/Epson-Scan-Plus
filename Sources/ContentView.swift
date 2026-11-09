@@ -514,7 +514,7 @@ struct ContentView: View {
           .floatingPlate(RoundedRectangle(cornerRadius: 5), text: Color(white: 0.92), opacity: 0.65)
           .help(m.baseSource(f) + (m.toneAnalysis.map { a in
             "\n片基 " + zip(["R", "G", "B"], a.base.values).map { String(format: "%@ %.3f", $0, $1) }.joined(separator: " · ")
-          } ?? "") + "\n白平衡按这个顺序定：取样中性灰 → 手动配平 → 标定预设的中性 → 自动；冷暖、绿洋红和阴影冷暖在它之后")
+          } ?? "") + "\n白平衡按这个顺序定：取样中性灰 → 手动配平 → 标定预设的中性 → 自动；冷暖、绿洋红、阴影冷暖和阴影色调在它之后")
           .accessibilityElement(children: .combine).accessibilityLabel("片基和白平衡")
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(12)
       }
@@ -930,7 +930,7 @@ struct ContentView: View {
   }
   /// White balance: automatic or by hand, the roll as one, and the points picked on the frame.
   var balanceSection: some View {
-    PanelSection("白平衡", key: "balance", info: "自动白平衡按画面估计，忽略外缘 5%（不改变导出范围）；在「画面范围」里框选了去色罩区域时，只按青色框里估计。用本机或翻拍标定的预设时不按画面估计，按标定时记下的中性配平，开不开「自动」都一样；这个中性是在标定时的光下定的（比如阳光），阴天、树荫、室内的照片会带上光的颜色，用「中性灰」或冷暖、绿 / 洋红调。\n\n「阴影冷暖」只动暗部，越亮作用越小，阳光下的灰不变：晴天的阴影由蓝天照亮，本来就偏蓝，往右拨把它暖回来。\n\n「中性灰」用滴管点画面中应为灰色的地方，按这一点自动白平衡（「自动」保持开着）；滴管也在画面上方的工具条里（N）。取过点以后旁边出现「清除取样」：放弃取样点，打开「自动」，按画面估计，标定预设回到标定的中性；冷暖、绿 / 洋红和片基不动。\n\n反转片：片子本来的颜色就是画面，默认不自动白平衡，透过片子最亮处的光就是白。打开「自动」时每个通道各自从最暗拉到最亮，适合褪色、偏色的片子。「中性灰」把那一点配成灰。「清除取样」放弃取样点，回到片子本来的颜色。") {
+    PanelSection("白平衡", key: "balance", info: "自动白平衡按画面估计，忽略外缘 5%（不改变导出范围）；在「画面范围」里框选了去色罩区域时，只按青色框里估计。用本机或翻拍标定的预设时不按画面估计，按标定时记下的中性配平，开不开「自动」都一样；这个中性是在标定时的光下定的（比如阳光），阴天、树荫、室内的照片会带上光的颜色，用「中性灰」或冷暖、绿 / 洋红调。\n\n「阴影冷暖」「阴影色调」只动暗部（亮度 0.2 最多，0.55 以上和纯黑不动），阳光下的灰不变：晴天的阴影由蓝天照亮，本来就偏蓝，阴影冷暖往右拨把它暖回来；远处的雾气、只有蓝层曝了光的阴影常常蓝里带紫，再把阴影色调往左（绿）拨；它只去掉相反的偏色，往绿只动偏紫的暗处，草和中性的沙不变。「阴影中性」用滴管点阴影里应为灰色的地方（背光的水泥、路面、石头），两个一起按它设定，之后还能拖滑块微调；点在树林这类本身有颜色的东西上会把它也变成灰。\n\n「中性灰」用滴管点画面中应为灰色的地方，按这一点自动白平衡（「自动」保持开着）；滴管也在画面上方的工具条里（N）。取过点以后旁边出现「清除取样」：放弃取样点，打开「自动」，按画面估计，标定预设回到标定的中性；冷暖、绿 / 洋红和片基不动。\n\n反转片：片子本来的颜色就是画面，默认不自动白平衡，透过片子最亮处的光就是白。打开「自动」时每个通道各自从最暗拉到最亮，适合褪色、偏色的片子。「中性灰」把那一点配成灰。「清除取样」放弃取样点，回到片子本来的颜色。") {
       Toggle(
         "自动",
         isOn: Binding(
@@ -957,6 +957,7 @@ struct ContentView: View {
         slider("冷暖", key: \.warmth, range: -1...1)
         slider("绿 / 洋红", key: \.tint, range: -1...1)
         slider("阴影冷暖", key: \.shadowWarmthAmount, range: -1...1)
+        slider("阴影色调", key: \.shadowTintAmount, range: -1...1)
         // The picker, latched while in use and marked once a point is picked (the same picker lies
         // over the picture), and what lets the point go once there is one.
         HStack(spacing: 6) {
@@ -966,6 +967,12 @@ struct ContentView: View {
           } label: {
             Label(m.settings.neutralSample != nil ? "中性灰 ✓" : "中性灰", systemImage: CanvasTool.neutral.symbol)
           }.buttonStyle(KeyStyle(latched: m.tool == .neutral)).help("取中性灰：点画面中应为灰色的地方 · N")
+          Button {
+            m.useTool(.shadowNeutral)
+          } label: {
+            Label("阴影中性", systemImage: CanvasTool.shadowNeutral.symbol)
+          }.buttonStyle(KeyStyle(latched: m.tool == .shadowNeutral)).disabled(m.selected == nil)
+            .help("阴影中性：点阴影里应为灰色的地方（背光的水泥、路面、石头），按它设定阴影冷暖和阴影色调，亮处不变")
           if m.settings.neutralSample != nil || m.settings.manualBalance != nil {
             Spacer(minLength: 4)
             Button("清除取样") { m.clearBalanceSamples() }

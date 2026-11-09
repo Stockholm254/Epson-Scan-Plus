@@ -95,7 +95,7 @@ enum HighlightTests {
       let one = CIVector(x: 1, y: 1, z: 1), none = CIVector(x: 0, y: 0, z: 0)
       let args: [Any] = [
         image, one, one, none, one, none, CIVector(x: 0, y: 1, z: 0, w: 1), CIVector(x: 0, y: 1, z: 1, w: 1.6),
-        CIVector(x: 0, y: 0, z: 0, w: 1), CIVector(x: 0, y: 0.9, z: 0, w: 0), 0.0, CIVector(x: 0, y: 1), CIVector(x: 0, y: 0, z: 0, w: 0),
+        CIVector(x: 0, y: 0, z: 0, w: 1), CIVector(x: 0, y: 0.9, z: 0, w: 0), 0.0, CIVector(x: 0, y: 1, z: 0, w: 0), CIVector(x: 0, y: 0, z: 0, w: 0),
         CIVector(x: 0, y: 0, z: 0, w: 0), 1.0,
       ]
       guard let result = kernel?.apply(extent: image.extent, arguments: args) else { return [] }

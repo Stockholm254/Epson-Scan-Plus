@@ -306,7 +306,7 @@ final class AppModel: ObservableObject {
         page = .library
         return
       }
-      if page == .capture, [CanvasTool.base, .neutral, .region].contains(tool) { tool = .select }
+      if page == .capture, [CanvasTool.base, .neutral, .shadowNeutral, .region].contains(tool) { tool = .select }
       // The library shows no picture: the canvas's look changes with the module it shows next,
       // against the one it showed last, so ① → 库 → ① renders nothing again.
       guard page != .library else { return }
@@ -488,6 +488,7 @@ final class AppModel: ObservableObject {
       return singleView ? "在画面里拖出青色的去色罩区域：片基估计、白平衡和色阶只看这里 · 拖边、角或框内调整 · ⌫ 跟随画面 · 回车完成 · Esc 退出" : "进入单张后框选去色罩区域 · Esc 退出"
     case .base: return "点未曝光的橙色片基（片间或片边），不要点景物或片夹；琥珀色是自动找到的片基 · Esc 退出"
     case .neutral: return "点画面中应为中性灰的地方：灰卡、白墙、水泥 · Esc 退出"
+    case .shadowNeutral: return "点阴影里应为中性的地方：背光的水泥、路面、石头，白墙的阴影；阴影冷暖和阴影色调随之设定 · Esc 退出"
     case .calibrate:
       return "点选中性灰：灰卡、白墙、水泥等均匀处 · 已取 \(calibrationPoints.count) 个"
         + (calibrationPoints.isEmpty ? "" : " · ⌫ 撤回上一点") + " · Esc 结束"
@@ -544,7 +545,7 @@ final class AppModel: ObservableObject {
     if value != tool { editRegionLock = nil }
     if value != .crop { levelling = false }
     tool = value
-    if value == .neutral || value == .calibrate || value == .it8 || value == .dust || value == .region { singleView = selected != nil }
+    if value == .neutral || value == .shadowNeutral || value == .calibrate || value == .it8 || value == .dust || value == .region { singleView = selected != nil }
     if value == .base || value == .crop { fitView() }
     focusCanvas()
     refresh()
@@ -1356,6 +1357,7 @@ final class AppModel: ObservableObject {
     if abs(s.warmth) > 0.005 { parts.append(String(format: "冷暖 %+.2f", s.warmth)) }
     if abs(s.tint) > 0.005 { parts.append(String(format: "绿洋红 %+.2f", s.tint)) }
     if abs(s.shadowWarmthAmount) > 0.005 { parts.append(String(format: "阴影冷暖 %+.2f", s.shadowWarmthAmount)) }
+    if abs(s.shadowTintAmount) > 0.005 { parts.append(String(format: "阴影色调 %+.2f", s.shadowTintAmount)) }
     return parts.joined(separator: " · ")
   }
   /// Shows on the single frame where its film base was read at its edges.
@@ -2660,7 +2662,7 @@ final class AppModel: ObservableObject {
     f.flatField = nil
     if !everything {
       var s = f.adjustments
-      (s.exposure, s.contrast, s.warmth, s.tint, s.shadowWarmth, s.black, s.white, s.midtone) = (0, 1, 0, 0, nil, 0, 1, 1)
+      (s.exposure, s.contrast, s.warmth, s.tint, s.shadowWarmth, s.shadowTint, s.black, s.white, s.midtone) = (0, 1, 0, 0, nil, nil, 0, 1, 1)
       (s.shadows, s.highlights, s.pressHighlights, s.colourNoise, s.sharpening, s.curves) = (nil, nil, nil, nil, nil, nil)
       (s.rotation, s.flipHorizontal, s.angle) = (0, nil, nil)
       f.adjustments = s
@@ -3090,6 +3092,9 @@ final class AppModel: ObservableObject {
           width: Double(2 * radius + 1) / Double(r.width), height: Double(2 * radius + 1) / Double(r.height))
         : nil
       setFilmBase(color, at: at)
+    } else if tool == .shadowNeutral {
+      guard singleView else { return }
+      setShadowNeutral(color)
     } else if tool == .neutral {
       // Where in the picture: the grey is picked on the frame as cropped.
       let crop = frames[i].rect
@@ -3127,6 +3132,26 @@ final class AppModel: ObservableObject {
     }
     status = "已按中性点自动白平衡"
     updateThumbnails()
+  }
+  /// The shadow warmth and shadow tint that make a reading of something grey in shadow come out
+  /// grey (`ImagePipeline.shadowBalance`), as one edit. False, with the reason in the status, where
+  /// the point is too dark or too light for the dark tones' controls to reach.
+  @discardableResult
+  func setShadowNeutral(_ color: RGB) -> Bool {
+    guard let analysis = toneAnalysis,
+      let found = ImagePipeline.shadowBalance(color, settings: settings, profile: conversionProfile, analysis: analysis)
+    else {
+      status = "这一点太暗或太亮，阴影冷暖和阴影色调够不着：点亮度在暗部到中间调之间的阴影"
+      return false
+    }
+    change("阴影中性点") {
+      $0.shadowWarmthAmount = (found.warmth * 100).rounded() / 100
+      $0.shadowTintAmount = (found.tint * 100).rounded() / 100
+    }
+    status = String(format: "已按阴影中性点配平阴影：阴影冷暖 %+.2f、阴影色调 %+.2f", settings.shadowWarmthAmount, settings.shadowTintAmount)
+      + (found.reached ? "" : "（已到滑块的一端，还没完全中性）")
+    updateThumbnails()
+    return true
   }
   func scanEnabled() {
     guard !isWorking else { return }
