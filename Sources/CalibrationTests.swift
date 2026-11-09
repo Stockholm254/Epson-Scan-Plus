@@ -93,6 +93,13 @@ enum CalibrationTests {
     settings.autoWhiteBalance = false
     try check(black < 1.5 && purple > black + 6,
       String(format: "and the unexposed film comes out a neutral black: %.1f levels of cast, %.1f with the balance applied evenly", black, purple))
+    // Warmth and tint are white balance too, and fade in with it: a warm or cool print keeps the
+    // unexposed film a neutral black, while the greys above it take them in full.
+    (settings.warmth, settings.tint) = (0.3, -0.2)
+    let warmBlack = try cast(made, in: shadowed, row: h * 7 / 8), warmGrey = try cast(made, in: shadowed, row: h / 4)
+    (settings.warmth, settings.tint) = (0, 0)
+    try check(warmBlack < 1.5 && warmGrey > 12,
+      String(format: "warmth 0.3 and tint −0.2 leave the unexposed film a neutral black (%.1f levels of cast) and warm the greys above it (%.1f)", warmBlack, warmGrey))
 
     // Making, keeping, applying and deleting a preset through the model.
     let suite = "EpsonScanPlus.tests.\(UUID().uuidString)"

@@ -96,6 +96,8 @@ enum Kernels {
     static float3 toned(float4 p, bool first, NEGATIVE_ARGS) {
       float3 v = max(p.rgb, float3(0.000001));
       float3 q;
+      // How far the white balance has faded in (`ImagePipeline.unexposedFade`): 1 on a positive.
+      float faded = 1.0;
       if (inverted < 0.5) {
         float3 t = pow(v, float3(color.w)) * gain + balance;
         t = (t - float3(levels.x)) / max(levels.y - levels.x, 0.000001) * pow(2.0, tone.x);
@@ -104,7 +106,7 @@ enum Kernels {
         float3 e = log(max(base, float3(0.000001)) / v) * (color.w / 2.302585093) / slope;
         e += toe * log(max(float3(1.0) - exp(-e / max(toe, float3(0.000001))), float3(0.02)));
         float3 b = balance;
-        if (fade.x > 0.0) { b *= min((1.0 - exp(-max((e.r + e.g + e.b) / 3.0, 0.0) / fade.x)) / fade.y, 1.0); }
+        if (fade.x > 0.0) { faded = min((1.0 - exp(-max((e.r + e.g + e.b) / 3.0, 0.0) / fade.x)) / fade.y, 1.0); b *= faded; }
         q = (e * gain + b + float3(tone.x * 0.30103) - float3(levels.x)) / max(levels.y - levels.x, 0.001);
       }
       q = (q - float3(levels.z)) / max(levels.w - levels.z, 0.01);
@@ -114,7 +116,9 @@ enum Kernels {
       float l = dot(q, float3(0.2126, 0.7152, 0.0722));
       float dark = smoothstep(0.03, 0.2, l) * (1.0 - smoothstep(0.2, 0.55, l));
       q += float3(color.z * 0.2 * dark, 0.0, -color.z * 0.2 * dark);
-      q += float3(color.x * 0.12 + color.y * 0.05, -color.y * 0.10, -color.x * 0.12 + color.y * 0.05);
+      // Warmth (color.x) and tint (color.y), white balance as much as the picked grey's: they fade
+      // in with it, so film that took no light stays a neutral black in a warm or a cool print.
+      q += faded * float3(color.x * 0.12 + color.y * 0.05, -color.y * 0.10, -color.x * 0.12 + color.y * 0.05);
       q = (q - float3(0.5)) * tone.z + float3(0.5);
       if (first) { q = saturated(q, tone, ends); }
       return q;

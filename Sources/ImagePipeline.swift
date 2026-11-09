@@ -108,7 +108,7 @@ final class ImagePipeline {
   /// layer, and black is neutral; there the balance would only lift red and blue into a purple
   /// black. So, where no fitted toe bends the curve down to the base, the balance fades in over
   /// about a toe's width of log exposure above it (the Kodak sheets' toes are 0.10–0.165): 95% of
-  /// it by 0.36, 1.2 stops up.
+  /// it by 0.36, 1.2 stops up. Warmth and tint, white balance too, fade in with it in the kernel.
   static var unexposedFade = 0.12
   /// `image` with its colour smoothed over `radius` pixels and its lightness kept exactly: colour
   /// noise (the sensor's, and what taking the crosstalk out adds to it) goes, the grain stays. The
