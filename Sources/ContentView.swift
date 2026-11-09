@@ -162,12 +162,16 @@ struct ContentView: View {
         LeakToolbar(lab: m.leak)
       } else {
         // The library, a new project and importing are the library tab's, the first in the switcher.
+        // The frame's colour and tone set from its own picture, on this Mac (`AutoAdjust`). Opening it
+        // on the leak page stays in the 画面 menu (⌥⌘L) and the light table's context menu.
         if m.page == .convert {
           Button {
-            if let id = m.selectedID { m.openInLeak(id) }
+            m.autoAdjust()
           } label: {
-            Label("去漏光", systemImage: "wand.and.rays")
-          }.help("在去漏光页打开选中的这张，按它现在的调色（⌥⌘L）").disabled(m.selected == nil || m.isWorking)
+            Label("自动调整", systemImage: "wand.and.stars")
+          }
+          .help("自动调整这张：白平衡和色阶回到自动，按画面定曝光和阴影冷暖，对比度、饱和度不动；只在本机计算，不上传，⌘Z 撤销（⇧⌘A）")
+          .disabled(m.selected == nil || m.isWorking)
         }
       }
     }
