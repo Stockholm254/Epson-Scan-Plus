@@ -6,19 +6,32 @@ import SwiftUI
 struct LeakPage: View {
   @ObservedObject var m: AppModel
   @ObservedObject var lab: LeakLab
+  /// The selected frame of the roll on the page: its job, opened or begun; with none selected, the
+  /// job used last. An imported file stays open until a frame is picked.
+  func follow() {
+    guard let f = m.selected, let origin = m.leakOrigin(f) else {
+      if lab.job == nil { lab.restoreLast() }
+      return
+    }
+    if lab.job?.origin?.frame == origin.frame && lab.job?.origin?.project == origin.project { refresh() } else { lab.open(origin: origin) }
+  }
+  /// The job open, when it is the selected frame's and that frame's conversion changed since,
+  /// converted again as it is now.
+  func refresh() {
+    guard lab.busy == nil, let f = m.selected, let origin = m.leakOrigin(f), lab.stale(for: origin) else { return }
+    lab.reload(origin: origin)
+  }
   var body: some View {
     // The panel is the window's inspector.
     LeakViewer(lab: lab, choose: lab.chooseFile).frame(maxWidth: .infinity, maxHeight: .infinity)
     // In the glass look the picture runs on, blurred, behind the viewer's surround and the panel.
     .background { PictureExtension(image: lab.after ?? lab.before) }
-    .onAppear {
-      if lab.job == nil {
-        if let f = m.selected, let origin = m.leakOrigin(f) { lab.open(origin: origin) } else { lab.restoreLast() }
-      }
-    }
-    .onChange(of: m.selectedID) {
-      if let f = m.selected, let origin = m.leakOrigin(f) { lab.open(origin: origin) }
-    }
+    // Arriving from ② or another frame picked: that frame, as it is converted now. A job opened,
+    // or work finished, on the frame whose colour was changed in ② since: brought up to it.
+    .onAppear { follow() }
+    .onChange(of: m.selectedID) { follow() }
+    .onChange(of: lab.job?.id) { refresh() }
+    .onChange(of: lab.busy) { if lab.busy == nil { refresh() } }
     .sheet(isPresented: $lab.showAPI) { LeakAPISheet(credentials: lab.credentials, shown: $lab.showAPI) }
     .sheet(isPresented: $lab.showGenerate) { LeakGenerateSheet(lab: lab, credentials: lab.credentials) }
     .sheet(isPresented: $lab.showAlign) { LeakAlignSheet(lab: lab) }

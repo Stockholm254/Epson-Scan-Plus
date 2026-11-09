@@ -44,7 +44,7 @@ enum ContactPageTests {
       shown.pixel(Int(upright.midX), Int(upright.minY) + 1), shown.pixel(Int(upright.midX), Int(upright.maxY) - 2)]
     try check(shown.width == composed.width && edges.allSatisfy { $0.values.min()! > 0.7 }
       && shown.pixel(Int(upright.maxX) + 10, Int(upright.midY)).values.max()! < 0.2,
-      "the frame turned upright fills its cell to every edge, the film strip just beyond it")
+      "the frame turned upright fills its cell to every edge, nothing but the light table just beyond it")
 
     // A roll of 40 pictures a file each, as a camera or an import brings them.
     let pictures = folder.appendingPathComponent("contact-pages", isDirectory: true)

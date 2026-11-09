@@ -113,9 +113,9 @@ extension LeakEngine {
     func levelAt(_ xx: Int, _ yy: Int) -> SIMD3<Double> { smooth[min(ch - 1, yy / cell) * cw + min(cw - 1, xx / cell)] ?? black }
 
     // What stands above that level, as marks. Light piped in along the film's side runs on along
-    // it: an unbroken run of marks, down a column or along a row, longer than a twentieth of the
+    // it: an unbroken run of marks, down a column or along a row, longer than an eighth of the
     // frame is the leak's; edge print never runs so far, each stroke and digit short of it, even
-    // close to the side. Of the rest, a long thin line or a large patch is a leak's too; edge print
+    // close to the side, nor does the tab some cameras' gates expose at a corner (a twentieth). Of the rest, a long thin line or a large patch is a leak's too; edge print
     // is neither, its digits standing a fortieth of the frame across. They are told apart after
     // the runs are taken out, so a glow joining the print to the side's line does not take it along.
     let scale = max(1, max(w, h) / 1800), mw = (w + scale - 1) / scale, mh = (h + scale - 1) / scale
@@ -124,13 +124,14 @@ extension LeakEngine {
     for my in 0..<mh {
       for mx in 0..<mw {
         let xx = min(w - 1, mx * scale), yy = min(h - 1, my * scale)
-        guard outside(Double(xx) / Double(w - 1), Double(yy) / Double(h - 1)),
-          luma(original.rgb(yy * w + xx)) - luma(levelAt(xx, yy)) > 0.06
-        else { continue }
+        let x = Double(xx) / Double(w - 1), y = Double(yy) / Double(h - 1)
+        // The photograph's own soft edge, a few pixels past the line all along it, is no leak's.
+        let past = max((x0 - x) * Double(w - 1), (x - x1) * Double(w - 1), (y0 - y) * Double(h - 1), (y - y1) * Double(h - 1))
+        guard outside(x, y), past > 4 * Double(scale), luma(original.rgb(yy * w + xx)) - luma(levelAt(xx, yy)) > 0.06 else { continue }
         mark[my * mw + mx] = 1
       }
     }
-    let run = Int(side / 20)
+    let run = Int(side / 8)
     func runs(_ count: Int, _ length: Int, _ index: (Int, Int) -> Int) {
       for line in 0..<count {
         var start = -1
@@ -154,6 +155,63 @@ extension LeakEngine {
       let along = Double(max(hx - lx, hy - ly) + 1), across = Double(min(hx - lx, hy - ly) + 1)
       if (along > longest && across < thin) || Double(part.count) > patch { for i in part { leak[i] = true } }
     }
+    // The edge print's own colour, from the print kept on the edge; where it runs into the
+    // photograph near its sides (frame numbers, arrows), the reference has none, and its
+    // correction would recolour it: there, small marks of that colour keep the original's pixels.
+    var print = [Bool](repeating: false, count: mw * mh)
+    var printed: [[Double]] = [[], [], []]
+    for my in 0..<mh {
+      for mx in 0..<mw where mark[my * mw + mx] == 1 && !leak[my * mw + mx] {
+        let xx = min(w - 1, mx * scale), yy = min(h - 1, my * scale), p = original.rgb(yy * w + xx)
+        guard luma(p) - luma(levelAt(xx, yy)) > 0.15 else { continue }
+        for c in 0..<3 { printed[c].append(p[c]) }
+      }
+    }
+    if printed[0].count >= 30 {
+      let ink = SIMD3((0..<3).map { median(printed[$0]) }), inkTop = max(ink.x, ink.y, ink.z), hue = ink / max(1e-4, inkTop)
+      // The ink is bright in its strong channels; over the picture the scene's light adds to it,
+      // most in the channels the ink lacks (blue under a yellow print over water): those may be
+      // higher than on the edge, but stay under the strong ones.
+      let strong = (0..<3).filter { hue[$0] > 0.5 }, weak = (0..<3).filter { hue[$0] <= 0.5 }
+      func inked(_ p: SIMD3<Double>) -> Bool {
+        let top = max(p.x, p.y, p.z)
+        guard top > 0.45 * inkTop else { return false }
+        let n = p / top, floor = strong.map { n[$0] }.min() ?? 1
+        return strong.allSatisfy { abs(n[$0] - hue[$0]) < 0.15 } && weak.allSatisfy { n[$0] < hue[$0] + 0.5 && n[$0] < floor - 0.1 }
+      }
+      let band = 0.06
+      func nearSide(_ x: Double, _ y: Double) -> Bool {
+        (picture[0] != nil && x - x0 < band) || (picture[2] != nil && x1 - x < band)
+          || (picture[1] != nil && y - y0 < band) || (picture[3] != nil && y1 - y < band)
+      }
+      var candidate = [UInt8](repeating: 0, count: mw * mh)
+      for my in 0..<mh {
+        for mx in 0..<mw {
+          let xx = min(w - 1, mx * scale), yy = min(h - 1, my * scale)
+          let x = Double(xx) / Double(w - 1), y = Double(yy) / Double(h - 1)
+          guard !outside(x, y), nearSide(x, y) else { continue }
+          if inked(original.rgb(yy * w + xx)) { candidate[my * mw + mx] = 1 }
+        }
+      }
+      let mark = side / 6, area = (side / 12) * (side / 12)
+      for part in components(candidate, mw, mh) where part.count >= 12 && Double(part.count) <= area {
+        var lx = mw, hx = 0, ly = mh, hy = 0
+        for i in part { let x = i % mw, y = i / mw; lx = min(lx, x); hx = max(hx, x); ly = min(ly, y); hy = max(hy, y) }
+        guard Double(max(hx - lx, hy - ly)) <= mark else { continue }
+        // Printed flat, of one lightness; a sunlit beam or a warm leaf of the scene is not.
+        let lights = part.map { i in luma(original.rgb(min(h - 1, (i / mw) * scale) * w + min(w - 1, (i % mw) * scale))) }
+        let middle = median(lights)
+        guard median(lights.map { abs($0 - middle) }) < 0.06 else { continue }
+        // A pixel round it too, the print's soft edge.
+        for i in part {
+          let x = i % mw, y = i / mw
+          for dy in -2...2 { for dx in -2...2 {
+            let nx = x + dx, ny = y + dy
+            if nx >= 0, ny >= 0, nx < mw, ny < mh { print[ny * mw + nx] = true }
+          } }
+        }
+      }
+    }
 
     var out = repaired
     let feather = 2.0
@@ -164,10 +222,14 @@ extension LeakEngine {
           let x = Double(xx) / Double(w - 1)
           // How far outside the photograph, in pixels: 0 inside, blended over `feather`.
           let past = max((x0 - x) * Double(w - 1), (x - x1) * Double(w - 1), (y0 - y) * Double(h - 1), (y - y1) * Double(h - 1))
-          guard past > -feather else { continue }
+          let m = (min(mh - 1, yy / scale)) * mw + min(mw - 1, xx / scale)
+          guard past > -feather else {
+            // Edge print in the photograph: the original's.
+            if print[m] { let i = yy * w + xx; for c in 0..<3 { dst[i * 3 + c] = original.data[i * 3 + c] } }
+            continue
+          }
           let t = clamp((past + feather) / (2 * feather))
           let i = yy * w + xx, p = original.rgb(i)
-          let m = (min(mh - 1, yy / scale)) * mw + min(mw - 1, xx / scale)
           let cleaned = leak[m] ? black : simdClamp(black + p - levelAt(xx, yy))
           let r = repaired.rgb(i), v = r + (cleaned - r) * t
           for c in 0..<3 { dst[i * 3 + c] = UInt16(jsRound(clamp(v[c]) * 65535)) }
