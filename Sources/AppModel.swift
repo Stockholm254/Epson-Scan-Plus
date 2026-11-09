@@ -218,7 +218,19 @@ final class AppModel: ObservableObject {
   @Published var measuringTarget = false
   /// Progress or failure of the last target measurement, shown in the scan tab.
   @Published var sharpeningMessage: String?
-  @Published var zoom = 1.0
+  /// The single frame's zoom, relative to fitting the canvas. Not published: a pinch changes it on
+  /// every event, and each change updated the whole window, two thirds of a step's time; the
+  /// canvas follows it through `zoomChanged`, the readout through `zoomReadout`.
+  var zoom = 1.0 {
+    didSet {
+      guard zoom != oldValue else { return }
+      zoomReadout.show(zoom)
+      zoomChanged?()
+    }
+  }
+  let zoomReadout = ZoomReadout()
+  /// The canvas, told the zoom changed.
+  var zoomChanged: (() -> Void)?
   /// Where the loupe lies on the light table, as a fraction of the canvas; nil by the edge.
   var loupeCenter: CGPoint?
   @Published var overviewDPI = 150.0
@@ -227,7 +239,9 @@ final class AppModel: ObservableObject {
   @Published var sourceSummary = ""
   @Published var canvasRegion: NormalRect?
   @Published var toneAnalysis: ToneAnalysis?
-  @Published var viewportRevision = 0
+  /// Counts 「适合」s: the canvas puts the picture back in the middle on a new one. Not published,
+  /// like the zoom: the canvas is told (`zoomChanged`), and the window, updated for it, took 100 ms.
+  private(set) var viewportRevision = 0
   @Published var canvasFocusRevision = 0
   private var samplingInput: CGImage?
   private var editRegionLock: NormalRect?
@@ -507,8 +521,8 @@ final class AppModel: ObservableObject {
       selected.rect.relative(to: region), settings: selected.adjustments)
   }
   func fitView() {
-    zoom = 1
     viewportRevision += 1
+    if zoom != 1 { zoom = 1 } else { zoomChanged?() }
   }
   func focusCanvas() { canvasFocusRevision += 1 }
   /// The frame before or after the selected one, in the roll's order: in single view, and on the
@@ -2384,15 +2398,17 @@ final class AppModel: ObservableObject {
     var key: String
     var region: NormalRect
     var image: CGImage
+    /// Its pixels to the frame's own: 1 at its own resolution, less when the screen needed fewer.
+    var scale = 1.0
   }
   /// The selected frame at its own resolution, read once for all the parts zoomed into; only on
   /// the render queue.
   private var detailSource: (key: String, image: CGImage)?
   func releaseDetailSource() { renderQueue.async { self.detailSource = nil } }
   /// `region` of the single frame at its own resolution, rendered with the whole frame's analysis
-  /// (its base, white balance and levels) so it matches the picture around it. Nil until the
-  /// frame has been analysed.
-  func renderDetail(_ frame: FilmFrame, region: NormalRect, completion: @escaping (Detail?) -> Void) {
+  /// (its base, white balance and levels) so it matches the picture around it; with `across`, no
+  /// finer than the whole picture `across` pixels wide. Nil until the frame has been analysed.
+  func renderDetail(_ frame: FilmFrame, region: NormalRect, across: Double? = nil, completion: @escaping (Detail?) -> Void) {
     // Never answered at once: an asker that asks again on an answer would never stop.
     let original = showsOriginal
     // The raw picture needs no analysis: nothing is taken off it.
@@ -2414,9 +2430,10 @@ final class AppModel: ObservableObject {
       // The whole frame as shown, straightened, turned and mirrored, of which only the part asked
       // for is worked out.
       if let full = self.detailSource?.image,
-        let part = ImagePipeline.shared.render(full, region: region, settings: settings, profile: p, analysis: original ? nil : analysis, negative: negative)
+        let part = ImagePipeline.shared.render(full, region: region, across: across, settings: settings, profile: p,
+          analysis: original ? nil : analysis, negative: negative)
       {
-        detail = Detail(key: key, region: part.region, image: part.image)
+        detail = Detail(key: key, region: part.region, image: part.image, scale: part.scale)
       }
       DispatchQueue.main.async { completion(detail) }
     }
@@ -3879,5 +3896,56 @@ final class AppModel: ObservableObject {
       _, error in
       if let error { DispatchQueue.main.async { self.errorText = error.localizedDescription } }
     }
+  }
+}
+
+/// The single frame's zoom as the canvas's bar reads it, to a tenth, on a figure of its own that
+/// AppKit draws: a pinch changes it on nearly every step, and every change SwiftUI made measured
+/// the whole window again for its smallest size, 25 ms a step.
+final class ZoomReadout {
+  private(set) var tenths = 10
+  fileprivate weak var figure: ZoomFigure?
+  func show(_ zoom: Double) {
+    let t = Int((zoom * 10).rounded())
+    guard t != tenths else { return }
+    tenths = t
+    figure?.text = text
+  }
+  var text: String { String(format: "%.1f×", Double(tenths) / 10) }
+}
+
+/// The zoom's figure: as wide as the widest it shows, so a new one lays nothing out again.
+final class ZoomFigure: NSView {
+  static let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+  var text = "" {
+    didSet {
+      guard text != oldValue else { return }
+      needsDisplay = true
+      setAccessibilityValue(text)
+    }
+  }
+  override var isFlipped: Bool { true }
+  override var intrinsicContentSize: NSSize {
+    let widest = ("32.0×" as NSString).size(withAttributes: [.font: Self.font])
+    return NSSize(width: ceil(widest.width), height: ceil(widest.height))
+  }
+  override func draw(_ dirtyRect: NSRect) {
+    (text as NSString).draw(at: .zero, withAttributes: [.font: Self.font, .foregroundColor: NSColor.secondaryLabelColor])
+  }
+  override func isAccessibilityElement() -> Bool { true }
+  override func accessibilityRole() -> NSAccessibility.Role? { .staticText }
+  override func accessibilityLabel() -> String? { "缩放倍率" }
+}
+
+struct ZoomReadoutLabel: NSViewRepresentable {
+  let readout: ZoomReadout
+  func makeNSView(context: Context) -> ZoomFigure {
+    let figure = ZoomFigure()
+    figure.toolTip = "相对适合窗口的缩放倍率"
+    return figure
+  }
+  func updateNSView(_ figure: ZoomFigure, context: Context) {
+    readout.figure = figure
+    figure.text = readout.text
   }
 }

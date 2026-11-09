@@ -236,8 +236,10 @@ enum RenderTests {
     }
     try check(sized.allSatisfy { $0 }, "a full-resolution sheet sizes each frame from its file's header, turned as the file says, as reading it gives")
 
-    // The single frame's shadowed plate, drawn once and kept, against drawing it each time.
-    func painted(_ draw: (CGRect) -> Void) -> [UInt8] {
+    // The single frame's shadowed plate, made once and stretched to the picture, against drawing
+    // it each time: a picture of the canvas's size, one zoomed far past it, and one too small to
+    // stretch the plate to.
+    func painted(_ rect: CGRect, _ draw: (CGRect) -> Void) -> [UInt8] {
       let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 640, pixelsHigh: 400, bitsPerSample: 8, samplesPerPixel: 4,
         hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 640 * 4, bitsPerPixel: 32)!
       rep.size = CGSize(width: 320, height: 200)
@@ -248,30 +250,32 @@ enum RenderTests {
       ctx.cgContext.scaleBy(x: 1, y: -1)
       NSColor.gray.setFill()
       CGRect(x: 0, y: 0, width: 320, height: 200).fill()
-      draw(CGRect(x: 60, y: 40, width: 200, height: 120))
+      draw(rect)
       NSGraphicsContext.restoreGraphicsState()
       return Array(UnsafeBufferPointer(start: rep.bitmapData!, count: 640 * 400 * 4))
     }
     let canvas = FilmCanvasView(frame: NSRect(x: 0, y: 0, width: 320, height: 200))
-    let each = painted { rect in
-      NSGraphicsContext.saveGraphicsState()
-      let shadow = NSShadow()
-      shadow.shadowColor = NSColor.black.withAlphaComponent(0.55)
-      shadow.shadowBlurRadius = 18
-      shadow.shadowOffset = CGSize(width: 0, height: 5)
-      shadow.set()
-      NSColor.black.setFill()
-      rect.insetBy(dx: -1, dy: -1).fill()
-      NSGraphicsContext.restoreGraphicsState()
+    var worst = 0
+    for rect in [CGRect(x: 60, y: 40, width: 200, height: 120), CGRect(x: 40, y: 30, width: 9000, height: 6000),
+      CGRect(x: -8800, y: -5900, width: 9000, height: 6000), CGRect(x: 130, y: 80, width: 60, height: 40)]
+    {
+      let each = painted(rect) { rect in
+        NSGraphicsContext.saveGraphicsState()
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.55)
+        shadow.shadowBlurRadius = 18
+        shadow.shadowOffset = CGSize(width: 0, height: 5)
+        shadow.set()
+        NSColor.black.setFill()
+        rect.insetBy(dx: -1, dy: -1).fill()
+        NSGraphicsContext.restoreGraphicsState()
+      }
+      let kept = painted(rect) { canvas.drawShadowPlate(around: $0) }
+      worst = max(worst, zip(each, kept).map { abs(Int($0) - Int($1)) }.max() ?? 255)
     }
-    let kept = painted { rect in
-      let plate = canvas.shadowPlate(for: rect.size)
-      let m = FilmCanvasView.plateMargin
-      plate.draw(in: CGRect(x: rect.minX - m, y: rect.minY - m, width: plate.size.width, height: plate.size.height),
-        from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
-    }
-    let worst = zip(each, kept).map { abs(Int($0) - Int($1)) }.max() ?? 255
-    try check(worst <= 1 && canvas.shadowPlate(for: CGSize(width: 200, height: 120)) === canvas.shadowPlate(for: CGSize(width: 200, height: 120)),
-      "the single frame's plate and shadow, drawn once for its size, look as drawn each time (within \(worst) of 255)")
+    let made = canvas.shadowPlate?.parts.first
+    _ = painted(CGRect(x: 0, y: 0, width: 4000, height: 3000)) { canvas.drawShadowPlate(around: $0) }
+    try check(worst <= 1 && made != nil && canvas.shadowPlate?.parts.first === made && (made?.size.width ?? 999) < 100,
+      "the single frame's plate and shadow, made once and stretched to any size, look as drawn each time (within \(worst) of 255)")
   }
 }

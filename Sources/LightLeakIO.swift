@@ -411,7 +411,10 @@ final class LeakKeychain {
   let service: String
   let account = "openai-api"
   let keychain: SecKeychain?
-  init(service: String = "local.epscan.mac.openai", keychain: SecKeychain? = nil) {
+  /// The saved key's. The self-test sets one of its own, so no test reads the saved key: a test
+  /// build is a stranger to the item, macOS asks the user, and the test waits for the answer.
+  static var defaultService = "local.epscan.mac.openai"
+  init(service: String = LeakKeychain.defaultService, keychain: SecKeychain? = nil) {
     self.service = service
     self.keychain = keychain
   }

@@ -445,8 +445,7 @@ struct ContentView: View {
       .help("负片：扫描或翻拍的原样。正片：每张按各自的调色显示，接触表上片边与片夹按本卷片基反相")
       .onChange(of: m.showNegative) { m.refresh() }
     if m.singleView {
-      Text(String(format: "%.1f×", m.zoom)).font(.system(size: 11, design: .monospaced))
-        .foregroundStyle(.secondary).help("相对适合窗口的缩放倍率")
+      ZoomReadoutLabel(readout: m.zoomReadout)
     }
   }
   /// Turning and mirroring: this frame (or every one, synced) in the single view, the whole roll on

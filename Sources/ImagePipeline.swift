@@ -914,16 +914,27 @@ final class ImagePipeline {
   }
   /// Only `region` (normalised to the picture as shown, top left at 0) of `image` rendered: Core
   /// Image works out no more of the frame than that, so a part of a 60-megapixel frame takes a
-  /// fraction of the whole.
+  /// fraction of the whole. With `across`, the picture as if `across` pixels wide, when that is
+  /// fewer than its own: worked out from the frame's own pixels, then filtered down, for a screen
+  /// that shows no more; `scale` says how far.
   func render(
-    _ image: CGImage, region: NormalRect, settings: Adjustments, profile: FilmProfile, analysis: ToneAnalysis?, negative: Bool
-  ) -> (image: CGImage, region: NormalRect)? {
-    guard let ci = shown(image, settings: settings, profile: profile, analysis: analysis, negative: negative) else { return nil }
+    _ image: CGImage, region: NormalRect, across: Double? = nil, settings: Adjustments, profile: FilmProfile, analysis: ToneAnalysis?,
+    negative: Bool
+  ) -> (image: CGImage, region: NormalRect, scale: Double)? {
+    guard var ci = shown(image, settings: settings, profile: profile, analysis: analysis, negative: negative) else { return nil }
+    var scale = 1.0
+    if let across, across < ci.extent.width * 0.999, across >= 1 {
+      let whole = ci.extent
+      scale = across / whole.width
+      ci = ci.clampedToExtent()
+        .applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: scale, kCIInputAspectRatioKey: 1.0])
+        .cropped(to: CGRect(x: whole.minX * scale, y: whole.minY * scale, width: (whole.width * scale).rounded(.down), height: (whole.height * scale).rounded(.down)))
+    }
     let e = ci.extent
     let r = CGRect(x: region.x * e.width, y: (1 - region.y - region.height) * e.height, width: region.width * e.width, height: region.height * e.height)
       .integral.intersection(e)
     guard r.width >= 1, r.height >= 1, let cg = context.createCGImage(ci, from: r, format: .RGBA8, colorSpace: outputSpace) else { return nil }
-    return (cg, NormalRect(x: r.minX / e.width, y: 1 - r.maxY / e.height, width: r.width / e.width, height: r.height / e.height))
+    return (cg, NormalRect(x: r.minX / e.width, y: 1 - r.maxY / e.height, width: r.width / e.width, height: r.height / e.height), scale)
   }
   /// How light the film base shows in a negative, encoded for the screen: a light grey, as on a
   /// light box, with bare light past the film lighter still.
