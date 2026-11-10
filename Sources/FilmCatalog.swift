@@ -135,7 +135,7 @@ enum FilmCatalog {
     FilmStock(maker: "ADOX", stock: "CHS 100 II", iso: 100, kind: .blackWhite, gauges: both, note: "正全色，柔和，五十年代质感", aliases: ["chs"]),
     FilmStock(maker: "ADOX", stock: "HR-50", iso: 50, kind: .blackWhite, gauges: both, note: "航拍乳剂改良，极细颗粒", aliases: ["hr50"]),
     FilmStock(maker: "ADOX", stock: "CMS 20 II", iso: 20, kind: .blackWhite, gauges: both, note: "微缩胶片乳剂，几乎没有颗粒", aliases: ["cms20", "cms 20"]),
-    FilmStock(maker: "ADOX", stock: "Silvermax 100", iso: 100, kind: .blackWhite, gauges: only135, note: "双倍银盐，影调宽", aliases: ["silvermax"]),
+    FilmStock(maker: "ADOX", stock: "Silvermax 100", iso: 100, kind: .blackWhite, gauges: only135, note: "双倍银盐，影调宽", aliases: ["silvermax"], discontinued: true),
     FilmStock(maker: "ADOX", stock: "Scala 50", iso: 50, kind: .slide, gauges: only135, note: "黑白反转片，极细颗粒", aliases: ["scala", "黑白反转", "黑白"], mono: true),
     FilmStock(maker: "ADOX", stock: "Color Mission 200", iso: 200, kind: .colour, gauges: only135, note: "单批次彩色负片，绿色偏薄荷", aliases: ["color mission", "colour mission"]),
     FilmStock(maker: "Ferrania", stock: "P30 80", iso: 80, kind: .blackWhite, gauges: both, note: "电影黑白乳剂，细颗粒，反差高", aliases: ["p30"]),
@@ -146,7 +146,7 @@ enum FilmCatalog {
     FilmStock(maker: "ORWO", stock: "Wolfen UN54+", iso: 100, kind: .blackWhite, gauges: only135, note: "电影黑白乳剂", aliases: ["un54"]),
     FilmStock(maker: "ORWO", stock: "Wolfen N74+", iso: 400, kind: .blackWhite, gauges: only135, note: "电影黑白乳剂", aliases: ["n74"]),
     FilmStock(maker: "Lucky", stock: "Color 200", iso: 200, kind: .colour, gauges: both, note: "乐凯民用彩色负片，偏红", aliases: ["c200", "乐凯200"]),
-    FilmStock(maker: "Lucky", stock: "Color 400", iso: 400, kind: .colour, gauges: both, note: "乐凯新一代彩色负片（C400）", aliases: ["c400", "乐凯400"]),
+    FilmStock(maker: "Lucky", stock: "Color 400", iso: 400, kind: .colour, gauges: only135, note: "乐凯新一代彩色负片（C400）", aliases: ["c400", "乐凯400"]),
     FilmStock(maker: "Lucky", stock: "SHD 100", iso: 100, kind: .blackWhite, gauges: both, note: "淡蓝色涤纶片基，宽容度大", aliases: ["shd", "乐凯黑白"]),
     FilmStock(maker: "Lucky", stock: "SHD 400", iso: 400, kind: .blackWhite, gauges: both, note: "淡蓝色涤纶片基，反差偏高", aliases: ["shd", "乐凯黑白"]),
     // CineStill, Lomography, Rollei, AgfaPhoto: others' emulsions under their names.

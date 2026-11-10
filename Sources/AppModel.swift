@@ -5,7 +5,10 @@ import UniformTypeIdentifiers
 
 final class AppModel: ObservableObject {
   let scanner: ScannerController
-  @Published var frames = [FilmFrame]()
+  @Published var frames = [FilmFrame]() {
+    // Every frame reads the film's edge as the roll says, new ones too.
+    didSet { stampFilmEdges() }
+  }
   @Published var selectedID: UUID? {
     // The light table turns to the page the frame selected lies on.
     didSet {
@@ -113,6 +116,15 @@ final class AppModel: ObservableObject {
   @Published var showNegative = false
   @Published var tool = CanvasTool.select
   @Published var format = FilmFormat.auto
+  /// Whether the roll's copies take in the film's edge (边字、齿孔): from the new-project sheet or
+  /// ②'s film section; each frame's de-masking region and a copy's size follow it. Kept with the roll.
+  @Published var filmEdges = PictureEdges.auto { didSet { stampFilmEdges() } }
+  /// The roll's `filmEdges` on each frame, where its picture is read.
+  private func stampFilmEdges() {
+    let edges: PictureEdges? = filmEdges == .auto ? nil : filmEdges
+    guard frames.contains(where: { $0.adjustments.filmEdges != edges }) else { return }
+    for i in frames.indices where frames[i].adjustments.filmEdges != edges { frames[i].adjustments.filmEdges = edges }
+  }
   @Published var dpi = 2400
   @Published var filmName = "Kodak Portra 160"
   /// The open roll's name and notes in the library.
@@ -790,7 +802,7 @@ final class AppModel: ObservableObject {
   }
   /// The sheet's 开始: the new project begun (`startNewProject`), then its film, kind and format
   /// set, after the open roll is saved as it was.
-  func beginNewProject(profile p: FilmProfile, filmName name: String? = nil, reversal: Bool, format f: FilmFormat) {
+  func beginNewProject(profile p: FilmProfile, filmName name: String? = nil, reversal: Bool, format f: FilmFormat, edges: PictureEdges = .auto) {
     askingNewProject = false
     guard !isWorking else { return }
     startNewProject()
@@ -801,7 +813,8 @@ final class AppModel: ObservableObject {
     preferences.scanReversal = reversal
     startsAsSlides = reversal
     format = f
-    status = "新建工程：\(filmName) · \(reversal ? "反转片" : "负片") · 画幅 \(f.rawValue)；下一次预览、导入或拍摄存进新的一卷"
+    filmEdges = edges
+    status = "新建工程：\(filmName) · \(reversal ? "反转片" : "负片") · 画幅 \(f.rawValue)" + (edges == .auto ? "" : " · \(edges.summary)") + "；下一次预览、导入或拍摄存进新的一卷"
   }
   /// What an export's {film} is: the preset's own id where the roll is that film, else the roll's
   /// film name made short, as the catalog has its stock (「Fujifilm Velvia 50」 → velvia50), so a
@@ -836,7 +849,7 @@ final class AppModel: ObservableObject {
   @Published var changingFilm = false
   /// The shelf's 换上 for the open roll: its preset, the film's own name, negative or slide and its
   /// format, one step of ⌘Z where the window groups the edits (each is undone with the others).
-  func applyFilm(profile p: FilmProfile, filmName name: String, reversal: Bool, format f: FilmFormat) {
+  func applyFilm(profile p: FilmProfile, filmName name: String, reversal: Bool, format f: FilmFormat, edges: PictureEdges? = nil) {
     changingFilm = false
     guard !isWorking else {
       status = "正在扫描、翻拍或导出：完成后再从胶片架换胶片"
@@ -859,13 +872,14 @@ final class AppModel: ObservableObject {
     }
     // The format first: a preview's frames are found again by it when the kind changes.
     setFormat(f)
+    if let edges { setFilmEdges(edges) }
     // A roll with nothing in it yet: its first copy or import comes in as the kind chosen.
     if frames.isEmpty {
       startsAsSlides = reversal
       preferences.scanReversal = reversal
     }
     if reversal != reversalRoll { setReversal(reversal) }
-    status = "这一卷换成 \(name) · \(reversal ? "反转片" : "负片") · 画幅 \(f.rawValue)"
+    status = "这一卷换成 \(name) · \(reversal ? "反转片" : "负片") · 画幅 \(f.rawValue)" + (filmEdges == .auto ? "" : " · \(filmEdges.summary)")
   }
   /// The roll's film format, from the new-project sheet, ①'s 规格 or ②'s film section: a scan's
   /// frames are found by it, and a copy's size on the film, so the loupe's field and the export's
@@ -876,6 +890,17 @@ final class AppModel: ObservableObject {
     recordEdit("画幅")
     format = f
     refresh()
+    saveProject()
+  }
+  /// Whether the roll's copies take in the film's edge: 不带, each crop is the picture (no edge
+  /// looked for, its short side the picture's 24 or 56 mm); 带边字、齿孔, across the film the crop
+  /// is the film's 35 or 61.5 mm, the picture found inside the edge; 自动, the edge looked for.
+  func setFilmEdges(_ e: PictureEdges) {
+    guard e != filmEdges else { return }
+    recordEdit("片边")
+    filmEdges = e
+    refresh()
+    updateThumbnails()
     saveProject()
   }
   /// A roll moved to the Trash, its folder whole (its originals, decoded pictures, exports and
@@ -1323,12 +1348,12 @@ final class AppModel: ObservableObject {
   weak var undoManager: UndoManager?
   private struct EditState {
     var frames: [FilmFrame], selectedID: UUID?, profile: FilmProfile, filmName: String, useCalibration: Bool, rollFlats: [FlatProfile]
-    var format: FilmFormat, startsAsSlides: Bool?
+    var format: FilmFormat, startsAsSlides: Bool?, filmEdges: PictureEdges
   }
   private var lastEdit: (key: String, at: Date)?
   private var editState: EditState { EditState(
     frames: frames, selectedID: selectedID, profile: profile, filmName: filmName, useCalibration: useCalibration,
-    rollFlats: rollFlats, format: format, startsAsSlides: startsAsSlides)
+    rollFlats: rollFlats, format: format, startsAsSlides: startsAsSlides, filmEdges: filmEdges)
   }
   /// Called before an edit. Repeats of one control within a second, a fader being dragged, are one step.
   func recordEdit(_ name: String, key: String? = nil, filmName shown: String? = nil) {
@@ -1375,7 +1400,7 @@ final class AppModel: ObservableObject {
     }
     selectedID = state.selectedID.flatMap { id in frames.contains { $0.id == id } ? id : nil } ?? frames.first?.id
     (profile, filmName, useCalibration, rollFlats) = (state.profile, state.filmName, state.useCalibration, state.rollFlats)
-    (format, startsAsSlides) = (state.format, state.startsAsSlides)
+    (format, startsAsSlides, filmEdges) = (state.format, state.startsAsSlides, state.filmEdges)
     editRegionLock = nil
     status = (undoing ? "已撤销：" : "已重做：") + name
     updateRollBase()
@@ -1599,6 +1624,8 @@ final class AppModel: ObservableObject {
   func measureEdgeBases(wait: Bool = false) {
     // A slide has no mask to divide by: nothing at its edges to look for.
     let blanks = blankFrameIDs
+    // Copies of the picture alone (片边 不带) have no rebate round them to read.
+    guard filmEdges != .picture else { return }
     let pending = frames.filter { $0.edgeBase == nil && isSinglePicture($0) && $0.adjustments.inputIsNegative && !blanks.contains($0.id) }
     guard !pending.isEmpty else { return }
     let project = sessionURL
@@ -2519,13 +2546,21 @@ final class AppModel: ObservableObject {
     guard frame.format == "翻拍", format.shortMM != nil, let path = frame.sourcePath else { return nil }
     let pixels = filePixels(path)
     return Self.formatDPI(crop: CGSize(width: frame.rect.width * pixels.width, height: frame.rect.height * pixels.height),
-      region: frame.adjustments.analysisRegion, format: format)
+      region: frame.adjustments.analysisRegion, format: format, edges: filmEdges)
   }
-  /// The same from the crop's size in pixels.
-  static func formatDPI(crop: CGSize, region: NormalRect?, format: FilmFormat) -> Double? {
+  /// The same from the crop's size in pixels. A crop taking in the film's edge (`edges` 带) is the
+  /// film's width across it: 35 mm on 135, its short side; 61.5 mm on 120, its short side for 6×7
+  /// and 6×9 (and 120 of unknown length), its long one for 6×6 and 6×4.5, whose picture along the
+  /// film, gaps and all, is shorter than the film is wide.
+  static func formatDPI(crop: CGSize, region: NormalRect?, format: FilmFormat, edges: PictureEdges = .auto) -> Double? {
     guard let short = format.shortMM else { return nil }
     var (w, h) = (Double(crop.width), Double(crop.height))
-    if let r = region { (w, h) = (w * r.width, h * r.height) }
+    if let r = region {
+      (w, h) = (w * r.width, h * r.height)
+    } else if edges == .rebate, let film = format.filmWidthMM {
+      let across = format == .six6 || format == .six45 ? max(w, h) : min(w, h)
+      return across > 1 ? across / film * 25.4 : nil
+    }
     let side = min(w, h)
     return side > 1 ? side / short * 25.4 : nil
   }
@@ -4049,6 +4084,7 @@ final class AppModel: ObservableObject {
     project.useCalibration = useCalibration ? nil : false
     project.flats = rollFlats.isEmpty ? nil : rollFlats
     project.format = format == .auto ? nil : format.rawValue
+    project.edges = filmEdges == .auto ? nil : filmEdges.rawValue
     // Older versions would open a roll whose frames lack their grids as if not flattened: they
     // refuse it instead.
     if stripped { project.version = 2 }
@@ -4132,6 +4168,7 @@ final class AppModel: ObservableObject {
       filmName = p.filmName
       // A roll saved before the format was kept with it opens as 自动.
       format = p.format.flatMap(FilmFormat.init(rawValue:)) ?? .auto
+      filmEdges = p.edges.flatMap(PictureEdges.init(rawValue:)) ?? .auto
       startsAsSlides = nil
       rollName = p.rollName ?? ""
       rollNotes = p.notes ?? ""

@@ -209,6 +209,17 @@ enum LightLeakTests {
       reopened.restore()
       try check(reopened.configured && reopened.remembered && reopened.secret == key && reopened.model == "gpt-image-2",
         "a remembered key is found again by the next launch, with its model")
+      // In the app the key goes through EpsonScanKey, the same program every version, so the
+      // Keychain's 始终允许 holds across updates; it answers the app only.
+      if let helper = LeakKeychain.helper {
+        try check(LeakKeychain.lastWay == "helper", "the app saves and reads the key through its key reader, not itself")
+        let shell = Process()
+        shell.executableURL = URL(fileURLWithPath: "/bin/sh")
+        shell.arguments = ["-c", "\"$0\" read \"$1\" openai-api > /dev/null 2>&1", helper.path, store.service]
+        try shell.run()
+        shell.waitUntilExit()
+        try check(shell.terminationStatus == 3, "the key reader refuses any caller but the app (exit \(shell.terminationStatus))")
+      }
       try credentials.update(apiKey: "", model: LeakOpenAI.defaultModel, remember: false)
       let forgotten = LeakCredentials(store: LeakKeychain(service: store.service, keychain: keychain))
       forgotten.restore()

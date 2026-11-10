@@ -110,6 +110,10 @@ enum FollowedRegionTests {
       strip(u, v, slide: false) { u, v in dense(scene((u - 0.03) / 0.94, (v - photo135.top) / (24 * mm))) }
     }
     let region135 = pipe.followedRegion(negative135, settings: known)
+    var alone = known
+    alone.filmEdges = .picture
+    try check(pipe.followedRegion(negative135, settings: alone) == nil,
+      "a roll copied without the film's edge (片边 不带) looks for none: the crop is the picture")
     try check(inside(region135, photo135) && region135.map { $0.y < photo135.top + 0.04 && 1 - $0.y - $0.height < 1 - photo135.bottom + 0.04 } == true,
       String(format: "a 135 negative with its sprocket holes and print is read inside the frame (%.3f–%.3f down): ", photo135.top, photo135.bottom) + text(region135))
     // With no base known the holes alone put it inside, and the base is still the crop's thinnest

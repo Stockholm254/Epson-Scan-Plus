@@ -37,12 +37,12 @@ enum FilmPrint {
     /// Words as they are set: runs in their own fonts and colours, made smaller to be no longer
     /// than `fit` millimetres; or, `stretch`, their letters widened (or narrowed) to be just as long,
     /// as the makers set their names.
-    func runs(_ parts: [(String, NSFont, NSColor)], kern: CGFloat = 0, fit: CGFloat?, stretch: Bool = false, wide: CGFloat = 1) -> NSAttributedString {
+    func runs(_ parts: [(String, NSFont, NSColor)], kern: CGFloat = 0, fit: CGFloat?, stretch: Bool = false, wide: CGFloat = 1, slant: CGFloat = 0) -> NSAttributedString {
       func make(_ k: CGFloat, wide: CGFloat = 1) -> NSAttributedString {
         let a = NSMutableAttributedString()
         for (s, f, c) in parts {
           let font = NSFont(descriptor: f.fontDescriptor, size: f.pointSize * k) ?? f
-          a.append(NSAttributedString(string: s, attributes: [.font: font, .foregroundColor: c, .kern: kern * m * k, .expansion: log(wide)]))
+          a.append(NSAttributedString(string: s, attributes: [.font: font, .foregroundColor: c, .kern: kern * m * k, .expansion: log(wide), .obliqueness: slant]))
         }
         return a
       }
@@ -54,8 +54,8 @@ enum FilmPrint {
     /// A line set along the length, reading from the top end down (its letters' tops towards the
     /// lip), its middle `s` round, starting `top` mm down; reading up from `top` (`up`), the letters'
     /// tops away from the lip.
-    func along(_ parts: [(String, NSFont, NSColor)], s: CGFloat, top: CGFloat, fit: CGFloat, kern: CGFloat = 0, up: Bool = false, stretch: Bool = false, wide: CGFloat = 1, outline: NSColor? = nil) {
-      let a = runs(parts, kern: kern, fit: fit, stretch: stretch, wide: wide)
+    func along(_ parts: [(String, NSFont, NSColor)], s: CGFloat, top: CGFloat, fit: CGFloat, kern: CGFloat = 0, up: Bool = false, stretch: Bool = false, wide: CGFloat = 1, slant: CGFloat = 0, outline: NSColor? = nil) {
+      let a = runs(parts, kern: kern, fit: fit, stretch: stretch, wide: wide, slant: slant)
       let line = a.size()
       ctx.saveGState()
       ctx.translateBy(x: x(s), y: top * m)
@@ -355,11 +355,11 @@ enum FilmPrint {
     Design { f, look in
       f.all(paper)
       // A bright green from the middle on, paler where it meets the white.
-      let green = rgb(0x34A83A)
+      let green = rgb(0x3BB54A)
       f.fill(green, 0.6, 30)
       f.shade([rgb(0xA8DA8E), green], -1.0, 0.6)
       f.along(fujifilm(5.0, white), s: 4.6, top: 4.0, fit: 30, kern: 0.3, wide: 1.18)
-      f.along([("\(iso)", font("AvenirNext-DemiBoldItalic", 6.6), ink)], s: -4.0, top: 13.0, fit: 14)
+      f.along([("\(iso)", font("AvenirNext-DemiBoldItalic", 5.8), ink)], s: -4.0, top: 11.0, fit: 12)
       f.fill(rgb(0x141414), -9.6, -7.0, y0: 3.2, y1: 34.8)
       f.along([("FILM FOR COLOR PRINTS", font("AvenirNext-DemiBold", 1.9), white)], s: -8.3, top: 6.2, fit: 26, kern: 0.12)
       f.along([("CH-36   \(iso)   PROCESS C-41", font("AvenirNext-Medium", 1.7), ink)], s: -11.6, top: 8.0, fit: 24)
@@ -473,10 +473,11 @@ enum FilmPrint {
     Design { f, look in
       f.all(paper)
       let heavy = "HelveticaNeue-CondensedBlack"
-      f.along([(maker, font(heavy, 4.6), maker == "ILFORD" ? ink : colour)], s: -12.0, top: 32.6, fit: 25.5, up: true, stretch: true)
-      f.along([(word, font(heavy, 12.4), colour)], s: -5.0, top: 32.6, fit: 25.5, up: true, stretch: true)
+      // The heavy words lean, as Ilford sets them.
+      f.along([(maker, font(heavy, 4.6), maker == "ILFORD" ? ink : colour)], s: -12.0, top: 32.6, fit: 25.5, up: true, stretch: true, slant: 0.16)
+      f.along([(word, font(heavy, 12.4), colour)], s: -5.0, top: 32.6, fit: 25.5, up: true, stretch: true, slant: 0.16)
       let t = [(third, font(heavy, 6.0), ink)]
-      f.along(t, s: 2.4, top: 32.6, fit: 13, up: true)
+      f.along(t, s: 2.4, top: 32.6, fit: 13, up: true, slant: 0.16)
       let used = min(13, f.width(t))
       f.fill(ink, 0.3, 4.5, y0: 6.8, y1: 31.6 - used)
       if let iso { f.along([("\(iso)", font("HelveticaNeue-CondensedBold", 3.6), ink)], s: 6.0, top: 32.6, fit: 8, up: true) }
