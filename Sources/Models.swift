@@ -643,6 +643,8 @@ struct DeskProject: Codable {
   var useCalibration: Bool? = nil
   /// The flat fields its frames are divided by (`FilmFrame.flatID`), and those made on it.
   var flats: [FlatProfile]? = nil
+  /// The roll's film format as chosen (`FilmFormat`'s raw value); nil, 自动.
+  var format: String? = nil
 }
 
 /// A project names its files by absolute path, which older versions read, and relative to its
@@ -761,6 +763,8 @@ enum CanvasTool: String, CaseIterable {
     return what + (shortcut.map { " · \($0.uppercased())" } ?? "")
   }
 }
+/// A roll's film format: how a scan's frames are found, and a copy's size on the film (the loupe's
+/// field and the export's dpi), which the camera's pixels do not say.
 enum FilmFormat: String, CaseIterable {
   case auto = "自动"
   case mm135 = "135"
@@ -769,6 +773,26 @@ enum FilmFormat: String, CaseIterable {
   case six6 = "120 · 6×6"
   case six7 = "120 · 6×7"
   case six9 = "120 · 6×9"
+  /// The picture's short side on the film, in millimetres: 24 for 135, 56 for 120 whatever its
+  /// length. Nil for 自动.
+  var shortMM: Double? {
+    switch self {
+    case .auto: return nil
+    case .mm135: return 24
+    case .six45: return 41.5
+    case .medium, .six6, .six7, .six9: return 56
+    }
+  }
+  /// The picture's long side, where the format says it.
+  var longMM: Double? {
+    switch self {
+    case .auto, .medium: return nil
+    case .mm135: return 36
+    case .six45, .six6: return 56
+    case .six7: return 69.5
+    case .six9: return 84
+    }
+  }
 }
 
 func clamp(_ x: Double, _ a: Double = 0, _ b: Double = 1) -> Double { min(b, max(a, x)) }

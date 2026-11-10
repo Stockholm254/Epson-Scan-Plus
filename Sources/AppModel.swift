@@ -771,6 +771,37 @@ final class AppModel: ObservableObject {
     projectStarted = true
     if page == .library { page = .capture }
   }
+  /// 新建工程 from the library or the menu asks first, in a sheet, which film the roll is, negative
+  /// or slide, and its format (as last chosen), so ① previews and copies it as that film and ② and
+  /// ③ convert it so from the first picture.
+  @Published var askingNewProject = false
+  func askNewProject() {
+    guard !isWorking else { return }
+    askingNewProject = true
+  }
+  /// The sheet's 开始: the new project begun (`startNewProject`), then its film, kind and format
+  /// set, after the open roll is saved as it was.
+  func beginNewProject(profile p: FilmProfile, reversal: Bool, format f: FilmFormat) {
+    askingNewProject = false
+    guard !isWorking else { return }
+    startNewProject()
+    filmName = p.name
+    profile = p
+    useCalibration = true
+    preferences.scanReversal = reversal
+    startsAsSlides = reversal
+    format = f
+    status = "新建工程：\(p.name) · \(reversal ? "反转片" : "负片") · 画幅 \(f.rawValue)；下一次预览、导入或拍摄存进新的一卷"
+  }
+  /// The roll's film format, from the new-project sheet, ①'s 规格 or ②'s film section: a scan's
+  /// frames are found by it, and a copy's size on the film, so the loupe's field and the export's
+  /// dpi, follows it (`formatDPI`). Kept with the roll.
+  func setFormat(_ f: FilmFormat) {
+    guard f != format else { return }
+    format = f
+    refresh()
+    saveProject()
+  }
   /// A roll moved to the Trash, its folder whole (its originals, decoded pictures, exports and
   /// project), from where Finder's 放回原处 brings it back. The roll open is closed first, the
   /// window emptied and back on the library.
@@ -804,6 +835,7 @@ final class AppModel: ObservableObject {
     overviewBackendID = nil
     overviewInputGamma = 1
     pendingShift = []
+    startsAsSlides = nil
     sourceSummary = ""
     status = (had ? "上一卷已存进库 · " : "") + "新建工程：下一次预览、导入或拍摄存进新的一卷"
     refresh()
@@ -1529,7 +1561,11 @@ final class AppModel: ObservableObject {
   var hasSensorPictures: Bool { frames.contains { $0.sensorRead == true } }
   var crosstalkRemoved: Bool { frames.contains { $0.sensorRead == true && $0.crosstalk != nil } }
   /// The roll is reversal film, slides; with no frames yet, what the next preview is set to.
-  var reversalRoll: Bool { frames.isEmpty ? preferences.scanReversal : frames.contains { $0.adjustments.isSlide } }
+  var reversalRoll: Bool { frames.isEmpty ? (startsAsSlides ?? preferences.scanReversal) : frames.contains { $0.adjustments.isSlide } }
+  /// What the new-project sheet said the roll is, negative or slide: its first copy or import
+  /// follows it (the scanner's previews follow `scanReversal`, which the sheet sets too). Nil for a
+  /// roll begun otherwise, or opened: its pictures then come in as negatives until switched.
+  private(set) var startsAsSlides: Bool?
   /// The roll read as slides, or as negatives again, as one edit, from the scanner's panel or the
   /// film section; the next preview follows, and pictures copied into the roll after. Frames only
   /// found on the scanner's overview, none scanned yet, are found again as this film shows them: a
@@ -2368,16 +2404,17 @@ final class AppModel: ObservableObject {
   /// shows it, positive or raw (its scan, or the full-resolution preview); over the single frame
   /// as that view shows it, turned and mirrored, at full resolution.
   func loupeDetail(for frame: FilmFrame, single: Bool = false, pixels: Int = 2400, completion: @escaping (CGImage?) -> Void) {
-    let positive = !showsNegative, original = showsOriginal, p = conversionProfile
+    let positive = !showsNegative, original = showsOriginal, p = conversionProfile, gains = rawGains(frame)
     // A page laid out from files of their own shows each positive as the film strip has it,
     // turned, mirrored and straightened; the holder's preview, as the frame lies under its box.
     let asLaidOut = onSheetPage && sheetPageFrames.contains { $0.id == frame.id }
     renderQueue.async {
       var image = try? self.source(for: frame, full: single, maxDimension: single ? nil : pixels)
       if original {
-        // The raw picture: its readings as the file has them, nothing unmixed or filled.
+        // The raw picture: its readings as the file has them, nothing unmixed or filled, in the
+        // white balance the table shows it in (日光 or 原样), so the lens matches what lies under it.
         image = (try? self.dustFreeSource(for: frame, full: single, maxDimension: single ? nil : pixels))
-          .flatMap { ImagePipeline.shared.original($0, settings: frame.adjustments, oriented: single) }
+          .flatMap { ImagePipeline.shared.original($0, settings: frame.adjustments, oriented: single, gains: gains) }
       } else if single, let crop = image {
         image = ImagePipeline.shared.render(crop, settings: frame.adjustments, profile: p, analysis: nil, negative: !positive)
       } else if positive, let crop = image {
@@ -2396,17 +2433,40 @@ final class AppModel: ObservableObject {
       DispatchQueue.main.async { completion(image) }
     }
   }
+  /// A copy's resolution as the roll's format gives it: its picture's short side, the 去色罩区域
+  /// where one is set inside the crop (the picture without the rebate or the sprocket strips), as
+  /// the format's (24 mm for 135, 56 mm for 120). Nil for 自动 and for frames that are not a
+  /// camera's: their long side is then taken as the 36 mm of a 135 frame, as it always was.
+  func formatDPI(_ frame: FilmFrame) -> Double? {
+    guard frame.format == "翻拍", format.shortMM != nil, let path = frame.sourcePath else { return nil }
+    let pixels = filePixels(path)
+    return Self.formatDPI(crop: CGSize(width: frame.rect.width * pixels.width, height: frame.rect.height * pixels.height),
+      region: frame.adjustments.analysisRegion, format: format)
+  }
+  /// The same from the crop's size in pixels.
+  static func formatDPI(crop: CGSize, region: NormalRect?, format: FilmFormat) -> Double? {
+    guard let short = format.shortMM else { return nil }
+    var (w, h) = (Double(crop.width), Double(crop.height))
+    if let r = region { (w, h) = (w * r.width, h * r.height) }
+    let side = min(w, h)
+    return side > 1 ? side / short * 25.4 : nil
+  }
+  /// The dpi a frame's file is at: a copy's from the roll's format when given, else as stored.
+  func pixelDPI(_ frame: FilmFrame) -> Double? {
+    formatDPI(frame) ?? frame.scanDPI.flatMap { $0 > 0 ? Double($0) : nil }
+  }
   /// A frame's size on the film, in millimetres, as it lies (before it is turned): its share of
-  /// the bed for a scan, or a file's pixels at its dpi (a camera's long side is taken as 36 mm).
+  /// the bed for a scan, or a file's pixels at its dpi (a copy's from the roll's format, else its
+  /// long side taken as 36 mm).
   func frameMM(_ frame: FilmFrame) -> CGSize? {
     guard let path = frame.sourcePath else {
       guard physicalMM.width > 0 else { return nil }
       return CGSize(width: frame.rect.width * physicalMM.width, height: frame.rect.height * physicalMM.height)
     }
-    guard let dpi = frame.scanDPI, dpi > 0 else { return nil }
+    guard let dpi = pixelDPI(frame) else { return nil }
     let pixels = filePixels(path)
     guard pixels.width > 0 else { return nil }
-    let mm = 25.4 / Double(dpi)
+    let mm = 25.4 / dpi
     return CGSize(width: frame.rect.width * pixels.width * mm, height: frame.rect.height * pixels.height * mm)
   }
   /// A file's size in pixels, read once.
@@ -2474,6 +2534,7 @@ final class AppModel: ObservableObject {
     encoder.outputFormatting = .sortedKeys
     let settings = (try? encoder.encode(frame.adjustments)).map { $0.base64EncodedString() } ?? ""
     let shown = (single ? "single " : "table ") + "\(!showNegative) \(showsOriginal)" + (single && curvesBypassed ? " no curves" : "")
+      + (showsOriginal ? rawGains(frame).map { " gains \($0.values)" } ?? " as read" : "")
     return [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", shown, conversionProfile.id, settings, frame.dust?.signature ?? "",
       frame.flatField.map { "flat\($0.values.reduce(0, +))" } ?? "-", frame.crosstalk.map { "\($0.m)" } ?? "-"]
       .joined(separator: "|")
@@ -2754,7 +2815,7 @@ final class AppModel: ObservableObject {
     wantedLock.unlock()
     guard let r = wanted else { return }
     let frame = r.frame, p = r.profile, edit = r.edit, negative = r.negative, token = r.token, bypassed = r.bypassed
-    let started = Date()
+    let started = Date(), rollFormat = format
     if r.original {
       renderOriginal(r, started: started)
       return
@@ -2804,8 +2865,11 @@ final class AppModel: ObservableObject {
             ).size
             : frame.rect.pixels(CGSize(width: info.width, height: info.height)).size
         }
+        // A copy's dpi as the roll's format gives it.
+        let copyDPI = frame.format == "翻拍" ? Self.formatDPI(crop: pixels, region: frame.adjustments.analysisRegion, format: rollFormat) : nil
+        let fileDPI = copyDPI.map { Int($0.rounded()) } ?? frame.scanDPI
         let summary =
-          "\(Int(pixels.width)) × \(Int(pixels.height)) · \(frame.hasFullResolution ? (frame.scanDPI.map{String($0)+" dpi"} ?? "源图") : r.previewDPI >= 600 ? "\(r.previewDPI) dpi 预览" : "低清预览")"
+          "\(Int(pixels.width)) × \(Int(pixels.height)) · \(frame.hasFullResolution ? (fileDPI.map{String($0)+" dpi"} ?? "源图") : r.previewDPI >= 600 ? "\(r.previewDPI) dpi 预览" : "低清预览")"
           + (Self.readsScan(frame) && frame.levels?.usable == true ? " · 已对齐预览" : "")
         DispatchQueue.main.async {
           // The newest asked for ends the render, shown or not.
@@ -3552,6 +3616,8 @@ final class AppModel: ObservableObject {
         f.sourcePath = dest.path
         f.scanDPI = Int(info.dpi > 0 ? info.dpi : Double(dpi))
         f.sourceBits = info.bits
+        // A new roll the sheet said is slides imports them as slides.
+        if startsAsSlides == true { f.adjustments.setReversal(true) }
         frames.append(f)
         if idx == 0 {
           overviewURL = dest
@@ -3678,6 +3744,9 @@ final class AppModel: ObservableObject {
     let space = preferences.exportColorSpace, template = preferences.exportNameTemplate
     let roll = sessionURL?.lastPathComponent ?? "", overviewPath = overviewURL?.path ?? ""
     let previewDPI = Int(overviewDPI)
+    // A copy's dpi as the roll's format gives it, read here, on the main thread.
+    let fileDPI = Dictionary(items.map { ($0.id, pixelDPI($0).map { Int($0.rounded()) }) }, uniquingKeysWith: { a, _ in a })
+    let rollFormat = self.format.shortMM == nil ? nil : self.format.rawValue
     let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
     exportQueue.async {
       do {
@@ -3691,7 +3760,7 @@ final class AppModel: ObservableObject {
               40))
           let source = f.hasFullResolution ? (f.scanPath ?? f.sourcePath ?? "") : overviewPath
           let scanned = (try? FileManager.default.attributesOfItem(atPath: source))?[.creationDate] as? Date
-          let dpi = f.hasFullResolution ? (f.scanDPI ?? previewDPI) : previewDPI
+          let dpi = f.hasFullResolution ? ((fileDPI[f.id] ?? nil) ?? f.scanDPI ?? previewDPI) : previewDPI
           let stem = ExportNaming.name(template, film: p.id, name: p.name, frame: safeName, roll: roll, date: scanned)
           // Never over an earlier export: a second one gets a number.
           var url = directory.appendingPathComponent(stem).appendingPathExtension(format.fileExtension)
@@ -3704,7 +3773,7 @@ final class AppModel: ObservableObject {
             title: "\(p.name) · \(f.name)",
             description: "\(p.name) · 第 \(f.name) 张 · \(dpi) dpi" + (f.hasFullResolution ? "" : " · 预览")
               + (f.sourcePath == nil ? " · EPSON Perfection V800/V850" : ""),
-            keywords: [p.name, f.format, "胶片扫描"],
+            keywords: [p.name, f.format] + (rollFormat.map { [$0] } ?? []) + ["胶片扫描"],
             scanner: f.sourcePath == nil ? ("EPSON", "Perfection V800/V850") : nil, scanned: scanned,
             software: "Epson Scan plus" + (version.map { " " + $0 } ?? ""))
           try ImagePipeline.shared.export(
@@ -3870,6 +3939,7 @@ final class AppModel: ObservableObject {
     project.poolPictures = poolPictures ? true : nil
     project.useCalibration = useCalibration ? nil : false
     project.flats = rollFlats.isEmpty ? nil : rollFlats
+    project.format = format == .auto ? nil : format.rawValue
     // Older versions would open a roll whose frames lack their grids as if not flattened: they
     // refuse it instead.
     if stripped { project.version = 2 }
@@ -3951,6 +4021,9 @@ final class AppModel: ObservableObject {
       clearEdits()
       profile = p.profile
       filmName = p.filmName
+      // A roll saved before the format was kept with it opens as 自动.
+      format = p.format.flatMap(FilmFormat.init(rawValue:)) ?? .auto
+      startsAsSlides = nil
       rollName = p.rollName ?? ""
       rollNotes = p.notes ?? ""
       poolPictures = p.poolPictures ?? false

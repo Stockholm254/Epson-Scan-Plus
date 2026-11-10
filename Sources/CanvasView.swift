@@ -1376,11 +1376,20 @@ final class FilmCanvasView: NSView {
       let across = frame.adjustments.rotation % 2 == 0 ? mm.width : mm.height
       return imageRect.width / across
     }
-    // A laid-out page prints every frame to the scale of a 135 frame, a 3:2 one 36 mm across,
-    // whatever its file's own size, so the loupe's field takes in a whole one.
-    if model.onSheetPage, !model.contactFrames.isEmpty {
+    // A laid-out page prints every frame as large as a 3:2 cell holds: one narrower than 3:2 as
+    // tall, one wider as wide. Without the roll's format that is a 135 frame's scale, a 3:2 one 36
+    // mm across, whatever its file's own size; with it, a frame's own size on the film (a 6 × 6
+    // its 56 mm), so the loupe takes in as much of it as the real one would.
+    if model.onSheetPage, let first = model.contactFrames.first {
       let page = AppModel.sheetLayout(count: model.contactFrames.count, pages: model.contactPages.count).size
-      return imageRect.width * AppModel.sheetCell.width / page.width / 36
+      let points = imageRect.width / page.width, cell = AppModel.sheetCell
+      if model.formatDPI(first) != nil, let mm = model.frameMM(first), mm.width > 0, mm.height > 0 {
+        let positive = !model.showsNegative
+        let turned = positive && ((first.adjustments.rotation % 4) + 4) % 2 == 1
+        let (across, tall) = turned ? (mm.height, mm.width) : (mm.width, mm.height)
+        return points * (across / tall >= cell.width / cell.height ? cell.width / across : cell.height / tall)
+      }
+      return points * cell.width / 36
     }
     guard model.physicalMM.height > 0 else { return nil }
     let shownHeight = turn.sideways ? model.physicalMM.width : model.physicalMM.height

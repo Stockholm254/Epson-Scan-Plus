@@ -282,7 +282,7 @@ enum MCPTools {
     case "get_state":
       let (frame, profile) = try selected(model)
       let summary: [String: Any] = onMain {
-        var project: [String: Any] = ["film": model.filmName, "frames": model.frames.count, "preview_dpi": model.overviewDPI]
+        var project: [String: Any] = ["film": model.filmName, "format": model.format.rawValue, "frames": model.frames.count, "preview_dpi": model.overviewDPI]
         if let folder = model.sessionURL { project["folder"] = folder.lastPathComponent }
         return ["project": project, "view": model.singleView ? "single" : "contact"]
       }

@@ -126,13 +126,25 @@ enum OriginalViewTests {
     let daylightWant = RGB((0..<3).map { min(1, greenBase.values[$0] * day.values[$0]) }.map(srgb))
     let wasDaylight = model.preferences.balanceRawView
     let daylightShown = model.displayed, daylightExposure = model.exposureReading
+    // The loupe's lens, from the frame's own pixels: in the same white balance as the table.
+    func loupePixel() -> RGB? {
+      var detail: CGImage?
+      model.loupeDetail(for: sensorFrame) { detail = $0 }
+      settle { detail != nil }
+      return detail.map { pipe.raster($0) }?.pixel(5, 5)
+    }
+    let daylightLoupe = loupePixel()
     model.setBalanceRawView(false)
     settle { !model.rendering && model.displayed !== daylightShown }
     let asReadPixel = model.displayed.map { pipe.raster($0) }?.pixel(5, 5)
+    let asReadLoupe = loupePixel()
     func close(_ a: RGB?, _ b: RGB) -> Bool { a.map { zip($0.values, b.values).allSatisfy { abs($0 - $1) < 0.02 } } ?? false }
     try check(wasDaylight && close(daylightPixel, daylightWant) && close(asReadPixel, RGB(greenBase.values.map(srgb)))
       && daylightExposure != nil && model.exposureReading == daylightExposure,
       "a camera's raw picture shows in daylight white balance (\(daylightPixel.map { String(format: "%.2f %.2f %.2f", $0.r, $0.g, $0.b) } ?? "-")), and with 原样 as the sensor read it (\(asReadPixel.map { String(format: "%.2f %.2f %.2f", $0.r, $0.g, $0.b) } ?? "-")); the exposure reading the same either way")
+    func rgbText(_ p: RGB?) -> String { p.map { String(format: "%.2f %.2f %.2f", $0.r, $0.g, $0.b) } ?? "-" }
+    try check(close(daylightLoupe, daylightWant) && close(asReadLoupe, RGB(greenBase.values.map(srgb))),
+      "the loupe shows the raw picture in the table's white balance: 日光 \(rgbText(daylightLoupe)), 原样 \(rgbText(asReadLoupe))")
     // The base is judged in daylight: grey there is right, whatever the sensor's own balance.
     let rightLight = BaseBalance(level: RGB(r: 0.62 / day.r, g: 0.62, b: 0.62 / day.b), source: "片边")
     let thisLight = BaseBalance(level: greenBase, source: "片边")

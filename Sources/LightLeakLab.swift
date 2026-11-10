@@ -13,6 +13,11 @@ struct LeakJob: Codable, Identifiable {
     var frameName: String
     var adjustments: Adjustments
     var profile: FilmProfile
+    /// The roll's film as named, its format and the frame's dpi when the job began, for the export:
+    /// nil in jobs from before they were kept.
+    var film: String? = nil
+    var format: String? = nil
+    var dpi: Int? = nil
   }
   struct Generated: Codable, Equatable {
     struct Usage: Codable, Equatable { var total_tokens: Int?, input_tokens: Int?, output_tokens: Int? }
@@ -981,7 +986,8 @@ final class LeakLab: ObservableObject {
       let full = LeakEngine.cropped(try self.original(j), rotation: input.rotation, crop: input.crop)
       self.onMain { self.busy = "应用去漏光到全分辨率" }
       let out = try LeakEngine.result(full, base: base, params: input, picture: Self.pictureHint(j, input))
-      try out.saveTIFF(to: url)
+      // At the frame's own dpi (a copy's as the roll's format gives it), else 300.
+      try out.saveTIFF(to: url, dpi: j.origin?.dpi ?? 300)
       let folder = url.deletingLastPathComponent(), stem = url.deletingPathExtension().lastPathComponent
       var jpg = folder.appendingPathComponent(stem + ".jpg"), n = 1
       while FileManager.default.fileExists(atPath: jpg.path) {
@@ -993,10 +999,12 @@ final class LeakLab: ObservableObject {
         var version = 1, sourceName: String, params: LeakParams, generatedAI: LeakJob.Generated?
         var width: Int, height: Int, colorSpace = "Adobe RGB (1998)", depth = 16
         var note = "参考图只提供平滑校正参数；所有输出结构来自原片。"
+        var film: String?, format: String?, dpi: Int?
       }
       let encoder = JSONEncoder()
       encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-      try encoder.encode(Record(sourceName: j.sourceName, params: input, generatedAI: j.generatedAI, width: out.width, height: out.height))
+      try encoder.encode(Record(sourceName: j.sourceName, params: input, generatedAI: j.generatedAI, width: out.width, height: out.height,
+        film: j.origin?.film, format: j.origin?.format, dpi: j.origin?.dpi))
         .write(to: url.appendingPathExtension("json"), options: .atomic)
       return {
         self.notice = "已导出 \(out.width) × \(out.height) · RGB 16 位 · Adobe RGB 到 \(url.lastPathComponent)，并附 sRGB JPEG 与参数记录。原片未改动。"
@@ -1057,7 +1065,11 @@ extension AppModel {
   }
   /// What a light-leak job keeps of a frame of the open roll: its conversion as it is now.
   func leakOrigin(_ frame: FilmFrame) -> LeakJob.Origin? {
-    projectPath.map { LeakJob.Origin(project: $0, frame: frame.id, frameName: frame.name, adjustments: frame.adjustments, profile: conversionProfile) }
+    projectPath.map {
+      LeakJob.Origin(project: $0, frame: frame.id, frameName: frame.name, adjustments: frame.adjustments, profile: conversionProfile,
+        film: filmName, format: format.shortMM == nil ? nil : format.rawValue,
+        dpi: frame.hasFullResolution ? pixelDPI(frame).map { Int($0.rounded()) } : nil)
+    }
   }
   /// A frame of the open roll at full resolution, converted as `origin` says and as an export
   /// would convert it.

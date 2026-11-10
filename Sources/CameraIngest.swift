@@ -204,15 +204,18 @@ extension AppModel {
   /// such frames have, or as last chosen for a roll's first.
   func addCapturedFrame(_ picture: URL, original: URL, linear: Bool, sensor: Bool = false) {
     let info = ImagePipeline.shared.info(picture)
-    // The long side taken as the 36 mm of a 135 frame filling it; only the export's dpi follows it.
+    // The long side taken as the 36 mm of a 135 frame filling it, kept for rolls without a format;
+    // with one, the frame's size on the film is read from its picture as the format gives it
+    // (`formatDPI`).
     let dpi = info.width > 0 ? Double(max(info.width, info.height)) / 36 * 25.4 : 300
     var f = FilmFrame(name: nextFrameName, rect: .full, format: "翻拍")
     f.sourcePath = picture.path
     f.sourceBits = info.bits
     f.scanDPI = Int(dpi.rounded())
     f.adjustments.inputGamma = linear ? 1 : 2.2
-    // It joins the roll's film: a copy of a slide in a roll of slides is a slide.
-    if frames.contains(where: { $0.adjustments.isSlide }) { f.adjustments.setReversal(true) }
+    // It joins the roll's film: a copy of a slide in a roll of slides is a slide, and a new roll's
+    // first is as its sheet said (`startsAsSlides`).
+    if frames.contains(where: { $0.adjustments.isSlide }) || (frames.isEmpty && startsAsSlides == true) { f.adjustments.setReversal(true) }
     f.sensorRead = sensor
     if sensor {
       f.adjustments.colourNoise = 1

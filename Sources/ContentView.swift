@@ -130,6 +130,7 @@ struct ContentView: View {
     .sheet(isPresented: $m.showPresets) { PresetManagerSheet(m: m) }
     .sheet(isPresented: $m.showFlats) { FlatManagerSheet(m: m) }
     .sheet(isPresented: $m.showUpdates) { UpdateSheet(m: m, updater: m.updater) }
+    .sheet(isPresented: $m.askingNewProject) { NewProjectSheet(m: m) }
     .onChange(of: m.tool) { m.refresh() }
     .onAppear {
       m.undoManager = undoManager
@@ -698,6 +699,13 @@ struct ContentView: View {
           }
           .pickerStyle(.segmented).labelsHidden().disabled(m.isWorking || m.frames.isEmpty)
           .help("这一卷是负片还是反转片（幻灯片、正片）：整卷一起切换，可以撤销；扫描、翻拍和导入的卷都一样。反转片不去色罩、不用通道斜率，扫描或翻拍的读数就是画面。反转片当负片转时，片边发白、颜色反着")
+        }
+        labeled("画幅") {
+          Picker("画幅", selection: Binding(get: { m.format }, set: { m.setFormat($0) })) {
+            ForEach(FilmFormat.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+          }
+          .labelsHidden().frame(maxWidth: .infinity, alignment: .leading).disabled(m.isWorking)
+          .help("这一卷的画幅：翻拍的照片按它算画面在胶片上的大小，看片镜的视场和导出的 dpi 跟着它；扫描时按它识别画面。「自动」时翻拍照片的长边按 135 的 36 mm 算")
         }
         labeled("胶片名") {
           HStack(spacing: 6) {

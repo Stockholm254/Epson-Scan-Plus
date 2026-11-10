@@ -69,7 +69,7 @@ struct EpsonScanPlusApp: App {
         }
       }
       CommandGroup(replacing: .newItem) {
-        Button("新建工程") { model.startNewProject() }.keyboardShortcut("n").disabled(model.isWorking)
+        Button("新建工程…") { model.askNewProject() }.keyboardShortcut("n").disabled(model.isWorking)
         // On ③, the positive to repair, as its own key has it.
         Button(model.page == .leak ? "导入正片…" : "导入图像…") {
           if model.page == .leak { model.leak.chooseFile() } else { model.importImages() }

@@ -138,11 +138,11 @@ struct LibraryPage: View {
         Text(shelf.loaded ? "\(shelf.entries.count) 卷" : "读取中").readout(11)
         // Where a roll starts: empty, for the scanner or the camera, or from files.
         Button {
-          m.startNewProject()
+          m.askNewProject()
         } label: {
           Label("新建工程", systemImage: "plus.rectangle.on.folder")
         }.disabled(m.isWorking)
-          .help("新建工程（⌘N）：打开着的这一卷存好留在库里，窗口清空，转到 ① 采集；下一次预览、拍摄或导入存进新的一卷")
+          .help("新建工程（⌘N）：先选这一卷的胶片、片种和画幅；打开着的这一卷存好留在库里，窗口清空，转到 ① 采集；下一次预览、拍摄或导入存进新的一卷")
         Button {
           m.importImages()
         } label: {
@@ -305,7 +305,7 @@ struct RollSleeve: View {
     .accessibilityAction { open() }
   }
   var details: String {
-    var parts = [entry.film, "\(entry.frames.count) 张"]
+    var parts = [entry.film] + (entry.format.map { [$0] } ?? []) + ["\(entry.frames.count) 张"]
     if entry.fullResolution > 0 { parts.append("全分辨率 \(entry.fullResolution)") }
     if entry.exported > 0 { parts.append("已导出 \(entry.exported)") }
     return parts.joined(separator: " · ")
