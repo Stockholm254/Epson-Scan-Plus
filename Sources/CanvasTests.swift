@@ -467,6 +467,88 @@ enum CanvasTests {
     try check(onLayer && looked > 0 && litOnLayer > looked / 2,
       "the single frame is a layer the GPU composites, where the canvas shows it, and a picture taken of the canvas has it drawn in (\(litOnLayer) of \(looked) samples lit)")
 
+    // The curves mark the colour under the pointer as it was before them. Off the picture the mark
+    // stays; a curve then bends the picture, which is read again at the same place, and the mark
+    // stands where it stood, its dot where the curve now takes it.
+    // Where the picture's colour lies furthest from black and white in every channel, so a curve moves it.
+    var probe: CGPoint?, probeRoom = -1.0
+    if let plate = zoomCanvas.shown {
+      let span = zoomCanvas.imageRect.intersection(zoomCanvas.bounds).insetBy(dx: 8, dy: 8)
+      for y in stride(from: span.minY, to: span.maxY, by: 23) {
+        for x in stride(from: span.minX, to: span.maxX, by: 11) {
+          let p = CGPoint(x: x, y: y)
+          guard let c = FilmCanvasView.colour(in: plate, at: zoomCanvas.shownNormal(p)) else { continue }
+          let room = c.values.map { min($0, 1 - $0) }.min() ?? 0
+          if room > probeRoom { (probe, probeRoom) = (p, room) }
+        }
+      }
+    }
+    zoomCanvas.hover = probe
+    zoomCanvas.readPointer()
+    let plainReading = zoomed.curveState.reading
+    zoomCanvas.hover = nil
+    zoomCanvas.readPointer()
+    let kept = zoomed.curveState.reading
+    // Black and white lifted and lowered, so even a colour near either end moves.
+    var bend = ToneCurves()
+    bend.rgb.points = [CurvePoint(x: 0, y: 0.1), CurvePoint(x: 0.5, y: 0.4), CurvePoint(x: 1, y: 0.9)]
+    let unbent = zoomed.displayed
+    zoomed.change("曲线") { $0.curves = bend }
+    for _ in 0..<400 where zoomed.displayed === unbent || zoomed.rendering { settle(0.05) }
+    zoomCanvas.modelChanged()
+    let bentReading = zoomed.curveState.reading
+    let bentShown = zoomCanvas.shown.flatMap { plate in probe.flatMap { FilmCanvasView.colour(in: plate, at: zoomCanvas.shownNormal($0)) } }
+    let marks = bentReading.map { CurveEditor.pointerMarks($0, curves: bend, channel: 0) } ?? []
+    let stood = plainReading.flatMap { p in bentReading.map { b in (0..<3).map { abs(p.input.values[$0] - b.input.values[$0]) }.max() ?? 1 } } ?? 1
+    let dotOff = bentShown.map { s in marks.map { abs($0.y - s.values[$0.channel - 1]) }.max() ?? 1 } ?? 1
+    let bentBy = plainReading.flatMap { p in bentShown.map { s in (0..<3).map { abs(p.input.values[$0] - s.values[$0]) }.max() ?? 0 } } ?? 0
+    try check(probe != nil && plainReading?.over == true && kept?.over == false && kept?.input == plainReading?.input
+      && bentReading?.over == false && stood < 0.012 && marks.count == 3 && dotOff < 0.012 && bentBy > 0.03,
+      String(format: "the curves mark the colour under the pointer as it was before them, and keep it off the picture through a curve that bent it by %.3f: it moved %.4f, its dots %.4f from the picture", bentBy, stood, dotOff)
+        + " (probe \(probe.map { "\($0)" } ?? "none") room \(String(format: "%.2f", probeRoom)), read \(plainReading.map { "\($0.input)" } ?? "nil"), kept \(kept?.over.description ?? "nil"), bent \(bentReading.map { "\($0.input) over \($0.over)" } ?? "nil"), shown \(bentShown.map { "\($0)" } ?? "nil"), single \(zoomed.singleView), tool \(zoomed.tool), rect \(zoomCanvas.imageRect))")
+    // The targeted adjustment on the picture: down at the probe lowers the RGB curve where the colour
+    // there lies, on the curves the frame keeps.
+    let bentFirst = zoomed.displayed
+    zoomed.change("曲线") { $0.curves = nil }
+    for _ in 0..<400 where zoomed.displayed === bentFirst || zoomed.rendering { settle(0.05) }
+    zoomed.tool = .curve
+    zoomed.curveState.parametric = false
+    zoomed.curveState.channel = 0
+    if let probe {
+      zoomCanvas.beginCurveTarget(at: probe)
+      zoomCanvas.dragCurveTarget(to: CGPoint(x: probe.x, y: probe.y + 30))
+      zoomCanvas.dragCurveTarget(to: CGPoint(x: probe.x, y: probe.y + 60))
+    }
+    let targeted = zoomed.settings.curves?.rgb.points ?? []
+    let lifted = targeted.count == 3 ? targeted[1].y - targeted[1].x : 0
+    zoomed.tool = .select
+    try check(targeted.count == 3 && abs(lifted + 0.2) < 0.01,
+      "the targeted adjustment on the picture lowers the RGB curve where the colour under it lies: a point at \(targeted.count == 3 ? String(format: "%.3f → %.3f", targeted[1].x, targeted[1].y) : "none") for 60 points down")
+    // Left off for a while, the curves leave the picture shown, not the frame's settings or its film-strip copy.
+    for _ in 0..<400 where zoomed.rendering { settle(0.05) }
+    let stripCopy = zoomed.selected.flatMap { zoomed.thumbnails[$0.id] }
+    let withCurves = zoomed.displayed
+    zoomed.curvesBypassed = true
+    for _ in 0..<400 where zoomed.displayed === withCurves || zoomed.rendering { settle(0.05) }
+    let plainAgain = zoomed.displayed.flatMap { plate in probe.flatMap { FilmCanvasView.colour(in: plate, at: zoomCanvas.shownNormal($0)) } }
+    let offBy = plainReading.flatMap { p in plainAgain.map { a in (0..<3).map { abs(p.input.values[$0] - a.values[$0]) }.max() ?? 1 } } ?? 1
+    let keptSettings = zoomed.settings.curves != nil, keptCopy = zoomed.selected.flatMap { zoomed.thumbnails[$0.id] } === stripCopy
+    zoomed.curvesBypassed = false
+    for _ in 0..<400 where zoomed.rendering { settle(0.05) }
+    try check(offBy < 0.02 && keptSettings && keptCopy && zoomed.shownCurves != nil,
+      String(format: "left off for a while, the curves leave the picture as it was without them (%.4f off), and the frame's curves and film-strip copy as they were", offBy))
+    let bentPicture2 = zoomed.displayed
+    zoomed.change("曲线") { $0.curves = nil }
+    for _ in 0..<400 where zoomed.displayed === bentPicture2 || zoomed.rendering { settle(0.05) }
+    let bentPicture = zoomed.displayed
+    zoomed.change("曲线") { $0.curves = nil }
+    for _ in 0..<400 where zoomed.displayed === bentPicture || zoomed.rendering { settle(0.05) }
+    zoomed.selectedID = nil
+    let cleared = zoomed.curveState.reading == nil
+    zoomed.selectedID = zoomed.frames.first?.id
+    for _ in 0..<400 where zoomed.rendering { settle(0.05) }
+    try check(cleared, "another frame clears the curves' mark")
+
     // A row with a full and a compact layout keeps the one shown, with its controls, through the
     // window's updates; it changes as its room does. ViewThatFits, laid out again at the window's
     // smallest for its minimum size, took the compact one and then the full one again at every update,

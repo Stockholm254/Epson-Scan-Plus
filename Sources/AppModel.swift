@@ -10,7 +10,12 @@ final class AppModel: ObservableObject {
     // The light table turns to the page the frame selected lies on.
     didSet {
       if let id = selectedID, id != oldValue, let page = contactPageIndex(of: id), page != contactPage { contactPage = page }
-      if selectedID != oldValue { announceAutoBase() }
+      if selectedID != oldValue {
+        announceAutoBase()
+        if curveState.reading != nil { curveState.reading = nil }
+        // Another frame selected lets go of the frames chosen with the last (Finder does the same).
+        if !alsoSelected.isEmpty { alsoSelected = [] }
+      }
     }
   }
   /// The light table's page shown: the holder's preview, or one laid out from frames of their own.
@@ -79,7 +84,7 @@ final class AppModel: ObservableObject {
     didSet {
       // On the light table the curves' histograms are the selected positive's, as it comes.
       if !singleView, let picture = selected.flatMap({ thumbnails[$0.id] }), picture !== selected.flatMap({ oldValue[$0.id] }) {
-        (histogram, channelHistograms) = Self.histograms(picture)
+        (histogram, channelHistograms) = Self.histograms(picture, curves: selected?.adjustments.curves)
       }
       if onSheetPage && !showsNegative { refresh() }
       guard !thumbnails.isEmpty, !readOnly, let folder = sessionURL else { return }
@@ -100,6 +105,7 @@ final class AppModel: ObservableObject {
       }
       if !singleView, zoom != 1 { fitView() }
       if singleView != oldValue { announceAutoBase() }
+      if !singleView, curveState.reading != nil { curveState.reading = nil }
     }
   }
   /// The scanner's preview shows on the light table as it is read.
@@ -193,6 +199,17 @@ final class AppModel: ObservableObject {
   /// The passes still to scan: one frame each, or the frames of a row scanned together.
   @Published var scanQueue = [[UUID]]()
   @Published private(set) var scanBatch = ScanBatchProgress()
+  /// What lies under the pointer over the single frame, before the curves, for their marks: an
+  /// object of its own, as the window need not update when the pointer moves.
+  let curveState = CurveState()
+  /// The curves left off the single frame's picture for a while, to see it without them: only the
+  /// picture shown, never the frame's settings, its film-strip copy or an export.
+  @Published var curvesBypassed = false {
+    didSet { if curvesBypassed != oldValue { refresh() } }
+  }
+  /// The curves the single frame's picture on the canvas was printed with: what lies under the
+  /// pointer before them is read through these, not through curves newer than the picture.
+  private(set) var shownCurves: ToneCurves?
   @Published var histogram = [Double](repeating: 0, count: 64)
   /// Red, green and blue of the positive, on one scale, for the curves.
   @Published var channelHistograms = [[Double]](repeating: [Double](repeating: 0, count: 64), count: 3)
@@ -287,8 +304,9 @@ final class AppModel: ObservableObject {
   private var exportsRunning = 0
   /// Module ②'s sidebar tab: calibrating the preset, or the export settings. Module ①'s sidebar
   /// is the capture source's.
-  enum PanelTab: String, CaseIterable { case calibration = "预设标定", output = "输出" }
-  @Published var panelTab = PanelTab.calibration
+  /// Module ②'s sidebar: the film, its base and the frame's extent; calibrating the preset; exporting.
+  enum PanelTab: String, CaseIterable { case film = "胶片", calibration = "预设标定", output = "输出" }
+  @Published var panelTab = PanelTab.film
   /// The main window's three modules, in the order a roll goes through them: capturing it (the
   /// scanner, the camera or files), taking the orange mask off, and repairing light leaks.
   /// The library first, where rolls are kept and started; then the modules, numbered in the order
@@ -510,6 +528,11 @@ final class AppModel: ObservableObject {
       return singleView
         ? "点一处灰尘去掉它；点已标出的圆圈，去掉的留下、留下的去掉 · Esc 退出"
         : "进入单张后点灰尘 · Esc 退出"
+    case .curve:
+      let page = curveState.parametric ? "参数曲线上它所在的那段影调" : ["RGB", "红色", "绿色", "蓝色"][curveState.channel] + "曲线上它所在的那一段"
+      return singleView
+        ? "在照片上按住要调的地方，往上拖提亮、往下拖压暗\(page) · Esc 退出"
+        : "进入单张后在照片上按住要调的地方上下拖 · Esc 退出"
     case .it8:
       let n = it8Marks.count, undo = n > 0 ? " · ⌫ 撤回上一点" : ""
       guard n < IT8Layout.marks.count else { return "6 个点已就位 · 检查色块位置后点「生成标定」" + undo + " · Esc 退出" }
@@ -2423,6 +2446,7 @@ final class AppModel: ObservableObject {
     // The raw picture as `ImagePipeline.original` has it: as a negative, with no base to divide by.
     var settings = frame.adjustments
     if original { (settings.base, settings.rollBase) = (nil, nil) }
+    if curvesBypassed { settings.curves = nil }
     renderQueue.async {
       let source = [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", frame.sourcePath ?? "", frame.dust?.signature ?? "", "\(original)",
         frame.flatField.map { "flat\($0.width)x\($0.height)-\($0.values.reduce(0, +))" } ?? "-", frame.crosstalk.map { "\($0.m)" } ?? "-"].joined(separator: "|")
@@ -2449,7 +2473,7 @@ final class AppModel: ObservableObject {
     let encoder = JSONEncoder()
     encoder.outputFormatting = .sortedKeys
     let settings = (try? encoder.encode(frame.adjustments)).map { $0.base64EncodedString() } ?? ""
-    let shown = (single ? "single " : "table ") + "\(!showNegative) \(showsOriginal)"
+    let shown = (single ? "single " : "table ") + "\(!showNegative) \(showsOriginal)" + (single && curvesBypassed ? " no curves" : "")
     return [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", shown, conversionProfile.id, settings, frame.dust?.signature ?? "",
       frame.flatField.map { "flat\($0.values.reduce(0, +))" } ?? "-", frame.crosstalk.map { "\($0.m)" } ?? "-"]
       .joined(separator: "|")
@@ -2469,16 +2493,31 @@ final class AppModel: ObservableObject {
   /// A picture of the roll's own file, as the light table shows it, kept for the next time; only
   /// on the render queue.
   /// The luminance and channel histograms of a positive, 64 bins each, each scaled to its peak.
-  static func histograms(_ image: CGImage) -> ([Double], [[Double]]) {
+  /// The curves' histograms of a positive: its brightness and each channel, counted as they were
+  /// before `curves`, the picture's printed with, which is the curves' own axis: so the curves lie
+  /// over what they act on, and a value under the pointer finds its place among them. Where a curve
+  /// runs flat, what it takes to one value is spread over the span that comes out there.
+  static func histograms(_ image: CGImage, curves: ToneCurves? = nil) -> ([Double], [[Double]]) {
     let r = ImagePipeline.shared.raster(image, maxDimension: 250)
+    let inverse = CurveInverse(curves)
+    func bin(_ v: Double) -> Int { min(63, max(0, Int(v * 63))) }
     var hist = [Double](repeating: 0, count: 64)
     var channels = [[Double]](repeating: [Double](repeating: 0, count: 64), count: 3)
     for y in 0..<r.height {
       for x in 0..<r.width {
-        let c = r.pixel(x, y)
+        let shown = r.pixel(x, y)
+        let c = inverse?.input(shown) ?? shown
         let l = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
-        hist[min(63, max(0, Int(l * 63)))] += 1
-        for (i, v) in c.values.enumerated() { channels[i][min(63, max(0, Int(v * 63)))] += 1 }
+        hist[bin(l)] += 1
+        for i in 0..<3 {
+          guard let inverse else {
+            channels[i][bin(c.values[i])] += 1
+            continue
+          }
+          let span = inverse.span(i, shown.values[i])
+          let from = bin(span.lowerBound), to = bin(span.upperBound)
+          for b in from...to { channels[i][b] += 1 / Double(to - from + 1) }
+        }
       }
     }
     let maxBin = hist.max() ?? 1, maxChannel = channels.joined().max() ?? 1
@@ -2499,7 +2538,9 @@ final class AppModel: ObservableObject {
       toneAnalysis = nil
       toneRange = nil
       // The curves' histograms, from the selected frame's positive as the filmstrip has it.
-      if let picture = selected.flatMap({ thumbnails[$0.id] }) { (histogram, channelHistograms) = Self.histograms(picture) }
+      if let picture = selected.flatMap({ thumbnails[$0.id] }) {
+        (histogram, channelHistograms) = Self.histograms(picture, curves: selected?.adjustments.curves)
+      }
       // Frames of their own files (a camera's, imports) on a page laid out as a contact sheet:
       // positives from the film strip's, negatives read small from their files.
       if onSheetPage {
@@ -2594,7 +2635,7 @@ final class AppModel: ObservableObject {
     rendering = true
     let request = SingleRender(
       token: token, frame: frame, profile: conversionProfile, edit: edit, negative: showsNegative || tool == .base, original: showsOriginal,
-      sharpening: preferences.sharpening, previewDPI: Int(overviewDPI), analysisKey: analysisKey(frame),
+      bypassed: curvesBypassed, sharpening: preferences.sharpening, previewDPI: Int(overviewDPI), analysisKey: analysisKey(frame),
       overview: overview)
     wantedLock.lock()
     wantedSingle = request
@@ -2608,6 +2649,8 @@ final class AppModel: ObservableObject {
   /// The single frame's render, as asked for (`wantedSingle`, under `wantedLock`).
   private struct SingleRender {
     let token: Int, frame: FilmFrame, profile: FilmProfile, edit: Bool, negative: Bool, original: Bool
+    /// The curves left off for a while (`curvesBypassed`).
+    let bypassed: Bool
     let sharpening: SharpeningProfile?, previewDPI: Int, analysisKey: String
     /// The preview it may be cut from, kept with its analysis so the key's identity of it holds.
     let overview: CGImage?
@@ -2710,7 +2753,7 @@ final class AppModel: ObservableObject {
     singleQueued = false
     wantedLock.unlock()
     guard let r = wanted else { return }
-    let frame = r.frame, p = r.profile, edit = r.edit, negative = r.negative, token = r.token
+    let frame = r.frame, p = r.profile, edit = r.edit, negative = r.negative, token = r.token, bypassed = r.bypassed
     let started = Date()
     if r.original {
       renderOriginal(r, started: started)
@@ -2733,6 +2776,7 @@ final class AppModel: ObservableObject {
         // Its surroundings as they lie while the crop or base is edited, with the kept part outlined.
         var shownSettings = frame.adjustments
         if edit { shownSettings.angle = nil }
+        if bypassed { shownSettings.curves = nil }
         // The kernel follows the size the source was loaded at, as in source(for:) and contextSource(for:).
         let loaded = edit ? 3000 : (frame.sourcePath != nil ? 3000 : 2200)
         let sharpener = negative ? nil : Sharpening.sharpener(r.sharpening, frame: frame, maxDimension: loaded)
@@ -2744,9 +2788,9 @@ final class AppModel: ObservableObject {
         // A newer request already waiting: this picture now, histograms and range with that one.
         let measured = !self.singleWaiting
         self.step(0.9, "直方图", token, since: started)
-        let hist = measured ? Self.histograms(output) : nil
+        let hist = measured ? Self.histograms(output, curves: negative ? nil : shownSettings.curves) : nil
         // The film strip's copy, no larger than it is ever shown.
-        let thumbnail = measured && !edit && !negative ? ImagePipeline.shared.scaled(output, maxDimension: Self.thumbnailDimension) : nil
+        let thumbnail = measured && !edit && !negative && !bypassed ? ImagePipeline.shared.scaled(output, maxDimension: Self.thumbnailDimension) : nil
         var range = !measured || negative ? nil : ImagePipeline.shared.toneRange(cropped, settings: frame.adjustments, profile: p, analysis: analysis)
         // What shows white or black, counted on the picture itself where it is only the frame.
         if !edit, range != nil { (range!.atWhite, range!.atBlack) = ImagePipeline.shared.screenShares(output) }
@@ -2775,6 +2819,7 @@ final class AppModel: ObservableObject {
             return
           }
           self.shownSingle = token
+          self.shownCurves = negative ? nil : shownSettings.curves
           self.showOnCanvas(output)
           // Only what changed is set, as setting published state updates the window even to the same.
           if self.canvasRegion != context?.region { self.canvasRegion = context?.region }
@@ -2827,6 +2872,7 @@ final class AppModel: ObservableObject {
           return
         }
         self.shownSingle = token
+        self.shownCurves = nil
         self.showOnCanvas(output)
         if self.canvasRegion != context?.region { self.canvasRegion = context?.region }
         if edit { self.editRegionLock = context?.region }
@@ -3556,8 +3602,39 @@ final class AppModel: ObservableObject {
       }
     } catch { errorText = error.localizedDescription }
   }
+  /// The ticked frames, or the ones chosen: the frame shown and those chosen with it (`alsoSelected`).
   func exportImages(all: Bool) {
-    let items = all ? frames.filter(\.enabled) : (selected.map { [$0] } ?? [])
+    exportImages(all ? frames.filter(\.enabled) : selection)
+  }
+  /// Frames chosen together with the one shown, to be exported at once: ⌘-click adds a frame or
+  /// takes it away, ⇧-click takes the run from the frame shown to the one clicked, and a plain click
+  /// goes back to the one frame. The frame shown stays as it is.
+  @Published var alsoSelected = Set<UUID>()
+  /// The frames chosen, in the roll's order: the one shown and those chosen with it.
+  var selection: [FilmFrame] { frames.filter { $0.id == selectedID || alsoSelected.contains($0.id) } }
+  /// What exporting the chosen frames is called where it is offered.
+  var exportSelectionTitle: String { selection.count > 1 ? "导出所选的 \(selection.count) 张…" : "导出当前…" }
+  /// A click on a frame (the film strip, the light table) with `modifiers`: true when it chose
+  /// frames with ⌘ or ⇧, which leaves the frame shown; false when the frame is to be opened, the
+  /// frames chosen with the last one let go. Control-click is the Mac's right click, so ⌘ adds.
+  func choose(_ id: UUID, modifiers: NSEvent.ModifierFlags) -> Bool {
+    let adding = modifiers.contains(.command), running = modifiers.contains(.shift)
+    guard adding || running, let shown = selectedID, let b = frames.firstIndex(where: { $0.id == id }) else {
+      // A plain click, or no frame shown yet: back to the one frame, which is opened.
+      if !alsoSelected.isEmpty { alsoSelected = [] }
+      return false
+    }
+    // The frame shown stays chosen.
+    guard id != shown else { return true }
+    if adding {
+      if alsoSelected.contains(id) { alsoSelected.remove(id) } else { alsoSelected.insert(id) }
+    } else if let a = frames.firstIndex(where: { $0.id == shown }) {
+      alsoSelected = Set(frames[min(a, b)...max(a, b)].map(\.id)).subtracting([shown])
+    }
+    return true
+  }
+  /// Exports `items` into a folder chosen with the format, as 导出当前 does.
+  func exportImages(_ items: [FilmFrame]) {
     guard !items.isEmpty, !isWorking else { return }
     let previews = items.filter { !$0.hasFullResolution }.count
     if previews > 0 {
@@ -3854,6 +3931,7 @@ final class AppModel: ObservableObject {
         try ImagePipeline.shared.load(URL(fileURLWithPath: overviewPath), maxDimension: 2200), backend: p.scanBackendID)
       sessionURL = folder
       projectFileName = url.lastPathComponent
+      alsoSelected = []
       overviewURL = URL(fileURLWithPath: overviewPath)
       overview = cg
       frames = p.frames.map { saved in

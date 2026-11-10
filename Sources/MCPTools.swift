@@ -66,7 +66,7 @@ enum MCPTools {
     Tool(name: "auto_film_base", description: "放弃手动片基，改用自动片基：扫描的卷用整卷片间测得的，翻拍和单张照片用片边的未曝光片基，都没有时按本张最薄处估计。", properties: [:]),
     Tool(name: "pick_neutral", description: "把指定位置作为中性灰，按它自动白平衡（灰卡、白墙、水泥等）。", properties: point, required: ["x", "y"]),
     Tool(name: "pick_shadow_neutral", description: "把阴影里的指定位置作为中性灰，设定阴影冷暖和阴影色调让它变灰（背光的水泥、路面、石头）；亮处和整体白平衡不变。这一点太暗或太亮时不改，并说明。", properties: point, required: ["x", "y"]),
-    Tool(name: "set_curve", description: "设定选中画面的一条色调曲线，和 App 里「曲线」一节的一样：channel 是 rgb、red、green 或 blue（各通道曲线在 RGB 曲线之后生效）；points 是 [[x, y], …]，都在 0 到 1 之间，x 是转换后的输出值，y 是曲线给它的新值。两端 x=0 和 x=1 不给时按 (0, 0)、(1, 1) 补上，相邻两点的 x 至少相隔 0.01，最多 16 个点；中间按单调三次样条连起来，不会过冲。points 省略或为空时把这条曲线恢复成直线；channel 为 all 时清掉全部曲线。曲线在转换之后按通道查表，从黑到白所有影调都受影响：偏色先用白平衡、阴影冷暖和阴影色调，曲线用来做它们做不到的。get_state 的 curves 列出现有曲线。可用 undo 撤销。", properties: [
+    Tool(name: "set_curve", description: "设定选中画面的一条色调曲线，和 App 里「曲线」一节的一样：channel 是 rgb、red、green 或 blue（各通道曲线在 RGB 曲线之后生效）；points 是 [[x, y], …]，都在 0 到 1 之间，x 是转换后的输出值，y 是曲线给它的新值。两端 x=0 和 x=1 不给时按 (0, 0)、(1, 1) 补上，相邻两点的 x 至少相隔 0.01，最多 16 个点；中间按单调三次样条连起来，不会过冲。points 省略或为空时把这条曲线恢复成直线；channel 为 all 时清掉全部曲线（连同用户在 App 里调的参数曲线）。曲线在转换之后按通道查表，从黑到白所有影调都受影响：偏色先用白平衡、阴影冷暖和阴影色调，曲线用来做它们做不到的。get_state 的 curves 列出现有曲线。可用 undo 撤销。", properties: [
       "channel": ["type": "string", "enum": ["rgb", "red", "green", "blue", "all"], "description": "哪条曲线；all 只用来清掉全部曲线"],
       "points": ["type": "array", "maxItems": 16, "items": ["type": "array", "minItems": 2, "maxItems": 2, "items": ["type": "number", "minimum": 0, "maximum": 1]],
         "description": "[[x, y], …]，0 到 1；省略或为空时恢复成直线"],
@@ -258,6 +258,12 @@ enum MCPTools {
     var out: [String: Any] = [:]
     for (i, name) in ["rgb", "red", "green", "blue"].enumerated() where !curves[i].isIdentity {
       out[name] = curves[i].points.map { [($0.x * 10000).rounded() / 10000, ($0.y * 10000).rounded() / 10000] }
+    }
+    // Lightroom's parametric curve, set by hand in the App: before the RGB curve.
+    if let p = curves.parametric, !p.isIdentity {
+      func r(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
+      out["parametric"] = ["shadows": r(p.shadows), "darks": r(p.darks), "lights": r(p.lights), "highlights": r(p.highlights), "splits": p.splits.map(r),
+        "note": "参数曲线（阴影、暗部、亮部、高光，-1 到 1，按 splits 分段），在 RGB 曲线之前生效；只能在 App 里调，set_curve 的 all 会一起清掉"]
     }
     return out
   }

@@ -691,6 +691,9 @@ enum CanvasTool: String, CaseIterable {
   case calibrate = "标定中性点"
   case it8 = "IT8 色卡"
   case dust = "灰尘"
+  /// Lightroom's targeted adjustment of the curves: a place on the picture held and dragged up or
+  /// down moves the curve taken where that place lies on it. Its key is in the curves section.
+  case curve = "曲线目标调整"
 
   /// The tools a click reads a point of the picture with.
   var picksPoint: Bool { self == .base || self == .neutral || self == .shadowNeutral || self == .calibrate || self == .it8 || self == .dust }
@@ -708,6 +711,7 @@ enum CanvasTool: String, CaseIterable {
     case .calibrate: return "target"
     case .it8: return "squareshape.split.3x3"
     case .dust: return "aqi.medium"
+    case .curve: return "scope"
     }
   }
   /// Shown next to the symbol in the toolbar.
@@ -737,7 +741,7 @@ enum CanvasTool: String, CaseIterable {
     case .region: return "m"
     case .base: return "b"
     case .neutral: return "n"
-    case .shadowNeutral, .calibrate, .it8, .dust: return nil
+    case .shadowNeutral, .calibrate, .it8, .dust, .curve: return nil
     }
   }
   var help: String {
@@ -752,6 +756,7 @@ enum CanvasTool: String, CaseIterable {
     case .calibrate: what = "标定中性点：点选灰卡等中性灰，生成这台扫描仪或这次翻拍的预设"
     case .it8: what = "IT8 色卡：按提示点色卡上的 6 个点"
     case .dust: what = "点选灰尘：在单张上点一处灰尘去掉它，点标出的圆圈改成留下或去掉"
+    case .curve: what = "曲线目标调整：在单张上按住要调的地方上下拖，调它在曲线上的那一段"
     }
     return what + (shortcut.map { " · \($0.uppercased())" } ?? "")
   }

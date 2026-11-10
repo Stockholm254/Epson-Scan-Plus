@@ -113,6 +113,8 @@ struct ContentView: View {
     .onChange(of: m.tool) { _, tool in
       // Picking neutral points calibrates the preset, whose list is in module ②'s sidebar.
       if tool == .calibrate, m.page == .convert, !convertSidebarShown { openCalibration() }
+      // Cropping, the de-masking region and the base pick have their controls in the sidebar's first tab.
+      if [.crop, .region, .base].contains(tool), m.page == .convert, convertSidebarShown { m.panelTab = .film }
     }
     .copyStandGlass(cameraStage, camera: m.camera)
     .windowMinimum(width: 1120, height: 760)
@@ -209,7 +211,7 @@ struct ContentView: View {
       } else if m.page == .convert {
         // Exporting, with its settings behind it in the sidebar.
         Menu {
-          Button("导出当前…") { m.exportImages(all: false) }.disabled(m.selected == nil || m.isWorking)
+          Button(m.exportSelectionTitle) { m.exportImages(all: false) }.disabled(m.selected == nil || m.isWorking)
           Button("导出勾选的 \(m.enabledCount) 张…") { m.exportImages(all: true) }.disabled(m.enabledCount == 0 || m.isWorking)
           Button("导出接触表…") { m.exportContactSheet() }.disabled(m.enabledCount == 0 || m.isWorking)
           Divider()
@@ -219,7 +221,7 @@ struct ContentView: View {
         } primaryAction: {
           if m.selected != nil && !m.isWorking { m.exportImages(all: false) }
         }
-        .help("导出当前这张（⌘E）；点箭头导出勾选的画面、接触表，或改格式和文件名")
+        .help("导出当前这张，或 ⌘ / ⇧ 点选的几张（⌘E）；点箭头导出勾选的画面、接触表，或改格式和文件名")
       }
     }
     ToolbarItem(placement: .primaryAction) {
@@ -593,10 +595,29 @@ struct ContentView: View {
   @ViewBuilder var rightPanel: some View {
     if m.page == .capture { rollPanel } else { adjustPanel }
   }
-  /// Module ②'s inspector, in the order a frame is worked on: the film and where its slopes come
-  /// from, the film base, the frame's extent, white balance, tone, levels and colour; then what is
-  /// reached for less (curves, sharpening, input) folded away. Every section folds, and opens as it
-  /// was left.
+  /// Module ②'s sidebar's first tab: the film and where its slopes come from, the film base and
+  /// the frame's extent, which are set once for a roll or a frame, before the picture is worked on.
+  var filmTab: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      // The roll's film stays at hand while exporting, which works from the preset it began with.
+      filmSection
+      Group {
+        // A slide has no mask to divide by.
+        if !m.settings.isSlide {
+          Divider()
+          baseSection
+        }
+        if m.singleView {
+          Divider()
+          frameSection
+        }
+      }.disabled(frameControlsOff)
+    }
+  }
+  /// Module ②'s inspector, in the order the picture is worked on: white balance, tone, levels and
+  /// colour; then what is reached for less (dust, curves, sharpening, input) folded away. The film,
+  /// its base and the frame's extent are in the sidebar's first tab. Every section folds, and opens
+  /// as it was left.
   var adjustPanel: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 16) {
@@ -607,19 +628,7 @@ struct ContentView: View {
             .help("把这一张的调整恢复默认；输入 Gamma、方向和整卷估计保留")
             .disabled(frameControlsOff)
         }
-        // The roll's film stays at hand while exporting, which works from the preset it began with.
-        filmSection
         Group {
-        // A slide has no mask to divide by.
-        if !m.settings.isSlide {
-          Divider()
-          baseSection
-        }
-        if m.singleView {
-          Divider()
-          frameSection
-        }
-        Divider()
         balanceSection
         Divider()
         toneSection
@@ -682,12 +691,14 @@ struct ContentView: View {
         .menuStyle(.button).frame(maxWidth: .infinity, alignment: .leading)
         .help("这一卷用的预设：通道斜率和标定的中性。也可以在下面输入胶片名")
         // Which film the roll is comes before its preset: a slide is not inverted at all.
-        Picker("片种", selection: Binding(get: { m.reversalRoll }, set: { m.setReversal($0) })) {
-          Text("负片").tag(false)
-          Text("反转片").tag(true)
+        labeled("本卷片种") {
+          Picker("本卷片种", selection: Binding(get: { m.reversalRoll }, set: { m.setReversal($0) })) {
+            Text("负片").tag(false)
+            Text("反转片").tag(true)
+          }
+          .pickerStyle(.segmented).labelsHidden().disabled(m.isWorking || m.frames.isEmpty)
+          .help("这一卷是负片还是反转片（幻灯片、正片）：整卷一起切换，可以撤销；扫描、翻拍和导入的卷都一样。反转片不去色罩、不用通道斜率，扫描或翻拍的读数就是画面。反转片当负片转时，片边发白、颜色反着")
         }
-        .pickerStyle(.segmented).labelsHidden().disabled(m.isWorking || m.frames.isEmpty)
-        .help("这一卷是负片还是反转片（幻灯片、正片）：整卷一起切换，可以撤销；扫描、翻拍和导入的卷都一样。反转片不去色罩、不用通道斜率，扫描的读数就是画面")
         labeled("胶片名") {
           HStack(spacing: 6) {
             TextField("胶片名", text: $m.filmName).textFieldStyle(.roundedBorder).font(.system(size: 12))
@@ -1040,16 +1051,20 @@ struct ContentView: View {
   /// The curves, over the picture's histograms channel by channel; folded until wanted, and marked
   /// when they change the picture.
   var curvesSection: some View {
-    PanelSection("曲线", key: "curves", open: false, info: "拖动控制点调整；点空白处添加，双击控制点删除。各通道曲线在 RGB 曲线之后生效。背后是正片的红、绿、蓝直方图。") {
-      if m.settings.curves != nil {
+    PanelSection("曲线", key: "curves", open: false, info: "和 Lightroom 的曲线一样分两种，先参数曲线、再点曲线，各通道的点曲线接在 RGB 之后。\n\n参数：阴影、暗部、亮部、高光四段影调各一个滑块，也可以在曲线上按住上下拖那一段；拖下方的三角移动分界。\n\n点曲线（RGB、R、G、B）：拖动控制点调整；点空白处添加，双击或拖出框外删除；两端还能横向拖，截掉黑或白。「预设」里有线性、中对比、强对比。单个通道的底色上方是它加的颜色，下方是相反的颜色（红对青、绿对洋红、蓝对黄）。\n\n背后是正片的红、绿、蓝直方图，按曲线之前的值统计，和横轴一致。光标停在单张照片上时，曲线上标出那里的颜色：每个通道一条竖线、曲线上一个点，左上角是曲线前后的值（0–255）；光标离开照片后标记变暗留着，可以接着拖那一段曲线；换一张时清掉。\n\n准星是目标调整：选中后在单张照片上按住要调的地方往上拖提亮、往下拖压暗，调的是当前这条曲线上它所在的那一段（参数曲线上是它所在的那一段影调）。眼睛暂时不加曲线看照片，只影响显示。") {
+      if m.curvesBypassed {
+        Text("暂不显示").font(.system(size: 11)).foregroundStyle(Hardware.amberText)
+      } else if m.settings.curves != nil {
         Text("已调整").font(.system(size: 11)).foregroundStyle(Hardware.amberText)
       }
     } content: {
       CurveEditor(
         curves: Binding(
           get: { m.settings.curves ?? ToneCurves() },
-          set: { value in m.change("曲线") { $0.curves = value.isIdentity ? nil : value } }),
-        histogram: m.histogram, channels: m.channelHistograms)
+          set: { value in m.change("曲线") { $0.curves = value.normalized } }),
+        histogram: m.histogram, channels: m.channelHistograms, state: m.curveState,
+        targeting: Binding(get: { m.tool == .curve }, set: { m.tool = $0 ? .curve : .select }),
+        bypassed: Binding(get: { m.curvesBypassed }, set: { m.curvesBypassed = $0 }))
     }
   }
   /// Per-frame deconvolution strength, once the scanner has a measured profile.
@@ -1198,7 +1213,10 @@ struct ContentView: View {
                 }.frame(width: 84, height: 60)
                 .accessibilityValue(f.enabled ? "已勾选" : "未勾选")
                 .overlay(
-                  Rectangle().stroke(f.id == m.selectedID ? accent : dropTarget == f.id ? Color.white.opacity(0.8) : Color.clear, lineWidth: 2)
+                  // The frame shown, and those chosen with it (⌘ / ⇧) fainter.
+                  Rectangle().stroke(
+                    f.id == m.selectedID ? accent : m.alsoSelected.contains(f.id) ? accent.opacity(0.55)
+                      : dropTarget == f.id ? Color.white.opacity(0.8) : Color.clear, lineWidth: 2)
                     .padding(-2)
                 )
                 // Dragged onto another frame, it takes that frame's place; the roll is numbered again.
@@ -1212,7 +1230,9 @@ struct ContentView: View {
                   return true
                 } isTargeted: { over in dropTarget = over ? f.id : (dropTarget == f.id ? nil : dropTarget) }
                 .onTapGesture {
-                  // From the light table it grows to the middle, shown on its own.
+                  // ⌘ adds a frame to those chosen, ⇧ takes the run; a plain click opens it: from the
+                  // light table it grows to the middle, shown on its own.
+                  guard !m.choose(f.id, modifiers: NSEvent.modifierFlags) else { return }
                   m.open(f.id)
                   m.focusCanvas()
                 }.onTapGesture(count: 2) {
@@ -1221,6 +1241,17 @@ struct ContentView: View {
                 }
                 .contextMenu {
                   if m.page != .leak {
+                    // The frames chosen together when this is one of them, else this one.
+                    let chosen = m.selection
+                    if chosen.count > 1, chosen.contains(where: { $0.id == f.id }) {
+                      Button("导出所选的 \(chosen.count) 张…", systemImage: "square.and.arrow.up.on.square") { m.exportImages(m.selection) }
+                        .disabled(m.isWorking)
+                    } else {
+                      Button("导出这张…", systemImage: "square.and.arrow.up") {
+                        if let now = m.frames.first(where: { $0.id == f.id }) { m.exportImages([now]) }
+                      }.disabled(m.isWorking)
+                    }
+                    Divider()
                     Button(f.enabled ? "取消勾选" : "勾选", systemImage: f.enabled ? "circle" : "checkmark.circle") {
                       m.setEnabled(f.id, enabled: !f.enabled)
                     }.disabled(m.isWorking)

@@ -115,5 +115,26 @@ enum UsabilityTests {
     let key = ScanPlan.speedKey(backend: scanner.backendID, dpi: 2400)
     try check(model.preferences.scanSpeed.keys.sorted() == [key] && model.frames[0].scanPath == file.path,
       "a finished scan is timed for the next estimate, under its backend and resolution: \(model.preferences.scanSpeed)")
+
+    // Frames chosen together, to export at once: ⌘ adds or takes one away, ⇧ takes the run from the
+    // frame shown, which stays shown; a plain click, or another frame selected, goes back to one.
+    model.frames.append(frame("04"))
+    let ids = model.frames.map(\.id)
+    model.selectedID = ids[0]
+    let added = model.choose(ids[2], modifiers: .command)
+    let afterAdd = model.selection.map(\.name)
+    _ = model.choose(ids[2], modifiers: .command)
+    let afterToggle = model.selection.map(\.name)
+    let ran = model.choose(ids[3], modifiers: .shift)
+    let afterRun = model.selection.map(\.name), title = model.exportSelectionTitle
+    let plain = model.choose(ids[1], modifiers: [])
+    let afterPlain = model.selection.map(\.name)
+    _ = model.choose(ids[3], modifiers: .command)
+    model.selectedID = ids[1]
+    let afterSelect = model.selection.map(\.name)
+    try check(added && afterAdd == ["01", "03"] && afterToggle == ["01"] && ran && afterRun == ["01", "02", "03", "04"]
+      && title == "导出所选的 4 张…" && model.selectedID == ids[1] && !plain && afterPlain == ["01"] && afterSelect == ["02"]
+      && model.exportSelectionTitle == "导出当前…",
+      "⌘ and ⇧ choose frames to export together, the frame shown kept; a plain click or another frame lets them go (\(afterAdd), \(afterRun), \(title))")
   }
 }

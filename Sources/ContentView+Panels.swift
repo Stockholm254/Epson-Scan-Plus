@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 
 /// The left panel. In module ① the source and its settings, the scanner's (with storage) or the
-/// camera's; in module ② calibrating the preset and the export settings, in two tabs. ⌘, comes
-/// back to ①'s.
+/// camera's; in module ② the film with its base and the frame's extent, calibrating the preset, and
+/// the export settings, in three tabs. ⌘, comes back to ①'s.
 extension ContentView {
   var leftPanel: some View {
     VStack(spacing: 0) {
@@ -13,7 +13,7 @@ extension ContentView {
             ForEach(AppModel.CaptureSource.allCases, id: \.self) { Text($0.short).tag($0).help($0.rawValue) }
           }
         } else if m.page != .library {
-          // Module ②'s film and its slopes are in the inspector; here, calibrating and exporting.
+          // Module ②'s film, its base and the frame's extent; calibrating the preset; exporting.
           Picker("面板", selection: $m.panelTab) {
             ForEach(AppModel.PanelTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
           }
@@ -29,6 +29,7 @@ extension ContentView {
             }
           } else {
             switch m.panelTab {
+            case .film: filmTab
             case .calibration: calibrationTab
             case .output: outputTab
             }
@@ -398,7 +399,8 @@ extension ContentView {
           .textFieldStyle(.roundedBorder).font(.system(size: 11, design: .monospaced))
       }
       HStack {
-        Button("导出当前…") { m.exportImages(all: false) }.disabled(m.selected == nil || m.isWorking)
+        Button(m.exportSelectionTitle) { m.exportImages(all: false) }.disabled(m.selected == nil || m.isWorking)
+          .help("导出当前这张；在胶片条或接触表上按住 ⌘ 点选、⇧ 连选几张，这里导出选中的这几张")
         Button("导出勾选的 \(m.enabledCount) 张…") { m.exportImages(all: true) }.disabled(m.enabledCount == 0 || m.isWorking)
       }.font(.system(size: 11))
       Toggle("扫描后自动导出正片", isOn: Binding(get: { m.preferences.autoExport }, set: { m.preferences.autoExport = $0 }))

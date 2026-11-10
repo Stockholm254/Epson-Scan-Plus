@@ -193,7 +193,7 @@ enum LibraryTests {
     try check(model.hasProject && model.page == .capture && model.sessionURL == nil && model.frames.isEmpty,
       "新建工程 opens the modules on ① 采集, the roll's folder left to its first preview, picture or import")
     model.page = .convert
-    try check(model.panelTab == .calibration, "② 去色罩's sidebar opens on calibrating the preset")
+    try check(model.panelTab == .film, "② 去色罩's sidebar opens on the film, its base and the frame's extent")
     model.tool = .neutral
     model.page = .capture
     try check(model.tool == .select, "the pickers are put down on going back to capture")

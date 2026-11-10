@@ -193,5 +193,74 @@ enum HighlightTests {
     let dimRange = pipe.toneRange(bright, settings: dimmed, profile: portra, analysis: ab)
     try check(dimRange != nil && dimRange?.white == nil && dimRange?.atWhite == 0,
       "with a curve that takes white down to 0.9, nothing shows white on screen")
+
+    // The curves' marks and histograms stand on the curves' own axis: a colour as shown, in 8 bits,
+    // is taken back through them to what it was before them.
+    var bent = ToneCurves()
+    bent.rgb.points.insert(CurvePoint(x: 0.3, y: 0.38), at: 1)
+    bent.red.points.insert(CurvePoint(x: 0.6749, y: 0.5436), at: 1)
+    func through(_ x: Double) -> RGB {
+      let v = bent.rgb.value(x)
+      return RGB([bent.red.value(v), bent.green.value(v), bent.blue.value(v)].map { ($0 * 255).rounded() / 255 })
+    }
+    let inverse = CurveInverse(bent)
+    var worstBack = 0.0
+    for i in 1..<20 {
+      let x = Double(i) / 20, back = inverse?.input(through(x)) ?? .zero
+      worstBack = max(worstBack, abs(back.r - x), abs(back.g - x), abs(back.b - x))
+    }
+    var clipped = ToneCurves()
+    clipped.rgb.points.insert(CurvePoint(x: 0.2, y: 0), at: 1)
+    let black = CurveInverse(clipped)?.span(0, 0)
+    try check(CurveInverse(ToneCurves()) == nil && CurveInverse(nil) == nil && inverse != nil && worstBack < 0.006
+      && black.map { $0.lowerBound == 0 && (0.2...0.24).contains($0.upperBound) } == true,
+      String(format: "a colour as shown is taken back through the curves to within %.4f, and black from a curve that clips the shadows stands for all it took (%.3f…%.3f)",
+        worstBack, black?.lowerBound ?? .nan, black?.upperBound ?? .nan))
+    let grey = CGContext(data: nil, width: 40, height: 30, bitsPerComponent: 8, bytesPerRow: 0, space: pipe.outputSpace,
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    let middle = through(0.5)
+    grey.setFillColor(red: middle.r, green: middle.g, blue: middle.b, alpha: 1)
+    grey.fill(CGRect(x: 0, y: 0, width: 40, height: 30))
+    func peaks(_ curves: ToneCurves?) -> [Int] {
+      AppModel.histograms(grey.makeImage()!, curves: curves).1.map { h in h.indices.max { h[$0] < h[$1] } ?? -1 }
+    }
+    let onAxis = peaks(bent), asShown = peaks(nil)
+    // Lightroom's parametric curve: each zone moves its own tones, black and white stay, and the
+    // curve never falls, whichever way the zones beside are pulled.
+    var lifted = ParametricCurve()
+    lifted.shadows = 1
+    let shadowLift = lifted.curve.value(0.125) - 0.125, highlightsKept = abs(lifted.curve.value(0.875) - 0.875)
+    var rising = true
+    for signs in 0..<16 {
+      var p = ParametricCurve()
+      p.amounts = (0..<4).map { signs >> $0 & 1 == 1 ? 1 : -1 }
+      p.splits = signs % 3 == 0 ? [0.1, 0.5, 0.9] : [0.25, 0.5, 0.75]
+      let c = p.curve, v = (0...200).map { c.value(Double($0) / 200) }
+      if zip(v, v.dropFirst()).contains(where: { $1 < $0 - 1e-9 }) || abs(v[0]) > 1e-9 || abs(v[200] - 1) > 1e-9 { rising = false }
+    }
+    let curvesBefore = #"{"rgb":{"points":[{"x":0,"y":0},{"x":1,"y":1}]},"red":{"points":[{"x":0,"y":0},{"x":0.5,"y":0.4},{"x":1,"y":1}]},"green":{"points":[{"x":0,"y":0},{"x":1,"y":1}]},"blue":{"points":[{"x":0,"y":0},{"x":1,"y":1}]}}"#
+    let read = try? JSONDecoder().decode(ToneCurves.self, from: Data(curvesBefore.utf8))
+    var withParametric = ToneCurves()
+    withParametric.parametric = lifted
+    let firstThenRGB = withParametric.table(1025)[512 * 4] - Float(lifted.curve.value(0.5))
+    try check(shadowLift > 0.1 && highlightsKept < 0.002 && rising && read?.parametric == nil && read?.red.points.count == 3
+      && abs(firstThenRGB) < 1e-4 && ParametricCurve().isIdentity,
+      String(format: "the parametric curve lifts its shadows by %.3f at full, leaves the highlights (%.4f), never falls with zones pulled apart, comes first, and a project from before it reads with none", shadowLift, highlightsKept))
+    // The targeted adjustment: a point curve takes a point where the colour lies, or moves the one
+    // there; the parametric curve moves the zone it lies in.
+    let once = ToneCurves().targeted(at: 0.5, channel: 0, parametric: false, by: 0.1)
+    let twice = once.targeted(at: 0.51, channel: 0, parametric: false, by: -0.05)
+    let zoned = ToneCurves().targeted(at: 0.1, channel: 0, parametric: true, by: 0.25)
+    var splitOnly = ToneCurves()
+    splitOnly.parametric = ParametricCurve(splits: [0.3, 0.5, 0.75])
+    let tried = RGB(r: 0.3, g: 0.5, b: 0.7)
+    try check(once.rgb.points.count == 3 && abs(once.rgb.points[1].y - 0.6) < 1e-9 && twice.rgb.points.count == 3
+      && abs(twice.rgb.points[1].y - 0.55) < 1e-9 && zoned.parametric?.shadows == 0.5 && zoned.parametric?.darks == 0
+      && ToneCurves().normalized == nil && splitOnly.normalized != nil
+      && abs(ToneCurves().target(tried, channel: 0, parametric: false) - ToneCurves.brightness(tried)) < 1e-9
+      && abs(ToneCurves().target(tried, channel: 3, parametric: false) - 0.7) < 1e-9,
+      "the targeted adjustment takes a point where the colour lies on the curve, moves the one already there, and on the parametric curve moves the zone the colour lies in")
+    try check(onAxis == [31, 31, 31] && asShown[0] != 31 && asShown[1] != 31,
+      "the curves' histograms count a picture as it was before them, on their axis: a grey printed at 0.5 and bent by the curves peaks at 0.5 (\(onAxis), as shown \(asShown))")
   }
 }

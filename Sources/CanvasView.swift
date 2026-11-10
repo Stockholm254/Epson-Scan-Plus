@@ -177,6 +177,7 @@ final class FilmCanvasView: NSView {
     updateLoupe()
     updateScanHead()
     settleOpening()
+    pictureUnderPointer()
   }
   var lastViewportRevision = -1
   var lastFocusRevision = -1
@@ -243,7 +244,7 @@ final class FilmCanvasView: NSView {
     switch model?.tool {
     case .base: return Self.filledDropper
     case .neutral, .shadowNeutral, .calibrate: return Self.dropper
-    case .it8, .dust: return .crosshair
+    case .it8, .dust, .curve: return .crosshair
     default: return nil
     }
   }
@@ -711,14 +712,17 @@ final class FilmCanvasView: NSView {
         let appear = rippleShare(n)
         let r = screen(model.contactRect(f).cg).insetBy(dx: -(1 - appear) * 10, dy: -(1 - appear) * 10)
         let selected = f.id == model.selectedID
+        // Those chosen with it (⌘ / ⇧) in its colour, fainter.
+        let chosen = !selected && model.alsoSelected.contains(f.id)
         let solid =
           selected
           ? NSColor(calibratedRed: 0.95, green: 0.71, blue: 0.38, alpha: 1)
+          : chosen ? NSColor(calibratedRed: 0.95, green: 0.71, blue: 0.38, alpha: 0.6)
           : NSColor.white.withAlphaComponent(f.enabled ? 0.85 : 0.3)
         let c = solid.withAlphaComponent(solid.alphaComponent * appear)
         c.setStroke()
         let path = NSBezierPath(rect: r)
-        path.lineWidth = selected ? 2 : f.enabled ? 1.5 : 1
+        path.lineWidth = selected || chosen ? 2 : f.enabled ? 1.5 : 1
         if !f.enabled { path.setLineDash([4, 4], count: 2, phase: 0) }
         path.stroke()
         // Straightened, the part kept, turned on the film as it lies.
@@ -1210,13 +1214,145 @@ final class FilmCanvasView: NSView {
     rim.fill()
     NSGraphicsContext.restoreGraphicsState()
   }
+  /// A right click on a frame in ②: export it, or the frames chosen together when it is one of them.
+  override func menu(for event: NSEvent) -> NSMenu? {
+    guard let model, model.page == .convert, model.scanner.previewSoFar == nil else { return super.menu(for: event) }
+    let p = convert(event.locationInWindow, from: nil)
+    let frame = model.singleView
+      ? (imageRect.contains(p) ? model.selected : nil)
+      : model.contactFrames.reversed().first(where: { model.contactRect($0).cg.contains(normal(p)) })
+    guard let frame else { return super.menu(for: event) }
+    let menu = NSMenu()
+    menu.autoenablesItems = false
+    let chosen = model.selection
+    if chosen.count > 1, chosen.contains(where: { $0.id == frame.id }) {
+      menu.addItem(ActionMenuItem("导出所选的 \(chosen.count) 张…", symbol: "square.and.arrow.up.on.square", enabled: !model.isWorking) { [weak model] in
+        guard let model else { return }
+        model.exportImages(model.selection)
+      })
+    } else {
+      menu.addItem(ActionMenuItem("导出这张…", symbol: "square.and.arrow.up", enabled: !model.isWorking) { [weak model] in
+        guard let model, let now = model.frames.first(where: { $0.id == frame.id }) else { return }
+        model.exportImages([now])
+      })
+    }
+    return menu
+  }
   override func mouseMoved(with event: NSEvent) {
     hover = convert(event.locationInWindow, from: nil)
     updateCropCursor(at: hover)
+    readPointer()
   }
   override func mouseExited(with event: NSEvent) {
     hover = nil
     updateCropCursor(at: nil)
+    readPointer()
+  }
+  /// The picture moved under a pointer that stayed (zoomed, scrolled): what lies under it is read.
+  private func pointerMoved(_ event: NSEvent) {
+    guard hover != nil else { return }
+    hover = convert(event.locationInWindow, from: nil)
+    readPointer()
+  }
+
+  // MARK: The pointer on the curves
+
+  /// Where the curves' mark was last read, in the shown picture's normalised coordinates, and the
+  /// picture it was read from: a new picture is read again at the same place.
+  private var pointerRead: (point: CGPoint, image: CGImage)?
+  /// The curves' inverse, while they stay the same.
+  private var pointerInverse: (curves: ToneCurves?, inverse: CurveInverse?)?
+  /// The curves mark the colour under the pointer over the single frame's positive (`CurveState`),
+  /// as it was before them. Off the picture the mark stays, dimmed.
+  func readPointer() {
+    guard let model else { return }
+    guard model.singleView, !model.showsNegative, model.tool != .base, !model.showsOriginal, model.scanner.previewSoFar == nil,
+      let cg = shown, let p = hover, imageRect.contains(p)
+    else {
+      if model.curveState.reading?.over == true { model.curveState.reading?.over = false }
+      return
+    }
+    readPointer(at: shownNormal(p), in: cg, over: true)
+  }
+  private func readPointer(at point: CGPoint, in cg: CGImage, over: Bool) {
+    guard let model, let colour = Self.colour(in: cg, at: point) else { return }
+    let curves = model.shownCurves
+    if pointerInverse == nil || pointerInverse?.curves != curves { pointerInverse = (curves, CurveInverse(curves)) }
+    let input = pointerInverse?.inverse?.input(colour) ?? colour
+    pointerRead = (point, cg)
+    let reading = CurveState.Reading(input: input, over: over)
+    if model.curveState.reading != reading { model.curveState.reading = reading }
+  }
+  /// A new picture of the frame: the mark is read again where it was, so it follows what the
+  /// adjustments do there (the curves alone leave what lies before them as it was). Another crop,
+  /// turn or view leaves no such place, and the mark goes.
+  private func pictureUnderPointer() {
+    guard let model, let cg = shown, cg !== pointerRead?.image else { return }
+    if let p = hover, imageRect.contains(p) {
+      readPointer()
+      return
+    }
+    guard let read = pointerRead else { return }
+    pointerRead = nil
+    guard let reading = model.curveState.reading else { return }
+    guard model.singleView, !model.showsNegative, model.tool != .base, !model.showsOriginal,
+      cg.width == read.image.width, cg.height == read.image.height
+    else {
+      model.curveState.reading = nil
+      return
+    }
+    readPointer(at: read.point, in: cg, over: reading.over)
+  }
+  /// The targeted adjustment held on the picture: the tone it works at on the curve taken, the
+  /// curves as the press found them, where it began, and whether the curves have moved yet.
+  private var curveTarget: (x: Double, start: ToneCurves, from: CGFloat, channel: Int, parametric: Bool, moved: Bool)?
+  /// A press with the targeted adjustment: what lies under it before the curves, and where that
+  /// lies on the curve taken.
+  func beginCurveTarget(at p: CGPoint) {
+    guard let model, !model.showsNegative, !model.showsOriginal, let cg = shown, let colour = Self.colour(in: cg, at: shownNormal(p)) else { return }
+    let curves = model.shownCurves
+    if pointerInverse == nil || pointerInverse?.curves != curves { pointerInverse = (curves, CurveInverse(curves)) }
+    let input = pointerInverse?.inverse?.input(colour) ?? colour
+    let start = model.settings.curves ?? ToneCurves()
+    let state = model.curveState
+    curveTarget = (start.target(input, channel: state.channel, parametric: state.parametric), start, p.y, state.channel, state.parametric, false)
+  }
+  /// Up lightens that part of the curve, down darkens it: the plot's full height for 300 points of
+  /// drag, the parametric zone's whole range for 150. One undo step for the drag.
+  func dragCurveTarget(to p: CGPoint) {
+    guard let model, var t = curveTarget else { return }
+    let next = t.start.targeted(at: t.x, channel: t.channel, parametric: t.parametric, by: Double(t.from - p.y) / 300)
+    model.change("曲线目标调整", separate: !t.moved) { $0.curves = next.normalized }
+    t.moved = true
+    curveTarget = t
+  }
+  /// A picture's colour about a point (normalised, top left at 0) as it shows, in its own encoding,
+  /// which is the curves' axis: a few of its pixels each way averaged, so grain does not make the
+  /// reading flicker.
+  static func colour(in image: CGImage, at point: CGPoint, radius: Int = 2) -> RGB? {
+    let x = min(image.width - 1, max(0, Int(point.x * CGFloat(image.width))))
+    let y = min(image.height - 1, max(0, Int(point.y * CGFloat(image.height))))
+    let rect = CGRect(x: x - radius, y: y - radius, width: 2 * radius + 1, height: 2 * radius + 1)
+      .intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
+    guard !rect.isNull, rect.width >= 1, rect.height >= 1, let part = image.cropping(to: rect) else { return nil }
+    let w = Int(rect.width), h = Int(rect.height)
+    let space = image.colorSpace.flatMap { $0.model == .rgb && $0.supportsOutput ? $0 : nil } ?? ImagePipeline.shared.outputSpace
+    var px = [UInt8](repeating: 0, count: w * h * 4)
+    let drawn = px.withUnsafeMutableBytes { raw -> Bool in
+      guard let ctx = CGContext(
+        data: raw.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: space,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+      else { return false }
+      ctx.interpolationQuality = .none
+      ctx.draw(part, in: CGRect(x: 0, y: 0, width: w, height: h))
+      return true
+    }
+    guard drawn else { return nil }
+    var sum = [0.0, 0.0, 0.0]
+    for i in stride(from: 0, to: px.count, by: 4) {
+      for c in 0..<3 { sum[c] += Double(px[i + c]) }
+    }
+    return RGB(sum.map { $0 / Double(w * h) / 255 })
   }
 
   // MARK: Loupe
@@ -1815,6 +1951,10 @@ final class FilmCanvasView: NSView {
       sample(at: p)
       return
     }
+    if model.tool == .curve {
+      if model.singleView { beginCurveTarget(at: p) }
+      return
+    }
     if model.singleView {
       // The de-masking region: a corner, an edge or the box itself takes hold of it; elsewhere a new
       // one is drawn. While none is set, the part read as the picture follows (dashed) has its
@@ -1861,12 +2001,22 @@ final class FilmCanvasView: NSView {
     // On the table a click on a frame opens it, once the mouse comes up where it went down; its
     // crop is set on its own.
     if let f = model.contactFrames.reversed().first(where: { model.contactRect($0).cg.contains(normal(p)) }) {
+      // ⌘ adds it to the frames chosen, ⇧ takes the run, leaving the frame selected.
+      if model.choose(f.id, modifiers: event.modifierFlags) {
+        dragStart = nil
+        needsDisplay = true
+        return
+      }
       model.select(f.id)
       clickedFrame = (f.id, p)
     }
   }
   override func mouseDragged(with event: NSEvent) {
     let p = convert(event.locationInWindow, from: nil)
+    if curveTarget != nil {
+      dragCurveTarget(to: p)
+      return
+    }
     if let line = levelLine {
       levelLine = (line.from, p)
       needsDisplay = true
@@ -1945,6 +2095,7 @@ final class FilmCanvasView: NSView {
   }
   override func mouseUp(with event: NSEvent) {
     defer {
+      curveTarget = nil
       releaseLens()
       dragStart = nil
       draft = nil
@@ -2021,12 +2172,14 @@ final class FilmCanvasView: NSView {
       refreshCursorArea()
     }
     needsDisplay = true
+    pointerMoved(event)
   }
   override func magnify(with event: NSEvent) {
     setZoom(
       (model?.zoom ?? 1) * (1 + event.magnification),
       anchor: convert(event.locationInWindow, from: nil))
     needsDisplay = true
+    pointerMoved(event)
   }
   /// The light table always shows the whole roll; only the single frame zooms.
   /// A sampler's click on a point of the picture: on the canvas, or through the loupe's lens.
@@ -2153,4 +2306,18 @@ final class CanvasOverlay: NSView {
   override var isFlipped: Bool { true }
   override func hitTest(_ point: NSPoint) -> NSView? { nil }
   override func draw(_ dirtyRect: NSRect) { canvas?.drawOverlays() }
+}
+
+/// A menu item that runs a closure.
+final class ActionMenuItem: NSMenuItem {
+  private let run: () -> Void
+  init(_ title: String, symbol: String? = nil, enabled: Bool = true, _ run: @escaping () -> Void) {
+    self.run = run
+    super.init(title: title, action: #selector(fire), keyEquivalent: "")
+    target = self
+    isEnabled = enabled
+    if let symbol { image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) }
+  }
+  required init(coder: NSCoder) { fatalError("not from a nib") }
+  @objc private func fire() { run() }
 }

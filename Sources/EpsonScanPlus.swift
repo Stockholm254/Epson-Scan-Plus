@@ -142,7 +142,7 @@ struct EpsonScanPlusApp: App {
         Button("全部不勾选") { model.setAllEnabled(false) }.disabled(model.enabledCount == 0 || model.isWorking || !model.onRollModule)
         Divider()
         // ②'s conversion; ③ exports its repair from its own bar.
-        Button("导出当前…") { model.exportImages(all: false) }.keyboardShortcut("e")
+        Button(model.exportSelectionTitle) { model.exportImages(all: false) }.keyboardShortcut("e")
           .disabled(model.selected == nil || model.isWorking || !model.onRollModule)
         Button("导出勾选的 \(model.enabledCount) 张…") { model.exportImages(all: true) }.keyboardShortcut(
           "e", modifiers: [.command, .shift]).disabled(model.enabledCount == 0 || model.isWorking || !model.onRollModule)
