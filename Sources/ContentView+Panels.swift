@@ -481,7 +481,15 @@ extension ContentView {
             TextField(m.sessionURL.flatMap { RollLibrary.started($0.lastPathComponent) }.map(RollLibrary.title) ?? "卷名", text: $m.rollName)
               .textFieldStyle(.roundedBorder)
           }
-          labeled("胶片") { Text(FilmCalibration.film(m.filmName)).font(.system(size: 12)).lineLimit(1).help(m.filmName) }
+          labeled("胶片") {
+            // The film as the shelf, ②'s film section and the library draw it.
+            HStack(spacing: 6) {
+              let now = NewProjectSheet.current(m)
+              FilmObject(look: NewProjectSheet.look(now, m: m), gauge: NewProjectSheet.gauge(now, format: m.format))
+                .frame(width: 18, height: 24)
+              Text(FilmCalibration.film(m.filmName)).font(.system(size: 12)).lineLimit(1)
+            }.help(m.filmName)
+          }
           labeled("画面") { Text("\(m.frames.count) 张 · 全分辨率 \(full)").readout(10) }
           VStack(alignment: .leading, spacing: 4) {
             Text("备注").font(.system(size: 11)).foregroundStyle(.secondary)
