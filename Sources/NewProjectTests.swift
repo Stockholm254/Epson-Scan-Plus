@@ -169,6 +169,10 @@ enum NewProjectTests {
       && abs(dpi(3800, 3500, .mm135, .rebate, NormalRect(x: 0.05, y: 0.16, width: 0.9, height: 2400.0 / 3500)) - 2540) < 0.01
       && AppModel.formatDPI(crop: CGSize(width: 3800, height: 3500), region: nil, format: .auto, edges: .rebate) == nil,
       "a copy taking in the film's edge is sized by the film's width (35 mm on 135, 61.5 mm across 120), one of the picture alone by the picture's")
+    // 6×4.5 lies 41.5 mm along the film by 56 across: drawn narrower than 6×6, not as its square.
+    try check(FormatPiece.size(.six45).width < FormatPiece.size(.six6).width && FormatPiece.size(.six6).width < FormatPiece.size(.six7).width
+      && abs(FormatPiece.size(.six45).width / FormatPiece.size(.six45).height - 49.5 / 61.5) < 0.01,
+      "the format pieces lie as the frames do on the film: 6×4.5 41.5 mm along, narrower than 6×6, 6×7 longer")
     try check(NewProjectSheet.edgesNote(.rebate, format: .mm135).contains("35 mm") && NewProjectSheet.edgesNote(.rebate, format: .six7).contains("56×69.5")
       && NewProjectSheet.edgesNote(.picture, format: .six45).contains("56×41.5"),
       "the shelf says what the film's edge means in millimetres for the format chosen")

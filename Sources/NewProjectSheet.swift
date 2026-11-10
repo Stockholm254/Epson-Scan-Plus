@@ -314,7 +314,7 @@ struct NewProjectSheet: View {
   static func edgesNote(_ e: PictureEdges, format f: FilmFormat) -> String {
     func mm(_ x: Double) -> String { x == x.rounded() ? String(Int(x)) : String(format: "%.1f", x) }
     let picture: String? = f.pictureAcrossMM.map { across in
-      f == .medium ? "\(mm(across)) mm 宽" : "\(mm(across))×\(mm(f == .six45 ? 41.5 : f.longMM ?? across)) mm"
+      f == .medium ? "\(mm(across)) mm 宽" : "\(mm(across))×\(mm(f.alongMM ?? across)) mm"
     }
     switch e {
     case .auto:
@@ -553,7 +553,7 @@ struct NewProjectSheet: View {
     case .auto: what = "扫描时按画面自动识别；翻拍的照片长边按 135 画面的 36 mm 算"
     case .mm135: what = "135：画面 36 × 24 mm"
     case .medium: what = "120，画面长度不定：按短边 56 mm 算"
-    default: what = "\(f.rawValue)：画面 \(f.longMM.map { String(format: "%g", $0) } ?? "?") × 56 mm"
+    default: what = "\(f.rawValue)：画面 \(f.alongMM.map { String(format: "%g", $0) } ?? "?") × 56 mm（沿胶片 × 横过胶片）"
     }
     return what + (offered ? "" : "（这种胶片通常没有这个画幅）")
   }
@@ -588,7 +588,7 @@ struct FormatPiece: View {
     case .auto: return CGSize(width: 34, height: 34)
     case .mm135: return CGSize(width: 44 * scale, height: 35 * scale)
     case .medium: return CGSize(width: 64 * scale, height: 61.5 * scale)
-    default: return CGSize(width: (f.longMM ?? 56) + 8, height: 61.5).applying(CGAffineTransform(scaleX: scale, y: scale))
+    default: return CGSize(width: (f.alongMM ?? 56) + 8, height: 61.5).applying(CGAffineTransform(scaleX: scale, y: scale))
     }
   }
   static func width(_ f: FilmFormat) -> CGFloat { size(f).width + 4 }
@@ -622,7 +622,8 @@ struct FormatPiece: View {
           x += 4.75 * k
         }
       } else {
-        let long = format.longMM ?? 56
+        // The frame as it lies on the film: its length along it, 56 mm across.
+        let long = format.alongMM ?? 56
         window = CGRect(x: piece.midX - long / 2 * k, y: piece.midY - 28 * k, width: long * k, height: 56 * k)
       }
       ctx.fill(Path(roundedRect: window, cornerRadius: 0.8), with: .linearGradient(

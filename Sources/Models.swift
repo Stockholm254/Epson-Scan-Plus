@@ -809,6 +809,18 @@ extension FilmFormat {
     default: return 61.5
     }
   }
+  /// The picture's length along the film, in millimetres: 36 on 135; on 120 41.5 for 6×4.5 (its
+  /// short side runs along the film), 56, 69.5 and 84. Nil for 自动 and 120 of a length not given.
+  var alongMM: Double? {
+    switch self {
+    case .auto, .medium: return nil
+    case .mm135: return 36
+    case .six45: return 41.5
+    case .six6: return 56
+    case .six7: return 69.5
+    case .six9: return 84
+    }
+  }
   /// The picture's side across the film, in millimetres: 24 on 135, 56 on 120 whatever its length.
   var pictureAcrossMM: Double? {
     switch self {
