@@ -91,8 +91,9 @@ struct CameraStage: View {
   /// The top row as wide as the stage allows: with the live histogram's strip, or without it on a
   /// narrow stage, where it would push the window's columns past its edges.
   var fittedTopRow: some View {
-    ViewThatFits(in: .horizontal) {
+    WidthFit {
       topRow(strip: true)
+    } compact: {
       topRow(strip: false)
     }
   }

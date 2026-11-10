@@ -445,5 +445,70 @@ enum CanvasTests {
     try check(keepsOwn,
       "the zoom's figure keeps its own size in the bars under the picture: \(barFigure == nil ? "not shown" : "\(given)") for \(own) (single \(zoomed.singleView), original \(zoomed.showsOriginal))")
     barWindow.contentView = nil
+
+    // The single frame is a layer of its own, which the window server scales and colour-matches on
+    // the GPU, where the canvas shows it; a picture taken of the canvas has it drawn in.
+    zoomCanvas.needsDisplay = true
+    zoomCanvas.display()
+    let onLayer = (zoomCanvas.pictureLayer.contents as AnyObject?) === zoomCanvas.shown && !zoomCanvas.pictureLayer.isHidden
+      && zoomCanvas.pictureLayer.frame == zoomCanvas.imageRect
+    var litOnLayer = 0, looked = 0
+    if let rep = zoomCanvas.bitmapImageRepForCachingDisplay(in: zoomCanvas.bounds) {
+      zoomCanvas.cacheDisplay(in: zoomCanvas.bounds, to: rep)
+      let k = CGFloat(rep.pixelsWide) / zoomCanvas.bounds.width, r = zoomCanvas.imageRect.insetBy(dx: 4, dy: 4)
+      for y in stride(from: Int(r.minY * k), to: Int(r.maxY * k), by: 9) {
+        for x in stride(from: Int(r.minX * k), to: Int(r.maxX * k), by: 9) {
+          looked += 1
+          // The plate under the picture is black.
+          if let c = rep.colorAt(x: x, y: y), c.redComponent + c.greenComponent + c.blueComponent > 0.05 { litOnLayer += 1 }
+        }
+      }
+    }
+    try check(onLayer && looked > 0 && litOnLayer > looked / 2,
+      "the single frame is a layer the GPU composites, where the canvas shows it, and a picture taken of the canvas has it drawn in (\(litOnLayer) of \(looked) samples lit)")
+
+    // A row with a full and a compact layout keeps the one shown, with its controls, through the
+    // window's updates; it changes as its room does. ViewThatFits, laid out again at the window's
+    // smallest for its minimum size, took the compact one and then the full one again at every update,
+    // and built their controls anew: under the single frame a dozen buttons and two segmented controls
+    // at each slider step.
+    final class Steps: ObservableObject { @Published var n = 0 }
+    struct Row: View {
+      @ObservedObject var steps: Steps
+      var body: some View {
+        WidthFit {
+          HStack {
+            Picker("", selection: .constant(0)) { Text("完整").tag(0); Text("甲").tag(1) }.pickerStyle(.segmented).frame(width: 120)
+            Text(String(repeating: "步", count: 20 + steps.n))
+          }
+        } compact: {
+          Picker("", selection: .constant(0)) { Text("紧凑").tag(0); Text("乙").tag(1) }.pickerStyle(.segmented).frame(width: 120)
+        }.frame(maxWidth: .infinity, alignment: .leading)
+      }
+    }
+    let steps = Steps()
+    let rowHost = NSHostingView(rootView: Row(steps: steps).windowMinimum(width: 200, height: 40))
+    rowHost.sizingOptions = [.minSize]
+    let rowWindow = NSWindow(contentRect: NSRect(x: -9000, y: -9000, width: 800, height: 60), styleMask: [.borderless], backing: .buffered, defer: false)
+    rowWindow.contentView = rowHost
+    func laidOut() { for _ in 0..<3 { rowHost.layoutSubtreeIfNeeded(); settle(0.05) } }
+    func switches(_ v: NSView) -> [NSSegmentedControl] { ((v as? NSSegmentedControl).map { [$0] } ?? []) + v.subviews.flatMap { switches($0) } }
+    func shown() -> [String] { switches(rowHost).map { $0.label(forSegment: 0) ?? "" } }
+    laidOut()
+    let fullKey = switches(rowHost).first { $0.label(forSegment: 0) == "完整" }
+    for k in 1...5 {
+      steps.n = k
+      laidOut()
+    }
+    let stillKey = switches(rowHost).first { $0.label(forSegment: 0) == "完整" }
+    rowWindow.setContentSize(NSSize(width: 260, height: 60))
+    laidOut()
+    let narrow = shown()
+    rowWindow.setContentSize(NSSize(width: 800, height: 60))
+    laidOut()
+    let wide = shown()
+    try check(fullKey != nil && fullKey === stillKey && narrow == ["紧凑"] && wide == ["完整"],
+      "a row's full layout keeps its controls through the window's updates, the compact one takes its place when narrow and gives it back when wide (\(narrow), \(wide), kept \(fullKey != nil && fullKey === stillKey))")
+    rowWindow.contentView = nil
   }
 }

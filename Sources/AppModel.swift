@@ -3952,10 +3952,12 @@ final class ZoomFigure: NSView {
     }
   }
   override var isFlipped: Bool { true }
-  override var intrinsicContentSize: NSSize {
-    let widest = ("32.0×" as NSString).size(withAttributes: [.font: Self.font])
-    return NSSize(width: ceil(widest.width), height: ceil(widest.height))
-  }
+  /// As wide as the widest it shows, measured once: SwiftUI asks at every update of the window.
+  private static let widest: NSSize = {
+    let s = ("32.0×" as NSString).size(withAttributes: [.font: font])
+    return NSSize(width: ceil(s.width), height: ceil(s.height))
+  }()
+  override var intrinsicContentSize: NSSize { Self.widest }
   override func draw(_ dirtyRect: NSRect) {
     (text as NSString).draw(at: .zero, withAttributes: [.font: Self.font, .foregroundColor: NSColor.secondaryLabelColor])
   }

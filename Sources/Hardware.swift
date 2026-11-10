@@ -94,16 +94,25 @@ private struct BlinkingLamp<Lamp: View>: NSViewRepresentable {
   var size: CGFloat
   final class Host: NSView {
     let hosting: NSHostingView<Lamp>
+    private(set) var size: CGFloat
     init(_ lamp: Lamp, size: CGFloat) {
       hosting = NSHostingView(rootView: lamp)
+      self.size = size
       super.init(frame: CGRect(x: 0, y: 0, width: size, height: size))
+      // Placed by its frame, and sized by nothing it shows: with its content's size as
+      // constraints, every update of the window measured the lamp's own view again on the main
+      // thread, a tenth of each step of a slider dragged while the lamp blinked.
+      hosting.sizingOptions = []
+      hosting.translatesAutoresizingMaskIntoConstraints = false
       hosting.wantsLayer = true
       addSubview(hosting)
       place(size)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+    override var intrinsicContentSize: NSSize { NSSize(width: size, height: size) }
     /// Room round the lamp for its glow, which reaches past it.
     func place(_ size: CGFloat) {
+      self.size = size
       hosting.frame = CGRect(x: 0, y: 0, width: size, height: size).insetBy(dx: -size, dy: -size)
     }
     override func viewDidMoveToWindow() {
@@ -124,10 +133,17 @@ private struct BlinkingLamp<Lamp: View>: NSViewRepresentable {
     }
   }
   func makeNSView(context: Context) -> Host { Host(lamp, size: size) }
+  /// The lamp is drawn once: it blinks in the window server, and a busy lamp is always amber.
+  /// Only a new size draws it again.
   func updateNSView(_ view: Host, context: Context) {
-    view.hosting.rootView = lamp
-    view.place(size)
+    if view.size != size {
+      view.hosting.rootView = lamp
+      view.place(size)
+    }
     view.blink()
+  }
+  func sizeThatFits(_ proposal: ProposedViewSize, nsView: Host, context: Context) -> CGSize? {
+    CGSize(width: size, height: size)
   }
 }
 

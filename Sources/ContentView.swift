@@ -115,7 +115,7 @@ struct ContentView: View {
       if tool == .calibrate, m.page == .convert, !convertSidebarShown { openCalibration() }
     }
     .copyStandGlass(cameraStage, camera: m.camera)
-    .frame(minWidth: 1120, minHeight: 760)
+    .windowMinimum(width: 1120, height: 760)
     .alert(
       "无法完成操作",
       isPresented: Binding(get: { m.errorText != nil }, set: { if !$0 { m.errorText = nil } })
@@ -570,16 +570,18 @@ struct ContentView: View {
       ScanCanvas(model: m, reserved: NSEdgeInsets(top: bar, left: 0, bottom: bar, right: 0))
         .frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
       VStack(spacing: 0) {
-        ViewThatFits(in: .horizontal) {
+        WidthFit {
           glassToolRow
+        } compact: {
           glassToolRow.labelStyle(.iconOnly)
         }.lineLimit(1).padding(.horizontal, inset).padding(.top, inset)
         ZStack(alignment: .topTrailing) {
           Color.clear
           canvasOverlays
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
-        ViewThatFits(in: .horizontal) {
+        WidthFit {
           bottomBars(compact: false)
+        } compact: {
           bottomBars(compact: true)
         }.lineLimit(1).buttonStyle(.bordered).controlSize(.small).padding(.horizontal, inset).padding(.bottom, inset)
           .animation(Liquid.flow, value: m.singleView)

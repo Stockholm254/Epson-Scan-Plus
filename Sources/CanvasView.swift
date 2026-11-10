@@ -49,6 +49,15 @@ struct QuarterTurn: Equatable {
 }
 
 final class FilmCanvasView: NSView {
+  /// The canvas's picture (the single frame, or the light table's print or page), and the part of
+  /// the single frame zoomed into at its own resolution: layers the window server scales and
+  /// colour-matches on the GPU. Drawn into the canvas, each picture was resampled and converted to
+  /// the screen's colours on the main thread at every redraw, a third of its time while a slider was
+  /// dragged, and all of a zoom's.
+  let pictureLayer = CALayer()
+  let detailLayer = CALayer()
+  /// What lies over the picture (`drawOverlays`), above its layers.
+  let overlay = CanvasOverlay()
   /// Lies on the light table in the contact view.
   let loupe = LoupeView()
   /// Passes over the frame being scanned.
@@ -65,6 +74,19 @@ final class FilmCanvasView: NSView {
     wantsLayer = true
     clipsToBounds = true
     layer?.masksToBounds = true
+    for picture in [pictureLayer, detailLayer] {
+      picture.isHidden = true
+      picture.contentsGravity = .resize
+      picture.minificationFilter = .trilinear
+      picture.magnificationFilter = .linear
+      // Placed as the canvas draws: nothing of it animates by itself.
+      picture.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull(), "hidden": NSNull(), "magnificationFilter": NSNull()]
+    }
+    layer?.insertSublayer(pictureLayer, at: 0)
+    layer?.insertSublayer(detailLayer, above: pictureLayer)
+    overlay.canvas = self
+    overlay.frame = bounds
+    addSubview(overlay)
     loupe.canvas = self
     loupe.isHidden = true
     addSubview(loupe)
@@ -75,6 +97,63 @@ final class FilmCanvasView: NSView {
     // out again for the constraints it stood for, 27 ms for each step of a zoom with the loupe out.
     loupe.translatesAutoresizingMaskIntoConstraints = false
     scanHead.translatesAutoresizingMaskIntoConstraints = false
+    overlay.translatesAutoresizingMaskIntoConstraints = false
+  }
+  /// Whatever the canvas redraws, what lies over its picture is drawn again with it.
+  override var needsDisplay: Bool {
+    get { super.needsDisplay }
+    set {
+      super.needsDisplay = newValue
+      if newValue { overlay.needsDisplay = true }
+    }
+  }
+  override func setNeedsDisplay(_ invalidRect: NSRect) {
+    super.setNeedsDisplay(invalidRect)
+    overlay.setNeedsDisplay(invalidRect)
+  }
+  /// Drawn now, it is drawn now with what lies over its picture.
+  override func display() {
+    super.display()
+    overlay.display()
+  }
+  override func displayIfNeeded() {
+    super.displayIfNeeded()
+    overlay.displayIfNeeded()
+  }
+  /// A picture taken of the canvas has its picture drawn into it, with what lies over it: the
+  /// picture's own layers are not drawn.
+  override func cacheDisplay(in rect: NSRect, to bitmapImageRep: NSBitmapImageRep) {
+    let was = snapshotting
+    snapshotting = true
+    defer { snapshotting = was }
+    super.cacheDisplay(in: rect, to: bitmapImageRep)
+  }
+  /// The canvas's picture on its layers, as the canvas draws: `nil` hides them.
+  private func placePicture(_ p: (image: CGImage, rect: CGRect, covered: Bool, detail: (CGImage, CGRect)?)?) {
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    defer { CATransaction.commit() }
+    guard let p else {
+      pictureLayer.isHidden = true
+      detailLayer.isHidden = true
+      detailLayer.contents = nil
+      return
+    }
+    if (pictureLayer.contents as AnyObject?) !== p.image { pictureLayer.contents = p.image }
+    if pictureLayer.frame != p.rect { pictureLayer.frame = p.rect }
+    pictureLayer.isHidden = p.covered
+    if let (detail, area) = p.detail {
+      if (detailLayer.contents as AnyObject?) !== detail { detailLayer.contents = detail }
+      if detailLayer.frame != area { detailLayer.frame = area }
+      // Once a pixel of the frame is two of the screen or more, square, as the frame's own.
+      let pixelsPerPixel = area.width * (window?.backingScaleFactor ?? 2) / CGFloat(max(1, detail.width))
+      let filter: CALayerContentsFilter = pixelsPerPixel >= 2 ? .nearest : .linear
+      if detailLayer.magnificationFilter != filter { detailLayer.magnificationFilter = filter }
+      detailLayer.isHidden = false
+    } else {
+      detailLayer.isHidden = true
+      detailLayer.contents = nil
+    }
   }
   override var wantsDefaultClipping: Bool { true }
   /// Follows the model: on every update of the window, and by itself for each new picture of the
@@ -220,6 +299,7 @@ final class FilmCanvasView: NSView {
   }
   override func setFrameSize(_ newSize: NSSize) {
     super.setFrameSize(newSize)
+    overlay.frame = bounds
     clampPan()
     if !loupe.isHidden { loupe.layoutOnTable() }
   }
@@ -474,6 +554,9 @@ final class FilmCanvasView: NSView {
   }
   override func draw(_ dirtyRect: NSRect) {
     defer { tableDrawn() }
+    // The picture's layers go with what is drawn: hidden unless placed below.
+    var picturePlaced = false
+    defer { if !picturePlaced && !snapshotting { placePicture(nil) } }
     turnPage()
     NSGraphicsContext.saveGraphicsState()
     defer { NSGraphicsContext.restoreGraphicsState() }
@@ -513,7 +596,15 @@ final class FilmCanvasView: NSView {
     // square, once each is two pixels of the screen or more, so a pixel shows as one. Under one
     // that covers all of the picture in view the picture shown is not drawn: nothing of it is seen.
     let zoomed = zoomDetailInView()
-    if zoomed.map({ !$0.1.insetBy(dx: -0.5, dy: -0.5).contains(rect.intersection(visibleRect)) }) ?? true {
+    let covered = zoomed.map { $0.1.insetBy(dx: -0.5, dy: -0.5).contains(rect.intersection(visibleRect)) } ?? false
+    // On the GPU (`placePicture`), but in a picture taken of the canvas, which has only what is
+    // drawn, and in a drawing of the canvas outside a window.
+    if !snapshotting, window != nil {
+      placePicture((cg, rect, covered, zoomed))
+      picturePlaced = true
+      return
+    }
+    if !covered {
       let image = NSImage(cgImage: cg, size: CGSize(width: cg.width, height: cg.height))
       // A laid-out page's strips lie on the table, its perforations open to the light.
       image.draw(
@@ -526,6 +617,16 @@ final class FilmCanvasView: NSView {
         in: area, from: .zero, operation: .copy, fraction: 1, respectFlipped: true,
         hints: [.interpolation: pixelsPerPixel >= 2 ? NSImageInterpolation.none : .high])
     }
+  }
+  /// What lies over the picture, drawn by `overlay` above the picture's layers: the crop and its
+  /// handles, the grid, the frames on the light table, the marks of what was picked or found, the
+  /// crop's lens. Nothing while the canvas shows no picture, or a change of view covers it.
+  func drawOverlays() {
+    guard let model, shown != nil else { return }
+    if let opening, model.singleView, !opening.grown || model.displayed === opening.over { return }
+    if change?.hold == true { return }
+    let rect = imageRect
+    let sheet = model.onSheetPage
     if model.singleView, model.canvasCrop == nil, model.straightening {
       drawGrid(in: [
         CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY),
@@ -2043,4 +2144,13 @@ private extension NSBezierPath {
     for p in points.dropFirst() { line(to: p) }
     close()
   }
+}
+
+/// What the canvas draws over its picture (`FilmCanvasView.drawOverlays`), a view of its own above
+/// the picture's layers. The canvas takes every press and every pointer.
+final class CanvasOverlay: NSView {
+  weak var canvas: FilmCanvasView?
+  override var isFlipped: Bool { true }
+  override func hitTest(_ point: NSPoint) -> NSView? { nil }
+  override func draw(_ dirtyRect: NSRect) { canvas?.drawOverlays() }
 }
