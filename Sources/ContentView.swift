@@ -511,11 +511,11 @@ struct ContentView: View {
         HStack(spacing: 12) {
           HStack(spacing: 5) { Text("片基").foregroundStyle(.secondary); Text(m.baseShort(f)) }
           HStack(spacing: 5) { Text("白平衡").foregroundStyle(.secondary); Text(m.balanceShort(f)) }
-          if let region = f.adjustments.analysisRegion {
+          if let region = f.adjustments.analysisRegion ?? m.toneAnalysis?.followed {
             HStack(spacing: 5) {
               Image(systemName: CanvasTool.region.symbol)
                 .foregroundStyle(CanvasTool.region.colour.map { Color(red: $0.red, green: $0.green, blue: $0.blue) } ?? .primary)
-              Text(String(format: "去色罩区域 %.0f%%", region.width * region.height * 100))
+              Text(String(format: f.adjustments.analysisRegion == nil ? "去色罩区域 %.0f%%（避开片边）" : "去色罩区域 %.0f%%", region.width * region.height * 100))
             }
           }
         }.font(.system(size: 11)).lineLimit(1)
@@ -934,10 +934,11 @@ struct ContentView: View {
         }.buttonStyle(KeyStyle(latched: m.tool == .region)).font(.system(size: 11)).disabled(m.selected == nil)
           .help("在画面上拖出青色的框：片基估计、白平衡和色阶只看框里 · M")
         Button("跟随画面") { m.setAnalysisRegion(nil) }.font(.system(size: 11)).disabled(region == nil)
-          .help("不再单独框选：按画面裁切，去掉四边 5%")
+          .help("不再单独框选：按画面裁切，去掉四边 5%；裁切里带着片边时只看片边以内")
       }
       Text(region.map { String(format: "框选了画面的 %.0f%%：片基估计、白平衡、色阶和高光只看青色框里，显示和导出仍按琥珀色的画面裁切", $0.width * $0.height * 100) }
-        ?? "跟随画面裁切（去掉四边 5%）。要避开漏光、片夹或一大片天空，框选只想让去色罩看的地方")
+        ?? (m.toneAnalysis?.followed.map { String(format: "跟随画面裁切：裁切里带着片边（片基、齿孔、边字），只看片边以内的 %.0f%%（青色虚线）。要避开漏光或一大片天空，框选只想让去色罩看的地方", $0.width * $0.height * 100) }
+          ?? "跟随画面裁切（去掉四边 5%；裁切里带着片边时只看片边以内）。要避开漏光、片夹或一大片天空，框选只想让去色罩看的地方"))
         .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
   }
@@ -957,7 +958,7 @@ struct ContentView: View {
   }
   /// White balance: automatic or by hand, the roll as one, and the points picked on the frame.
   var balanceSection: some View {
-    PanelSection("白平衡", key: "balance", info: "自动白平衡按画面估计，忽略外缘 5%（不改变导出范围）；在「画面范围」里框选了去色罩区域时，只按青色框里估计。用本机或翻拍标定的预设时不按画面估计，按标定时记下的中性配平，开不开「自动」都一样；这个中性是在标定时的光下定的（比如阳光），阴天、树荫、室内的照片会带上光的颜色，用「中性灰」或冷暖、绿 / 洋红调。\n\n「阴影冷暖」「阴影色调」只动暗部（亮度 0.2 最多，0.55 以上和纯黑不动），阳光下的灰不变：晴天的阴影由蓝天照亮，本来就偏蓝，阴影冷暖往右拨把它暖回来；远处的雾气、只有蓝层曝了光的阴影常常蓝里带紫，再把阴影色调往左（绿）拨；它只去掉相反的偏色，往绿只动偏紫的暗处，草和中性的沙不变。「阴影中性」用滴管点阴影里应为灰色的地方（背光的水泥、路面、石头），两个一起按它设定，之后还能拖滑块微调；点在树林这类本身有颜色的东西上会把它也变成灰。\n\n「中性灰」用滴管点画面中应为灰色的地方，按这一点自动白平衡（「自动」保持开着）；滴管也在画面上方的工具条里（N）。取过点以后旁边出现「清除取样」：放弃取样点，打开「自动」，按画面估计，标定预设回到标定的中性；冷暖、绿 / 洋红和片基不动。\n\n反转片：片子本来的颜色就是画面，默认不自动白平衡，透过片子最亮处的光就是白。打开「自动」时每个通道各自从最暗拉到最亮，适合褪色、偏色的片子。「中性灰」把那一点配成灰。「清除取样」放弃取样点，回到片子本来的颜色。") {
+    PanelSection("白平衡", key: "balance", info: "自动白平衡按画面估计，忽略外缘 5%（不改变导出范围），裁切里带着片边（片基、齿孔、边字）时只看片边以内；在「画面范围」里框选了去色罩区域时，只按青色框里估计。用本机或翻拍标定的预设时不按画面估计，按标定时记下的中性配平，开不开「自动」都一样；这个中性是在标定时的光下定的（比如阳光），阴天、树荫、室内的照片会带上光的颜色，用「中性灰」或冷暖、绿 / 洋红调。\n\n「阴影冷暖」「阴影色调」只动暗部（亮度 0.2 最多，0.55 以上和纯黑不动），阳光下的灰不变：晴天的阴影由蓝天照亮，本来就偏蓝，阴影冷暖往右拨把它暖回来；远处的雾气、只有蓝层曝了光的阴影常常蓝里带紫，再把阴影色调往左（绿）拨；它只去掉相反的偏色，往绿只动偏紫的暗处，草和中性的沙不变。「阴影中性」用滴管点阴影里应为灰色的地方（背光的水泥、路面、石头），两个一起按它设定，之后还能拖滑块微调；点在树林这类本身有颜色的东西上会把它也变成灰。\n\n「中性灰」用滴管点画面中应为灰色的地方，按这一点自动白平衡（「自动」保持开着）；滴管也在画面上方的工具条里（N）。取过点以后旁边出现「清除取样」：放弃取样点，打开「自动」，按画面估计，标定预设回到标定的中性；冷暖、绿 / 洋红和片基不动。\n\n反转片：片子本来的颜色就是画面，默认不自动白平衡，透过片子最亮处的光就是白。打开「自动」时每个通道各自从最暗拉到最亮，适合褪色、偏色的片子。「中性灰」把那一点配成灰。「清除取样」放弃取样点，回到片子本来的颜色。") {
       Toggle(
         "自动",
         isOn: Binding(

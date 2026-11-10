@@ -91,8 +91,8 @@ enum AutoAdjust {
       }
       return pipeline.samples(image, maxDimension: 400)
     }
-    let m = ImagePipeline.statisticsMargin(s)
-    let part = s.analysisRegion ?? NormalRect(x: m, y: m, width: 1 - 2 * m, height: 1 - 2 * m)
+    // The part the analysis read: the region, inside the film's edge, or all but the outer 5%.
+    let part = s.analysisRegion ?? analysis.followed ?? NormalRect(x: 0.05, y: 0.05, width: 0.9, height: 0.9)
     let plain = try shown(s)
     let first = read(plain, part: part)
     // The shade's greys warmed to neutral, or only as far as the light tones' greys where those are

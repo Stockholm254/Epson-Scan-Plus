@@ -144,7 +144,7 @@ enum MCPTools {
       "analysis_region": f.adjustments.analysisRegion.map { r -> Any in
         ["x": round(r.x), "y": round(r.y), "width": round(r.width), "height": round(r.height),
          "note": "in the crop, 0-1 from its top left, unturned; the base estimate, white balance, levels and highlight reach read only here"]
-      } ?? "follows the crop (its outer 5% left out)",
+      } ?? "follows the crop: its outer 5% left out, and where the crop takes in the film's edge (rebate, sprocket holes, edge print) only the part inside it read",
       "picked": ["film_base": s.base != nil, "neutral": s.neutralSample != nil]]
     if let angle = s.angle { g["straighten_degrees"] = angle }
     if let path = f.sourcePath { g["file"] = URL(fileURLWithPath: path).lastPathComponent }
@@ -289,13 +289,19 @@ enum MCPTools {
       let s = frame.adjustments
       let source = try model.source(for: frame, maxDimension: 600)
       let analysis = pipe.analyze(source, settings: s, profile: profile)
-      let negative = pipe.samples(source, maxDimension: 300)
+      // The densities below are read where the statistics read (`ImagePipeline.analysisPart`).
+      let part = pipe.analysisPart(source, s)
+      let negative = pipe.samples(part.image, maxDimension: 300)
+      // Its outer 5% left out where the statistics leave it out.
+      let (rows, columns) = part.margin > 0
+        ? (negative.height / 20..<negative.height * 19 / 20, negative.width / 20..<negative.width * 19 / 20)
+        : (0..<negative.height, 0..<negative.width)
       let shown = try pipe.preview(source, settings: s, profile: profile)
       let positive = pipe.raster(shown, maxDimension: 300)
       var densities = [[Double]](repeating: [], count: 3), outputs = [[Double]](repeating: [], count: 3)
       var dark = 0.0, bright = 0.0, count = 0.0
-      for y in stride(from: negative.height / 20, to: negative.height * 19 / 20, by: 2) {
-        for x in stride(from: negative.width / 20, to: negative.width * 19 / 20, by: 2) {
+      for y in stride(from: rows.lowerBound, to: rows.upperBound, by: 2) {
+        for x in stride(from: columns.lowerBound, to: columns.upperBound, by: 2) {
           let v = negative.pixel(x, y).values
           for c in 0..<3 { densities[c].append(log10(max(1e-6, analysis.base.values[c]) / max(1e-6, v[c])) * s.inputGamma) }
         }
@@ -314,6 +320,10 @@ enum MCPTools {
       if let dpi = frame.scanDPI, AppModel.readsScan(frame) { framePart["scan_dpi"] = dpi }
       if let l = frame.levels { framePart["aligned_to_preview"] = ["used": l.usable, "fit": round(l.fit, 10000), "gain": rgb(l.gain)] }
       framePart.merge(geometry(frame)) { a, _ in a }
+      if s.analysisRegion == nil, let r = analysis.followed {
+        framePart["analysis_region"] = ["x": round(r.x), "y": round(r.y), "width": round(r.width), "height": round(r.height),
+          "note": "follows the crop, which takes in the film's edge (rebate, sprocket holes, edge print): read only inside it, here; in the crop, 0-1 from its top left, unturned"]
+      }
       if frame.sensorRead == true { framePart["read_from_sensor"] = true; framePart["crosstalk_removed"] = frame.crosstalk != nil }
       // How the light falling off across the picture (the lens's vignetting, the light's unevenness) is taken out.
       let flatPart: [String: Any]? = onMain {

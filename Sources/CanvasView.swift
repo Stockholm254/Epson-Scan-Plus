@@ -386,7 +386,8 @@ final class FilmCanvasView: NSView {
     let c = tool.colour ?? (1, 1, 1)
     return NSColor(calibratedRed: c.red, green: c.green, blue: c.blue, alpha: 1)
   }
-  /// The part of the picture the de-masking reads while no region is set: all but its outer 5%.
+  /// The part of the picture the de-masking reads while no region is set and no film edge lies in
+  /// the crop: all but its outer 5% (`AppModel.followedRegion`).
   static let followRegion = CGRect(x: 0.05, y: 0.05, width: 0.9, height: 0.9)
   /// A canvas point in the single frame's picture as cropped, unturned and not straightened: where
   /// the de-masking region lives.
@@ -436,7 +437,7 @@ final class FilmCanvasView: NSView {
   private func drawAnalysisRegion(_ frame: FilmFrame) {
     guard let model else { return }
     let editing = model.tool == .region, set = regionDraft ?? frame.adjustments.analysisRegion?.cg
-    let c = pictureCorners(set ?? Self.followRegion), whole = pictureCorners(CGRect(x: 0, y: 0, width: 1, height: 1))
+    let c = pictureCorners(set ?? model.followedRegion), whole = pictureCorners(CGRect(x: 0, y: 0, width: 1, height: 1))
     guard c.count == 4, whole.count == 4 else { return }
     let box = [c[0], c[1], c[3], c[2]], picture = [whole[0], whole[1], whole[3], whole[2]]
     let cyan = Self.colour(.region), amber = Self.colour(.crop)
@@ -467,7 +468,8 @@ final class FilmCanvasView: NSView {
     let topLeft = { (points: [CGPoint]) in points.min { $0.x + $0.y < $1.x + $1.y }! }
     drawTag("画面裁切", at: topLeft(picture), colour: amber)
     let first = topLeft(box)
-    drawTag(set == nil ? "去色罩区域 · 跟随画面" : "去色罩区域", at: CGPoint(x: first.x, y: first.y + 24), colour: cyan)
+    let following = model.toneAnalysis?.followed != nil ? "去色罩区域 · 跟随画面，避开片边" : "去色罩区域 · 跟随画面"
+    drawTag(set == nil ? following : "去色罩区域", at: CGPoint(x: first.x, y: first.y + 24), colour: cyan)
   }
   /// Over the single frame's crop, the pointer shows what a press there would resize: a corner or
   /// an edge, at the side of the box it is on the screen.
@@ -493,8 +495,8 @@ final class FilmCanvasView: NSView {
     } else if let p, let model, model.singleView, model.tool == .region, let frame = model.selected,
       !model.isWorking, regionDrag == nil, imageRect.contains(p)
     {
-      // While none is set, the part read as the picture follows (`followRegion`) is held as one.
-      let r = frame.adjustments.analysisRegion?.cg ?? Self.followRegion, hold = regionHold(r, at: p), c = pictureCorners(r)
+      // While none is set, the part read as the picture follows (`followedRegion`) is held as one.
+      let r = frame.adjustments.analysisRegion?.cg ?? model.followedRegion, hold = regionHold(r, at: p), c = pictureCorners(r)
       let at: CGPoint? = hold.corner.map { c[$0] } ?? hold.edge.map { e in
         let (a, b) = (c[Self.edgeEnds[e].0], c[Self.edgeEnds[e].1])
         return CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
@@ -772,9 +774,10 @@ final class FilmCanvasView: NSView {
         drawBasePick(picked, settings: s, aspect: model.shownAspect(frame))
       }
     }
-    // The de-masking region, cyan, over the picture as cropped.
+    // The de-masking region, cyan, over the picture as cropped; also where it follows the picture
+    // inside the film's edge, which the crop takes in.
     if model.singleView, !model.editingSingle, !model.showsOriginal, let frame = model.selected,
-      frame.adjustments.analysisRegion != nil || model.tool == .region
+      frame.adjustments.analysisRegion != nil || model.tool == .region || model.toneAnalysis?.followed != nil
     {
       drawAnalysisRegion(frame)
     }
@@ -1970,7 +1973,7 @@ final class FilmCanvasView: NSView {
       // corners and edges held the same way, so they drag from where they follow the picture; a
       // press inside it still draws a new one.
       if model.tool == .region, !model.isWorking, let frame = model.selected, let q = pictureNormal(p) {
-        let own = frame.adjustments.analysisRegion?.cg, set = own ?? Self.followRegion
+        let own = frame.adjustments.analysisRegion?.cg, set = own ?? model.followedRegion
         let hold = regionHold(set, at: p)
         let held = hold.corner != nil || hold.edge != nil || own?.contains(q) == true
         regionDrag = (q, held ? set : nil, hold.corner, hold.edge)

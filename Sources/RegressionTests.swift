@@ -35,6 +35,7 @@ enum RegressionTests {
     try PhotoInfoTests.run(folder: folder)
     try NewProjectTests.run(folder: folder)
     try AnalysisRegionTests.run(folder: folder)
+    try FollowedRegionTests.run(folder: folder)
     try ReversalTests.run(folder: folder)
     try OriginalViewTests.run(folder: folder)
     try ProxyTests.run(folder: folder)

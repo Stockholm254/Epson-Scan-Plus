@@ -40,6 +40,10 @@ struct ToneAnalysis: Equatable {
   /// exposure, in their brightest channel once saturated (`ImagePipeline.reach`); nil where the
   /// white is set by hand (a picked highlight, levels off).
   var reach: Double? = nil
+  /// Where the statistics read while the de-masking region follows the picture and the film's edge
+  /// lies inside the crop (`ImagePipeline.followedRegion`): in the picture as cropped, normalised
+  /// from its top left, unturned. Nil where the crop is read less its outer 5%, or a region is set.
+  var followed: NormalRect? = nil
 }
 
 final class ImagePipeline {
@@ -284,30 +288,56 @@ final class ImagePipeline {
     return ps.map { p in v.isEmpty ? 0 : v[min(v.count - 1, Int(Double(v.count - 1) * p))] }
   }
 
-  /// The part of a frame's picture the de-masking statistics read: its de-masking region where one
-  /// is set (`Adjustments.analysisRegion`), else the whole picture, whose outer 5% they leave out
-  /// (`statisticsMargin`). Every caller hands over the picture as cropped, so the single view, the
-  /// film strip, exports and the light table all read the same part.
-  func analysisPart(_ image: CGImage, _ settings: Adjustments) -> CGImage {
-    guard let region = settings.analysisRegion, region.width > 0, region.height > 0,
-      let part = try? crop(image, rect: region)
-    else { return image }
-    return part
+  /// The part of a frame's picture the de-masking statistics read (`analysisPart`), and the share
+  /// of each side of it they leave out.
+  struct AnalysisPart {
+    var image: CGImage
+    /// 5% of a picture read whole, against film base and holder at its edges; none of a de-masking
+    /// region or of the part inside the film's edge, which are where they are meant to read.
+    var margin: Double
+    /// Where that part lies in the picture, while the region follows it and the film's edge was
+    /// found inside the crop (`followedRegion`).
+    var followed: NormalRect?
   }
-  /// The share of each side the statistics leave out: 5% of the picture, against film base and holder
-  /// at its edges; none of a de-masking region, which is where they are meant to read.
-  static func statisticsMargin(_ settings: Adjustments) -> Double { settings.analysisRegion == nil ? 0.05 : 0 }
+  /// The part of a frame's picture the de-masking statistics read: its de-masking region where one
+  /// is set (`Adjustments.analysisRegion`); else, where the crop takes in the film's edge (rebate,
+  /// sprocket holes, edge print), the part inside it (`followedRegion`); else the whole picture, its
+  /// outer 5% left out. Every caller hands over the picture as cropped, so the single view, the film
+  /// strip, exports and the light table all read the same part.
+  func analysisPart(_ image: CGImage, _ settings: Adjustments) -> AnalysisPart {
+    if let region = settings.analysisRegion {
+      guard region.width > 0, region.height > 0, let part = try? crop(image, rect: region) else {
+        return AnalysisPart(image: image, margin: 0, followed: nil)
+      }
+      return AnalysisPart(image: part, margin: 0, followed: nil)
+    }
+    if let followed = followedRegion(image, settings: settings), let part = try? crop(image, rect: followed) {
+      return AnalysisPart(image: part, margin: 0, followed: followed)
+    }
+    return AnalysisPart(image: image, margin: 0.05, followed: nil)
+  }
+  /// The base a part read inside the film's edge (`AnalysisPart.followed`) is taken against where
+  /// none is picked or known for the roll: the thinnest film of `image`, the whole picture as
+  /// cropped, less its outer 5%, read at `maxDimension`, as it was before the film's edge was looked
+  /// for. The rebate the crop takes in is unexposed film, the base itself, where the picture's own
+  /// thinnest film is a shadow already up the toe. Nil otherwise: the base is then the known one,
+  /// or the part's own thinnest film.
+  func thinnestOfCrop(_ image: CGImage, _ part: AnalysisPart, _ settings: Adjustments, maxDimension: Int) -> RGB? {
+    guard part.followed != nil, settings.inputIsNegative, settings.base == nil, settings.rollBase == nil else { return nil }
+    return densities(samples(image, maxDimension: maxDimension), settings: settings, margin: 0.05).base
+  }
   /// The pixels colour statistics use, as density above the film base, with the base found.
   func densities(_ image: CGImage, settings: Adjustments, maxDimension: Int = 300) -> (base: RGB, density: [[Double]]) {
-    densities(samples(analysisPart(image, settings), maxDimension: maxDimension), settings: settings)
+    let part = analysisPart(image, settings)
+    return densities(samples(part.image, maxDimension: maxDimension), settings: settings, margin: part.margin,
+      base: thinnestOfCrop(image, part, settings, maxDimension: maxDimension))
   }
-  /// `r` is the part read (`analysisPart`).
-  func densities(_ r: Samples, settings: Adjustments) -> (base: RGB, density: [[Double]]) {
+  /// `r` is the part read (`analysisPart`), `margin` the share of each side of it left out; `base`
+  /// the base to take its film against where none is picked or known for the roll.
+  func densities(_ r: Samples, settings: Adjustments, margin: Double, base fallback: RGB? = nil) -> (base: RGB, density: [[Double]]) {
     var pixels = [[Double]]()
-    // Statistics are deliberately separate from the export crop. Without a de-masking region,
-    // ignore the outer 5% on each side, including residual film-base/holder edges in older
-    // projects. Never feed the expanded crop/film-base editing context into these statistics.
-    let margin = Self.statisticsMargin(settings)
+    // Statistics are deliberately separate from the export crop. Never feed the expanded
+    // crop/film-base editing context into these statistics.
     let marginX = margin > 0 ? max(1, Int(ceil(Double(r.width) * margin))) : 0
     let marginY = margin > 0 ? max(1, Int(ceil(Double(r.height) * margin))) : 0
     for y in marginY..<max(marginY + 1, r.height - marginY) {
@@ -318,7 +348,7 @@ final class ImagePipeline {
       }
     }
     // A picked base wins, then the roll's base from between the frames, then this frame's thinnest film.
-    let base = settings.base ?? settings.rollBase
+    let base = settings.base ?? settings.rollBase ?? fallback
       ?? RGB((0..<3).map { c in max(0.001, quantile(pixels.map { $0[c] }, 0.995)) })
     // Only near-opaque areas, over 3.0 D above the base in every channel (holder, frame lines),
     // are left out, so a linear scan's densest highlights stay in the statistics.
@@ -369,8 +399,9 @@ final class ImagePipeline {
     guard frames.count >= 2 else { return nil }
     var ratios = [[Double](), [Double]()]
     for f in frames {
-      let s = samples(analysisPart(f.image, f.settings), maxDimension: 240), w = s.width, h = s.height
-      let base = densities(s, settings: f.settings).base
+      let part = analysisPart(f.image, f.settings)
+      let s = samples(part.image, maxDimension: 240), w = s.width, h = s.height
+      let base = densities(s, settings: f.settings, margin: part.margin, base: thinnestOfCrop(f.image, part, f.settings, maxDimension: 240)).base
       // Density per channel, smoothed by a 3×3 box against grain and noise.
       var b = [[Double]](repeating: [Double](repeating: 0, count: w * h), count: 3)
       for c in 0..<3 {
@@ -389,7 +420,7 @@ final class ImagePipeline {
         }
       }
       // Gradients over 2 px each way, inside the same margins as the colour statistics.
-      let margin = Self.statisticsMargin(f.settings)
+      let margin = part.margin
       let mx = Int(ceil(Double(w) * margin)) + 3, my = Int(ceil(Double(h) * margin)) + 3
       guard w > 2 * mx, h > 2 * my else { continue }
       let (red, green, blue) = (b[0], b[1], b[2])
@@ -421,15 +452,21 @@ final class ImagePipeline {
   }
 
   func analyze(_ image: CGImage, settings: Adjustments, profile: FilmProfile) -> ToneAnalysis {
-    // Only the de-masking region, where one is set: the base estimate, balance, ends and reach alike.
+    // Only the de-masking region, or inside the film's edge: the base estimate, balance, ends and
+    // reach alike.
     let part = analysisPart(image, settings)
     // A positive has no density to read: a slide its own light, a file already positive nothing.
     if !settings.inputIsNegative {
-      return settings.isSlide ? slideAnalysis(part, settings: settings) : ToneAnalysis(base: .one, balance: .zero, low: 0, high: 1)
+      guard settings.isSlide else { return ToneAnalysis(base: .one, balance: .zero, low: 0, high: 1) }
+      var a = slideAnalysis(part.image, settings: settings, margin: part.margin)
+      a.followed = part.followed
+      return a
     }
-    let (base, density) = densities(samples(part, maxDimension: 300), settings: settings)
+    let (base, density) = densities(samples(part.image, maxDimension: 300), settings: settings, margin: part.margin,
+      base: thinnestOfCrop(image, part, settings, maxDimension: 300))
     var a = analyze(base: base, density: density, settings: settings, profile: profile)
-    if let sampled = a.reach, let counted = pixelReach(part, settings: settings, profile: profile, analysis: a) {
+    a.followed = part.followed
+    if let sampled = a.reach, let counted = pixelReach(part.image, settings: settings, profile: profile, analysis: a) {
       a.reach = max(sampled, counted)
     }
     // The roll's print: its balance, or its ends, in place of this frame's own, where they are left
@@ -457,9 +494,12 @@ final class ImagePipeline {
   /// brightest frame's: the roll's shoulder holds every frame's.
   func rollPrint(_ frames: [(image: CGImage, settings: Adjustments)], profile: FilmProfile) -> RollPrint? {
     guard let first = frames.first else { return nil }
+    // Each frame's part read (`analysisPart`), its highlight reach too.
     let each = frames.map { f -> (image: CGImage, base: RGB, density: [[Double]], settings: Adjustments) in
-      let d = densities(f.image, settings: f.settings)
-      return (f.image, d.base, d.density, f.settings)
+      let part = analysisPart(f.image, f.settings)
+      let d = densities(samples(part.image, maxDimension: 300), settings: f.settings, margin: part.margin,
+        base: thinnestOfCrop(f.image, part, f.settings, maxDimension: 300))
+      return (part.image, d.base, d.density, f.settings)
     }.filter { !$0.density[0].isEmpty }
     var pooled = [[Double](), [Double](), [Double]()]
     for f in each { for c in 0..<3 { pooled[c] += f.density[c] } }
@@ -785,13 +825,12 @@ final class ImagePipeline {
   /// balance takes each channel from its own darkest 0.5% to its own brightest, as a faded slide's
   /// dyes need.
   /// Auto levels put the darkest 0.5% at black and the brightest 0.5% at white, one pair for every
-  /// channel, so the colour stays. The outer 5% is left out, as for a negative, and bare light.
+  /// channel, so the colour stays. Bare light is left out, and `margin` of each side.
   /// `image` is the part read (`analysisPart`).
-  func slideAnalysis(_ image: CGImage, settings s: Adjustments) -> ToneAnalysis {
+  func slideAnalysis(_ image: CGImage, settings s: Adjustments, margin: Double) -> ToneAnalysis {
     let r = samples(image, maxDimension: 300), gamma = max(0.1, s.inputGamma)
     func linear(_ v: Double) -> Double { pow(max(0, v), gamma) }
     var light = [[Double](), [Double](), [Double]()]
-    let margin = Self.statisticsMargin(s)
     let marginX = margin > 0 ? max(1, Int(ceil(Double(r.width) * margin))) : 0
     let marginY = margin > 0 ? max(1, Int(ceil(Double(r.height) * margin))) : 0
     for y in marginY..<max(marginY + 1, r.height - marginY) {

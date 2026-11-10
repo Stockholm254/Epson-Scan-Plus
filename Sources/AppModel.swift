@@ -560,6 +560,10 @@ final class AppModel: ObservableObject {
     select(frames[i + offset].id)
     focusCanvas()
   }
+  /// The part of the single frame's picture the de-masking reads while its region follows the
+  /// picture: inside the film's edge where the crop takes some in (`ToneAnalysis.followed`), else
+  /// all but the outer 5%. In the picture as cropped, normalised from its top left, unturned.
+  var followedRegion: CGRect { toneAnalysis?.followed?.cg ?? FilmCanvasView.followRegion }
   /// The de-masking region of the selected frame (`Adjustments.analysisRegion`), in its picture's
   /// crop; nil follows the picture. Too small a box to read (under 3% either way) is left out.
   func setAnalysisRegion(_ region: NormalRect?) {
@@ -574,7 +578,7 @@ final class AppModel: ObservableObject {
     // A roll printed as one reads every frame's region.
     if settings.printsWithRoll { updateRollPrint() }
     status = r.map { String(format: "去色罩区域：画面的 %.0f%%，片基估计、白平衡和色阶只看这里", $0.width * $0.height * 100) }
-      ?? "去色罩区域跟随画面：去掉四边 5%"
+      ?? "去色罩区域跟随画面：去掉四边 5%，裁切里带着片边（片基、齿孔、边字）时只看片边以内"
   }
   func useTool(_ value: CanvasTool) {
     let editing = editingSingle, willEdit = singleView && (value == .crop || value == .base)
