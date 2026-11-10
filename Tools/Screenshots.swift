@@ -32,10 +32,10 @@ struct ShotFailure: Error { let message: String }
   /// already shown.
   static let roll = "2026-10-29_225926_1C87"
   /// The library's sleeves, newest first: copy rolls of Phoenix 6×6 and Portra 160 (one of them
-  /// cross-processed), one of Ektar, and scans of the sea roll, so the films on their labels differ.
+  /// cross-processed) and one of Ektar, so the films on their labels differ. Not the sea roll's
+  /// scans: some of its frames show the user, who keeps them out of the README.
   static let shelf = [
     "2026-11-07_132152_9EA1", "2026-11-07_221113_E606", "2026-10-30_194132_3146", "2026-10-28_220205_CF4A",
-    "2026-10-29_225926_1C87", "2026-10-27_191421_6597",
   ]
   /// A copy roll from the A7R IV: Harman Phoenix II 200 in 6×6, with dust found on its first frame.
   static let copyRoll = "2026-11-07_132152_9EA1"
