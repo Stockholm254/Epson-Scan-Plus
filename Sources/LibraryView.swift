@@ -68,9 +68,7 @@ struct LibraryPage: View {
   var shown: [RollEntry] {
     let query = shelf.query, source = shelf.source
     let found = shelf.entries.filter { e in
-      (source == nil || e.source == source)
-        && (query.isEmpty
-          || [e.title, e.film, e.notes, e.folder.lastPathComponent].contains { $0.localizedCaseInsensitiveContains(query) })
+      (source == nil || e.source == source) && (query.isEmpty || RollLibrary.matches(e, query))
     }
     if let spread = shelf.spread { return found.filter { spread.contains($0.id) } }
     guard stacks else { return found }

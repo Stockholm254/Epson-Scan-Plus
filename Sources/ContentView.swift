@@ -136,6 +136,9 @@ struct ContentView: View {
     .onAppear {
       m.undoManager = undoManager
       if m.page == .leak { m.leak.undoManager = undoManager }
+      // The 3D film's renderer readied while the window settles, so the film shelf and ②'s film
+      // come at once the first time.
+      DispatchQueue.main.asyncAfter(deadline: .now() + 3) { FilmRender.prewarm(m) }
     }
     .onChange(of: undoManager) { _, new in
       m.undoManager = new

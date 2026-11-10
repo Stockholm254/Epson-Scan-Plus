@@ -96,6 +96,9 @@ struct NewProjectSheet: View {
       ScrollView {
         LazyVStack(alignment: .leading, spacing: 6, pinnedViews: []) {
           if query.isEmpty {
+            if !recent.isEmpty {
+              shelfRow("最近用过", recent, anchors: false)
+            }
             if !calibrated.isEmpty {
               shelfRow("本机标定", calibrated.map { .preset($0.id) })
             }
@@ -134,7 +137,10 @@ struct NewProjectSheet: View {
       }
     }
   }
-  private func shelfRow(_ title: String, _ items: [Choice], @ViewBuilder accessory: () -> some View = { EmptyView() }) -> some View {
+  /// `anchors`: its films are where the shelf scrolls to them; the row of those last used stands
+  /// at the top with films that also stand further down, and leaves scrolling to those.
+  private func shelfRow(_ title: String, _ items: [Choice], anchors: Bool = true,
+    @ViewBuilder accessory: () -> some View = { EmptyView() }) -> some View {
     VStack(alignment: .leading, spacing: 4) {
       HStack(alignment: .firstTextBaseline) {
         Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
@@ -142,7 +148,9 @@ struct NewProjectSheet: View {
         accessory()
       }.padding(.leading, 2)
       LazyVGrid(columns: [GridItem(.adaptive(minimum: 86, maximum: 96), spacing: 10, alignment: .top)], alignment: .leading, spacing: 8) {
-        ForEach(items, id: \.self) { item in cell(item).id(item) }
+        ForEach(items, id: \.self) { item in
+          if anchors { cell(item).id(item) } else { cell(item) }
+        }
       }
       // The shelf's front edge under the row.
       Rectangle().fill(LinearGradient(colors: [Color.primary.opacity(0.16), Color.primary.opacity(0.02)], startPoint: .top, endPoint: .bottom))
@@ -314,6 +322,27 @@ struct NewProjectSheet: View {
     let i = list.firstIndex(of: choice).map { min(max($0 + by, 0), list.count - 1) } ?? (by > 0 ? 0 : list.count - 1)
     stepped = true
     withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) { pick(list[i]) }
+  }
+  /// The films of the rolls last begun in the library, newest first, each once.
+  private var recent: [Choice] { Self.recent(m.shelf.entries, profiles: m.profiles) }
+  /// The films of the rolls in `entries`, newest first, each once and at most `limit`: a preset of
+  /// this Mac as itself, else the roll's film in the catalog, else its own name when it has one.
+  static func recent(_ entries: [RollEntry], profiles: [FilmProfile], limit: Int = 6) -> [Choice] {
+    var found = [Choice]()
+    for e in entries.sorted(by: { $0.date > $1.date }) where found.count < limit {
+      let item: Choice
+      if !FilmProfile.builtins.contains(where: { $0.id == e.profile.id }), profiles.contains(where: { $0.id == e.profile.id }) {
+        item = .preset(e.profile.id)
+      } else if let s = FilmCatalog.stock(named: e.film) {
+        item = .stock(s.id)
+      } else if !e.film.isEmpty, !(FilmProfile.builtins + profiles).contains(where: { $0.name == e.film }) {
+        item = .named(e.film)
+      } else {
+        continue
+      }
+      if !found.contains(item) { found.append(item) }
+    }
+    return found
   }
   private var calibrated: [FilmProfile] {
     m.profiles.filter { p in !FilmProfile.builtins.contains { $0.id == p.id } }

@@ -31,6 +31,16 @@ enum FilmRender {
       DispatchQueue.main.async { completion(made) }
     }
   }
+  /// Readies the renderer (its Metal shaders take most of a second the first time) and draws the
+  /// open roll's film for ②, on the render queue, once.
+  private static var warmed = false
+  static func prewarm(_ m: AppModel) {
+    guard !warmed else { return }
+    warmed = true
+    let now = NewProjectSheet.current(m)
+    let look = NewProjectSheet.look(now, m: m), gauge = NewProjectSheet.gauge(now, format: m.format)
+    image(look, gauge: gauge, points: CGSize(width: 38, height: 50), scale: NSScreen.main?.backingScaleFactor ?? 2) { _ in }
+  }
   /// The same, at once, for a test or a window shot.
   static func renderNow(_ look: NewProjectSheet.Look, gauge: FilmStock.Gauge, pixels: CGSize) -> NSImage? {
     queue.sync { render(look, gauge: gauge, pixels: pixels) }

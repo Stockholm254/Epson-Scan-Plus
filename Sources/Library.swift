@@ -117,6 +117,17 @@ enum RollLibrary {
       notes: p.notes ?? "", profile: p.profile, legacy: legacy,
       flatIDs: Set(p.frames.compactMap(\.flatID)), flats: p.flats ?? [], format: p.format)
   }
+  /// The library's search: a roll's name, film, notes or folder has the words; or, every word
+  /// found in what its film is in the catalog (its maker in Chinese too, its kind, speed, gauges:
+  /// 「富士」「黑白」「正片」「400」) or in its format (「6×7」).
+  static func matches(_ e: RollEntry, _ query: String) -> Bool {
+    let q = query.trimmingCharacters(in: .whitespaces)
+    guard !q.isEmpty else { return true }
+    if [e.title, e.film, e.notes, e.folder.lastPathComponent].contains(where: { $0.localizedCaseInsensitiveContains(q) }) { return true }
+    if let f = e.format, FilmCatalog.fold(f).contains(FilmCatalog.fold(q)) { return true }
+    guard let stock = FilmCatalog.stock(named: e.film) else { return false }
+    return !FilmCatalog.search(q, in: [stock]).isEmpty
+  }
   /// When a roll was started, from the folder name new rolls get (`2026-10-25_174913_…`).
   static func started(_ folderName: String) -> Date? {
     guard folderName.count >= 17 else { return nil }

@@ -143,5 +143,28 @@ enum NewProjectTests {
     model.applyFilm(profile: portra400, filmName: portra400.name, reversal: false, format: .mm135)
     try check(velviaKey == "velvia50" && named.hasPrefix("velvia50_") && model.exportFilmKey == "portra400",
       "exports are named after the roll's own film (\(named)), a preset's id where the roll is that film (\(model.exportFilmKey))")
+    // The library's search finds rolls by what their film is, as the shelf finds films.
+    func entry(_ film: String, format: String? = nil, hoursAgo: Double = 0, profile: FilmProfile = FilmProfile.builtins[0]) -> RollEntry {
+      RollEntry(folder: root, project: root.appendingPathComponent(AppModel.projectFile), title: "卷", named: false, film: film,
+        date: Date(timeIntervalSinceNow: -hoursAgo * 3600), source: .camera, frames: [], fullResolution: 0, exported: 0, overview: nil,
+        notes: "", profile: profile, legacy: false, format: format)
+    }
+    let velviaRoll = entry("Fujifilm Velvia 50", format: FilmFormat.six7.rawValue), hp5Roll = entry("Ilford HP5 Plus 400"), ownRoll = entry("Aerocolor 100")
+    try check(RollLibrary.matches(velviaRoll, "富士") && RollLibrary.matches(velviaRoll, "正片") && RollLibrary.matches(velviaRoll, "6×7")
+      && !RollLibrary.matches(velviaRoll, "黑白") && RollLibrary.matches(hp5Roll, "黑白 400") && RollLibrary.matches(hp5Roll, "依尔福")
+      && RollLibrary.matches(ownRoll, "aero") && !RollLibrary.matches(ownRoll, "富士"),
+      "the library finds rolls by what their film is: 「富士」「正片」 a Velvia roll, 「黑白 400」「依尔福」 an HP5 one, 「6×7」 by its format")
+    // The shelf's first row: the films of the rolls last begun, newest first, each once; a preset of
+    // this Mac as itself, a film outside the catalog by its name, the generic film's own name not.
+    var own = FilmProfile.builtins[0]
+    own.id = "test-own-\(UUID().uuidString.prefix(6))"
+    own.name = "Kodak Portra 160 · 翻拍 · 2026-11-07 13:21"
+    let lately = NewProjectSheet.recent([
+      entry("Ilford HP5 Plus 400", hoursAgo: 2), entry("Fujifilm Velvia 50", hoursAgo: 1), entry("Fujifilm Velvia 50", hoursAgo: 3),
+      entry(own.name, hoursAgo: 4, profile: own), entry(generic.name, hoursAgo: 5, profile: generic), entry("Aerocolor 100", hoursAgo: 6),
+      entry("Kodak Gold 200", hoursAgo: 7)], profiles: FilmProfile.builtins + [own], limit: 4)
+    let velviaID = FilmCatalog.stock(named: "Fujifilm Velvia 50")?.id ?? "", hp5ID = FilmCatalog.stock(named: "Ilford HP5 Plus 400")?.id ?? ""
+    try check(lately == [.stock(velviaID), .stock(hp5ID), .preset(own.id), .named("Aerocolor 100")],
+      "the shelf starts with the films of the rolls last begun, newest first and each once, a preset of this Mac as itself: \(lately)")
   }
 }
