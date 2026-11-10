@@ -786,7 +786,7 @@ struct ContentView: View {
         }
         labeled("画幅") {
           Picker("画幅", selection: Binding(get: { m.format }, set: { m.setFormat($0) })) {
-            ForEach(FilmFormat.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            ForEach(FilmFormat.offered(keeping: m.format), id: \.self) { Text($0.rawValue).tag($0) }
           }
           .labelsHidden().frame(maxWidth: .infinity, alignment: .leading).disabled(m.isWorking)
           .help("这一卷的画幅：翻拍的照片按它算画面在胶片上的大小，看片镜的视场和导出的 dpi 跟着它；扫描时按它识别画面。「自动」时翻拍照片的长边按 135 的 36 mm 算")

@@ -809,6 +809,11 @@ extension FilmFormat {
     default: return 61.5
     }
   }
+  /// The formats a roll can be given: 120 of a length not given (`medium`, 「120 其他」) only where
+  /// the roll already has it, as an older one may; it opens as it was.
+  static func offered(keeping current: FilmFormat) -> [FilmFormat] {
+    allCases.filter { $0 != .medium || current == .medium }
+  }
   /// The picture's length along the film, in millimetres: 36 on 135; on 120 41.5 for 6×4.5 (its
   /// short side runs along the film), 56, 69.5 and 84. Nil for 自动 and 120 of a length not given.
   var alongMM: Double? {

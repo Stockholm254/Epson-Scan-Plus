@@ -169,6 +169,10 @@ enum NewProjectTests {
       && abs(dpi(3800, 3500, .mm135, .rebate, NormalRect(x: 0.05, y: 0.16, width: 0.9, height: 2400.0 / 3500)) - 2540) < 0.01
       && AppModel.formatDPI(crop: CGSize(width: 3800, height: 3500), region: nil, format: .auto, edges: .rebate) == nil,
       "a copy taking in the film's edge is sized by the film's width (35 mm on 135, 61.5 mm across 120), one of the picture alone by the picture's")
+    // 「120 其他」 is offered no more, but a roll that has it keeps it.
+    try check(!FilmFormat.offered(keeping: .auto).contains(.medium) && !FilmFormat.offered(keeping: .six6).contains(.medium)
+      && FilmFormat.offered(keeping: .medium).contains(.medium) && FilmFormat.offered(keeping: .auto).count == FilmFormat.allCases.count - 1,
+      "the formats offered leave out 120 of a length not given, but a roll already so keeps it")
     // 6×4.5 lies 41.5 mm along the film by 56 across: drawn narrower than 6×6, not as its square.
     try check(FormatPiece.size(.six45).width < FormatPiece.size(.six6).width && FormatPiece.size(.six6).width < FormatPiece.size(.six7).width
       && abs(FormatPiece.size(.six45).width / FormatPiece.size(.six45).height - 49.5 / 61.5) < 0.01,

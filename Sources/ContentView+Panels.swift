@@ -104,7 +104,7 @@ extension ContentView {
         "预览后自动识别画面。点接触表上的一张进入单张，在单张里用「画框」细调裁切：拖四角缩放，拖框内移动。漏掉的画面用「手动画框」在接触表上拖出新的画框。「收紧现有边界」只收紧已有画面框，保留逐张调色和原始扫描。")
       labeled("规格") {
         Picker("", selection: Binding(get: { m.format }, set: { m.setFormat($0) })) {
-          ForEach(FilmFormat.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+          ForEach(FilmFormat.offered(keeping: m.format), id: \.self) { Text($0.rawValue).tag($0) }
         }.labelsHidden()
           .help("这一卷的画幅：扫描时按它识别画面，翻拍时按它算画面在胶片上的大小（看片镜的视场、导出的 dpi）；和 ② 去色罩「胶片」里的画幅是同一个")
       }

@@ -274,7 +274,7 @@ struct NewProjectSheet: View {
     HStack(alignment: .bottom, spacing: 0) {
       Text("画幅").font(.system(size: 12, weight: .medium)).frame(width: 44, alignment: .leading).padding(.bottom, 18)
       HStack(alignment: .bottom, spacing: 12) {
-        ForEach(FilmFormat.allCases, id: \.self) { f in
+        ForEach(FilmFormat.offered(keeping: format), id: \.self) { f in
           let on = f == format, offered = offers(f)
           Button {
             withAnimation(.easeOut(duration: 0.15)) { format = f }
