@@ -193,8 +193,11 @@ struct ContentView: View {
         if p == .library || m.hasProject { m.page = p } else { m.objectWillChange.send() }
       }
     }
-    // The assistant by the modules, in the middle, clear of the inspector's part of the toolbar.
+    // The assistant by the modules, in the middle, clear of the inspector's part of the toolbar,
+    // on a capsule of its own (`AssistantKey`): on the toolbar's shared glass it ran into the
+    // modules' capsule through a neck in the front window, and a fixed spacer did not part them.
     ToolbarItem(placement: .status) { AssistantKey(m: m, panel: assistantPanel) }
+      .sharedBackgroundVisibility(.hidden)
     ToolbarItemGroup(placement: .primaryAction) {
       if m.page == .leak {
         LeakExportKey(lab: m.leak)
@@ -1402,10 +1405,15 @@ struct RenderProgress: View {
 /// The AI assistant's key: a lamp, green while one is connected, amber while one may connect,
 /// dark when it may not, and its name; the state in words in its tooltip, so the key stays narrow
 /// in the middle of the toolbar. Its settings in a popover.
+///
+/// It draws its own capsule of glass, of the toolbar's height and fill, a little way from the
+/// modules: on the toolbar's shared glass the two ran together through a neck. Its name dims
+/// with the window, as the toolbar's own keys do.
 struct AssistantKey<Panel: View>: View {
   @ObservedObject var m: AppModel
   let panel: Panel
   @State private var open = false
+  @Environment(\.controlActiveState) private var windowState
   var body: some View {
     let on = m.preferences.mcpEnabled, connected = m.mcpStatus.hasPrefix("已连接")
     Button {
@@ -1414,8 +1422,14 @@ struct AssistantKey<Panel: View>: View {
       HStack(spacing: 6) {
         StatusLED(lamp: connected ? .ready : .busy, size: 7).opacity(on ? 1 : 0.25)
         Text("AI 助手").font(.system(size: 12, weight: .medium))
+          .foregroundStyle(windowState == .inactive ? HierarchicalShapeStyle.tertiary : .primary)
       }
+      .padding(.horizontal, 6).frame(height: 36)
+      .contentShape(Capsule())
     }
+    .buttonStyle(.plain)
+    .liquid(Capsule(), LiquidStyle(interactive: true)) { $0.background(Capsule().fill(.regularMaterial)) }
+    .padding(.leading, 8)
     .help((connected ? "已连接" : on ? "等待连接" : "关闭") + " · " + m.mcpStatus)
     .popover(isPresented: $open, arrowEdge: .bottom) { panel.padding(16).frame(width: 320) }
     .accessibilityLabel("AI 助手").accessibilityValue(m.mcpStatus)
