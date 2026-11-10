@@ -99,6 +99,9 @@ struct ShotFailure: Error { let message: String }
     for (key, value) in switches { standard.set(value, forKey: key) }
     defer { for key in switches.keys { standard.removeObject(forKey: key) } }
 
+    // Never the saved OpenAI key: this tool is a stranger to its keychain item, so macOS would ask,
+    // and the push would wait on the dialog. A service of its own holds nothing.
+    LeakKeychain.defaultService = "local.epscan.screenshots.\(UUID().uuidString)"
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
     app.appearance = NSAppearance(named: .darkAqua)

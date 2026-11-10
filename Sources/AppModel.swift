@@ -798,6 +798,38 @@ final class AppModel: ObservableObject {
     format = f
     status = "新建工程：\(filmName) · \(reversal ? "反转片" : "负片") · 画幅 \(f.rawValue)；下一次预览、导入或拍摄存进新的一卷"
   }
+  /// What an export's {film} is: the preset's own id where the roll is that film, else the roll's
+  /// film name made short, as the catalog has its stock (「Fujifilm Velvia 50」 → velvia50), so a
+  /// film converted as the generic preset is not named 「generic」.
+  var exportFilmKey: String {
+    let film = FilmCalibration.film(filmName)
+    if profile.id != "generic", FilmCatalog.fold(film) == FilmCatalog.fold(FilmCalibration.film(profile.name)) { return profile.id }
+    let short = FilmCatalog.stock(named: film)?.stock ?? film
+    let key = FilmCatalog.fold(short).filter { $0.isLetter || $0.isNumber }
+    return key.isEmpty ? profile.id : key
+  }
+  /// The name an export of `frame` would take, for the output panel to show.
+  func exportName(for frame: FilmFrame?) -> String {
+    let stem = ExportNaming.name(preferences.exportNameTemplate, film: exportFilmKey, name: FilmCalibration.film(filmName),
+      frame: frame?.name ?? "01", roll: sessionURL?.lastPathComponent ?? "", date: Date())
+    return stem + "." + (ExportFormat(rawValue: exportType) ?? .tiff).fileExtension
+  }
+  /// ②'s film section opened the shelf to change the open roll's film.
+  @Published var changingFilm = false
+  /// The shelf's 换上 for the open roll: its preset, the film's own name, negative or slide and its
+  /// format, one step of ⌘Z where the window groups the edits (each is undone with the others).
+  func applyFilm(profile p: FilmProfile, filmName name: String, reversal: Bool, format f: FilmFormat) {
+    changingFilm = false
+    guard !isWorking else { return }
+    if p.id != profile.id || p != profile { chooseProfile(p) }
+    if filmName != name {
+      filmName = name
+      saveProject()
+    }
+    if reversal != reversalRoll { setReversal(reversal) }
+    setFormat(f)
+    status = "这一卷换成 \(name) · \(reversal ? "反转片" : "负片") · 画幅 \(f.rawValue)"
+  }
   /// The roll's film format, from the new-project sheet, ①'s 规格 or ②'s film section: a scan's
   /// frames are found by it, and a copy's size on the film, so the loupe's field and the export's
   /// dpi, follows it (`formatDPI`). Kept with the roll.
@@ -3743,6 +3775,8 @@ final class AppModel: ObservableObject {
     beginExport()
     // Named after the roll's preset; converted, and recorded, with what the roll converts with.
     let p = profile, film = conversionProfile
+    // Named after the roll's own film (a film converted as the generic preset keeps its name).
+    let filmKey = exportFilmKey, filmTitle = FilmCalibration.film(filmName)
     let format = ExportFormat(rawValue: exportType) ?? .tiff
     let quality = preferences.jpegQuality
     let sharpening = preferences.sharpening
@@ -3766,7 +3800,7 @@ final class AppModel: ObservableObject {
           let source = f.hasFullResolution ? (f.scanPath ?? f.sourcePath ?? "") : overviewPath
           let scanned = (try? FileManager.default.attributesOfItem(atPath: source))?[.creationDate] as? Date
           let dpi = f.hasFullResolution ? ((fileDPI[f.id] ?? nil) ?? f.scanDPI ?? previewDPI) : previewDPI
-          let stem = ExportNaming.name(template, film: p.id, name: p.name, frame: safeName, roll: roll, date: scanned)
+          let stem = ExportNaming.name(template, film: filmKey, name: filmTitle, frame: safeName, roll: roll, date: scanned)
           // Never over an earlier export: a second one gets a number.
           var url = directory.appendingPathComponent(stem).appendingPathExtension(format.fileExtension)
           var n = 1
@@ -3775,10 +3809,10 @@ final class AppModel: ObservableObject {
             url = directory.appendingPathComponent("\(stem)-\(n)").appendingPathExtension(format.fileExtension)
           }
           let metadata = ExportMetadata(
-            title: "\(p.name) · \(f.name)",
-            description: "\(p.name) · 第 \(f.name) 张 · \(dpi) dpi" + (f.hasFullResolution ? "" : " · 预览")
+            title: "\(filmTitle) · \(f.name)",
+            description: "\(filmTitle) · 第 \(f.name) 张 · \(dpi) dpi" + (f.hasFullResolution ? "" : " · 预览")
               + (f.sourcePath == nil ? " · EPSON Perfection V800/V850" : ""),
-            keywords: [p.name, f.format] + (rollFormat.map { [$0] } ?? []) + ["胶片扫描"],
+            keywords: [filmTitle, f.format] + (rollFormat.map { [$0] } ?? []) + ["胶片扫描"],
             scanner: f.sourcePath == nil ? ("EPSON", "Perfection V800/V850") : nil, scanned: scanned,
             software: "Epson Scan plus" + (version.map { " " + $0 } ?? ""))
           try ImagePipeline.shared.export(

@@ -21,13 +21,20 @@ struct NewProjectSheet: View {
   @State private var format = FilmFormat.auto
   @FocusState private var searching: Bool
   @State private var hovering: Choice?
+  /// The last choice came from ↑ or ↓, so the shelf scrolls to it.
+  @State private var stepped = false
+  /// What the shelf is for: a new roll's film, or the open roll's changed (from ②'s film section).
+  enum Purpose { case newProject, changeFilm }
+  let purpose: Purpose
   /// A search and a film to start on, for showing the sheet so (as the window shots do).
   private let preselect: Choice?
-  init(m: AppModel, query: String = "", preselect: Choice? = nil) {
+  init(m: AppModel, purpose: Purpose = .newProject, query: String = "", preselect: Choice? = nil) {
     self.m = m
+    self.purpose = purpose
     self.preselect = preselect
     _query = State(initialValue: query)
   }
+  private var changing: Bool { purpose == .changeFilm }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -51,20 +58,27 @@ struct NewProjectSheet: View {
   private var header: some View {
     VStack(alignment: .leading, spacing: 10) {
       HStack(alignment: .firstTextBaseline) {
-        Text("新建工程").font(.system(size: 17, weight: .semibold))
-        Text("这一卷是什么胶片").font(.system(size: 12)).foregroundStyle(.secondary)
+        Text(changing ? "更换胶片" : "新建工程").font(.system(size: 17, weight: .semibold))
+        Text(changing ? "这一卷换成什么胶片" : "这一卷是什么胶片").font(.system(size: 12)).foregroundStyle(.secondary)
         Spacer()
-        Text("之后在 ② 去色罩的「胶片」里也能改").font(.system(size: 11)).foregroundStyle(.tertiary)
+        Text(changing ? "胶片、片种和画幅一起换，⌘Z 撤销" : "之后在 ② 去色罩的「胶片」里也能改").font(.system(size: 11)).foregroundStyle(.tertiary)
       }
       HStack(spacing: 7) {
         Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
         TextField("搜索：品牌、名字、感光度或片种，如 portra 400、富士 正片、黑白 120", text: $query)
           .textFieldStyle(.plain).font(.system(size: 13)).focused($searching)
-          // Return takes the first film found; again, with it taken (or nothing typed), begins.
+          // Return begins with the film taken; one not among those found, it takes the first of them
+          // first. ↑ and ↓ go through the films on the shelf, as the search shows them.
           .onSubmit {
             let first = shown.first ?? (typed.isEmpty ? nil : .named(typed))
-            if let first, first != choice { withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) { pick(first) } } else { begin() }
+            if let first, !query.isEmpty, !shown.contains(choice), first != choice {
+              withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) { pick(first) }
+            } else {
+              begin()
+            }
           }
+          .onKeyPress(.downArrow) { step(1); return .handled }
+          .onKeyPress(.upArrow) { step(-1); return .handled }
         if !query.isEmpty {
           Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
             .buttonStyle(.plain).foregroundStyle(.tertiary).help("清除搜索")
@@ -111,8 +125,12 @@ struct NewProjectSheet: View {
       .background(LinearGradient(colors: [Self.shelfLight, Self.shelfGround], startPoint: .top, endPoint: .bottom))
       // The film last chosen in sight, when it lies below the first rows.
       .onAppear {
-        let order = calibrated.map { Choice.preset($0.id) } + FilmCatalog.stocks.map { Choice.stock($0.id) }
-        if let i = order.firstIndex(of: choice), i >= 14 { reader.scrollTo(choice, anchor: .center) }
+        if let i = onShelf.firstIndex(of: choice), i >= 14 { reader.scrollTo(choice, anchor: .center) }
+      }
+      // Taken with the keys, the film comes into sight.
+      .onChange(of: choice) { _, now in
+        if stepped { withAnimation(.easeOut(duration: 0.15)) { reader.scrollTo(now) } }
+        stepped = false
       }
     }
   }
@@ -223,8 +241,9 @@ struct NewProjectSheet: View {
     HStack {
       Text(summary).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
       Spacer()
-      Button("取消") { m.askingNewProject = false }.keyboardShortcut(.cancelAction)
-      Button("开始") { begin() }.keyboardShortcut(.defaultAction)
+      Text("↑↓ 选胶片 · ⏎ \(changing ? "换上" : "开始") · 双击也行").font(.system(size: 10.5)).foregroundStyle(.tertiary).padding(.trailing, 6)
+      Button("取消") { if changing { m.changingFilm = false } else { m.askingNewProject = false } }.keyboardShortcut(.cancelAction)
+      Button(changing ? "换上" : "开始") { begin() }.keyboardShortcut(.defaultAction)
     }
   }
 
@@ -247,7 +266,8 @@ struct NewProjectSheet: View {
     /// What its picture is drawn from, as a key to keep it by.
     var renderKey: String { [maker ?? "", name, iso.map(String.init) ?? "", kind?.rawValue ?? "", "\(calibrated)\(named)\(mono)"].joined(separator: "|") }
   }
-  private func look(_ item: Choice) -> Look {
+  private func look(_ item: Choice) -> Look { Self.look(item, m: m) }
+  static func look(_ item: Choice, m: AppModel) -> Look {
     switch item {
     case .stock(let id):
       guard let s = FilmCatalog.stocks.first(where: { $0.id == id }) else { return Look(name: id, title: id) }
@@ -278,11 +298,23 @@ struct NewProjectSheet: View {
     return "App 里没有它的数据表：按通用彩色负片转换，胶片名照它记；拍过灰阶或色卡后，可以在本机标定。"
   }
   private var summary: String {
-    "将新建：\(look(choice).maker.map { $0 == "本机标定" || $0 == "目录外" ? "" : $0 + " " } ?? "")\(look(choice).name) · \(reversal ? "反转片" : "负片") · \(format.rawValue)"
+    (changing ? "将改为：" : "将新建：") + "\(look(choice).maker.map { $0 == "本机标定" || $0 == "目录外" ? "" : $0 + " " } ?? "")\(look(choice).name) · \(reversal ? "反转片" : "负片") · \(format.rawValue)"
   }
 
   // MARK: Choosing
 
+  /// The films on the shelf, in its order: the Mac's presets and the catalog's, or what was found.
+  private var onShelf: [Choice] {
+    query.isEmpty ? calibrated.map { Choice.preset($0.id) } + FilmCatalog.stocks.map { Choice.stock($0.id) } : shown
+  }
+  /// The next or the last film on the shelf, from the one taken.
+  private func step(_ by: Int) {
+    let list = onShelf
+    guard !list.isEmpty else { return }
+    let i = list.firstIndex(of: choice).map { min(max($0 + by, 0), list.count - 1) } ?? (by > 0 ? 0 : list.count - 1)
+    stepped = true
+    withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) { pick(list[i]) }
+  }
   private var calibrated: [FilmProfile] {
     m.profiles.filter { p in !FilmProfile.builtins.contains { $0.id == p.id } }
   }
@@ -313,36 +345,49 @@ struct NewProjectSheet: View {
     }
   }
   private func begin() {
+    let (p, name) = Self.film(choice, m: m)
+    if changing {
+      m.applyFilm(profile: p, filmName: name, reversal: reversal, format: format)
+    } else {
+      m.beginNewProject(profile: p, filmName: name, reversal: reversal, format: format)
+    }
+  }
+  /// The preset a choice converts with and the film's name the roll keeps.
+  static func film(_ item: Choice, m: AppModel) -> (FilmProfile, String) {
     let generic = FilmProfile.builtins.first { $0.id == "generic" } ?? m.profile
-    switch choice {
+    switch item {
     case .stock(let id):
       let s = FilmCatalog.stocks.first { $0.id == id }
-      let p = s?.preset.flatMap { id in FilmProfile.builtins.first { $0.id == id } } ?? generic
-      m.beginNewProject(profile: p, filmName: s?.name ?? id, reversal: reversal, format: format)
+      return (s?.preset.flatMap { id in FilmProfile.builtins.first { $0.id == id } } ?? generic, s?.name ?? id)
     case .preset(let id):
       let p = m.profiles.first { $0.id == id } ?? m.profile
-      m.beginNewProject(profile: p, filmName: p.name, reversal: reversal, format: format)
+      return (p, p.name)
     case .named(let name):
-      m.beginNewProject(profile: generic, filmName: name.isEmpty ? generic.name : name, reversal: reversal, format: format)
+      return (generic, name.isEmpty ? generic.name : name)
     }
+  }
+  /// The open roll's film as the shelf has it: its preset when it is one of this Mac's, else its
+  /// film in the catalog, else its name.
+  static func current(_ m: AppModel) -> Choice {
+    if !FilmProfile.builtins.contains(where: { $0.id == m.profile.id }), m.profiles.contains(where: { $0.id == m.profile.id }) {
+      return .preset(m.profile.id)
+    }
+    if let s = FilmCatalog.stock(named: m.filmName) { return .stock(s.id) }
+    return .named(m.filmName)
   }
   /// As last chosen: the roll's preset when it is one of this Mac's, else its film in the catalog,
   /// else its name.
   private func start() {
     format = m.format
-    if !FilmProfile.builtins.contains(where: { $0.id == m.profile.id }), m.profiles.contains(where: { $0.id == m.profile.id }) {
-      choice = .preset(m.profile.id)
-    } else if let s = FilmCatalog.stock(named: m.filmName) {
-      choice = .stock(s.id)
-    } else if !m.filmName.isEmpty {
-      choice = .named(m.filmName)
-    }
+    let now = Self.current(m)
+    if case .named(let name) = now, name.isEmpty {} else { choice = now }
     reversal = m.reversalRoll
     if let preselect { pick(preselect) }
     DispatchQueue.main.async { searching = true }
   }
   /// The gauge a choice is drawn as: the one the format takes when the stock comes in it.
-  private func gauge(for item: Choice) -> FilmStock.Gauge {
+  private func gauge(for item: Choice) -> FilmStock.Gauge { Self.gauge(item, format: format) }
+  static func gauge(_ item: Choice, format: FilmFormat) -> FilmStock.Gauge {
     let wanted: FilmStock.Gauge? = format == .auto ? nil : format == .mm135 ? .mm135 : .mm120
     if case .stock(let id) = item, let s = FilmCatalog.stocks.first(where: { $0.id == id }) {
       if let wanted, s.gauges.contains(wanted) { return wanted }

@@ -131,6 +131,7 @@ struct ContentView: View {
     .sheet(isPresented: $m.showFlats) { FlatManagerSheet(m: m) }
     .sheet(isPresented: $m.showUpdates) { UpdateSheet(m: m, updater: m.updater) }
     .sheet(isPresented: $m.askingNewProject) { NewProjectSheet(m: m) }
+    .sheet(isPresented: $m.changingFilm) { NewProjectSheet(m: m, purpose: .changeFilm) }
     .onChange(of: m.tool) { m.refresh() }
     .onAppear {
       m.undoManager = undoManager
@@ -677,6 +678,24 @@ struct ContentView: View {
   var filmSection: some View {
     PanelSection("胶片", key: "film", info: conversionBasis) {
       VStack(alignment: .leading, spacing: 8) {
+        // The roll's film as it comes, and the shelf to take another from.
+        let now = NewProjectSheet.current(m)
+        Button {
+          m.changingFilm = true
+        } label: {
+          HStack(spacing: 10) {
+            FilmObject(look: NewProjectSheet.look(now, m: m), gauge: NewProjectSheet.gauge(now, format: m.format))
+              .frame(width: 38, height: 50)
+            VStack(alignment: .leading, spacing: 2) {
+              Text(FilmCalibration.film(m.filmName)).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+              Text("\(m.reversalRoll ? "反转片" : "负片") · \(m.format.rawValue)").font(.system(size: 10.5)).foregroundStyle(.secondary)
+              Text("从胶片架换…").font(.system(size: 10.5, weight: .medium)).foregroundStyle(Hardware.amberText)
+            }
+            Spacer(minLength: 0)
+          }.contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).disabled(m.isWorking || !m.hasProject)
+        .help("这一卷的胶片、片种和画幅：点开胶片架，搜索后换一种，三项一起换，可以撤销")
         Menu {
           ForEach(m.profiles) { p in
             Button {

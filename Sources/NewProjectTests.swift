@@ -124,5 +124,24 @@ enum NewProjectTests {
     let roll = drawn(FilmRender.renderNow(shelved, gauge: .mm120, pixels: CGSize(width: 140, height: 184)))
     try check(cassette.map { $0.middle > 0.9 && $0.corner < 0.05 } == true && roll.map { $0.middle > 0.9 && $0.corner < 0.05 } == true,
       "the shelf's films are rendered in 3D, a 135 cassette and a 120 roll, standing on a clear ground")
+
+    // ②'s film section opens the same shelf on the open roll: its film, kind and format change together.
+    model.loadProject(copyRoll.appendingPathComponent(AppModel.projectFile))
+    let opened = NewProjectSheet.current(model)
+    let portra400 = FilmProfile.builtins.first { $0.id == "portra400" }!
+    model.applyFilm(profile: portra400, filmName: "Kodak Ektacolor Pro 400", reversal: false, format: .six45)
+    let negativeRoll = (model.profile.id, model.filmName, model.format, model.frames.contains { $0.adjustments.isSlide })
+    model.applyFilm(profile: generic, filmName: "Fujifilm Velvia 50", reversal: true, format: .six7)
+    try check(opened == .stock("Kodak Portra 400")
+      && negativeRoll.0 == "portra400" && negativeRoll.1 == "Kodak Ektacolor Pro 400" && negativeRoll.2 == .six45 && !negativeRoll.3
+      && model.profile.id == "generic" && model.filmName == "Fujifilm Velvia 50" && model.format == .six7
+      && !model.frames.isEmpty && model.frames.allSatisfy { $0.adjustments.isSlide } && NewProjectSheet.current(model) == .stock("Fujifilm Velvia 50"),
+      "the open roll's film changes from the shelf: its preset, its own name, negative or slide and its format together")
+    // Exports are named after the roll's own film, not the generic preset it converts with.
+    let named = model.exportName(for: model.frames.first)
+    let velviaKey = model.exportFilmKey
+    model.applyFilm(profile: portra400, filmName: portra400.name, reversal: false, format: .mm135)
+    try check(velviaKey == "velvia50" && named.hasPrefix("velvia50_") && model.exportFilmKey == "portra400",
+      "exports are named after the roll's own film (\(named)), a preset's id where the roll is that film (\(model.exportFilmKey))")
   }
 }

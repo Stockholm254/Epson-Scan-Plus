@@ -370,7 +370,7 @@ extension ContentView {
     let sheet = Binding(get: { m.preferences.sheet }, set: { m.preferences.sheet = $0 })
     return VStack(alignment: .leading, spacing: 18) {
       titled("导出", symbol: "square.and.arrow.up", info:
-        "sRGB 以外的色彩空间在转换后嵌入 ICC 配置文件，饱和度推到 sRGB 以外的颜色会保留；ProPhoto 请配合 16-bit 格式。\n\n文件名：{film} 预设简称　{name} 胶片名　{frame} 片号　{roll} 工程文件夹　{date} 扫描日期。同名文件已存在时自动加序号，不会覆盖。导出文件写入胶片、片号、扫描仪和扫描日期等元数据。\n\n扫描保存的是保留色罩的原始负片（Originals）；打开自动导出时，去色罩的正片在整批扫完后按当前调整和上面的格式导出到工程的 Exports 文件夹。之后改了调整需要重新导出；为接触表进行的扫描不单独导出。")
+        "sRGB 以外的色彩空间在转换后嵌入 ICC 配置文件，饱和度推到 sRGB 以外的颜色会保留；ProPhoto 请配合 16-bit 格式。\n\n文件名：{film} 胶片简称（如 portra160、velvia50）　{name} 胶片名　{frame} 片号　{roll} 工程文件夹　{date} 扫描日期。同名文件已存在时自动加序号，不会覆盖。导出文件写入胶片、片号、扫描仪和扫描日期等元数据。\n\n扫描保存的是保留色罩的原始负片（Originals）；打开自动导出时，去色罩的正片在整批扫完后按当前调整和上面的格式导出到工程的 Exports 文件夹。之后改了调整需要重新导出；为接触表进行的扫描不单独导出。")
       labeled("格式") {
         Picker("", selection: format) { ForEach(ExportFormat.allCases) { Text($0.title).tag($0) } }.labelsHidden()
       }
@@ -399,6 +399,10 @@ extension ContentView {
         TextField(ExportNaming.standard, text: Binding(get: { m.preferences.exportNameTemplate }, set: { m.preferences.exportNameTemplate = $0 }))
           .textFieldStyle(.roundedBorder).font(.system(size: 11, design: .monospaced))
       }
+      // What it comes to, for the frame shown.
+      Text("例：" + m.exportName(for: m.selected)).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.secondary)
+        .lineLimit(1).truncationMode(.middle).frame(maxWidth: .infinity, alignment: .trailing)
+        .help("按上面的模板，这一张导出时的文件名；同名已存在时自动加序号")
       HStack {
         Button(m.exportSelectionTitle) { m.exportImages(all: false) }.disabled(m.selected == nil || m.isWorking)
           .help("导出当前这张；在胶片条或接触表上按住 ⌘ 点选、⇧ 连选几张，这里导出选中的这几张")

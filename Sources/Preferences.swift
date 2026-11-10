@@ -53,7 +53,7 @@ enum ExportColorSpace: String, CaseIterable, Identifiable {
   }
 }
 
-/// Export file names from a template: {film} the preset's short name, {name} the film's name,
+/// Export file names from a template: {film} the film's short name (`AppModel.exportFilmKey`), {name} the film's name,
 /// {frame} the frame number, {roll} the project folder, {date} the scan date (yyyyMMdd).
 enum ExportNaming {
   static let standard = "{film}_{frame}"
