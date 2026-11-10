@@ -280,6 +280,21 @@ enum WorkflowTests {
     try check(shown?.status == exporter.status && shown?.files.count == 1
       && shown.map { files.contains($0.files[0].lastPathComponent) && FileManager.default.fileExists(atPath: $0.files[0].path) } == true,
       "the status line can show the files an export wrote in Finder: \(shown?.files.map(\.lastPathComponent) ?? [])")
+    // The export panel opens where the last export went when that is a folder of its own; one in
+    // a roll (this or another) or gone, it opens in this roll's Exports.
+    let fm = FileManager.default
+    let rollExports = exporter.sessionURL!.appendingPathComponent("Exports", isDirectory: true)
+    try fm.createDirectory(at: rollExports, withIntermediateDirectories: true)
+    let other = root.appendingPathComponent("other-roll", isDirectory: true)
+    try fm.createDirectory(at: other.appendingPathComponent("Exports"), withIntermediateDirectories: true)
+    try Data("{}".utf8).write(to: other.appendingPathComponent(AppModel.projectFile))
+    func start(_ last: URL) -> String? {
+      exporter.preferences.lastExportFolder = last.path
+      return exporter.exportStart()?.standardizedFileURL.path
+    }
+    let own = start(out), inOther = start(other.appendingPathComponent("Exports")), gone = start(root.appendingPathComponent("gone"))
+    try check(own == out.standardizedFileURL.path && inOther == rollExports.standardizedFileURL.path && gone == rollExports.standardizedFileURL.path,
+      "the export panel opens in the folder last exported to when it is one of its own, else in this roll's Exports: \(own ?? "-"), \(inOther ?? "-"), \(gone ?? "-")")
   }
 }
 

@@ -105,6 +105,8 @@ final class Preferences: ObservableObject {
     didSet { defaults?.set(exportColorSpace.rawValue, forKey: "exportColorSpace") }
   }
   @Published var exportNameTemplate: String { didSet { defaults?.set(exportNameTemplate, forKey: "exportNameTemplate") } }
+  /// The folder last chosen to export into (`AppModel.exportStart`).
+  @Published var lastExportFolder: String? { didSet { defaults?.set(lastExportFolder, forKey: "lastExportFolder") } }
   @Published var sheet: ContactSheet.Layout {
     didSet { defaults?.set(try? JSONEncoder().encode(sheet), forKey: "contactSheet") }
   }
@@ -192,6 +194,7 @@ final class Preferences: ObservableObject {
     exportFormat = defaults?.string(forKey: "exportFormat").flatMap(ExportFormat.init(rawValue:)) ?? .tiff
     exportColorSpace = defaults?.string(forKey: "exportColorSpace").flatMap(ExportColorSpace.init(rawValue:)) ?? .sRGB
     exportNameTemplate = defaults?.string(forKey: "exportNameTemplate") ?? ExportNaming.standard
+    lastExportFolder = defaults?.string(forKey: "lastExportFolder")
     let quality = defaults?.double(forKey: "jpegQuality") ?? 0
     jpegQuality = quality > 0 ? min(1, max(0.5, quality)) : 0.97
     sheet = defaults?.data(forKey: "contactSheet").flatMap { try? JSONDecoder().decode(ContactSheet.Layout.self, from: $0) }

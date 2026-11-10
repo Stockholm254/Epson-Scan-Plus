@@ -3756,14 +3756,37 @@ final class AppModel: ObservableObject {
     panel.canChooseDirectories = true
     panel.canCreateDirectories = true
     panel.prompt = "导出到此文件夹"
-    panel.directoryURL = sessionURL
+    panel.directoryURL = exportStart()
     // The format is chosen with the destination and becomes the default in the output tab.
     let chooser = FormatChooser(selected: ExportFormat(rawValue: exportType) ?? .tiff)
     chooser.attach(to: panel)
     guard panel.runModal() == .OK, let folder = panel.url else { return }
     exportType = chooser.format.rawValue
     preferences.exportFormat = chooser.format
+    preferences.lastExportFolder = folder.path
     export(items: items, to: folder)
+  }
+  /// Where the export panels open: the folder last exported to when it is a folder of its own
+  /// (outside every roll, as one each roll goes into for Lightroom or Photos), else this roll's
+  /// Exports, else the roll's folder.
+  func exportStart() -> URL? {
+    let fm = FileManager.default
+    if let path = preferences.lastExportFolder, fm.fileExists(atPath: path) {
+      let last = URL(fileURLWithPath: path, isDirectory: true)
+      if !Self.withinRoll(last) { return last }
+    }
+    guard let roll = sessionURL else { return nil }
+    let exports = roll.appendingPathComponent("Exports", isDirectory: true)
+    return fm.fileExists(atPath: exports.path) ? exports : roll
+  }
+  /// Whether a folder is a roll's or lies in one: it, or a folder above it, holds a project.
+  static func withinRoll(_ folder: URL) -> Bool {
+    var at = folder.standardizedFileURL
+    while at.path != "/" && !at.path.isEmpty {
+      if [projectFile, "Session.filmdesk"].contains(where: { FileManager.default.fileExists(atPath: at.appendingPathComponent($0).path) }) { return true }
+      at = at.deletingLastPathComponent()
+    }
+    return false
   }
   /// Exports can overlap (an auto-export while the next scan runs), so `exporting` counts them.
   private func beginExport() {
@@ -3884,7 +3907,7 @@ final class AppModel: ObservableObject {
     let panel = NSSavePanel()
     panel.canCreateDirectories = true
     panel.message = usePreviews ? "按预览的分辨率（\(Int(overviewDPI)) dpi）直接导出，不扫描" : "1200 dpi 接触表"
-    panel.directoryURL = sessionURL ?? libraryURL
+    panel.directoryURL = exportStart() ?? libraryURL
     let date = Date().formatted(.iso8601.year().month().day())
     let safeFilm = String(filmName.map { $0.isLetter || $0.isNumber ? $0 : "_" }.prefix(40))
     panel.nameFieldStringValue = "接触表_\(safeFilm)_\(date)"
@@ -3892,6 +3915,7 @@ final class AppModel: ObservableObject {
     chooser.attach(to: panel)
     guard panel.runModal() == .OK, let url = panel.url else { return }
     preferences.exportFormat = chooser.format
+    preferences.lastExportFolder = url.deletingLastPathComponent().path
     exportType = chooser.format.rawValue
     if needScan.isEmpty || usePreviews {
       composeContactSheet(ids: items.map(\.id), to: url, format: chooser.format, fromPreview: usePreviews)
