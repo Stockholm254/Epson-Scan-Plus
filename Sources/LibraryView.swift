@@ -65,11 +65,17 @@ struct LibraryPage: View {
   /// The roll asked to go to the Trash, until the user says yes.
   @State private var trashing: RollEntry?
   @State private var newName = ""
-  var shown: [RollEntry] {
+  /// The rolls the search and the source let through, each stacked or not.
+  var matching: [RollEntry] {
     let query = shelf.query, source = shelf.source
-    let found = shelf.entries.filter { e in
+    return shelf.entries.filter { e in
       (source == nil || e.source == source) && (query.isEmpty || RollLibrary.matches(e, query))
     }
+  }
+  /// A search or a source narrows the library.
+  var filtering: Bool { !shelf.query.trimmingCharacters(in: .whitespaces).isEmpty || shelf.source != nil }
+  var shown: [RollEntry] {
+    let found = matching
     if let spread = shelf.spread { return found.filter { spread.contains($0.id) } }
     guard stacks else { return found }
     // Each stack shows as its newest roll; the older ones lie under it.
@@ -133,7 +139,8 @@ struct LibraryPage: View {
       HStack(spacing: 12) {
         Image(systemName: "archivebox").foregroundStyle(Hardware.amber)
         Text("库").font(.system(size: 16, weight: .semibold))
-        Text(shelf.loaded ? "\(shelf.entries.count) 卷" : "读取中").readout(11)
+        Text(!shelf.loaded ? "读取中" : filtering ? "\(matching.count) / \(shelf.entries.count) 卷" : "\(shelf.entries.count) 卷").readout(11)
+          .help(filtering ? "找到 \(matching.count) 卷，库里共 \(shelf.entries.count) 卷" : "库里共 \(shelf.entries.count) 卷")
         // Where a roll starts: empty, for the scanner or the camera, or from files.
         Button {
           m.askNewProject()
@@ -185,8 +192,17 @@ struct LibraryPage: View {
         if shelf.loaded && shown.isEmpty {
           VStack(spacing: 8) {
             Image(systemName: "tray").font(.system(size: 30)).foregroundStyle(.secondary)
-            Text(shelf.entries.isEmpty ? "还没有卷" : "没有符合的卷").font(.system(size: 14, weight: .medium))
-            Text("点「新建工程」去预览扫描或翻拍，或「导入…」照片；每卷都会自动放进这里。").font(.system(size: 11)).foregroundStyle(.secondary)
+            if shelf.entries.isEmpty || !filtering {
+              Text("还没有卷").font(.system(size: 14, weight: .medium))
+              Text("点「新建工程」去预览扫描或翻拍，或「导入…」照片；每卷都会自动放进这里。").font(.system(size: 11)).foregroundStyle(.secondary)
+            } else {
+              let query = shelf.query.trimmingCharacters(in: .whitespaces)
+              Text(query.isEmpty ? "这个来源还没有卷" : "没有符合「\(query)」的卷").font(.system(size: 14, weight: .medium))
+              Text("卷名、胶片和备注都能搜，也能按厂家（富士、柯达）、片种（正片、黑白）、感光度或画幅（6×7）找。")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+              Button("显示全部 \(shelf.entries.count) 卷") { shelf.query = ""; shelf.source = nil; shelf.spread = nil }
+                .controlSize(.small).padding(.top, 4)
+            }
           }.frame(maxWidth: .infinity).padding(.top, 90)
         }
         // Top-aligned: a stack, taller with its edges, does not push the pages beside it down.
