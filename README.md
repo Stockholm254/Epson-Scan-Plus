@@ -22,7 +22,7 @@
   <a href="doc/CHANGELOG.md">版本记录</a>
 </p>
 
-![主界面：② 去色罩，接触表放在灯箱上，看片镜放在所选的第 16 张上](doc/images/main-window.jpg)
+![主界面：② 去色罩，一卷 6×6 的翻拍放在灯箱上，看片镜放在所选的画面上](doc/images/main-window.jpg)
 
 扫描或翻拍，去色罩，调色，导出，全部在本机处理。只有去漏光生成参考图时，才会在你确认后上传一张缩图。
 
@@ -43,7 +43,7 @@
 <td colspan="2" valign="top"><img src="doc/images/shelf-detail.jpg" width="100%" alt="胶片架下方：厂家资料、画幅和片边"><br><b>厂家资料、画幅和片边</b>：选中一款，下面是厂家怎么介绍它、数据表里的关键数据，以及数据表和厂家页面的链接。「片边」说照片里有没有拍进片边，尺寸按胶片的实际宽度算：135 为 35 mm，120 为 61.5 mm。</td>
 </tr>
 <tr>
-<td valign="top"><img src="doc/images/capture.jpg" width="100%" alt="① 采集：V850 的整幅预览"><br><b>① V850 扫描</b>：48-bit 线性整幅预览，自动识别 135 和 120 的画面，按行合并扫描，扫完自动导出正片。</td>
+<td valign="top"><img src="doc/images/capture.jpg" width="100%" alt="① 采集：V850 的设置和等着预览的灯箱"><br><b>① V850 扫描</b>：片夹放好后先扫一张 48-bit 线性整幅预览，自动识别 135 和 120 的画面，按行合并扫描，扫完自动导出正片。</td>
 <td valign="top"><img src="doc/images/copy-table.jpg" width="100%" alt="翻拍卷的灯箱"><br><b>① A7R IV 翻拍</b>：直连相机的 PTP，支持 4 张或 16 张像素位移。翻拍的卷按画幅排在灯箱上，先去串色、再除以平场。</td>
 </tr>
 <tr>
@@ -55,16 +55,12 @@
 <td valign="top"><img src="doc/images/curves.jpg" width="100%" alt="曲线"><br><b>曲线</b>：和 Lightroom 一样的参数曲线和 RGB / 单通道点曲线，背后是正片的直方图；也能在照片上直接拖着调。</td>
 </tr>
 <tr>
-<td valign="top"><img src="doc/images/loupe-eyepiece.jpg" width="100%" alt="看片镜"><br><b>看片镜</b>：Pentax、Mamiya、Peak、Rodenstock、Schneider 式的 3D 看片镜，放在灯箱或单张上，按画幅算视场和放大倍率。</td>
+<td valign="top"><img src="doc/images/loupe.jpg" width="100%" alt="看片镜"><br><b>看片镜</b>：Pentax、Mamiya、Peak、Rodenstock、Schneider 式的 3D 看片镜，放在灯箱或单张上，按画幅算视场和放大倍率。</td>
 <td valign="top"><img src="doc/images/leak-page.jpg" width="100%" alt="③ 去漏光"><br><b>③ 去漏光</b>：用同一张照片的干净参考图修复红色 / 品红漏光。参考图只指导平滑的色彩校正，输出的像素都来自原片。</td>
 </tr>
 <tr>
-<td valign="top"><img src="doc/images/scan-head.jpg" width="100%" alt="扫描头"><br><b>扫描头</b>：正式扫描时，3D 的扫描头按真实进度从画面上走过，接触表和单张上都看得到。</td>
+<td valign="top"><img src="doc/images/panels.jpg" width="100%" alt="左栏的三页"><br><b>左栏</b>：① 扫描仪的设置、② 的预设标定和输出，各是左栏的一页。</td>
 <td valign="top"><img src="doc/images/shortcuts.jpg" width="100%" alt="键盘快捷键"><br><b>键盘快捷键</b>：⌘/ 打开一览，包括画面上不在菜单里的单个字母键。</td>
-</tr>
-<tr>
-<td valign="top"><img src="doc/images/loupes.jpg" width="100%" alt="四种看片镜"><br><b>几种看片镜</b>：放大倍率和视场各不相同，按画幅换算。</td>
-<td valign="top"><img src="doc/images/crop-lens.jpg" width="100%" alt="裁切时的玻璃泡"><br><b>裁切时的玻璃泡</b>：拖裁切框的角，旁边浮出一个放大的玻璃泡，看清边缘再放手。</td>
 </tr>
 </table>
 

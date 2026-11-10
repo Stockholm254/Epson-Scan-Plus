@@ -28,14 +28,17 @@ struct ShotFailure: Error { let message: String }
 
 @main enum Screenshots {
   static let library = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Pictures/epscan")
-  /// The sea-and-sky roll on Portra 160 from the V850, turned upright: its pictures are the ones
-  /// already shown.
-  static let roll = "2026-10-29_225926_1C87"
-  /// The library's sleeves, newest first: copy rolls of Phoenix 6×6 and Portra 160 (one of them
-  /// cross-processed) and one of Ektar, so the films on their labels differ. Not the sea roll's
-  /// scans: some of its frames show the user, who keeps them out of the README.
+  /// The roll the window shows: Harman Phoenix II 200 in 6×6, copied on the A7R IV: bridges, hills
+  /// and sky. No roll with people in it is shown anywhere (the user keeps those out of the README):
+  /// not the sea roll the V850 scanned, nor the cross-processed Portra.
+  static let roll = "2026-11-07_132152_9EA1"
+  /// Its frame on the light table under the loupe, in the single view and on the leak page.
+  static let frame = "06"
+  /// The library's sleeves: the copy rolls with no people in them (Phoenix 6×6, Portra 160 and
+  /// Ektar frames of lakes, bridges, signs and test charts), so the films on their labels differ.
   static let shelf = [
-    "2026-11-07_132152_9EA1", "2026-11-07_221113_E606", "2026-10-30_194132_3146", "2026-10-28_220205_CF4A",
+    "2026-11-07_132152_9EA1", "2026-11-07_125356_8778", "2026-10-30_194132_3146", "2026-10-30_091410_A34F",
+    "2026-10-28_220205_CF4A", "2026-10-31_220844_7A73", "2026-10-28_203123_8045",
   ]
   /// A copy roll from the A7R IV: Harman Phoenix II 200 in 6×6, with dust found on its first frame.
   static let copyRoll = "2026-11-07_132152_9EA1"
@@ -96,7 +99,8 @@ struct ShotFailure: Error { let message: String }
     let defaults = UserDefaults(suiteName: suite)!
     defaults.setPersistentDomain(UserDefaults.standard.persistentDomain(forName: "local.epscan.mac") ?? [:], forName: suite)
     defer { defaults.removePersistentDomain(forName: suite) }
-    for key in ["leftWidth", "rightWidth", "loupeStyle", "loupeField", "contactLandscape", "loupeShown"] {
+    // The scanner set for colour negatives, as a new install has it, whatever the user scanned last.
+    for key in ["leftWidth", "rightWidth", "loupeStyle", "loupeField", "contactLandscape", "loupeShown", "scanReversal"] {
       defaults.removeObject(forKey: key)
     }
     // The views' own switches live in this tool's standard defaults; set here, removed after.
@@ -165,12 +169,13 @@ struct ShotFailure: Error { let message: String }
       if try Picture.save(image, to: out.appendingPathComponent(name), width: width) { changed.append(name) }
     }
 
-    model.loadProject(rollURL.appendingPathComponent(AppModel.projectFile))
-    guard !model.frames.isEmpty else { throw ShotFailure(message: "截图用的那一卷打不开：\(rollURL.path)") }
     model.preferences.contactLandscape = true
     model.preferences.showLoupe = false
 
-    // ① capture, with the scanner: its left panel.
+    // ① capture, with the scanner, for a new roll: its left panel and the empty light table with
+    // the preview's key. The only rolls the scanner made are the sea roll's, whose frames show the
+    // user. Nothing is saved (`readOnly`), and a new project makes no folder before its first preview.
+    model.startNewProject()
     model.page = .capture
     model.captureSource = .scanner
     model.showSingle(false)
@@ -179,14 +184,27 @@ struct ShotFailure: Error { let message: String }
     let captureColumns = Picture.columns(window)
     try save(capturePanel, "capture.jpg", width: 1600)
 
-    // ② taking the mask off: the light table, the loupe on 16.
+    model.loadProject(rollURL.appendingPathComponent(AppModel.projectFile))
+    guard !model.frames.isEmpty else { throw ShotFailure(message: "截图用的那一卷打不开：\(rollURL.path)") }
+
+    // ② taking the mask off: the light table, the loupe on the frame; the light table cut out.
     model.page = .convert
     model.panelTab = .calibration
-    select("16")
+    settle(3)
+    // Every frame converted, not the first few over black cells.
+    var converting = 0.0
+    while (model.positivesLoading != nil || model.frames.contains { model.thumbnails[$0.id] == nil }) && converting < 120 {
+      pump(0.5)
+      converting += 0.5
+    }
+    settle(2)
+    select(frame)
     model.toggleLoupe(true)
     settle(2)
     freshStatus()
-    try save(try Picture.capture(window, work: work), "main-window.jpg", width: 1600)
+    let main = try Picture.capture(window, work: work)
+    try save(main, "main-window.jpg", width: 1600)
+    if let cut = Picture.crop(main, to: workArea(Picture.columns(window)), window: window) { try save(cut, "loupe.jpg", width: 1400) }
 
     // The same with the left panel open, the areas numbered.
     standard.set(true, forKey: "convertSidebarShown")
@@ -211,7 +229,7 @@ struct ShotFailure: Error { let message: String }
     standard.set(false, forKey: "convertSidebarShown")
     model.panelTab = .calibration
 
-    // The single view, 16.
+    // The single view, the same frame.
     model.toggleLoupe(false)
     model.showSingle(true)
     settle(2)
@@ -266,7 +284,7 @@ struct ShotFailure: Error { let message: String }
       if let cut = Picture.crop(dust, to: workArea(Picture.columns(window)), window: window) { try save(cut, "dust.jpg", width: 1400) }
       dustBack()
       model.showSingle(false)
-      // Back to the sea roll for the library and the leak page.
+      // Back to the window's roll for the library and the leak page.
       model.loadProject(rollURL.appendingPathComponent(AppModel.projectFile))
       model.page = .convert
       settle(2)
@@ -301,7 +319,7 @@ struct ShotFailure: Error { let message: String }
     settle()
 
     // Last, and never left: leaving the 去漏光 page saves its job into Application Support.
-    select("16")
+    select(frame)
     if let id = model.selectedID { model.openInLeak(id) }
     settle(4)
     try save(try Picture.capture(window, work: work), "leak-page.jpg", width: 1600)
