@@ -63,5 +63,13 @@ enum UIDayTests {
     var square = roll(frames: 12, full: 12)
     square.format = FilmFormat.six6.rawValue
     try check(RollSleeve.details(square) == "Kodak Portra 160 · 6×6 · 12 张", "a 6×6 roll's label names its frame, not 120 as well: \(RollSleeve.details(square))")
+    // Each roll in the library shows its own film, as the shelf draws it.
+    let film35 = RollSleeve.film(roll(frames: 3, full: 3), model: model), film120 = RollSleeve.film(square, model: model)
+    var own = roll(frames: 1, full: 1)
+    own = RollEntry(folder: own.folder, project: own.project, title: "t", named: false, film: "Grandpa's Mystery 64", date: own.date, source: .files,
+      frames: own.frames, fullResolution: 1, exported: 0, overview: nil, notes: "", profile: FilmProfile.builtins[0], legacy: false)
+    try check(film35?.look.maker == "Kodak" && film35?.look.name.contains("Portra") == true && film35?.gauge == .mm135 && film120?.gauge == .mm120,
+      "a roll's label shows its film from the catalog: Portra 160 as its cassette, in a 6×6 roll as its 120 roll")
+    try check(RollSleeve.film(own, model: model)?.look.named == true, "a film the catalog does not know shows its own name on a plain can")
   }
 }

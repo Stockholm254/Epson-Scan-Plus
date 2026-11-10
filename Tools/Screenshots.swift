@@ -31,10 +31,11 @@ struct ShotFailure: Error { let message: String }
   /// The sea-and-sky roll on Portra 160 from the V850, turned upright: its pictures are the ones
   /// already shown.
   static let roll = "2026-10-29_225926_1C87"
-  /// The library's sleeves: scans of that same film, newest first.
+  /// The library's sleeves, newest first: copy rolls of Phoenix 6×6 and Portra 160 (one of them
+  /// cross-processed), one of Ektar, and scans of the sea roll, so the films on their labels differ.
   static let shelf = [
-    "2026-10-29_225926_1C87", "2026-10-29_222948_DEF0", "2026-10-29_204224_C6F9",
-    "2026-10-29_092428_7497", "2026-10-28_210643_FE21", "2026-10-28_200224_0E3A",
+    "2026-11-07_132152_9EA1", "2026-11-07_221113_E606", "2026-10-30_194132_3146", "2026-10-28_220205_CF4A",
+    "2026-10-29_225926_1C87", "2026-10-27_191421_6597",
   ]
   /// A copy roll from the A7R IV: Harman Phoenix II 200 in 6×6, with dust found on its first frame.
   static let copyRoll = "2026-11-07_132152_9EA1"
@@ -284,7 +285,13 @@ struct ShotFailure: Error { let message: String }
     model.profiles = FilmProfile.builtins
     model.askNewProject()
     settle(3)
-    if let sheet = window.attachedSheet { try save(try Picture.capture(sheet, work: work), "shelf.jpg", width: 1400) }
+    // Its top, as wide against as high as the window's shots beside it in the README: the search,
+    // the recent films, the first maker's shelf and the film chosen.
+    if let sheet = window.attachedSheet {
+      let shelf = try Picture.capture(sheet, work: work)
+      let top = CGRect(x: 0, y: 0, width: shelf.width, height: min(shelf.height, Int(Double(shelf.width) / 1.57)))
+      try save(shelf.cropping(to: top) ?? shelf, "shelf.jpg", width: 1400)
+    }
     model.askingNewProject = false
     model.profiles = keptProfiles
     settle()

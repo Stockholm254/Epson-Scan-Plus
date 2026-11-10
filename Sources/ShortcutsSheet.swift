@@ -18,11 +18,11 @@ enum Shortcuts {
   static let groups: [Group] = [
     Group(title: "库和模块", keys: [
       Key(keys: "⇧⌘L", does: "库"),
-      Key(keys: "⌥⌘1 · ⌥⌘2 · ⌥⌘3", does: "① 采集 · ② 去色罩 · ③ 去漏光"),
+      Key(keys: "⌥⌘1 – 3", does: "① 采集、② 去色罩、③ 去漏光"),
       Key(keys: "⌘N", does: "新建工程"),
       Key(keys: "⌘O", does: "导入图像（③ 里导入正片）"),
       Key(keys: "⇧⌘O", does: "打开工程"),
-      Key(keys: "⌘,", does: "扫描仪和相机的设置（① 的左栏）"),
+      Key(keys: "⌘,", does: "扫描仪和相机的设置"),
     ]),
     Group(title: "扫描和翻拍", keys: [
       Key(keys: "⇧⌘P", does: "整幅预览"),
@@ -74,16 +74,17 @@ struct ShortcutsSheet: View {
         Spacer()
         Text("画面上的单个字母键在点过画面以后才收得到").font(.system(size: 11)).foregroundStyle(.secondary)
       }
-      // Two columns, each group's keys right-aligned against what they do.
-      HStack(alignment: .top, spacing: 28) {
-        column(Array(Shortcuts.groups.prefix(3)))
-        column(Array(Shortcuts.groups.dropFirst(3)))
+      // Three columns of two groups, each group's keys right-aligned against what they do.
+      HStack(alignment: .top, spacing: 26) {
+        column([Shortcuts.groups[0], Shortcuts.groups[1]])
+        column([Shortcuts.groups[2], Shortcuts.groups[4]])
+        column([Shortcuts.groups[3], Shortcuts.groups[5]])
       }
       HStack {
         Spacer()
         Button("完成") { dismiss() }.keyboardShortcut(.defaultAction)
       }
-    }.padding(20).frame(width: 700)
+    }.padding(20).frame(width: 940)
   }
   func column(_ groups: [Shortcuts.Group]) -> some View {
     VStack(alignment: .leading, spacing: 14) {
@@ -97,7 +98,7 @@ struct ShortcutsSheet: View {
                   .padding(.horizontal, 6).padding(.vertical, 2)
                   .background(RoundedRectangle(cornerRadius: 4).fill(Color.primary.opacity(0.08)))
                   .gridColumnAlignment(.trailing)
-                Text(k.does).font(.system(size: 12)).foregroundStyle(.secondary)
+                Text(k.does).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
               }
             }
           }
