@@ -83,5 +83,46 @@ enum NewProjectTests {
     model.addCapturedFrame(copy, original: copy, linear: false)
     try check(model.frames.first?.adjustments.isSlide == true && model.reversalRoll && model.format == .mm135,
       "a new roll begun as slides takes its first copy as a slide")
+
+    // The sheet's films: the catalog is sound, and found by any word of what one calls a film.
+    let stocks = FilmCatalog.stocks
+    try check(stocks.count >= 80 && Set(stocks.map(\.id)).count == stocks.count
+      && stocks.allSatisfy { $0.iso > 0 && !$0.gauges.isEmpty && !$0.note.isEmpty }
+      && stocks.compactMap(\.preset).allSatisfy { id in FilmProfile.builtins.contains { $0.id == id } },
+      "the catalog's \(stocks.count) films each have a speed, a gauge and a note, no two the same, and the presets they name are built in")
+    func names(_ q: String) -> [String] { FilmCatalog.search(q).map(\.name) }
+    let portra = names("portra 400"), fujiSlides = FilmCatalog.search("富士 正片"), speed = names("400"), bw120 = FilmCatalog.search("黑白 120")
+    try check(portra.first == "Kodak Portra 400" && portra.contains("Kodak Ektacolor Pro 400")
+      && !fujiSlides.isEmpty && fujiSlides.allSatisfy { $0.maker == "Fujifilm" && $0.kind == .slide } && fujiSlides.count == 3
+      && speed.contains("Ilford HP5 Plus 400") && !speed.contains("Ilford Delta 3200") && names("320") == ["Foma Retropan 320 Soft"]
+      && !bw120.isEmpty && bw120.allSatisfy { $0.kind == .blackWhite && $0.gauges.contains(.mm120) }
+      && names("柯达 电影").allSatisfy { $0.hasPrefix("Kodak") } && names("柯达 电影").count == 5
+      && names("hp5") == ["Ilford HP5 Plus 400"] && names("aerocolor").isEmpty,
+      "the films are found by any word: 「portra 400」 puts Portra 400 first and finds its new name, 「富士 正片」 the three Fujifilm slides, 「400」 a speed whole (not Delta 3200), 「黑白 120」 black and white in 120, 「柯达 电影」 Kodak's cine films")
+    try check(FilmCatalog.stock(named: "Kodak Portra 160 · 翻拍 · 2026-11-07 13:21")?.name == "Kodak Portra 160"
+      && FilmCatalog.stock(named: "Kodak Ektar 100")?.preset == "ektar100" && FilmCatalog.stock(named: "Agfa Ultra 50") == nil,
+      "a roll's film or a calibration made from it is found in the catalog, so the sheet starts on it")
+    // A stock the app has no data for: its name kept with the roll, converted as the generic film.
+    let generic = FilmProfile.builtins.first { $0.id == "generic" }!
+    model.beginNewProject(profile: generic, filmName: "Fujifilm Velvia 50", reversal: true, format: .six7)
+    try check(model.filmName == "Fujifilm Velvia 50" && model.profile.id == "generic" && model.reversalRoll && model.format == .six7,
+      "a film without data is kept by its own name, converted as the generic film, its kind and format as chosen")
+
+    // The shelf's films in 3D: a cassette and a roll come out drawn, standing clear of the corners.
+    func drawn(_ image: NSImage?) -> (middle: Double, corner: Double)? {
+      guard let image, let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+      let ctx = CGContext(data: nil, width: cg.width, height: cg.height, bitsPerComponent: 8, bytesPerRow: cg.width * 4,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+      ctx.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+      guard let data = ctx.data else { return nil }
+      let px = data.bindMemory(to: UInt8.self, capacity: cg.width * cg.height * 4)
+      func alpha(_ x: Int, _ y: Int) -> Double { Double(px[(y * cg.width + x) * 4 + 3]) / 255 }
+      return (alpha(cg.width / 3, cg.height / 2), alpha(1, 1))
+    }
+    let shelved = NewProjectSheet.Look(maker: "Kodak", name: "Portra 400", title: "Portra 400", iso: 400, kind: .colour)
+    let cassette = drawn(FilmRender.renderNow(shelved, gauge: .mm135, pixels: CGSize(width: 140, height: 184)))
+    let roll = drawn(FilmRender.renderNow(shelved, gauge: .mm120, pixels: CGSize(width: 140, height: 184)))
+    try check(cassette.map { $0.middle > 0.9 && $0.corner < 0.05 } == true && roll.map { $0.middle > 0.9 && $0.corner < 0.05 } == true,
+      "the shelf's films are rendered in 3D, a 135 cassette and a 120 roll, standing on a clear ground")
   }
 }

@@ -781,17 +781,18 @@ final class AppModel: ObservableObject {
   }
   /// The sheet's 开始: the new project begun (`startNewProject`), then its film, kind and format
   /// set, after the open roll is saved as it was.
-  func beginNewProject(profile p: FilmProfile, reversal: Bool, format f: FilmFormat) {
+  func beginNewProject(profile p: FilmProfile, filmName name: String? = nil, reversal: Bool, format f: FilmFormat) {
     askingNewProject = false
     guard !isWorking else { return }
     startNewProject()
-    filmName = p.name
+    // The film's own name, kept with the roll, where it converts as another preset (the generic one).
+    filmName = name ?? p.name
     profile = p
     useCalibration = true
     preferences.scanReversal = reversal
     startsAsSlides = reversal
     format = f
-    status = "新建工程：\(p.name) · \(reversal ? "反转片" : "负片") · 画幅 \(f.rawValue)；下一次预览、导入或拍摄存进新的一卷"
+    status = "新建工程：\(filmName) · \(reversal ? "反转片" : "负片") · 画幅 \(f.rawValue)；下一次预览、导入或拍摄存进新的一卷"
   }
   /// The roll's film format, from the new-project sheet, ①'s 规格 or ②'s film section: a scan's
   /// frames are found by it, and a copy's size on the film, so the loupe's field and the export's
