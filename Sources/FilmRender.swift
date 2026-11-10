@@ -171,10 +171,11 @@ enum FilmRender {
   private static let capPaint = material(NSColor(white: 0.03, alpha: 1), metal: 0.5, rough: 0.3, coat: 0.7)
   private static let reloadable = material(NSColor(white: 0.04, alpha: 1), metal: 0, rough: 0.42, coat: 0.25)
 
-  /// A 135 cassette as the photographs show it: the printed shell; black end caps pressed over it
-  /// with a rolled rim; the spool's knob a short thick-walled tube with its key bar, the short
-  /// hub below; the lip down the right side, its mouth lined with black felt; and the leader out of
-  /// it, curling out to the right, perforated, cut to its tongue.
+  /// A 135 cassette as the photographs show it: the printed shell, its lip running on from it down
+  /// the right side, the mouth lined with black felt; black end caps crimped over it, their rolled
+  /// bead standing well above a dished face, a collar round the spool; the spool's knob a wide thin-walled tube
+  /// with its lugs deep inside, the hub nearly flush below; and the leader out of the mouth,
+  /// curling out to the right, perforated, cut to its tongue.
   private static func cassette(_ look: NewProjectSheet.Look) -> SCNNode {
     let node = SCNNode()
     let r = Shell.radius, h: CGFloat = 38
@@ -194,50 +195,67 @@ enum FilmRender {
       node.addChildNode(tapeNode)
     }
     let ends = plain ? reloadable : capPaint
+    /// A part turned round the cassette's axis, at `y`, its height (a torus's) `flat` of its width.
+    func turned(_ g: SCNGeometry, _ m: SCNMaterial, y: CGFloat, flat: CGFloat = 1) {
+      g.materials = [m]
+      let n = SCNNode(geometry: g)
+      n.position.y = y
+      n.scale.y = flat
+      node.addChildNode(n)
+    }
+    // The end caps as the photographs show them, pressed steel painted black: a skirt crimped over
+    // the shell's end, its edge rolled into a bead standing above the face; the face dished in
+    // below the bead; round the spool's hole a raised collar.
+    var faceTop: CGFloat = 0
     for top in [true, false] {
       let y = top ? h / 2 : -h / 2, out: CGFloat = top ? 1 : -1
-      // The cap over the shell's end, its rim rolled, a ring pressed into its face.
-      let cap = SCNCylinder(radius: r + 0.6, height: 1.7)
-      cap.radialSegmentCount = 128
-      cap.materials = [ends]
-      let capNode = SCNNode(geometry: cap)
-      capNode.position.y = y + out * 0.85
-      node.addChildNode(capNode)
-      let rim = SCNTorus(ringRadius: r + 0.3, pipeRadius: 0.9)
-      rim.ringSegmentCount = 128
-      rim.materials = [ends]
-      let rimNode = SCNNode(geometry: rim)
-      rimNode.position.y = y + out * 0.5
-      node.addChildNode(rimNode)
-      let groove = SCNTorus(ringRadius: r - 2.6, pipeRadius: 0.45)
-      groove.ringSegmentCount = 96
-      groove.materials = [ends]
-      let grooveNode = SCNNode(geometry: groove)
-      grooveNode.position.y = y + out * 1.72
-      node.addChildNode(grooveNode)
+      // The skirt rises well above the face, a wall round it, the bead rolled on its top.
+      let skirt = SCNTube(innerRadius: r - 0.05, outerRadius: r + 0.5, height: 2.9)
+      skirt.radialSegmentCount = 128
+      turned(skirt, ends, y: y + out * 0.75)
+      let bead = SCNTorus(ringRadius: r + 0.05, pipeRadius: 0.55)
+      bead.ringSegmentCount = 128
+      turned(bead, ends, y: y + out * 2.2)
+      let face = SCNCylinder(radius: r - 0.2, height: 0.5)
+      face.radialSegmentCount = 128
+      turned(face, ends, y: y + out * 1.2)
+      let collar = SCNTube(innerRadius: 5.85, outerRadius: 7.3, height: 0.5)
+      collar.radialSegmentCount = 96
+      turned(collar, ends, y: y + out * 1.6)
+      let collarEdge = SCNTorus(ringRadius: 6.58, pipeRadius: 0.72)
+      collarEdge.ringSegmentCount = 96
+      turned(collarEdge, ends, y: y + out * 1.7, flat: 0.55)
+      if top { faceTop = y + 1.45 }
     }
-    // The spool's knob: a tube standing 6 mm proud, its key bar across inside; the hub below.
-    let knob = SCNTube(innerRadius: 2.75, outerRadius: 4.35, height: 6.2)
-    knob.radialSegmentCount = 64
+    // The spool's knob: a plastic tube about 11.6 mm across, its wall 1.2 mm, standing 6.6 mm proud
+    // of the face, its mouth rounded; inside, deep down, the two lugs a camera's rewind fork takes.
+    let knob = SCNTube(innerRadius: 4.6, outerRadius: 5.8, height: 6.4)
+    knob.radialSegmentCount = 96
     knob.materials = [blackPlastic, blackPlastic, blackPlastic, blackPlastic]
     let knobNode = SCNNode(geometry: knob)
-    knobNode.position.y = h / 2 + 1.7 + 3.1
+    knobNode.position.y = faceTop + 3.2
     node.addChildNode(knobNode)
-    let bore = SCNCylinder(radius: 2.76, height: 0.5)
-    bore.materials = [felt]
-    let boreNode = SCNNode(geometry: bore)
-    boreNode.position.y = h / 2 + 1.7 + 2.0
-    node.addChildNode(boreNode)
-    let key = SCNBox(width: 5.6, height: 2.6, length: 1.0, chamferRadius: 0.2)
-    key.materials = [blackPlastic]
-    let keyNode = SCNNode(geometry: key)
-    keyNode.position.y = h / 2 + 1.7 + 3.6
-    keyNode.eulerAngles.y = 0.5
-    node.addChildNode(keyNode)
-    let hub = SCNTube(innerRadius: 2.1, outerRadius: 3.5, height: 1.6)
+    let mouth = SCNTorus(ringRadius: 5.2, pipeRadius: 0.6)
+    mouth.ringSegmentCount = 96
+    turned(mouth, blackPlastic, y: faceTop + 6.4, flat: 0.4)
+    let floor = SCNCylinder(radius: 4.62, height: 0.4)
+    floor.radialSegmentCount = 64
+    turned(floor, felt, y: faceTop + 0.9)
+    let lugs = SCNNode()
+    lugs.eulerAngles.y = 0.5
+    for side: CGFloat in [-1, 1] {
+      let lug = SCNBox(width: 1.3, height: 2.2, length: 1.6, chamferRadius: 0.25)
+      lug.materials = [blackPlastic]
+      let lugNode = SCNNode(geometry: lug)
+      lugNode.position = SCNVector3(side * 4.05, faceTop + 2.2, 0)
+      lugs.addChildNode(lugNode)
+    }
+    node.addChildNode(lugs)
+    // Below, the spool's other end, nearly flush with the cap.
+    let hub = SCNTube(innerRadius: 2.4, outerRadius: 4.2, height: 0.9)
     hub.materials = [blackPlastic, blackPlastic, blackPlastic, blackPlastic]
     let hubNode = SCNNode(geometry: hub)
-    hubNode.position.y = -h / 2 - 1.7 - 0.8
+    hubNode.position.y = -h / 2 - 1.45 - 0.35
     node.addChildNode(hubNode)
     // The leader out of the lip's mouth, from between its felts, along the lip.
     let leader = curledLeader(look)
