@@ -177,22 +177,19 @@ enum FilmRender {
   /// it, curling out to the right, perforated, cut to its tongue.
   private static func cassette(_ look: NewProjectSheet.Look) -> SCNNode {
     let node = SCNNode()
-    let r: CGFloat = 12.4, h: CGFloat = 38
+    let r = Shell.radius, h: CGFloat = 38
     let plain = look.named || look.calibrated
-    let shell = SCNCylinder(radius: r, height: h)
-    shell.radialSegmentCount = 128
-    shell.materials = [plain ? reloadable : material(Label.cassette(look), metal: 0.15, rough: 0.28, coat: 1), capPaint, capPaint]
-    let shellNode = SCNNode(geometry: shell)
-    // The print's front towards the camera.
-    shellNode.eulerAngles.y = -.pi / 2 + 0.35
-    node.addChildNode(shellNode)
+    // The shell and its lip, one sheet: the print round it and on out along the lip, the mouth in felt.
+    let shell = Shell.geometry(height: h)
+    shell.materials = [plain ? reloadable : material(Label.cassette(look), metal: 0.15, rough: 0.28, coat: 1), velvet, plain ? reloadable : capPaint]
+    node.addChildNode(SCNNode(geometry: shell))
     if plain {
       // A reloadable cassette's tape, written on.
       let tape = SCNTube(innerRadius: r + 0.01, outerRadius: r + 0.12, height: 15)
       tape.radialSegmentCount = 128
       tape.materials = [material(Label.tape(look), metal: 0, rough: 0.6), material(NSColor(white: 0.95, alpha: 1), metal: 0, rough: 0.6)]
       let tapeNode = SCNNode(geometry: tape)
-      tapeNode.eulerAngles.y = shellNode.eulerAngles.y
+      tapeNode.eulerAngles.y = -.pi / 2 + 0.35
       tapeNode.position.y = 1
       node.addChildNode(tapeNode)
     }
@@ -242,26 +239,80 @@ enum FilmRender {
     let hubNode = SCNNode(geometry: hub)
     hubNode.position.y = -h / 2 - 1.7 - 0.8
     node.addChildNode(hubNode)
-    // The lip down the right side, along the shell's tangent, its mouth in black felt.
-    let exit: CGFloat = 0.92
-    func place(_ n: SCNNode, radial: CGFloat, along: CGFloat, y: CGFloat = 0) {
-      n.position = SCNVector3(radial * sin(exit) + along * cos(exit), y, radial * cos(exit) - along * sin(exit))
-      n.eulerAngles.y = exit
-    }
-    let lip = SCNBox(width: 8.6, height: h + 0.8, length: 3.6, chamferRadius: 1.5)
-    lip.materials = [plain ? reloadable : material(Label.lip(look), metal: 0.15, rough: 0.28, coat: 1)]
-    let lipNode = SCNNode(geometry: lip)
-    place(lipNode, radial: r - 0.6, along: 3.4)
-    node.addChildNode(lipNode)
-    let velvet = SCNBox(width: 2.4, height: h - 0.4, length: 3.3, chamferRadius: 0.7)
-    velvet.materials = [Self.velvet]
-    let velvetNode = SCNNode(geometry: velvet)
-    place(velvetNode, radial: r - 0.45, along: 7.9)
-    node.addChildNode(velvetNode)
+    // The leader out of the lip's mouth, from between its felts, along the lip.
     let leader = curledLeader(look)
-    place(leader, radial: r - 0.2, along: 8.9)
+    let e = Shell.exit, radial = r - Shell.gap / 2, along = Shell.reach - 0.4
+    leader.position = SCNVector3(radial * sin(e) + along * cos(e), 0, radial * cos(e) - along * sin(e))
+    leader.eulerAngles.y = e
     node.addChildNode(leader)
     return node
+  }
+  /// A 135 shell seen from above, as it is made, of one sheet of steel: rolled round, its two ends
+  /// carried out together along the tangent at `exit` (some 53° right of the front) as the lip,
+  /// `gap` apart with the felt and the film between them, `reach` out from where the outer end
+  /// leaves the round; so the lip runs smoothly on from the round, the print with it, and the inner
+  /// end leaves the round further on, in a crease.
+  enum Shell {
+    static let radius: CGFloat = 12.4, exit: CGFloat = 0.92, gap: CGFloat = 2.6, reach: CGFloat = 10.5
+    /// The angle round of the print's front, from the camera: a little to the right, where the
+    /// shelf's view centres the face between its left edge and the lip.
+    static let front: CGFloat = 0.12
+    /// How much further round the inner end leaves the round, and how far along the lip that is.
+    static var bend: CGFloat { acos((radius - gap) / radius) }
+    static var inner: CGFloat { (radius * radius - (radius - gap) * (radius - gap)).squareRoot() }
+    /// Millimetres round the outline, from where the inner end leaves the round: the round, the
+    /// outer lip, the mouth, the inner lip back.
+    static var round: CGFloat { radius * (2 * .pi - bend) + reach + gap + reach - inner }
+    /// Where the print's front is along it.
+    static var frontAt: CGFloat { radius * (2 * .pi + front - exit - bend) }
+    /// The shell's side all round, the felt across the mouth, and the lip's top and foot (where it
+    /// stands out of the end caps): three elements, for the print, the felt and the steel.
+    static func geometry(height h: CGFloat) -> SCNGeometry {
+      let r = radius, e = exit, t = gap, l = reach
+      let n = CGPoint(x: sin(e), y: cos(e)), d = CGPoint(x: cos(e), y: -sin(e))
+      func at(_ base: CGPoint, _ k: CGFloat, _ v: CGPoint) -> CGPoint { CGPoint(x: base.x + k * v.x, y: base.y + k * v.y) }
+      let outer = CGPoint(x: r * n.x, y: r * n.y)
+      let mouthOut = at(outer, l, d), mouthIn = at(at(outer, -t, n), l, d), crease = at(at(outer, -t, n), inner, d)
+      var vertices = [SCNVector3](), normals = [SCNVector3](), uv = [CGPoint]()
+      var side = [Int32](), felt = [Int32](), ends = [Int32]()
+      let total = round
+      // A run of the outline (points with their outward normals) stood up into the side.
+      func stand(_ points: [(CGPoint, CGPoint)], from s0: CGFloat, into list: inout [Int32]) -> CGFloat {
+        var s = s0
+        for (i, (q, normal)) in points.enumerated() {
+          if i > 0 { s += hypot(q.x - points[i - 1].0.x, q.y - points[i - 1].0.y) }
+          let base = Int32(vertices.count)
+          for top in [true, false] {
+            vertices.append(SCNVector3(q.x, top ? h / 2 : -h / 2, q.y))
+            normals.append(SCNVector3(normal.x, 0, normal.y))
+            uv.append(CGPoint(x: s / total, y: top ? 0 : 1))
+          }
+          if i > 0 { list += [base - 2, base - 1, base, base, base - 1, base + 1] }
+        }
+        return s
+      }
+      let steps = 256
+      var round = (0...steps).map { i -> (CGPoint, CGPoint) in
+        let a = e + bend + (2 * .pi - bend) * CGFloat(i) / CGFloat(steps)
+        return (CGPoint(x: r * sin(a), y: r * cos(a)), CGPoint(x: sin(a), y: cos(a)))
+      }
+      round.append((mouthOut, n))
+      var s = stand(round, from: 0, into: &side)
+      s = stand([(mouthOut, d), (mouthIn, d)], from: s, into: &felt)
+      _ = stand([(mouthIn, CGPoint(x: -n.x, y: -n.y)), (crease, CGPoint(x: -n.x, y: -n.y))], from: s, into: &side)
+      for top in [true, false] {
+        let base = Int32(vertices.count)
+        for q in [outer, mouthOut, mouthIn, crease] {
+          vertices.append(SCNVector3(q.x, top ? h / 2 : -h / 2, q.y))
+          normals.append(SCNVector3(0, top ? 1 : -1, 0))
+          uv.append(.zero)
+        }
+        ends += top ? [base, base + 1, base + 2, base, base + 2, base + 3] : [base, base + 2, base + 1, base, base + 3, base + 2]
+      }
+      return SCNGeometry(
+        sources: [SCNGeometrySource(vertices: vertices), SCNGeometrySource(normals: normals), SCNGeometrySource(textureCoordinates: uv)],
+        elements: [side, felt, ends].map { SCNGeometryElement(indices: $0, primitiveType: .triangles) })
+    }
   }
   /// Black felt: no shine, a little fuzz.
   private static let velvet: SCNMaterial = {
@@ -442,64 +493,13 @@ enum FilmRender {
       case .cine: return "Motion Picture Film"
       }
     }
-    /// A 135 shell's print, 2π × 12.4 mm round and 38 mm tall, laid out as cassettes print theirs:
-    /// in bands along the length, the words reading from the top down, the maker's band beside
-    /// the lip, then the film's name and what it is, then its speed large; the process in the
-    /// kind's colour; the DX squares and the bar code behind.
+    /// A 135 shell's print, as far round as the shell's outline goes (the round and out along the
+    /// lip, `Shell.round`) and 38 mm tall: the stock's own print (`FilmPrint`), its front where the
+    /// camera looks.
     static func cassette(_ look: NewProjectSheet.Look) -> NSImage {
-      let round = 2 * .pi * 12.4, tall: CGFloat = 38
-      let l = livery(look.maker)
-      let (kindColour, process) = kindBand(look)
-      return draw(width: round, height: tall) { ctx, size in
-        let m = mm, w = size.width, mid = size.height / 2
-        let front = w * Label.cassetteFront
-        func u(_ k: CGFloat) -> CGFloat { front + k * w }
-        ctx.setFillColor(l.ground.cgColor)
-        ctx.fill(CGRect(origin: .zero, size: size))
-        // The maker's band, beside the lip.
-        ctx.setFillColor(l.band.cgColor)
-        ctx.fill(CGRect(x: u(0.024), y: 0, width: 0.062 * w, height: size.height))
-        // The band's words in the cassette's ground where they stand out on it, else black or white.
-        func luminance(_ c: NSColor) -> CGFloat {
-          let c = c.usingColorSpace(.sRGB) ?? c
-          return 0.2126 * c.redComponent + 0.7152 * c.greenComponent + 0.0722 * c.blueComponent
-        }
-        let bandLight = luminance(l.band) > 0.5, groundLight = luminance(l.ground) > 0.5
-        let bandInk = bandLight ? (groundLight ? NSColor(white: 0.08, alpha: 1) : l.ground) : (groundLight ? l.ground : NSColor.white)
-        along(look.maker ?? "", condensed(3.9 * m, .heavy), bandInk, centre: CGPoint(x: u(0.055), y: mid), fit: 32 * m, kern: 0.2 * m)
-        // The film's name, and what it is.
-        along(look.name.uppercased(), condensed(5.4 * m, .bold), l.ink, centre: CGPoint(x: u(-0.022), y: mid), fit: 33 * m, kern: 0.15 * m)
-        along(description(look), condensed(2.3 * m, .medium), l.ink.withAlphaComponent(0.85), centre: CGPoint(x: u(-0.079), y: mid), fit: 30 * m)
-        // The speed, large, towards the foot; the length above it.
-        if let iso = look.iso {
-          along("\(iso)", condensed(8.4 * m, .heavy), l.ink, centre: CGPoint(x: u(-0.142), y: size.height * 0.64), fit: 19 * m)
-          along("36 EXP", condensed(2.3 * m, .semibold), l.ink, centre: CGPoint(x: u(-0.11), y: size.height * 0.2), fit: 12 * m)
-        }
-        // The kind's stripe with the process, at the far left of the front.
-        ctx.setFillColor(kindColour.cgColor)
-        ctx.fill(CGRect(x: u(-0.235), y: 0, width: 0.032 * w, height: size.height))
-        along(process, condensed(2.0 * m, .bold), NSColor.white, centre: CGPoint(x: u(-0.219), y: size.height * 0.22), fit: 14 * m)
-        // The DX squares, bare steel or painted, two by six; the bar code beside them.
-        for row in 0..<2 {
-          for col in 0..<6 {
-            let bare = (row * 5 + col + (look.iso ?? 100) / 50) % 3 != 0
-            ctx.setFillColor(bare ? NSColor(white: 0.8, alpha: 1).cgColor : NSColor(white: 0.07, alpha: 1).cgColor)
-            ctx.fill(CGRect(x: u(0.3) + CGFloat(row) * 2.6 * m, y: size.height * 0.5 + CGFloat(col) * 2.6 * m, width: 2.3 * m, height: 2.3 * m))
-          }
-        }
-        let code = CGRect(x: u(0.39), y: size.height * 0.12, width: 7.5 * m, height: size.height * 0.62)
-        ctx.setFillColor(NSColor.white.cgColor)
-        ctx.fill(code)
-        var y = code.minY + 0.8 * m
-        var seed = look.renderKey.unicodeScalars.reduce(UInt32(7)) { $0 &* 31 &+ $1.value } | 1
-        ctx.setFillColor(NSColor.black.cgColor)
-        while y < code.maxY - 1 * m {
-          seed = seed &* 1103515245 &+ 12345
-          let t = CGFloat((seed >> 16) % 3 + 1) * 0.28 * m
-          ctx.fill(CGRect(x: code.minX + 0.8 * m, y: y, width: code.width - 1.6 * m, height: t))
-          y += t + CGFloat((seed >> 20) % 2 + 1) * 0.3 * m
-        }
-        along("DX", condensed(2.6 * m, .heavy), l.ink, centre: CGPoint(x: u(0.31), y: size.height * 0.3), fit: 6 * m)
+      draw(width: Shell.round, height: 38) { ctx, size in
+        let flat = FilmPrint.Flat(ctx: ctx, size: size, front: Shell.frontAt * mm)
+        (FilmPrint.design(look) ?? FilmPrint.generic(look)).draw(flat, look)
       }
     }
     /// A leader's picture, `length` mm along and 35 mm across, its top edge at the top: the film's
@@ -566,14 +566,6 @@ enum FilmRender {
       image.addRepresentation(rep)
       return image
     }()
-    /// The lip's own print: the ground, with the bands.
-    static func lip(_ look: NewProjectSheet.Look) -> NSImage {
-      let l = livery(look.maker)
-      return draw(width: 8, height: 38) { ctx, size in
-        ctx.setFillColor(l.ground.cgColor)
-        ctx.fill(CGRect(origin: .zero, size: size))
-      }
-    }
     /// A reloadable cassette's tape: what the roll is, written in pencil; a preset of this Mac
     /// under an amber 本机 mark.
     static func tape(_ look: NewProjectSheet.Look) -> NSImage {
