@@ -2,6 +2,12 @@
 
 最新的在最前。各版本开头「打开 `Epson-Scan-plus-v0.4.x/…`」指作者本机的发布目录；0.3.1 及以前的名称是 Film Desk。
 
+## 下一版
+
+负片的转换不变。
+
+- **胶片架补上 8 款胶片的 120**：Harman Phoenix II 200、Red 125、Switch Azure 125，Kentmere Pan 200，Ferrania P30、Orto，乐凯 C200（目录里的 Lucky Color 200），LomoChrome Classicolor 200。以前只标了 135，选 120 画幅时架上画的还是暗盒。这几款的 120 版本是 2025–2026 年陆续推出的，逐款在网上核实过，各大胶片店都在卖。
+
 ## 0.18.6 胶片架上的暗盒照各款实物印刷；片口和外壳连成一体
 
 负片的转换不变。
