@@ -112,6 +112,12 @@ struct ContentView: View {
       let shown: Double = m.exported?.status == m.activityStatus ? 20 : 6
       DispatchQueue.main.asyncAfter(deadline: .now() + shown) { if statusChange == change { statusShown = false } }
     }
+    // A batch of scans takes minutes a frame: the Dock icon counts the frames done, and once the
+    // batch ends with the app behind another, it bounces once.
+    .onChange(of: m.scanBatch.badge) { was, now in
+      NSApp.dockTile.badgeLabel = now
+      if was != nil, now == nil, !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
+    }
     .onChange(of: m.tool) { _, tool in
       // Picking neutral points calibrates the preset, whose list is in module ②'s sidebar.
       if tool == .calibrate, m.page == .convert, !convertSidebarShown { openCalibration() }

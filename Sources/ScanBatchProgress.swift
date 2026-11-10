@@ -16,6 +16,9 @@ struct ScanBatchProgress {
     phase = total > 0 ? .running : .idle
   }
   var isActive: Bool { phase == .running || phase == .cancelling }
+  /// What the Dock icon shows while the batch runs: the frames done of all, as 「3/12」; nothing
+  /// before or after.
+  var badge: String? { isActive ? "\(completed)/\(total)" : nil }
   mutating func beginFrame(count: Int = 1) {
     guard phase == .running, current == nil, completed < total else { return }
     current = completed + 1

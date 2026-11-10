@@ -32,6 +32,14 @@ enum ScanProgressTests {
     }
     var batch = ScanBatchProgress()
     try check(batch.fraction(frameProgress: .nan) == 0, "empty scan progress is finite and zero")
+    var docked = ScanBatchProgress(total: 3)
+    let first = docked.badge
+    docked.beginFrame()
+    docked.completeFrame()
+    let one = docked.badge
+    docked.stop(cancelled: true)
+    try check(first == "0/3" && one == "1/3" && docked.badge == nil && ScanBatchProgress().badge == nil,
+      "the Dock icon shows a batch's frames done of all while it runs, and nothing before or after")
     batch = ScanBatchProgress(total: 18)
     for _ in 0..<2 {
       batch.beginFrame()
