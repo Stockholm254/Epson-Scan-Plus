@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftUI
 
 /// The three modules, the library of rolls, and the glass bubble over a dragged crop corner.
 enum LibraryTests {
@@ -166,6 +167,14 @@ enum LibraryTests {
       && kept.path.hasPrefix(RollLibrary.cacheRoot.path) && kept != RollLibrary.cacheFolder(for: imported)
       && !files.fileExists(atPath: scanned.appendingPathComponent(".thumbnails").path),
       "the positives the app renders are kept in the caches, a folder per roll, and shown in its pockets")
+    func components(_ c: Color) -> [Double] {
+      guard let s = NSColor(c).usingColorSpace(.sRGB) else { return [] }
+      return [s.redComponent, s.greenComponent, s.blueComponent].map(Double.init)
+    }
+    let behindPositive = components(RollSleeve.backing(positive: true)), behindNegative = components(RollSleeve.backing(positive: false))
+    try check(behindPositive.count == 3 && behindPositive.max()! - behindPositive.min()! < 0.005 && behindPositive.max()! < 0.12
+      && behindNegative.count == 3 && behindNegative[0] > behindNegative[2] + 0.1,
+      "round a frame that does not fill its pocket, a positive lies on a neutral black and a negative on the orange film base")
     let upright = image(40, 60) { c in
       c.setFillColor(red: 0.2, green: 0.9, blue: 0.3, alpha: 1)
       c.fill(CGRect(x: 0, y: 0, width: 40, height: 60))

@@ -373,11 +373,17 @@ struct RollSleeve: View {
         .allowsHitTesting(false)
     }
   }
+  /// What shows round a frame that does not fill its 3:2 pocket (a 6×6, a crop with its sprocket
+  /// strips): the orange film base behind a negative, as on the film, and a print's neutral black
+  /// behind a positive, where the orange read as red in the dark round the picture.
+  static func backing(positive: Bool) -> Color {
+    positive ? Color(white: 0.07) : Hardware.filmBase.opacity(0.85)
+  }
   /// A pocket of the strip; under the pointer, a glass loupe rises over it, enlarging the frame.
   func pocket(_ frame: RollEntry.Frame?) -> some View {
     let under = frame != nil && hovered == frame?.id
     return ZStack {
-      Rectangle().fill(frame == nil ? Color.primary.opacity(0.04) : Hardware.filmBase.opacity(0.85))
+      Rectangle().fill(frame.map { Self.backing(positive: pictures[$0.id]?.positive == true) } ?? Color.primary.opacity(0.04))
       if let frame, let picture = pictures[frame.id] {
         Image(decorative: picture.image, scale: 1).resizable().aspectRatio(contentMode: .fit)
       }
