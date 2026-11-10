@@ -137,6 +137,18 @@ enum NewProjectTests {
       && model.profile.id == "generic" && model.filmName == "Fujifilm Velvia 50" && model.format == .six7
       && !model.frames.isEmpty && model.frames.allSatisfy { $0.adjustments.isSlide } && NewProjectSheet.current(model) == .stock("Fujifilm Velvia 50"),
       "the open roll's film changes from the shelf: its preset, its own name, negative or slide and its format together")
+    // One ⌘Z puts all of it back.
+    let undo = UndoManager()
+    undo.groupsByEvent = false
+    model.undoManager = undo
+    let before = (model.profile.id, model.filmName, model.format, model.frames.allSatisfy { $0.adjustments.isSlide })
+    model.applyFilm(profile: portra400, filmName: "Kodak Ektacolor Pro 400", reversal: false, format: .six45)
+    let changed = model.profile.id == "portra400" && model.format == .six45 && !model.reversalRoll
+    undo.undo()
+    let after = (model.profile.id, model.filmName, model.format, model.frames.allSatisfy { $0.adjustments.isSlide })
+    model.undoManager = nil
+    try check(changed && after == before,
+      "one ⌘Z puts the roll's film, its name, negative or slide and its format back as they were: \(after)")
     // Exports are named after the roll's own film, not the generic preset it converts with.
     let named = model.exportName(for: model.frames.first)
     let velviaKey = model.exportFilmKey
@@ -165,6 +177,11 @@ enum NewProjectTests {
       entry(own.name, hoursAgo: 4, profile: own), entry(generic.name, hoursAgo: 5, profile: generic), entry("Aerocolor 100", hoursAgo: 6),
       entry("Kodak Gold 200", hoursAgo: 7)], profiles: FilmProfile.builtins + [own], limit: 5)
     let velviaID = FilmCatalog.stock(named: "Fujifilm Velvia 50")?.id ?? "", hp5ID = FilmCatalog.stock(named: "Ilford HP5 Plus 400")?.id ?? ""
+    // A roll with nothing in it yet changed to slides: its first copy or import is a slide.
+    model.beginNewProject(profile: portra400, reversal: false, format: .mm135)
+    model.applyFilm(profile: generic, filmName: "Fujifilm Velvia 50", reversal: true, format: .six7)
+    try check(model.frames.isEmpty && model.reversalRoll && model.format == .six7,
+      "a roll with nothing in it yet changed to a slide film comes in as slides")
     try check(lately.map(\.choice) == [.stock(velviaID), .stock(hp5ID), .stock(velviaID), .preset(own.id), .named("Aerocolor 100")]
       && lately.map(\.format) == [.six7, nil, nil, nil, nil],
       "the shelf starts with the films of the rolls last begun, newest first, each once in 120 (in its newest roll's format) and once in 135, a preset of this Mac as itself: \(lately.map { "\($0.choice) \($0.format?.rawValue ?? "-")" })")

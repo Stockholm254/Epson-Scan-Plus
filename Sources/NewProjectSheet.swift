@@ -341,6 +341,7 @@ struct NewProjectSheet: View {
     let list = onShelf
     guard !list.isEmpty else { return }
     let i = list.firstIndex(of: choice).map { min(max($0 + by, 0), list.count - 1) } ?? (by > 0 ? 0 : list.count - 1)
+    guard list[i] != choice else { return }
     stepped = true
     withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) { pick(list[i]) }
   }
@@ -349,8 +350,9 @@ struct NewProjectSheet: View {
     let choice: Choice
     let format: FilmFormat?
   }
-  /// The films of the rolls last begun in the library, newest first, each once in each gauge.
-  private var recent: [Used] { Self.recent(m.shelf.entries, profiles: m.profiles) }
+  /// The films of the rolls last begun in the library, newest first, each once in each gauge: read
+  /// as the sheet opens (the library stays as it is under it), not on every redraw.
+  @State private var recent: [Used] = []
   /// The films of the rolls in `entries`, newest first and at most `limit`: a preset of this Mac as
   /// itself, else the roll's film in the catalog, else its own name when it has one; each with the
   /// newest of its rolls' formats, once in 135 (or 自动) and once in 120.
@@ -438,6 +440,7 @@ struct NewProjectSheet: View {
   /// As last chosen: the roll's preset when it is one of this Mac's, else its film in the catalog,
   /// else its name.
   private func start() {
+    recent = Self.recent(m.shelf.entries, profiles: m.profiles)
     format = m.format
     let now = Self.current(m)
     if case .named(let name) = now, name.isEmpty {} else { choice = now }

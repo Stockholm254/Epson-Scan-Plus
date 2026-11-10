@@ -39,7 +39,7 @@ enum FilmRender {
     warmed = true
     let now = NewProjectSheet.current(m)
     let look = NewProjectSheet.look(now, m: m), gauge = NewProjectSheet.gauge(now, format: m.format)
-    image(look, gauge: gauge, points: CGSize(width: 38, height: 50), scale: NSScreen.main?.backingScaleFactor ?? 2) { _ in }
+    image(look, gauge: gauge, points: CGSize(width: 38, height: 50), scale: max(2, NSScreen.main?.backingScaleFactor ?? 2)) { _ in }
   }
   /// The same, at once, for a test or a window shot.
   static func renderNow(_ look: NewProjectSheet.Look, gauge: FilmStock.Gauge, pixels: CGSize) -> NSImage? {

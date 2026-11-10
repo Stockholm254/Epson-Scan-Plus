@@ -5,7 +5,19 @@ import SwiftUI
 /// frames hashed and the stacks they make, and the search, the source and the stack spread out as
 /// they were left. Each visit reads the folders again, the rolls already read shown meanwhile.
 final class LibraryShelf: ObservableObject {
-  @Published private(set) var entries = [RollEntry]()
+  @Published private(set) var entries = [RollEntry]() { didSet { read += 1 } }
+  /// Readings of the rolls, for the search's rolls to be worked out again only when they change.
+  private var read = 0
+  private var found: (query: String, source: RollSource?, read: Int, rolls: [RollEntry])?
+  /// The rolls a search and a source let through, worked out once for each search, source and
+  /// reading of the rolls, not on every redraw: the tab stays up while scans and renders publish
+  /// many times a second, and a roll's film is looked up in the catalog.
+  func matching(_ query: String, _ source: RollSource?) -> [RollEntry] {
+    if let found, found.query == query, found.source == source, found.read == read { return found.rolls }
+    let rolls = entries.filter { e in (source == nil || e.source == source) && (query.isEmpty || RollLibrary.matches(e, query)) }
+    found = (query, source, read, rolls)
+    return rolls
+  }
   @Published private(set) var loaded = false
   @Published var query = ""
   @Published var source: RollSource?
@@ -66,12 +78,7 @@ struct LibraryPage: View {
   @State private var trashing: RollEntry?
   @State private var newName = ""
   /// The rolls the search and the source let through, each stacked or not.
-  var matching: [RollEntry] {
-    let query = shelf.query, source = shelf.source
-    return shelf.entries.filter { e in
-      (source == nil || e.source == source) && (query.isEmpty || RollLibrary.matches(e, query))
-    }
-  }
+  var matching: [RollEntry] { shelf.matching(shelf.query, shelf.source) }
   /// A search or a source narrows the library.
   var filtering: Bool { !shelf.query.trimmingCharacters(in: .whitespaces).isEmpty || shelf.source != nil }
   var shown: [RollEntry] {

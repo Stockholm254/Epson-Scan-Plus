@@ -103,15 +103,9 @@ struct ContentView: View {
     .navigationTitle(windowTitle)
     .navigationSubtitle(windowSubtitle)
     .toolbar { toolbarContent }
-    .onChange(of: m.activityStatus) {
-      // A new status shows for a few seconds, then the line folds away unless work is under way.
-      statusShown = true
-      statusChange += 1
-      let change = statusChange
-      // An export just done stays longer, for its files to be shown in Finder.
-      let shown: Double = m.exported?.status == m.activityStatus ? 20 : 6
-      DispatchQueue.main.asyncAfter(deadline: .now() + shown) { if statusChange == change { statusShown = false } }
-    }
+    .onChange(of: m.activityStatus) { showStatus() }
+    // An export done shows, also one whose words are those the line said last.
+    .onChange(of: m.exportsDone) { showStatus() }
     // A batch of scans takes minutes a frame: the Dock icon counts the frames done, and once the
     // batch ends with the app behind another, it bounces once.
     .onChange(of: m.scanBatch.badge) { was, now in
@@ -1186,6 +1180,15 @@ struct ContentView: View {
         Image(systemName: "plus")
       }.help("\(names[edge])边 +0.1%").accessibilityLabel("\(names[edge])边加 0.1%")
     }.controlSize(.mini).disabled(m.isWorking || m.rendering)
+  }
+  /// A new status shows for a few seconds, then the line folds away unless work is under way; an
+  /// export just done stays longer, for its files to be shown in Finder.
+  func showStatus() {
+    statusShown = true
+    statusChange += 1
+    let change = statusChange
+    let shown: Double = m.exported?.status == m.activityStatus ? 20 : 6
+    DispatchQueue.main.asyncAfter(deadline: .now() + shown) { if statusChange == change { statusShown = false } }
   }
   /// The status line: while something is under way, an update waits, or a while after it changed.
   var footerShown: Bool {

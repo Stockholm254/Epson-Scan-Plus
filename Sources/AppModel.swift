@@ -195,6 +195,8 @@ final class AppModel: ObservableObject {
   /// The files the last export wrote, with what the status said of it: while it still says so,
   /// the status line offers them in Finder.
   @Published private(set) var exported: (status: String, files: [URL])?
+  /// Exports finished, for the status line to show each, also one saying what the last said.
+  @Published private(set) var exportsDone = 0
   @Published var errorText: String?
   @Published var rendering = false
   @Published var detectingFrames = false
@@ -814,8 +816,21 @@ final class AppModel: ObservableObject {
   /// The name an export of `frame` would take, for the output panel to show.
   func exportName(for frame: FilmFrame?) -> String {
     let stem = ExportNaming.name(preferences.exportNameTemplate, film: exportFilmKey, name: FilmCalibration.film(filmName),
-      frame: frame?.name ?? "01", roll: sessionURL?.lastPathComponent ?? "", date: Date())
+      frame: Self.exportFrameName(frame?.name ?? "01"), roll: sessionURL?.lastPathComponent ?? "",
+      date: frame.flatMap { Self.created(Self.exportSource($0, overview: overviewURL?.path ?? "")) } ?? Date())
     return stem + "." + (ExportFormat(rawValue: exportType) ?? .tiff).fileExtension
+  }
+  /// A frame's name as an export's file name has it: letters, digits, - and _, at most 40.
+  static func exportFrameName(_ name: String) -> String {
+    String(name.map { ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") ? $0 : "_" }.prefix(40))
+  }
+  /// The picture an export of `f` comes from: its scan or copy, else the preview.
+  static func exportSource(_ f: FilmFrame, overview: String) -> String {
+    f.hasFullResolution ? (f.scanPath ?? f.sourcePath ?? "") : overview
+  }
+  /// When a file was made, for an export's {date}.
+  static func created(_ path: String) -> Date? {
+    (try? FileManager.default.attributesOfItem(atPath: path))?[.creationDate] as? Date
   }
   /// ②'s film section opened the shelf to change the open roll's film.
   @Published var changingFilm = false
@@ -823,14 +838,33 @@ final class AppModel: ObservableObject {
   /// format, one step of ⌘Z where the window groups the edits (each is undone with the others).
   func applyFilm(profile p: FilmProfile, filmName name: String, reversal: Bool, format f: FilmFormat) {
     changingFilm = false
-    guard !isWorking else { return }
+    guard !isWorking else {
+      status = "正在扫描、翻拍或导出：完成后再从胶片架换胶片"
+      return
+    }
+    // One step of ⌘Z, the edits grouped by the window's event or not: the name alone or the
+    // format alone is undone too.
+    let grouping = undoManager.map { !$0.groupsByEvent } ?? false
+    if grouping { undoManager?.beginUndoGrouping() }
+    defer {
+      // Named while its group is open: a group closed with none open names nothing (and throws).
+      if let undoManager, undoManager.groupingLevel > 0 { undoManager.setActionName("换胶片") }
+      if grouping { undoManager?.endUndoGrouping() }
+    }
+    recordEdit("换胶片", key: "换胶片 \(UUID().uuidString)")
     if p.id != profile.id || p != profile { chooseProfile(p) }
     if filmName != name {
       filmName = name
       saveProject()
     }
-    if reversal != reversalRoll { setReversal(reversal) }
+    // The format first: a preview's frames are found again by it when the kind changes.
     setFormat(f)
+    // A roll with nothing in it yet: its first copy or import comes in as the kind chosen.
+    if frames.isEmpty {
+      startsAsSlides = reversal
+      preferences.scanReversal = reversal
+    }
+    if reversal != reversalRoll { setReversal(reversal) }
     status = "这一卷换成 \(name) · \(reversal ? "反转片" : "负片") · 画幅 \(f.rawValue)"
   }
   /// The roll's film format, from the new-project sheet, ①'s 规格 or ②'s film section: a scan's
@@ -838,6 +872,8 @@ final class AppModel: ObservableObject {
   /// dpi, follows it (`formatDPI`). Kept with the roll.
   func setFormat(_ f: FilmFormat) {
     guard f != format else { return }
+    // An edit of its own: undone, the format goes back (and an edit undone past it keeps it).
+    recordEdit("画幅")
     format = f
     refresh()
     saveProject()
@@ -1287,11 +1323,12 @@ final class AppModel: ObservableObject {
   weak var undoManager: UndoManager?
   private struct EditState {
     var frames: [FilmFrame], selectedID: UUID?, profile: FilmProfile, filmName: String, useCalibration: Bool, rollFlats: [FlatProfile]
+    var format: FilmFormat, startsAsSlides: Bool?
   }
   private var lastEdit: (key: String, at: Date)?
   private var editState: EditState { EditState(
     frames: frames, selectedID: selectedID, profile: profile, filmName: filmName, useCalibration: useCalibration,
-    rollFlats: rollFlats)
+    rollFlats: rollFlats, format: format, startsAsSlides: startsAsSlides)
   }
   /// Called before an edit. Repeats of one control within a second, a fader being dragged, are one step.
   func recordEdit(_ name: String, key: String? = nil, filmName shown: String? = nil) {
@@ -1338,6 +1375,7 @@ final class AppModel: ObservableObject {
     }
     selectedID = state.selectedID.flatMap { id in frames.contains { $0.id == id } ? id : nil } ?? frames.first?.id
     (profile, filmName, useCalibration, rollFlats) = (state.profile, state.filmName, state.useCalibration, state.rollFlats)
+    (format, startsAsSlides) = (state.format, state.startsAsSlides)
     editRegionLock = nil
     status = (undoing ? "已撤销：" : "已重做：") + name
     updateRollBase()
@@ -3821,11 +3859,9 @@ final class AppModel: ObservableObject {
         for f in items { try autoreleasepool {
           let image = try self.source(for: f, full: true)
           let sharpener = Sharpening.sharpener(sharpening, frame: f, maxDimension: nil)
-          let safeName = String(
-            f.name.map { ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") ? $0 : "_" }.prefix(
-              40))
-          let source = f.hasFullResolution ? (f.scanPath ?? f.sourcePath ?? "") : overviewPath
-          let scanned = (try? FileManager.default.attributesOfItem(atPath: source))?[.creationDate] as? Date
+          let safeName = Self.exportFrameName(f.name)
+          let source = Self.exportSource(f, overview: overviewPath)
+          let scanned = Self.created(source)
           let dpi = f.hasFullResolution ? ((fileDPI[f.id] ?? nil) ?? f.scanDPI ?? previewDPI) : previewDPI
           let stem = ExportNaming.name(template, film: filmKey, name: filmTitle, frame: safeName, roll: roll, date: scanned)
           // Never over an earlier export: a second one gets a number.
@@ -3858,6 +3894,7 @@ final class AppModel: ObservableObject {
           self.endExport()
           self.status = "已导出 \(items.count) 张到 \(directory.lastPathComponent)"
           self.exported = (self.status, files)
+          self.exportsDone += 1
           completion?()
         }
       } catch {
@@ -3964,6 +4001,7 @@ final class AppModel: ObservableObject {
           self.endExport()
           self.status = "接触表已导出：\(url.lastPathComponent) · \(Int(size.width)) × \(Int(size.height))"
           self.exported = (self.status, [url])
+          self.exportsDone += 1
           completion?(nil)
         }
       } catch {
