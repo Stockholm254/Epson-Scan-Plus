@@ -97,7 +97,7 @@ struct NewProjectSheet: View {
         LazyVStack(alignment: .leading, spacing: 6, pinnedViews: []) {
           if query.isEmpty {
             if !recent.isEmpty {
-              shelfRow("最近用过", recent, anchors: false)
+              recentRow
             }
             if !calibrated.isEmpty {
               shelfRow("本机标定", calibrated.map { .preset($0.id) })
@@ -157,15 +157,36 @@ struct NewProjectSheet: View {
         .frame(height: 5).clipShape(RoundedRectangle(cornerRadius: 1.5)).padding(.top, -6)
     }.padding(.bottom, 8)
   }
-  private func cell(_ item: Choice) -> some View {
-    let on = item == choice
+  /// The films of the rolls last begun, each in the format its roll was: taken, the format comes too.
+  private var recentRow: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Text("最近用过").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).padding(.leading, 2)
+      LazyVGrid(columns: [GridItem(.adaptive(minimum: 86, maximum: 96), spacing: 10, alignment: .top)], alignment: .leading, spacing: 8) {
+        ForEach(recent, id: \.self) { used in cell(used.choice, used: used.format) }
+      }
+      Rectangle().fill(LinearGradient(colors: [Color.primary.opacity(0.16), Color.primary.opacity(0.02)], startPoint: .top, endPoint: .bottom))
+        .frame(height: 5).clipShape(RoundedRectangle(cornerRadius: 1.5)).padding(.top, -6)
+    }.padding(.bottom, 8)
+  }
+  /// `used`: the format of the roll the film was last used in, drawn so and taken with it.
+  private func cell(_ item: Choice, used: FilmFormat? = nil) -> some View {
+    let on = item == choice && (used == nil || used == format)
     let look = self.look(item)
+    let gauge = used.map { Self.gauge(item, format: $0) } ?? self.gauge(for: item)
     return Button {
-      withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) { pick(item) }
+      withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) { pick(item, format: used) }
     } label: {
       VStack(spacing: 3) {
-        FilmObject(look: look, gauge: gauge(for: item))
+        FilmObject(look: look, gauge: gauge)
           .frame(width: 70, height: 92)
+          // The format its roll was, on a tab, where it is 120.
+          .overlay(alignment: .bottomTrailing) {
+            if let used, used != .mm135 {
+              Text(used.rawValue.replacingOccurrences(of: "120 · ", with: "")).font(.system(size: 9, weight: .semibold).monospacedDigit())
+                .padding(.horizontal, 4).padding(.vertical, 1.5)
+                .background(Capsule().fill(.regularMaterial)).overlay(Capsule().strokeBorder(Color.primary.opacity(0.12)))
+            }
+          }
           .offset(y: on ? -5 : hovering == item ? -2 : 0)
           .shadow(color: .black.opacity(on ? 0.18 : 0), radius: on ? 8 : 0, y: on ? 6 : 0)
         Text(look.title).font(.system(size: 10.5, weight: on ? .semibold : .regular)).lineLimit(2)
@@ -179,7 +200,7 @@ struct NewProjectSheet: View {
     .onHover { inside in
       withAnimation(.easeOut(duration: 0.12)) { hovering = inside ? item : (hovering == item ? nil : hovering) }
     }
-    .simultaneousGesture(TapGesture(count: 2).onEnded { pick(item); begin() })
+    .simultaneousGesture(TapGesture(count: 2).onEnded { pick(item, format: used); begin() })
     .help(look.help)
     .accessibilityLabel(look.title + "，" + look.kindText)
     .accessibilityAddTraits(on ? .isSelected : [])
@@ -323,12 +344,18 @@ struct NewProjectSheet: View {
     stepped = true
     withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) { pick(list[i]) }
   }
-  /// The films of the rolls last begun in the library, newest first, each once.
-  private var recent: [Choice] { Self.recent(m.shelf.entries, profiles: m.profiles) }
-  /// The films of the rolls in `entries`, newest first, each once and at most `limit`: a preset of
-  /// this Mac as itself, else the roll's film in the catalog, else its own name when it has one.
-  static func recent(_ entries: [RollEntry], profiles: [FilmProfile], limit: Int = 6) -> [Choice] {
-    var found = [Choice]()
+  /// A film as a roll was begun with it, and the format the roll was (nil, 自动 or not kept).
+  struct Used: Hashable {
+    let choice: Choice
+    let format: FilmFormat?
+  }
+  /// The films of the rolls last begun in the library, newest first, each once in each gauge.
+  private var recent: [Used] { Self.recent(m.shelf.entries, profiles: m.profiles) }
+  /// The films of the rolls in `entries`, newest first and at most `limit`: a preset of this Mac as
+  /// itself, else the roll's film in the catalog, else its own name when it has one; each with the
+  /// newest of its rolls' formats, once in 135 (or 自动) and once in 120.
+  static func recent(_ entries: [RollEntry], profiles: [FilmProfile], limit: Int = 6) -> [Used] {
+    var found = [Used]()
     for e in entries.sorted(by: { $0.date > $1.date }) where found.count < limit {
       let item: Choice
       if !FilmProfile.builtins.contains(where: { $0.id == e.profile.id }), profiles.contains(where: { $0.id == e.profile.id }) {
@@ -340,7 +367,9 @@ struct NewProjectSheet: View {
       } else {
         continue
       }
-      if !found.contains(item) { found.append(item) }
+      let format = e.format.flatMap(FilmFormat.init(rawValue:)).flatMap { $0 == .auto ? nil : $0 }
+      let medium = { (f: FilmFormat?) in f.map { $0 != .mm135 } ?? false }
+      if !found.contains(where: { $0.choice == item && medium($0.format) == medium(format) }) { found.append(Used(choice: item, format: format)) }
     }
     return found
   }
@@ -364,8 +393,10 @@ struct NewProjectSheet: View {
   private var typedIsListed: Bool {
     FilmCatalog.stocks.contains { FilmCatalog.fold($0.name) == FilmCatalog.fold(typed) || FilmCatalog.fold($0.stock) == FilmCatalog.fold(typed) }
   }
-  private func pick(_ item: Choice) {
+  /// `format`: the format to take with it, from a roll it was used in.
+  private func pick(_ item: Choice, format used: FilmFormat? = nil) {
     choice = item
+    if let used { format = used }
     // The kind of film the stock is: a slide is not inverted; the rest are negatives.
     if let kind = look(item).kind { reversal = kind == .slide }
     // A stock made only in one gauge: a format of the other is left for another to pick.
