@@ -16,6 +16,9 @@ import UniformTypeIdentifiers
 /// - A shot that looks like the file already there (a mean difference under 1/255) leaves that
 ///   file as it is, so a rebuild does not rewrite every JPEG.
 /// - The close-ups (the scan head, the loupes, the crop glass) are drawn by hand and not taken here.
+/// - The README's features each have a picture: the film shelf, ① with the scanner, a copy roll's
+///   light table, the two crops, dust, the curves and the shortcuts, cut from the window where only
+///   a part of it says what the feature is. The copy roll is the user's Phoenix 6×6 roll.
 final class ShotWindow: NSWindow {
   override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
   override var canBecomeKey: Bool { true }
@@ -33,6 +36,8 @@ struct ShotFailure: Error { let message: String }
     "2026-10-29_225926_1C87", "2026-10-29_222948_DEF0", "2026-10-29_204224_C6F9",
     "2026-10-29_092428_7497", "2026-10-28_210643_FE21", "2026-10-28_200224_0E3A",
   ]
+  /// A copy roll from the A7R IV: Harman Phoenix II 200 in 6×6, with dust found on its first frame.
+  static let copyRoll = "2026-11-07_132152_9EA1"
   static let size = NSSize(width: 1440, height: 920)
 
   static func pump(_ seconds: Double) { RunLoop.main.run(until: Date().addingTimeInterval(seconds)) }
@@ -142,6 +147,18 @@ struct ShotFailure: Error { let message: String }
       model.status = text
       pump(0.4)
     }
+    /// The inspector's sections opened or folded for a shot (their own switches, in this tool's
+    /// standard defaults), and put back after.
+    func sections(_ open: [String: Bool]) -> () -> Void {
+      let was = open.keys.map { ($0, standard.object(forKey: "panelSection." + $0)) }
+      for (key, on) in open { standard.set(on, forKey: "panelSection." + key) }
+      return { for (key, value) in was { if let value { standard.set(value, forKey: "panelSection." + key) } else { standard.removeObject(forKey: "panelSection." + key) } } }
+    }
+    /// The middle of the window and the inspector beside it, below the window's own buttons.
+    func workArea(_ c: Picture.Columns) -> CGRect {
+      let right = c.inspector?.maxX ?? c.middle.maxX
+      return CGRect(x: c.middle.minX, y: 46, width: right - c.middle.minX, height: c.middle.height - 46)
+    }
     var changed = [String]()
     func save(_ image: CGImage, _ name: String, width: Int) throws {
       if try Picture.save(image, to: out.appendingPathComponent(name), width: width) { changed.append(name) }
@@ -159,6 +176,7 @@ struct ShotFailure: Error { let message: String }
     settle()
     let capturePanel = try Picture.capture(window, work: work)
     let captureColumns = Picture.columns(window)
+    try save(capturePanel, "capture.jpg", width: 1600)
 
     // ② taking the mask off: the light table, the loupe on 16.
     model.page = .convert
@@ -197,8 +215,61 @@ struct ShotFailure: Error { let message: String }
     model.showSingle(true)
     settle(2)
     try save(try Picture.capture(window, work: work), "single-view.jpg", width: 1600)
+
+    // The curves open over the frame's histograms, the sections above them folded.
+    let curvesBack = sections(["balance": false, "tone": false, "levels": false, "colour": false, "dust": false, "curves": true])
+    let keptCurves = model.settings.curves
+    let medium = CurveEditor.presets.first { $0.name == "中对比" }?.levels ?? []
+    model.change("曲线") { $0.curves = ToneCurves(rgb: CurveEditor.preset(medium)) }
+    settle(2)
+    let curves = try Picture.capture(window, work: work)
+    if let cut = Picture.crop(curves, to: workArea(Picture.columns(window)), window: window) { try save(cut, "curves.jpg", width: 1400) }
+    model.change("曲线") { $0.curves = keptCurves }
+    curvesBack()
+    settle()
+
+    // The keys, in their sheet.
+    model.showShortcuts = true
+    settle(1.5)
+    if let sheet = window.attachedSheet { try save(try Picture.capture(sheet, work: work), "shortcuts.jpg", width: 1400) }
+    model.showShortcuts = false
+    settle()
     model.showSingle(false)
     settle()
+
+    // A copy roll: its light table, the two crops on a frame, and the dust found on another.
+    let copyURL = library.appendingPathComponent(copyRoll).appendingPathComponent(AppModel.projectFile)
+    if files.fileExists(atPath: copyURL.path) {
+      model.loadProject(copyURL)
+      model.page = .convert
+      settle(3)
+      // Every frame converted, not the first few over black cells.
+      var waited = 0.0
+      while model.positivesLoading != nil && waited < 120 { pump(0.5); waited += 0.5 }
+      settle(2)
+      try save(try Picture.capture(window, work: work), "copy-table.jpg", width: 1600)
+      select("03")
+      model.showSingle(true)
+      settle(2)
+      model.preferences.showDustMarks = false
+      model.tool = .region
+      settle(1.5)
+      let region = try Picture.capture(window, work: work)
+      if let cut = Picture.crop(region, to: workArea(Picture.columns(window)), window: window) { try save(cut, "crop-region.jpg", width: 1400) }
+      model.tool = .select
+      model.preferences.showDustMarks = true
+      let dustBack = sections(["balance": false, "tone": false, "levels": false, "colour": false, "dust": true])
+      select("01")
+      settle(3)
+      let dust = try Picture.capture(window, work: work)
+      if let cut = Picture.crop(dust, to: workArea(Picture.columns(window)), window: window) { try save(cut, "dust.jpg", width: 1400) }
+      dustBack()
+      model.showSingle(false)
+      // Back to the sea roll for the library and the leak page.
+      model.loadProject(rollURL.appendingPathComponent(AppModel.projectFile))
+      model.page = .convert
+      settle(2)
+    }
 
     // The library, the window's first tab, of the shelf's rolls only; the library, the module and
     // the status line put back after.
@@ -208,6 +279,15 @@ struct ShotFailure: Error { let message: String }
     settle(3)
     guard model.page == .library else { throw ShotFailure(message: "库没有打开") }
     try save(try Picture.capture(window, work: work), "library.jpg", width: 1600)
+    // 新建工程's film shelf, over the library.
+    let keptProfiles = model.profiles
+    model.profiles = FilmProfile.builtins
+    model.askNewProject()
+    settle(3)
+    if let sheet = window.attachedSheet { try save(try Picture.capture(sheet, work: work), "shelf.jpg", width: 1400) }
+    model.askingNewProject = false
+    model.profiles = keptProfiles
+    settle()
     model.page = .convert
     model.setLibrary(library)
     model.status = status
