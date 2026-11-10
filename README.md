@@ -56,7 +56,7 @@
 - Apple Silicon Mac，macOS 26 或更新。
 - 扫描：Epson Perfection V800 / V850（USB `04b8:0151`，实测设备名 GT-X980）。
 - 翻拍（可选）：Sony A7R IV，USB 连接；直连不需要别的，要改用 Sony 的 SDK 时构建要有它，见[构建](#构建)。
-- App 为本地临时签名，未经 Apple 公证。
+- App 用作者 Mac 上的自签名证书「Epson Scan plus Signing」签名（0.18.1 起），未经 Apple 公证。见[构建与测试](doc/building-and-testing.md#发布和更新)。
 
 ## 安装与更新
 

@@ -57,6 +57,25 @@ enum MCPTests {
     let d = samples?.map { ($0["density_above_base"] as? [String: Double])?["g"] ?? -1 }
     try check(samples?.count == 2 && (d?[0] ?? 0) > (d?[1] ?? 1),
       "sample reads the negative's density above the base and the positive at each point")
+    // A dense negative, as a sky's blue on a copy: 0.0174 of white lies between the 8-bit codes 4
+    // and 5 (0.0157, 0.0196, about 0.1 D apart). The tools read floats, so it comes back as it is.
+    let dense: CGImage = {
+      let w = 64, h = 48
+      var px = [UInt16](repeating: 65535, count: w * h * 4)
+      for i in 0..<(w * h) {
+        (px[i * 4], px[i * 4 + 1], px[i * 4 + 2]) = (UInt16(0.0235 * 65535), UInt16(0.1235 * 65535), UInt16(0.0174 * 65535))
+      }
+      return CGImage(
+        width: w, height: h, bitsPerComponent: 16, bitsPerPixel: 64, bytesPerRow: w * 8,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!,
+        bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder16Little.rawValue),
+        provider: CGDataProvider(data: Data(bytes: px, count: px.count * 2) as CFData)!, decode: nil,
+        shouldInterpolate: false, intent: .defaultIntent)!
+    }()
+    let fine = MCPTools.reading(ImagePipeline.shared.samples(dense, maxDimension: 64), at: CGPoint(x: 0.5, y: 0.5), settings: Adjustments())
+    let coarse = ImagePipeline.shared.raster(dense, maxDimension: 64).pixel(32, 24)
+    try check(abs(fine.b - 0.0174) < 0.0002 && abs(fine.r - 0.0235) < 0.0002 && abs(coarse.b - 0.0174) > 0.001,
+      String(format: "the tools read the negative in floats: a dense blue of 0.0174 reads %.4f, where 8 bits would give %.4f", fine.b, coarse.b))
     try check(!call("adjust", ["warmth": 0.3, "exposure": 0.25]).isError && model.settings.warmth == 0.3 && model.settings.exposure == 0.25,
       "adjust changes only what it is given")
     try check(!call("undo").isError && model.settings.warmth == 0 && model.settings.exposure == 0, "and undo takes it back, as ⌘Z does")

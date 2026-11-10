@@ -240,13 +240,15 @@ enum MCPTools {
   private static func fitError(_ points: [NeutralPoint], _ green: Double, _ curve: RGB?) -> String {
     do { _ = try FilmCalibration.fit(points, greenSlope: green, curve: curve); return "" } catch { return error.localizedDescription }
   }
-  /// The negative's linear reading around a point of the frame as shown, 5 × 5 pixels.
-  private static func reading(_ raster: Raster, at p: CGPoint, settings: Adjustments) -> RGB {
-    let raw = ImageGeometry.raw(p, settings: settings, aspect: Double(raster.width) / Double(max(1, raster.height)))
-    let x = Int(raw.x * Double(raster.width - 1)), y = Int(raw.y * Double(raster.height - 1))
+  /// The negative's linear reading around a point of the frame as shown, 5 × 5 pixels, in floats:
+  /// 8 bits keep only a few codes where a linear negative is dense (a sky's blue at 4–6 of 255,
+  /// about 0.1 D apart), so densities, neutral picks and bases read there would come in steps.
+  static func reading(_ samples: Samples, at p: CGPoint, settings: Adjustments) -> RGB {
+    let raw = ImageGeometry.raw(p, settings: settings, aspect: Double(samples.width) / Double(max(1, samples.height)))
+    let x = Int(raw.x * Double(samples.width - 1)), y = Int(raw.y * Double(samples.height - 1))
     var sum = [0.0, 0.0, 0.0], n = 0.0
     for dy in -2...2 { for dx in -2...2 {
-      let v = raster.pixel(x + dx, y + dy).values
+      let v = samples.pixel(x + dx, y + dy).values
       for c in 0..<3 { sum[c] += v[c] }
       n += 1
     } }
@@ -287,7 +289,7 @@ enum MCPTools {
       let s = frame.adjustments
       let source = try model.source(for: frame, maxDimension: 600)
       let analysis = pipe.analyze(source, settings: s, profile: profile)
-      let negative = pipe.raster(source, maxDimension: 300)
+      let negative = pipe.samples(source, maxDimension: 300)
       let shown = try pipe.preview(source, settings: s, profile: profile)
       let positive = pipe.raster(shown, maxDimension: 300)
       var densities = [[Double]](repeating: [], count: 3), outputs = [[Double]](repeating: [], count: 3)
@@ -460,7 +462,7 @@ enum MCPTools {
       let s = frame.adjustments
       let source = try model.source(for: frame, maxDimension: 1500)
       let analysis = pipe.analyze(source, settings: s, profile: profile)
-      let negative = pipe.raster(source, maxDimension: 1500)
+      let negative = pipe.samples(source, maxDimension: 1500)
       let positive = pipe.raster(try pipe.preview(source, settings: s, profile: profile), maxDimension: 1500)
       return text(points.map { p -> [String: Any] in
         let v = reading(negative, at: p, settings: s)
@@ -513,10 +515,10 @@ enum MCPTools {
     case "pick_film_base", "pick_neutral":
       let p = try coordinate(arguments)
       let (frame, _) = try selected(model)
-      let raster = pipe.raster(try model.source(for: frame, maxDimension: 2000), maxDimension: 2000)
-      let v = reading(raster, at: p, settings: frame.adjustments)
+      let read = pipe.samples(try model.source(for: frame, maxDimension: 2000), maxDimension: 2000)
+      let v = reading(read, at: p, settings: frame.adjustments)
       // Where it was read, in the frame's picture: the point on the frame as cropped, unturned.
-      let raw = ImageGeometry.raw(p, settings: frame.adjustments, aspect: Double(raster.width) / Double(max(1, raster.height)))
+      let raw = ImageGeometry.raw(p, settings: frame.adjustments, aspect: Double(read.width) / Double(max(1, read.height)))
       let crop = frame.rect
       let place = NormalRect(x: crop.x + (raw.x - 0.005) * crop.width, y: crop.y + (raw.y - 0.005) * crop.height,
         width: 0.01 * crop.width, height: 0.01 * crop.height)
@@ -565,8 +567,8 @@ enum MCPTools {
     case "pick_shadow_neutral":
       let p = try coordinate(arguments)
       let (frame, _) = try selected(model)
-      let raster = pipe.raster(try model.source(for: frame, maxDimension: 2000), maxDimension: 2000)
-      let v = reading(raster, at: p, settings: frame.adjustments)
+      let read = pipe.samples(try model.source(for: frame, maxDimension: 2000), maxDimension: 2000)
+      let v = reading(read, at: p, settings: frame.adjustments)
       let set = onMain { model.setShadowNeutral(v) }
       guard set else { throw DeskError.message("这一点太暗或太亮（亮度在暗部到中间调之间时才够得着），没有改。换一处阴影里的中性物体。") }
       let after = onMain { model.settings }

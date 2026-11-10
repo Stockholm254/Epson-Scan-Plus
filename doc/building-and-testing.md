@@ -72,7 +72,10 @@ bash release.sh
 - **替换**：App 退出后，一个独立的脚本把旧版本移到 `~/Library/Application Support/epscan/旧版/Epson Scan plus <版本> (<构建号>).app`，再把新版本放回原处。新版本放不进去时，把旧版本放回去。日志在 `~/Library/Application Support/epscan/Updates/install.log`。
   - 结果写在同一目录的 `install-result` 里。没换上的那个版本，下次打开时只显示原因，不再自动下载；在「检查更新…」里点检查会再试。
 - **换更新列表**：用 `defaults write local.epscan.mac updateFeed <URL>`，https 地址也行，签名照样核对。
-- **签名方式**：App 是临时签名（ad-hoc），没有 Apple 公证。从网上下载到别的 Mac 时，第一次打开要在「系统设置 → 隐私与安全性」里允许。更新时系统可能再问一次权限。
+- **签名方式**：`build.sh` 在这台 Mac 有代码签名身份「Epson Scan plus Signing」时用它签名（0.18.1 起的发布都是），没有时退回临时签名（ad-hoc）；名字可以用环境变量 `EPSON_SCAN_PLUS_SIGNING_IDENTITY` 换。都没有 Apple 公证。
+  - **为什么要固定证书**：临时签名的身份是这一份构建的散列，每个版本对 macOS 都是新 App，钥匙串里的 OpenAI Key 每次更新后都要再问一次。用同一张证书签名，各个版本就是同一个 App，「始终允许」一直有效。
+  - **建证书**：「钥匙串访问」→「证书助理」→「创建证书…」，名称 `Epson Scan plus Signing`，身份类型「自签名根证书」，证书类型「代码签名」，放在登录钥匙串里，不用设成信任。默认一年有效，换证书的那一版钥匙串会再问一次。第一次用它签名时 macOS 问 codesign 能否使用这把密钥，选「始终允许」。
+  - **别的 Mac**：自签名证书和临时签名一样不被系统认可，从网上下载到别的 Mac 时，第一次打开要在「系统设置 → 隐私与安全性」里允许。
 
 ## 界面截图
 
