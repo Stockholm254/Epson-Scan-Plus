@@ -156,6 +156,7 @@ struct LibraryPage: View {
         }
         Spacer()
         TextField("搜索卷名、胶片或备注", text: $shelf.query).textFieldStyle(.roundedBorder).frame(width: 200)
+          .help("也能按胶片是什么来找：厂家（富士、柯达）、片种（正片、黑白）、感光度或画幅（6×7）")
         Picker("来源", selection: $shelf.source) {
           Text("全部").tag(RollSource?.none)
           ForEach(RollSource.allCases, id: \.self) { Text($0.rawValue).tag(Optional($0)) }

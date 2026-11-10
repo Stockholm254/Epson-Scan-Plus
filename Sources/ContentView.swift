@@ -108,7 +108,9 @@ struct ContentView: View {
       statusShown = true
       statusChange += 1
       let change = statusChange
-      DispatchQueue.main.asyncAfter(deadline: .now() + 6) { if statusChange == change { statusShown = false } }
+      // An export just done stays longer, for its files to be shown in Finder.
+      let shown: Double = m.exported?.status == m.activityStatus ? 20 : 6
+      DispatchQueue.main.asyncAfter(deadline: .now() + shown) { if statusChange == change { statusShown = false } }
     }
     .onChange(of: m.tool) { _, tool in
       // Picking neutral points calibrates the preset, whose list is in module ②'s sidebar.
@@ -1327,7 +1329,14 @@ struct ContentView: View {
   var footer: some View {
     HStack(spacing: 12) {
       if m.exporting { ProgressView().controlSize(.small) }
-      Text(m.activityStatus).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+      HStack(spacing: 10) {
+        Text(m.activityStatus).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+        // The export just done, its files selected in Finder.
+        if let done = m.exported, done.status == m.activityStatus, !done.files.isEmpty {
+          Button("在 Finder 中显示") { NSWorkspace.shared.activateFileViewerSelecting(done.files) }
+            .buttonStyle(.link).font(.system(size: 11)).help("在 Finder 中选中导出的 \(done.files.count) 个文件")
+        }
+      }.frame(maxWidth: .infinity, alignment: .leading)
       UpdateNotice(m: m, updater: m.updater)
       if m.scanBatch.isActive || m.scanner.busy {
         scanProgress

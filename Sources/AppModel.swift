@@ -192,6 +192,9 @@ final class AppModel: ObservableObject {
   /// The pipeline finds a calibrated preset's film among them (`ImagePipeline.analyze`).
   @Published var profiles = FilmProfile.builtins { didSet { ImagePipeline.shared.films = profiles } }
   @Published var status = "从库里开始：新建工程、打开一卷或导入照片"
+  /// The files the last export wrote, with what the status said of it: while it still says so,
+  /// the status line offers them in Finder.
+  @Published private(set) var exported: (status: String, files: [URL])?
   @Published var errorText: String?
   @Published var rendering = false
   @Published var detectingFrames = false
@@ -3790,6 +3793,7 @@ final class AppModel: ObservableObject {
     exportQueue.async {
       do {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var written = [URL]()
         // Each frame's pictures let go before the next: a 60-megapixel frame holds half a gigabyte.
         for f in items { try autoreleasepool {
           let image = try self.source(for: f, full: true)
@@ -3824,10 +3828,13 @@ final class AppModel: ObservableObject {
           encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
           try encoder.encode(sidecar).write(
             to: url.appendingPathExtension("json"), options: .atomic)
+          written.append(url)
         } }
+        let files = written
         DispatchQueue.main.async {
           self.endExport()
           self.status = "已导出 \(items.count) 张到 \(directory.lastPathComponent)"
+          self.exported = (self.status, files)
           completion?()
         }
       } catch {
@@ -3932,6 +3939,7 @@ final class AppModel: ObservableObject {
         DispatchQueue.main.async {
           self.endExport()
           self.status = "接触表已导出：\(url.lastPathComponent) · \(Int(size.width)) × \(Int(size.height))"
+          self.exported = (self.status, [url])
           completion?(nil)
         }
       } catch {

@@ -275,6 +275,11 @@ enum WorkflowTests {
     let files = (try? FileManager.default.contentsOfDirectory(atPath: out.path))?.filter { $0.hasSuffix(".tif") }.sorted() ?? []
     let id = FilmProfile.builtins[0].id
     try check(files == ["\(id)_01-2.tif", "\(id)_01.tif"], "a second export of a frame gets a number, never overwriting: \(files)")
+    // The status line offers in Finder the files the export just done wrote, while it says so.
+    let shown = exporter.exported
+    try check(shown?.status == exporter.status && shown?.files.count == 1
+      && shown.map { files.contains($0.files[0].lastPathComponent) && FileManager.default.fileExists(atPath: $0.files[0].path) } == true,
+      "the status line can show the files an export wrote in Finder: \(shown?.files.map(\.lastPathComponent) ?? [])")
   }
 }
 
