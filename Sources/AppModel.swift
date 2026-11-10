@@ -413,6 +413,10 @@ final class AppModel: ObservableObject {
   var hasProject: Bool { projectStarted || sessionURL != nil || !frames.isEmpty }
   /// The page shows the open roll's frames and works on them: ① or ②.
   var onRollModule: Bool { page == .capture || page == .convert }
+  /// ① with the scanner and nothing on its light table yet: a new roll, before its first preview.
+  var emptyScannerTable: Bool {
+    page == .capture && captureSource == .scanner && !singleView && frames.isEmpty && overview == nil && scanner.previewSoFar == nil
+  }
   /// The presets table is open.
   @Published var showPresets = false
   /// The preset the presets table selects when it opens next (the calibration panel's 「管理…」).
@@ -421,6 +425,8 @@ final class AppModel: ObservableObject {
   @Published var settingsRequests = 0
   /// The window about updates is open.
   @Published var showUpdates = false
+  /// The keyboard shortcuts sheet is open (⌘/).
+  @Published var showShortcuts = false
   /// Keeps a copy in Applications up to date; started with the app.
   lazy var updater = Updater(preferences: preferences)
   /// The 去漏光 page, made when it is first shown.
@@ -1322,6 +1328,40 @@ final class AppModel: ObservableObject {
   }
   /// The tone and colour settings back to their defaults. How the file is encoded, which way the
   /// frame faces and the roll's own estimates are not settings, so they stay.
+  /// The inspector's sections that a ⟲ in their title sets back on their own, as Capture One's
+  /// tools do: the rest of the frame left as it is.
+  enum AdjustmentPart: String, CaseIterable { case balance = "白平衡", tone = "影调", levels = "色阶", colour = "色彩" }
+  /// `a` with `part` as a new frame has it: a slide keeps its own colour (auto white balance off),
+  /// a copy shot its colour noise reduction; everything else, the roll's switches among it, as it is.
+  static func reset(_ part: AdjustmentPart, of a: Adjustments, copyShot: Bool) -> Adjustments {
+    var r = a, fresh = Adjustments()
+    if a.isSlide { fresh.setReversal(true) }
+    switch part {
+    case .balance:
+      r.autoWhiteBalance = fresh.autoWhiteBalance
+      (r.warmth, r.tint, r.shadowWarmth, r.shadowTint) = (fresh.warmth, fresh.tint, nil, nil)
+      (r.neutralSample, r.neutralPicked, r.manualBalance) = (nil, nil, nil)
+    case .tone:
+      (r.exposure, r.contrast, r.highlights, r.pressHighlights, r.shadows) = (fresh.exposure, fresh.contrast, nil, nil, nil)
+    case .levels:
+      (r.autoLevels, r.black, r.white, r.midtone) = (fresh.autoLevels, fresh.black, fresh.white, fresh.midtone)
+    case .colour:
+      (r.saturation, r.softEnds, r.colourNoise) = (fresh.saturation, nil, copyShot ? 1 : nil)
+    }
+    return r
+  }
+  /// The selected frame's `part` differs from a new frame's: its ⟲ shows.
+  func isChanged(_ part: AdjustmentPart) -> Bool {
+    guard let f = selected else { return false }
+    return Self.reset(part, of: f.adjustments, copyShot: f.sensorRead == true) != f.adjustments
+  }
+  /// One section of the selected frame back as a new frame has it; ⌘Z brings it back.
+  func reset(_ part: AdjustmentPart) {
+    guard let f = selected, isChanged(part) else { return }
+    let copyShot = f.sensorRead == true
+    change("恢复" + part.rawValue, separate: true) { $0 = Self.reset(part, of: $0, copyShot: copyShot) }
+    status = "「\(part.rawValue)」已恢复默认 · ⌘Z 撤销"
+  }
   func resetAdjustments() {
     change("重置调整") {
       let kept = $0
@@ -1574,8 +1614,12 @@ final class AppModel: ObservableObject {
       if self?.baseFlash == flash { self?.baseFlash = nil }
     }
   }
-  /// The frame's dust marked on the single view: filled spots ringed, kept ones dotted.
-  @Published var showDust = true
+  /// The frame's dust marked on the single view: filled spots ringed, kept ones dotted. Switched
+  /// in the toolbar (除尘标出) and in the 除尘 section (标出), and remembered.
+  var showDust: Bool {
+    get { preferences.showDustMarks }
+    set { preferences.showDustMarks = newValue }
+  }
   /// What the dust search is doing, while it runs.
   @Published var dustSearch: String?
   /// The picture's file, whole and small, as it reads for the edge base: crosstalk taken out as
@@ -4147,6 +4191,8 @@ final class AppModel: ObservableObject {
       sessionURL = folder
       projectFileName = url.lastPathComponent
       alsoSelected = []
+      // The last roll's single frame is not this one's.
+      sourceSummary = ""
       overviewURL = URL(fileURLWithPath: overviewPath)
       overview = cg
       frames = p.frames.map { saved in

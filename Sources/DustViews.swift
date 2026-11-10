@@ -46,7 +46,7 @@ struct DustSection: View {
               .help("在单张上点灰尘去掉它，点圆圈改成留下或去掉")
             Spacer()
             Toggle("标出", isOn: $m.showDust).toggleStyle(.switch).controlSize(.mini)
-              .help("在单张上用圆圈标出灰尘：实线去掉，虚线留下")
+              .help("在单张上用圆圈标出灰尘：实线去掉，虚线留下；和工具栏的「除尘标出」是同一个开关")
           }.font(.system(size: 11))
           if let dust, !dust.spots.isEmpty {
             HStack {

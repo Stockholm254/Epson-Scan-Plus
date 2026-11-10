@@ -301,8 +301,10 @@ struct LeakPanel: View {
           Text("白天 / 自然光").tag("day")
           Text("夜晚 / 点光源").tag("night")
         }.labelsHidden().frame(width: 140).disabled(!lab.hasBase || lab.busy != nil)
+          .help("自动判断不确定时，可手动选择。不会因此调用 API。")
       }
-      note(sceneHint)
+      // What the scene was judged to be, once it has been; before that the picker's help says it.
+      if lab.params.sceneInfo != nil { note(sceneHint) }
       HStack {
         Text(!lab.hasBase ? "等待照片" : lab.repaired ? "已应用去漏光" : "尚未去漏光").readout(11)
         Spacer()
@@ -316,17 +318,17 @@ struct LeakPanel: View {
       note(lab.hasReference ? "已有参考图：在本地去漏光，不产生费用。"
         : lab.regionsAct ? "没有参考图：只校正启用的局部区域，不调用 API。"
         : "首次会用 API 生成参考图（先确认上传和费用）；不想用 API，先在「局部区域与保护」里标出漏光。")
-      Toggle(
+      SwitchRow(
         "保留灯光红晕和真实红色物体",
-        isOn: Binding(get: { lab.params.protectHighlights }, set: { v in lab.change("保留灯光红晕") { $0.protectHighlights = v } })
-      ).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11)).disabled(!lab.hasBase || lab.busy != nil)
+        isOn: Binding(get: { lab.params.protectHighlights }, set: { v in lab.change("保留灯光红晕") { $0.protectHighlights = v } }),
+        off: !lab.hasBase || lab.busy != nil)
       // A frame of the roll, whose de-masking region says where the photograph is: the film's edge
       // around it is cleaned on its own.
       if LeakLab.pictureHint(lab.job, lab.params) != nil {
-        Toggle(
+        SwitchRow(
           "片边去漏光，边字保留",
-          isOn: Binding(get: { lab.params.filmEdges != false }, set: { v in lab.change("片边去漏光") { $0.filmEdges = v ? nil : false } })
-        ).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11)).disabled(!lab.hasBase || lab.busy != nil)
+          isOn: Binding(get: { lab.params.filmEdges != false }, set: { v in lab.change("片边去漏光") { $0.filmEdges = v ? nil : false } }),
+          off: !lab.hasBase || lab.busy != nil)
           .help("照片外一圈片边单独处理：参考图里没有片边，不按它校正；片边压回片基的黑，贴着胶片边的亮线和整条的漏光去掉，边字保留原来的颜色。照片和片边的分界在这张的去色罩区域附近找，找不到的那一边不动。")
       }
       VStack(spacing: 3) {

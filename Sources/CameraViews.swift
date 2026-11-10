@@ -156,8 +156,18 @@ struct CameraStage: View {
     } else {
       VStack(spacing: 8) {
         Image(systemName: "camera.viewfinder").font(.system(size: 34)).foregroundStyle(.secondary)
-        Text(camera.connected ? "等待实时取景…" : camera.phase == .missing ? "这份 App 没有带 Sony SDK" : "在左边连接相机")
+        Text(camera.connected ? "等待实时取景…" : camera.phase == .missing ? "这份 App 没有带 Sony SDK" : "相机还没有连接")
           .font(.system(size: 13)).foregroundStyle(.secondary)
+        // The way in where the eye is, as the left panel's key: one click from the empty view.
+        if !camera.connected && camera.phase != .missing {
+          Button {
+            m.connectCamera()
+          } label: {
+            Label(camera.phase == .connecting ? "正在连接…" : "连接相机", systemImage: "cable.connector")
+          }.buttonStyle(KeyStyle(prominent: true)).controlSize(.large).disabled(camera.phase == .connecting)
+            .help("用左边「连接方式」里选的方式连接 A7R IV（相机的 USB 连接方式选「PC 遥控」）")
+            .padding(.top, 6)
+        }
       }.frame(width: size.width, height: size.height)
     }
   }
@@ -463,16 +473,26 @@ struct CameraPanel: View {
       }.help("照片总是传到电脑；选「电脑和存储卡」时，存储卡上再留一份（要插卡）。下次连接照这里设定，连着时改也立刻生效。")
       if camera.connected {
         Divider()
-        Text("曝光").font(.system(size: 12, weight: .medium))
+        HStack {
+          Text("曝光").font(.system(size: 12, weight: .medium))
+          Spacer()
+          InfoButton(
+            text: "模式由相机上的转盘决定：M 档时快门、光圈都能改，A 档只改光圈，S 档只改快门。光圈要电子镜头才能远程改（比如 Sigma 70mm F2.8 DG Macro Art）；翻拍底片一般从 f/5.6–8 开始试。",
+            about: "曝光")
+        }
         setting("快门", "ShutterSpeed")
         setting("光圈", "FNumber")
         setting("ISO", "IsoSensitivity")
         setting("模式", "ExposureProgramMode")
         setting("曝光补偿", "ExposureBiasCompensation")
-        Text("模式由相机上的转盘决定：M 档时快门、光圈都能改，A 档只改光圈，S 档只改快门。光圈要电子镜头才能远程改（比如 Sigma 70mm F2.8 DG Macro Art）；翻拍底片一般从 f/5.6–8 开始试。")
-          .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         Divider()
-        Text("白平衡").font(.system(size: 12, weight: .medium))
+        HStack {
+          Text("白平衡").font(.system(size: 12, weight: .medium))
+          Spacer()
+          InfoButton(
+            text: "RAW 的数据不受白平衡影响，App 解码时整卷固定 5500K；这里只改实时取景和 JPEG 的颜色。固定一个色温，取景每张颜色一致。",
+            about: "相机白平衡")
+        }
         setting("模式", "WhiteBalance")
         if camera.properties["WhiteBalance"]?.value == CameraController.colourTemperatureMode {
           HStack(spacing: 6) {
@@ -489,8 +509,6 @@ struct CameraPanel: View {
         } else {
           Button("设为色温 5500K") { camera.setColourTemperature(5500) }.font(.system(size: 11))
         }
-        Text("RAW 的数据不受白平衡影响，App 解码时整卷固定 5500K；这里只改实时取景和 JPEG 的颜色。固定一个色温，取景每张颜色一致。")
-          .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         Divider()
         Text("对焦").font(.system(size: 12, weight: .medium))
         HStack {

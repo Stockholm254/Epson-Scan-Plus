@@ -110,7 +110,8 @@ struct LibraryPage: View {
         Text(m.libraryURL.path).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
           .lineLimit(1).truncationMode(.middle)
         Spacer()
-        Text("双击一页打开这一卷，进入 ② 去色罩；鼠标停在一格上可以放大看；右键可以重命名；标签右下角的废纸篓把这一卷移到废纸篓").font(.system(size: 11)).foregroundStyle(.secondary)
+        Text("双击打开 · 停在一格上放大 · 右键重命名或移到废纸篓").font(.system(size: 11)).foregroundStyle(.secondary)
+          .help("双击一页打开这一卷，进入 ② 去色罩；鼠标停在一格上可以放大看；右键可以重命名；标签右下角的废纸篓把这一卷移到废纸篓")
       }.padding(.horizontal, 18).padding(.vertical, 8)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -326,9 +327,15 @@ struct RollSleeve: View {
     .accessibilityAddTraits(.isButton)
     .accessibilityAction { open() }
   }
-  var details: String {
-    var parts = [entry.film] + (entry.format.map { [$0] } ?? []) + ["\(entry.frames.count) 张"]
-    if entry.fullResolution > 0 { parts.append("全分辨率 \(entry.fullResolution)") }
+  var details: String { Self.details(entry) }
+  /// The label's second line: the film, the format, how many frames and what of them is done.
+  static func details(_ entry: RollEntry) -> String {
+    // A medium format by its frame alone (6×6 is 120 film); 自动 says nothing.
+    let format = entry.format.flatMap { f in f == FilmFormat.auto.rawValue ? nil : f.hasPrefix("120 · ") ? String(f.dropFirst(6)) : f }
+    var parts = [entry.film] + (format.map { [$0] } ?? []) + ["\(entry.frames.count) 张"]
+    // Only where some frames are still previews (a scanned roll part scanned): a copy's or an
+    // import's are all full, and saying so crowded out the rest.
+    if entry.fullResolution > 0, entry.fullResolution < entry.frames.count { parts.append("全分辨率 \(entry.fullResolution)") }
     if entry.exported > 0 { parts.append("已导出 \(entry.exported)") }
     return parts.joined(separator: " · ")
   }

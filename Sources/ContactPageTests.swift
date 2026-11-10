@@ -26,8 +26,17 @@ enum ContactPageTests {
     try check(mixed.cells[1].size == CGSize(width: 160, height: 240) && mixed.cells[1].minY == band.minY
       && mixed.cells[3].size == CGSize(width: 360, height: 120) && mixed.cells[3].midY == band.midY
       && mixed.cells[2].minX - mixed.cells[1].maxX == mixed.cells[1].minX - band.maxX
-      && mixed.size == alone.size && mixed.strips[0].width == alone.strips[0].width - 200,
-      "on a page a frame turned upright gets an upright cell as tall as a 3:2 one, a wide one a lower cell, the next a gap on")
+      && mixed.size.height == alone.size.height && mixed.strips[0].width == alone.strips[0].width - 200
+      && mixed.size.width == alone.size.width - 200,
+      "on a page a frame turned upright gets an upright cell as tall as a 3:2 one, a wide one a lower cell, the next a gap on; a one-page roll is as wide as its strip")
+    // A 6×6 roll of one page: two strips of six squares, the page as wide as they are, not as six
+    // 3:2 frames, so the light table shows them a half as large again.
+    let squares = AppModel.sheetLayout(aspects: Array(repeating: 1, count: 12), pages: 1)
+    try check(squares.strips.count == 2 && abs(squares.strips[0].maxX + 48 - squares.size.width) < 0.5
+      && squares.size.width < six.size.width * 0.75 && squares.cells.allSatisfy { $0.width == 240 && $0.height == 240 },
+      "a one-page roll of 6×6 squares is laid out as wide as its squares: \(Int(squares.size.width)) against \(Int(six.size.width)) for 3:2")
+    let longSquares = AppModel.sheetLayout(aspects: Array(repeating: 1, count: 12), pages: 2)
+    try check(longSquares.size == full.size, "a longer roll's pages keep the full page's size whatever its frames' shape")
     func solid(_ w: Int, _ h: Int) -> CGImage {
       let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: ImagePipeline.shared.outputSpace,
         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
