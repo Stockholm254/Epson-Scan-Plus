@@ -62,6 +62,20 @@ enum Render3DTests {
       try check(false, "the copy stand is rendered")
     }
 
+    // CineStill's 120: white paper, a seal in the stock's own colour (800T red, 400D purple, 50D blue).
+    func sealColour(_ stock: String) -> SIMD4<Double>? {
+      let look = NewProjectSheet.Look(maker: "CineStill", name: stock, title: stock, iso: 800, kind: .colour)
+      guard let p = pixels(Roll120Print.seal(look).image) else { return nil }
+      return p.at(p.w / 20, p.h * 3 / 4)
+    }
+    let paper = pixels(Roll120Print.paper(NewProjectSheet.Look(maker: "CineStill", name: "800T", title: "800T", iso: 800, kind: .colour)))?.at(10, 10)
+    if let red = sealColour("800T"), let purple = sealColour("400D"), let blue = sealColour("50D"), let paper {
+      try check(red.x > 0.7 && red.y < 0.3 && purple.x > purple.y + 0.15 && purple.z > purple.y + 0.25 && blue.z > blue.x + 0.3 && min(paper.x, paper.y, paper.z) > 0.9,
+        "CineStill 120 is white paper with a seal in its stock's colour: 800T red, 400D purple, 50D blue")
+    } else {
+      try check(false, "CineStill 120's paper and seal are printed")
+    }
+
     // A sleeve's plastic: never opaque, brighter on its welds than in the middle.
     if let image = SleevePlastic.shared.image(size: CGSize(width: 280, height: 40), scale: 2), let p = pixels(image) {
       var most = 0.0
