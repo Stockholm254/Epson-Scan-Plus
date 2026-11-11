@@ -225,10 +225,24 @@ extension ImagePipeline {
         bitmapInfo: CGBitmapInfo(
           rawValue: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder16Little.rawValue))
     else { throw DeskError.message("锐化：不支持的图像格式。") }
-    let source = try vImage_Buffer(cgImage: image, format: format)
-    defer { source.free() }
-    let output = try vImage_Buffer(width: Int(source.width), height: Int(source.height), bitsPerPixel: 64)
-    defer { output.free() }
+    // Read in place when the picture is already in this form (as a copy's corrected picture
+    // is), not copied: for 61 megapixels each copy is half a gigabyte.
+    let held = image.dataProvider?.data
+    let inPlace = held != nil && image.bitsPerComponent == 16 && image.bitsPerPixel == 64
+      && image.bitmapInfo.rawValue == format.bitmapInfo.rawValue && CFDataGetLength(held!) >= image.bytesPerRow * image.height
+    let source: vImage_Buffer
+    if inPlace, let held {
+      source = vImage_Buffer(
+        data: UnsafeMutableRawPointer(mutating: CFDataGetBytePtr(held)), height: vImagePixelCount(image.height),
+        width: vImagePixelCount(image.width), rowBytes: image.bytesPerRow)
+    } else {
+      source = try vImage_Buffer(cgImage: image, format: format)
+    }
+    defer { if !inPlace { source.free() } }
+    // Written into memory the picture made from it keeps, not copied out of a buffer of its own.
+    let outRowBytes = Int(source.width) * 8
+    guard let outData = NSMutableData(length: outRowBytes * Int(source.height)) else { throw DeskError.message("锐化：内存不足。") }
+    let output = vImage_Buffer(data: outData.mutableBytes, height: source.height, width: source.width, rowBytes: outRowBytes)
     let width = Int(source.width), height = Int(source.height), r = s.radius, band = 256
     let size = UInt32(2 * r + 1)
     var gamma = Float(s.gamma), inverse = Float(1 / s.gamma), low: Float = 1e-6, high: Float = 1
@@ -272,6 +286,13 @@ extension ImagePipeline {
       vImageConvert_FTo16U(&resultPlanar, &outputRows, 0, 1 / 65535, vImage_Flags(kvImageNoFlags))
       y0 = y1
     }
-    return try output.createCGImage(format: format)
+    withExtendedLifetime(held) {}
+    guard let provider = CGDataProvider(data: outData),
+      let made = CGImage(
+        width: Int(source.width), height: Int(source.height), bitsPerComponent: 16, bitsPerPixel: 64, bytesPerRow: outRowBytes,
+        space: format.colorSpace.takeUnretainedValue(), bitmapInfo: format.bitmapInfo, provider: provider, decode: nil,
+        shouldInterpolate: false, intent: .defaultIntent)
+    else { throw DeskError.message("锐化：无法生成图像。") }
+    return made
   }
 }

@@ -767,6 +767,9 @@ struct FilmObject: View {
       .onChange(of: spinning) { _, on in
         if on, turning == nil, !reduceMotion { startTurn(g.size) }
       }
+      .onAppear {
+        if spinning, turning == nil, !reduceMotion { startTurn(g.size) }
+      }
       .task(id: "\(look.renderKey)|\(gauge.rawValue)|\(Int(g.size.width))x\(Int(g.size.height))") {
         let size = g.size
         await withCheckedContinuation { done in

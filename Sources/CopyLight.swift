@@ -26,7 +26,7 @@ extension ImagePipeline {
     if let flat, let divide = Kernels.flatten, let grid = flatImage(flat, size: extent.size) {
       ci = divide.apply(extent: extent, arguments: [ci, grid]) ?? ci
     }
-    return context.createCGImage(ci.cropped(to: extent), from: extent, format: .RGBA16, colorSpace: image.colorSpace ?? outputSpace) ?? image
+    return image16(ci.cropped(to: extent), extent: extent, colorSpace: image.colorSpace ?? outputSpace) ?? image
   }
 
   /// The flat field's grid as an image over `size`, between the cells' centres. A bitmap's first row

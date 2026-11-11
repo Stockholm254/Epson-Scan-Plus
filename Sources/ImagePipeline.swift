@@ -1088,18 +1088,19 @@ final class ImagePipeline {
     }
     return ci.transformed(by: CGAffineTransform(translationX: -ci.extent.minX, y: -ci.extent.minY))
   }
+  /// `analysis`: the picture measured as the window measured it, on its preview-size copy; nil,
+  /// measured here on all its pixels.
   func export(
     _ image: CGImage, settings: Adjustments, profile: FilmProfile, url: URL, format: ExportFormat,
     dpi: Int, quality: Double = 0.97, sharpener: Sharpener? = nil, colorSpace: ExportColorSpace = .sRGB,
-    metadata: ExportMetadata? = nil
+    metadata: ExportMetadata? = nil, analysis: ToneAnalysis? = nil
   ) throws {
     let wide = colorSpace != .sRGB
-    let ci = try output(image, settings: settings, profile: profile, sharpener: sharpener, extendedRange: wide)
+    let ci = try output(image, settings: settings, profile: profile, analysis: analysis, sharpener: sharpener, extendedRange: wide)
     let cg: CGImage?
     if wide {
       // Rendered unclipped as extended sRGB, then converted by ColorSync into the wider space.
-      cg = context.createCGImage(ci, from: ci.extent, format: .RGBAf, colorSpace: CGColorSpace(name: CGColorSpace.extendedSRGB)!)
-        .flatMap { converted($0, to: colorSpace.space, bitsPerComponent: format.sixteenBit ? 16 : 8) }
+      cg = wideImage(ci, to: colorSpace.space, bitsPerComponent: format.sixteenBit ? 16 : 8)
     } else {
       cg = opaqueImage(ci, sixteenBit: format.sixteenBit, colorSpace: outputSpace)
     }
@@ -1151,13 +1152,66 @@ final class ImagePipeline {
     let w = Int(extent.width), h = Int(extent.height)
     guard w > 0, h > 0, let data = NSMutableData(length: w * h * (sixteenBit ? 8 : 4)) else { return nil }
     let rowBytes = w * (sixteenBit ? 8 : 4)
-    context.render(ci, toBitmap: data.mutableBytes, rowBytes: rowBytes, bounds: extent, format: sixteenBit ? .RGBA16 : .RGBA8, colorSpace: colorSpace)
+    renderInBands(ci, into: data.mutableBytes, rowBytes: rowBytes, extent: extent, format: sixteenBit ? .RGBA16 : .RGBA8, colorSpace: colorSpace)
     guard let provider = CGDataProvider(data: data) else { return nil }
     let info = CGImageAlphaInfo.noneSkipLast.rawValue | (sixteenBit ? CGBitmapInfo.byteOrder16Little.rawValue : 0)
     return CGImage(
       width: w, height: h, bitsPerComponent: sixteenBit ? 16 : 8, bitsPerPixel: sixteenBit ? 64 : 32, bytesPerRow: rowBytes,
       space: colorSpace, bitmapInfo: CGBitmapInfo(rawValue: info), provider: provider, decode: nil, shouldInterpolate: false,
       intent: .defaultIntent)
+  }
+  /// Rows rendered at a time into one bitmap: Core Image's working buffers are then a band's,
+  /// not the whole frame's, which for a 35-megapixel copy came to more than a gigabyte.
+  static let renderBand = 768
+  /// `ci` over `extent` rendered a band of rows at a time into `data` (its first row the top).
+  func renderInBands(_ ci: CIImage, into data: UnsafeMutableRawPointer, rowBytes: Int, extent: CGRect, format: CIFormat, colorSpace: CGColorSpace?) {
+    let h = Int(extent.height)
+    var top = 0
+    while top < h {
+      let rows = min(Self.renderBand, h - top)
+      let bounds = CGRect(x: extent.minX, y: extent.maxY - CGFloat(top + rows), width: extent.width, height: CGFloat(rows))
+      autoreleasepool {
+        context.render(ci, toBitmap: data.advanced(by: top * rowBytes), rowBytes: rowBytes, bounds: bounds, format: format, colorSpace: colorSpace)
+      }
+      top += rows
+    }
+  }
+  /// `ci` as a 16-bit RGBA picture (alpha premultiplied, as Core Image writes it), rendered in bands.
+  func image16(_ ci: CIImage, extent: CGRect, colorSpace: CGColorSpace) -> CGImage? {
+    let w = Int(extent.width), h = Int(extent.height), rowBytes = w * 8
+    guard w > 0, h > 0, let data = NSMutableData(length: rowBytes * h) else { return nil }
+    renderInBands(ci, into: data.mutableBytes, rowBytes: rowBytes, extent: extent, format: .RGBA16, colorSpace: colorSpace)
+    guard let provider = CGDataProvider(data: data) else { return nil }
+    return CGImage(
+      width: w, height: h, bitsPerComponent: 16, bitsPerPixel: 64, bytesPerRow: rowBytes, space: colorSpace,
+      bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder16Little.rawValue),
+      provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
+  }
+  /// `ci` into a wider colour space, unclipped until there: a band at a time rendered as extended
+  /// sRGB floats and drawn into the picture in `space`, rather than the whole frame in floats
+  /// first (a gigabyte for 61 megapixels) and then converted.
+  func wideImage(_ ci: CIImage, to space: CGColorSpace, bitsPerComponent: Int) -> CGImage? {
+    let extent = ci.extent.integral
+    let w = Int(extent.width), h = Int(extent.height)
+    guard w > 0, h > 0,
+      let target = CGContext(data: nil, width: w, height: h, bitsPerComponent: bitsPerComponent, bytesPerRow: 0,
+        space: space, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue),
+      let extended = CGColorSpace(name: CGColorSpace.extendedSRGB)
+    else { return nil }
+    target.interpolationQuality = .none
+    var top = 0
+    while top < h {
+      let rows = min(Self.renderBand, h - top)
+      let bounds = CGRect(x: extent.minX, y: extent.maxY - CGFloat(top + rows), width: extent.width, height: CGFloat(rows))
+      autoreleasepool {
+        if let band = context.createCGImage(ci, from: bounds, format: .RGBAf, colorSpace: extended) {
+          // The context's y runs up: this band's rows from the top are its own from the bottom.
+          target.draw(band, in: CGRect(x: 0, y: h - top - rows, width: w, height: rows))
+        }
+      }
+      top += rows
+    }
+    return target.makeImage()
   }
   /// `image` without its alpha channel, the values unchanged. Rendered images are opaque, so the
   /// channel only made TIFF and PNG files a third larger, and some apps took them as transparent.

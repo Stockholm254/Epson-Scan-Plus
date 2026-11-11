@@ -4374,6 +4374,9 @@ final class AppModel: ObservableObject {
           if stop.stopped { break }
           DispatchQueue.main.async { self.writing(f) }
           let url = try autoreleasepool { () throws -> URL in
+          // Measured as the window measured it, on the copy it shows: the export is the picture
+          // shown, and its 60 megapixels are not read through again for statistics.
+          let analysis = (try? self.source(for: f)).map { ImagePipeline.shared.analyze($0, settings: f.adjustments, profile: film) }
           let image = try self.source(for: f, full: true)
           let sharpener = Sharpening.sharpener(sharpening, frame: f, maxDimension: nil)
           let safeName = Self.exportFrameName(f.name)
@@ -4397,7 +4400,7 @@ final class AppModel: ObservableObject {
             software: "Epson Scan plus" + (version.map { " " + $0 } ?? ""))
           try ImagePipeline.shared.export(
             image, settings: f.adjustments, profile: film, url: url, format: format, dpi: dpi,
-            quality: quality, sharpener: sharpener, colorSpace: space, metadata: metadata)
+            quality: quality, sharpener: sharpener, colorSpace: space, metadata: metadata, analysis: analysis)
           let sidecar = ExportRecord(
             profile: film, frame: f, source: source, isPreview: !f.hasFullResolution, colorSpace: space.title)
           let encoder = JSONEncoder()
