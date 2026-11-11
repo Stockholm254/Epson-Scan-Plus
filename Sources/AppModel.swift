@@ -2603,6 +2603,19 @@ final class AppModel: ObservableObject {
     do {
       let readings = try IT8Layout.sample(try source(for: frame, full: true, raw: true), marks: it8Marks)
       let result = try ScannerCalibration.measure(readings, reference: reference)
+      // A copy of the target measures the copy stand, kept with the exposure it was taken at.
+      if frame.sensorRead == true, frame.adjustments.inputGamma == 1, let path = frame.sourcePath {
+        let exposure = PhotoInfo.exposure(URL(fileURLWithPath: path))
+        preferences.copyFlare = CopyFlare(calibration: result, exposure: exposure)
+        it8Marks = []
+        useTool(.select)
+        reapplyScannerCalibration()
+        status = String(
+          format: "已标定翻拍杂散光 · R %.2f%% · G %.2f%% · B %.2f%% · 灰阶误差 %.3f → %.3f D",
+          result.flare.r * 100, result.flare.g * 100, result.flare.b * 100, result.grayErrorBefore, result.grayError)
+          + (exposure == nil ? " · 这张没有曝光信息，扣不了：请用相机原片" : "")
+        return
+      }
       preferences.scannerCalibration = result
       it8Marks = []
       useTool(.select)
@@ -2688,10 +2701,22 @@ final class AppModel: ObservableObject {
   /// The stray light to take out of a frame's readings: this app's linear scans and previews, while
   /// a scanner calibration is in use. Imported files and older 24-bit scans keep what they read.
   func flareOffset(_ frame: FilmFrame) -> RGB? {
-    guard preferences.removeFlare, let calibration = preferences.scannerCalibration, frame.sourcePath == nil,
-      frame.adjustments.inputGamma == 1
-    else { return nil }
-    return calibration.offset
+    guard preferences.removeFlare, frame.adjustments.inputGamma == 1 else { return nil }
+    // This app's linear scans: the scanner's, as measured.
+    if frame.sourcePath == nil { return preferences.scannerCalibration?.offset }
+    // A copy read from the sensor: the copy stand's, at the copy's own exposure.
+    guard frame.sensorRead == true, let copy = preferences.copyFlare, let path = frame.sourcePath else { return nil }
+    return copy.offset(at: copyExposure(path))
+  }
+  /// Each copy's exposure from its EXIF, read once.
+  private var copyExposures = [String: Double?]()
+  private let copyExposureLock = NSLock()
+  /// Also from the export's queue.
+  func copyExposure(_ path: String) -> Double? {
+    if let known = copyExposureLock.withLock({ copyExposures[path] }) { return known }
+    let read = PhotoInfo.exposure(URL(fileURLWithPath: path))
+    copyExposureLock.withLock { copyExposures[path] = read }
+    return read
   }
   /// Files read to render from, at a size, kept so that a slider dragged over a frame does not
   /// read its 300 MB TIFF again each step (a quarter of a second, more the first time): the last

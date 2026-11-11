@@ -581,7 +581,7 @@ struct ContentView: View {
         }.font(.system(size: 11)).lineLimit(1)
           .padding(.horizontal, 9).padding(.vertical, 5)
           .floatingPlate(RoundedRectangle(cornerRadius: 5), text: Color(white: 0.92), opacity: 0.65)
-          .help(m.baseSource(f) + (m.toneAnalysis.map { a in
+          .help(m.baseSource(f) + (m.baseNotes(f).isEmpty ? "" : "\n" + m.baseNotes(f)) + (m.toneAnalysis.map { a in
             "\n片基 " + zip(["R", "G", "B"], a.base.values).map { String(format: "%@ %.3f", $0, $1) }.joined(separator: " · ")
           } ?? "") + "\n白平衡按这个顺序定：取样中性灰 → 手动配平 → 标定预设的中性 → 自动；冷暖、绿洋红、阴影冷暖和阴影色调在它之后")
           .accessibilityElement(children: .combine).accessibilityLabel("片基和白平衡")
@@ -1006,6 +1006,11 @@ struct ContentView: View {
               Toggle("标出", isOn: $m.showBaseAreas).toggleStyle(.switch).controlSize(.mini).font(.system(size: 11))
                 .help(from == i ? "在单张上标出这一张片边里取作片基的地方" : "片基取自第 \(m.frames[from].name) 张的片边；切到那一张能看到标出的地方")
             }
+          }
+          // A frame whose edge reads apart from the roll's, and the copy light's balance.
+          let notes = m.baseNotes(f)
+          if !notes.isEmpty {
+            Text(notes).font(.system(size: 11)).foregroundStyle(Hardware.amberText).fixedSize(horizontal: false, vertical: true)
           }
         }
         if m.settings.rollBasePicked == true {

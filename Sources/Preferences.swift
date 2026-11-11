@@ -150,6 +150,10 @@ final class Preferences: ObservableObject {
     didSet { defaults?.set(scannerCalibration.flatMap { try? JSONEncoder().encode($0) }, forKey: "scannerCalibration") }
   }
   @Published var removeFlare: Bool { didSet { defaults?.set(removeFlare, forKey: "removeFlare") } }
+  /// The copy stand's stray light, measured on a copy of an IT8 target the same way.
+  @Published var copyFlare: CopyFlare? {
+    didSet { defaults?.set(copyFlare.flatMap { try? JSONEncoder().encode($0) }, forKey: "copyFlare") }
+  }
   /// Pictures read from the camera's sensor have the copy light's crosstalk taken out as they come
   /// in, as the roll last chose. On unless turned off.
   @Published var removeCrosstalk: Bool { didSet { defaults?.set(removeCrosstalk, forKey: "removeCrosstalk") } }
@@ -205,6 +209,7 @@ final class Preferences: ObservableObject {
     sharpening = defaults?.data(forKey: "sharpening").flatMap { try? JSONDecoder().decode(SharpeningProfile.self, from: $0) }
     scannerCalibration = defaults?.data(forKey: "scannerCalibration").flatMap { try? JSONDecoder().decode(ScannerCalibration.self, from: $0) }
     removeFlare = defaults?.object(forKey: "removeFlare") as? Bool ?? true
+    copyFlare = defaults?.data(forKey: "copyFlare").flatMap { try? JSONDecoder().decode(CopyFlare.self, from: $0) }
     removeCrosstalk = defaults?.object(forKey: "removeCrosstalk") as? Bool ?? true
     lightCalibration = defaults?.data(forKey: "lightCalibration").flatMap { try? JSONDecoder().decode(LightCalibration.self, from: $0) }
     flatProfiles = defaults?.data(forKey: "flatProfiles").flatMap { try? JSONDecoder().decode([FlatProfile].self, from: $0) } ?? []

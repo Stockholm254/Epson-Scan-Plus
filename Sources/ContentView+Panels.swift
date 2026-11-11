@@ -617,6 +617,46 @@ extension ContentView {
       titled("A7R IV 翻拍", symbol: "camera", info:
         "联机默认直连相机自己的 PTP（和 Imaging Edge 一样），也可以在下面改用 Sony Camera Remote SDK。A7R IV 只能用 USB 连接，相机的 USB 连接方式选「PC 遥控」。\n\n两种都能取实时取景、半按快门自动对焦、设对焦点、手动对焦步进、对焦放大，并把拍好的 RAW 直接传到电脑。直连时像素位移的开关和张数在连接里直接改，取景不停；用 SDK 时要先断开，用 PTP 改好再连上。电子快门、像素位移的间隔和 RAW 的压缩方式要在相机上设好。")
       CameraPanel(m: m, camera: m.camera)
+      Divider()
+      copyFlareSection
+    }
+  }
+  /// The copy stand's stray light, measured on a copy of an IT8 target as the scanner's is.
+  var copyFlareSection: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      titled("翻拍杂散光 · IT8", symbol: "squareshape.split.3x3", info:
+        "镜头和翻拍台的杂散光会抬高底片密实处的读数，使高光发灰。用 IT8.7/1 透射色卡像翻拍底片一样拍一张（同一个镜头、灯和片夹），在 ② 的单张视图里按提示点 6 个点，生成后翻拍的原片在转换前扣除它。\n\n杂散光随曝光变：测量时记下那张的快门、ISO 和光圈，之后每张按自己的曝光换算；没有曝光信息的文件（不是相机原片）不扣。参考文件须与色卡批号一致。")
+      if let c = m.preferences.copyFlare {
+        Text(c.calibration.reference).font(.system(size: 11)).lineLimit(2).truncationMode(.middle)
+        Text(String(format: "杂散光 R %.2f%% · G %.2f%% · B %.2f%%", c.calibration.flare.r * 100, c.calibration.flare.g * 100, c.calibration.flare.b * 100)).readout()
+        note(String(format: "灰阶最大误差 %.3f D，扣除后 %.3f D", c.calibration.grayErrorBefore, c.calibration.grayError)
+          + (c.exposure == nil ? "；测量的那张没有曝光信息，扣不了" : ""))
+        SwitchRow("转换前扣除杂散光", isOn: Binding(get: { m.preferences.removeFlare }, set: { m.preferences.removeFlare = $0; m.reapplyScannerCalibration() }))
+      } else {
+        note("尚未标定。")
+      }
+      HStack {
+        Button(m.it8Reference == nil ? "① 导入参考文件…" : "参考：\(m.it8Reference!.batch.isEmpty ? m.it8Reference!.name : m.it8Reference!.batch)") { m.importIT8Reference() }
+        if m.preferences.copyFlare != nil {
+          Button("移除") {
+            m.preferences.copyFlare = nil
+            m.reapplyScannerCalibration()
+          }
+        }
+      }.font(.system(size: 11)).disabled(m.isWorking)
+      if m.it8Reference != nil {
+        HStack {
+          Button("② 在色卡上取点") { m.startIT8Marking() }.disabled(m.selected?.sensorRead != true || m.isWorking)
+            .help(m.selected?.sensorRead == true ? "在单张视图里依次点 6 个点" : "先在胶片条上选翻拍的色卡那一张（相机原片）")
+          Text("\(m.it8Marks.count) / 6").readout()
+          if !m.it8Marks.isEmpty { Button("退一步") { m.undoIT8Mark() } }
+        }.font(.system(size: 11))
+        if m.tool == .it8 && m.it8Marks.count < IT8Layout.marks.count {
+          note("下一个：\(IT8Layout.marks[m.it8Marks.count]) 的中心")
+        }
+        Button("③ 生成标定") { m.measureIT8() }.font(.system(size: 11))
+          .disabled(m.it8Marks.count < IT8Layout.marks.count || m.isWorking)
+      }
     }
   }
   /// Module ①'s right panel: with the camera the last picture's focus check first, then the roll as

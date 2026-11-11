@@ -88,6 +88,21 @@ enum IT8Layout {
 /// its reading for clear film), from the grey scale; and how well a 3×3 matrix maps its readings to
 /// the target's colours. Conversion subtracts the stray light from the scanner's linear scans; the
 /// matrix belongs to the target's slide dyes, not a negative's, so it is only reported.
+/// The copy stand's stray light: an IT8 target copied as the film is, its grey scale read as the
+/// scanner's is. The camera's exposure changes from roll to roll where the scanner's does not, and
+/// the stray light grows with it: kept with the exposure it was measured at (shutter time × ISO /
+/// f-number², from the copy's EXIF), it is scaled to each frame's. Without a known exposure, none.
+struct CopyFlare: Codable, Equatable {
+  var calibration: ScannerCalibration
+  var exposure: Double?
+  /// What to subtract from a copy taken at `exposure`.
+  func offset(at exposure: Double?) -> RGB? {
+    guard let measured = self.exposure, let exposure, measured > 0, exposure > 0 else { return nil }
+    let k = exposure / measured
+    return RGB(calibration.offset.values.map { $0 * k })
+  }
+}
+
 struct ScannerCalibration: Codable, Equatable {
   var reference: String
   var created: Date

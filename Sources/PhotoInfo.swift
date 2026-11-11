@@ -69,6 +69,19 @@ enum PhotoInfo {
     add("软件", tiff[kCGImagePropertyTIFFSoftware] as? String)
     return rows
   }
+  /// How much light the sensor took for the picture, relative: shutter time × ISO / f-number².
+  /// Nil without all three in its EXIF.
+  static func exposure(_ url: URL) -> Double? {
+    guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+      let p = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+      let exif = p[kCGImagePropertyExifDictionary] as? [CFString: Any]
+    else { return nil }
+    func number(_ key: CFString) -> Double? { (exif[key] as? NSNumber)?.doubleValue ?? (exif[key] as? [NSNumber])?.first?.doubleValue }
+    guard let t = number(kCGImagePropertyExifExposureTime), let iso = number(kCGImagePropertyExifISOSpeedRatings),
+      let n = number(kCGImagePropertyExifFNumber), t > 0, iso > 0, n > 0
+    else { return nil }
+    return t * iso / (n * n)
+  }
   /// 1/320 s, 0.5 s, 2 s.
   static func shutter(_ t: Double) -> String {
     guard t > 0 else { return "" }

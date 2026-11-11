@@ -1,4 +1,5 @@
 import CoreGraphics
+import ImageIO
 import Foundation
 
 /// Scanner calibration on an IT8.7/1 target: the reference file, finding the patches, and the
@@ -89,6 +90,25 @@ enum IT8Tests {
     encoded.adjustments.inputGamma = 2.2
     try check(model.flareOffset(linear) == calibration.offset && model.flareOffset(imported) == nil && model.flareOffset(encoded) == nil,
       "stray light comes out of this app's linear scans only")
+    // A copy read from the camera's sensor: the copy stand's own stray light, measured at one
+    // exposure and taken out at each copy's, from its EXIF; none from a file without one.
+    let copyFile = folder.appendingPathComponent("it8-copy.tif")
+    if let dest = CGImageDestinationCreateWithURL(copyFile as CFURL, "public.tiff" as CFString, 1, nil) {
+      let exif: [CFString: Any] = [kCGImagePropertyExifExposureTime: 1.0 / 250, kCGImagePropertyExifFNumber: 5.6, kCGImagePropertyExifISOSpeedRatings: [100]]
+      CGImageDestinationAddImage(dest, scan, [kCGImagePropertyExifDictionary: exif] as CFDictionary)
+      CGImageDestinationFinalize(dest)
+    }
+    var copied = linear
+    copied.sourcePath = copyFile.path
+    copied.sensorRead = true
+    var unknown = copied
+    unknown.sourcePath = folder.appendingPathComponent("no-exif.tif").path
+    model.preferences.copyFlare = CopyFlare(calibration: calibration, exposure: 1.0 / 500 * 100 / (5.6 * 5.6))
+    let twice = model.flareOffset(copied)
+    try check(twice.map { o in (0..<3).allSatisfy { abs(o.values[$0] - 2 * calibration.offset.values[$0]) < 1e-9 } } == true
+      && model.flareOffset(imported) == nil && model.flareOffset(unknown) == nil && model.flareOffset(linear) == calibration.offset,
+      "a copy has the copy stand's stray light taken out, scaled to its own exposure (twice the target's, twice as much); a file without its exposure, none")
+    model.preferences.copyFlare = nil
     model.preferences.removeFlare = false
     try check(model.flareOffset(linear) == nil, "and not when turned off")
     let cleaned = pipe.removingFlare(calibration.offset, from: scan)
