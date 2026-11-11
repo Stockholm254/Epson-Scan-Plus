@@ -202,7 +202,9 @@ enum FilmPrint {
       if has("SFX") { return ilford("SFX", rgb(0x8A1F33), "\(iso)", nil) }
       if has("Ortho") { return ilford("ORTHO", rgb(0x9C2A2A), "PLUS", iso) }
     case "Kentmere":
-      return ilford("PAN", iso == 400 ? rgb(0x5A3B9B) : iso == 200 ? rgb(0x1F8F8A) : rgb(0x2E4BA6), "\(iso)", nil, maker: "KENTMERE")
+      // Harman's own design since 2023, not Ilford's: a gradient all round, each speed its own.
+      return kentmere(iso, iso == 400 ? [rgb(0x3B3FC2), rgb(0x7A3AB8), rgb(0xC24AC9)]
+        : iso == 200 ? [rgb(0x2A6FB8), rgb(0x5E9B3C), rgb(0xC9B83A)] : [rgb(0x1E3E9A), rgb(0x1F7AA8), rgb(0x2FB09A)])
     case "CineStill":
       if has("800T") { return cineStill("800T", rgb(0xDC2A2A), "color film for low light") }
       if has("400D") { return cineStill("400D", rgb(0x7650C5), "color film for daylight") }
@@ -513,6 +515,44 @@ enum FilmPrint {
       if let iso { f.along([("\(iso)", font("HelveticaNeue-CondensedBlack", 3.4), ink)], s: 11.3, top: 19.2, fit: 5.6, up: true) }
       f.along([(sub ?? "BLACK & WHITE FILM", font("HelveticaNeue-Medium", 1.9), ink)], s: 13.6, top: 31.1, fit: 24.5, kern: 0.15, up: true)
       if sub != nil { f.along([("BLACK & WHITE FILM", font("HelveticaNeue-Medium", 1.9), ink)], s: 15.4, top: 31.1, fit: 24.5, kern: 0.15, up: true) }
+      f.fill(ink, -60, 30, y0: 36.6)
+      f.dx(look)
+    }
+  }
+
+  /// Kentmere Pan, as Harman prints it now: a gradient of the speed's colours all round with paler
+  /// diagonal bands across it; reading up in white, the K mark, PAN bold and the speed light beside
+  /// it, and KENTMERE bold with BLACK & WHITE FILM beside it nearer the lip.
+  static func kentmere(_ iso: Int, _ colours: [NSColor]) -> Design {
+    Design { f, look in
+      f.shade(colours, -60, 30, down: true)
+      // Paler diagonal bands across the gradient.
+      f.ctx.saveGState()
+      f.ctx.setFillColor(NSColor(white: 1, alpha: 0.09).cgColor)
+      for k in stride(from: -60.0, to: 40.0, by: 14.0) {
+        let p = CGMutablePath()
+        p.move(to: CGPoint(x: f.x(CGFloat(k)), y: 0))
+        p.addLine(to: CGPoint(x: f.x(CGFloat(k) + 6), y: 0))
+        p.addLine(to: CGPoint(x: f.x(CGFloat(k) + 22), y: f.size.height))
+        p.addLine(to: CGPoint(x: f.x(CGFloat(k) + 16), y: f.size.height))
+        p.closeSubpath()
+        f.ctx.addPath(p)
+      }
+      f.ctx.fillPath()
+      f.ctx.restoreGState()
+      let bold = "AvenirNext-Bold", light = "AvenirNext-Regular"
+      // The K mark: two triangles meeting at a point, by the foot.
+      f.ctx.setFillColor(white.cgColor)
+      let k0 = f.x(-4.6), kw = 4.2 * f.m, ky = 25.6 * f.m, kh = 4.6 * f.m
+      let mark = CGMutablePath()
+      mark.move(to: CGPoint(x: k0, y: ky)); mark.addLine(to: CGPoint(x: k0 + kw, y: ky)); mark.addLine(to: CGPoint(x: k0, y: ky + kh * 0.55)); mark.closeSubpath()
+      mark.move(to: CGPoint(x: k0, y: ky + kh * 0.62)); mark.addLine(to: CGPoint(x: k0 + kw * 0.8, y: ky + kh)); mark.addLine(to: CGPoint(x: k0, y: ky + kh)); mark.closeSubpath()
+      f.ctx.addPath(mark)
+      f.ctx.fillPath()
+      f.along([("PAN", font(bold, 4.8), white)], s: -2.4, top: 22.4, fit: 10, up: true)
+      f.along([("\(iso)", font(light, 4.8), white)], s: 2.2, top: 22.4, fit: 9, up: true)
+      f.along([("KENTMERE", font(bold, 4.0), white)], s: 8.4, top: 31.0, fit: 24, kern: 0.15, up: true)
+      f.along([("BLACK & WHITE FILM", font("AvenirNext-Medium", 1.9), white)], s: 12.4, top: 31.0, fit: 20, kern: 0.2, up: true)
       f.fill(ink, -60, 30, y0: 36.6)
       f.dx(look)
     }
