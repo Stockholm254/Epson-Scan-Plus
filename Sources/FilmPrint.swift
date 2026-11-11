@@ -494,55 +494,59 @@ enum FilmPrint {
   /// very large in black, DELTA as large in the stock's colour cut by fine white lines across, the
   /// speed in black as large again, and PROFESSIONAL in the colour by the lip.
   static func delta(_ iso: Int, _ colour: NSColor) -> Design {
+    // Measured off a photograph of the Delta 3200 cassette, in millimetres round from the front and
+    // down from the top end.
     Design { f, look in
       f.all(paper)
-      let heavy = "HelveticaNeue-CondensedBlack"
-      // The band round the back, and on it the table of speeds to rate the film at.
-      f.fill(colour, -60, -10.2)
-      f.fill(paper, -14.6, -11.0, y0: 3.2, y1: 34.6)
-      let speeds = [iso / 2, iso, iso * 2]
-      for (i, speed) in speeds.enumerated() {
-        let y1 = 34.6 - CGFloat(i) * 6.4
-        f.fill(NSColor(white: 0.62, alpha: 1), -14.6, -11.0, y0: y1 - 6.4, y1: y1 - 6.25)
-        f.along([("\(speed)", font("HelveticaNeue-Medium", 1.5), NSColor(white: 0.35, alpha: 1))], s: -13.9, top: y1 - 0.6, fit: 5.2, up: true)
+      let heavy = "HelveticaNeue-CondensedBlack", round = "AvenirNext-Heavy"
+      let pale = colour.blended(withFraction: 0.3, of: .white) ?? colour
+      // The band round the back, and over the top end beside it.
+      f.fill(colour, -60, -11.0)
+      f.fill(colour, -11.0, -7.6, y0: 0, y1: 4.5)
+      // The speeds to rate it at, in a white table on the band.
+      f.fill(paper, -16.8, -11.4, y0: 3.0, y1: 35.0)
+      let grey = NSColor(white: 0.62, alpha: 1)
+      for (i, speed) in [iso / 2, iso, iso * 2].enumerated() {
+        let y1 = 34.0 - CGFloat(i) * 8.0
+        f.fill(grey, -16.8, -11.4, y0: y1 - 8.0, y1: y1 - 7.85)
+        f.along([("\(speed)", font("HelveticaNeue", 1.7), NSColor(white: 0.3, alpha: 1))], s: -13.6, top: y1 - 0.8, fit: 6.4, up: true)
       }
-      f.fill(NSColor(white: 0.62, alpha: 1), -12.6, -12.45, y0: 3.2, y1: 34.6)
-      // The length, large in the colour, over the speed it is rated at in small type.
+      f.fill(grey, -14.9, -14.75, y0: 3.0, y1: 35.0)
+      // The length, large in the colour, and under it the speed it is rated at in small type.
       let din = 1 + Int((10 * log10(Double(max(iso, 1)))).rounded())
-      f.along([("36", font(heavy, 3.0), colour)], s: -8.5, top: 11.6, fit: 4.6, up: true)
+      f.along([("36", font("HelveticaNeue-Bold", 3.0), colour)], s: -9.8, top: 14.6, fit: 3.2, up: true)
       // 3200 is rated, not its box speed: EI, as its cassette says; the others ISO.
-      f.along([("\(iso >= 3200 ? "EI" : "ISO") \(iso)/\(din)° ", font("HelveticaNeue-Medium", 1.55), ink), ("DELTA", font("HelveticaNeue-Bold", 1.55), ink),
-        (" 36 EXP", font("HelveticaNeue-Medium", 1.55), ink)], s: -7.7, top: 32.6, fit: 20, up: true)
-      // DELTA, in fine stripes along its length (the way it reads), as the stock's name is printed.
+      f.along([("\(iso >= 3200 ? "EI" : "ISO") \(iso)/\(din)° ", font("HelveticaNeue", 1.6), ink), ("DELTA", font("HelveticaNeue-Bold", 1.6), ink),
+        (" 36 EXP", font("HelveticaNeue", 1.6), ink)], s: -8.7, top: 32.4, fit: 17, up: true)
+      // DELTA, in fine stripes along its length (the way it reads), as the stock's name is printed:
+      // thick stripes, narrow gaps, so it stands out from the Δ's thin lines.
       let pitch: CGFloat = 0.48
-      f.along([("DELTA", font(heavy, 7.2), colour)], s: 3.2, top: 32.6, fit: 25.5, up: true, stretch: true)
-      // Thick stripes, narrow gaps: the letters stand out from the Δ's thin lines.
-      var cut: CGFloat = -pitch
-      while cut < 6.6 {
-        f.fill(paper, cut + 0.37, cut + pitch, y0: 6.0, y1: 33.2)
+      f.along([("DELTA", font(round, 9.2), colour)], s: 4.6, top: 34.2, fit: 26.9, up: true, stretch: true)
+      var cut: CGFloat = 0
+      while cut < 8.4 {
+        f.fill(paper, cut + 0.37, cut + pitch, y0: 6.5, y1: 34.8)
         cut += pitch
       }
-      // The Δ it stands in: its point a little past ILFORD on the far side, at the middle of the
-      // length (ILFORD printed over it), its base by
-      // PROFESSIONAL as long as the name, drawn in thin lines on the name's stripes (inside a letter
-      // a line lies within its stripe, so the letters stay as they are and the lines show between
-      // and past them).
-      let apex: CGFloat = -7.0, base: CGFloat = 13.2, mid: CGFloat = 19.85
-      var k = (apex / pitch).rounded(.down)
+      // The Δ it stands in: its point a little past ILFORD on the far side, a little above the
+      // middle of the length, its base by PROFESSIONAL from 6.8 to 32.7 mm down; drawn in thin lines
+      // on the name's stripes (inside a letter a line lies within its stripe, so the letters stay as
+      // they are and the lines show between and past them, and between ILFORD's letters).
+      let apex = CGPoint(x: -7.5, y: 18.6), base: CGFloat = 13.3, baseTop: CGFloat = 6.8, baseFoot: CGFloat = 32.7
+      var k = (apex.x / pitch).rounded(.down)
       while k * pitch < base {
         let s0 = k * pitch + 0.1
-        if s0 > apex {
-          let long = 25.5 * (s0 - apex) / (base - apex)
-          f.fill(colour, s0, s0 + 0.17, y0: mid - long / 2, y1: mid + long / 2)
+        if s0 > apex.x {
+          let t = (s0 - apex.x) / (base - apex.x)
+          f.fill(colour, s0, s0 + 0.17, y0: apex.y + (baseTop - apex.y) * t, y1: apex.y + (baseFoot - apex.y) * t)
         }
         k += 1
       }
-      // ILFORD over the Δ's point, and the speed as large as ILFORD over its lines.
-      f.along([("ILFORD", font(heavy, 6.6), ink)], s: -3.4, top: 32.6, fit: 25.5, up: true, stretch: true)
-      // The speed centred on the middle of the length, as the names and the Δ are.
-      let speed = [("\(iso)", font(heavy, 8.6), ink)], fitted: CGFloat = iso >= 1000 ? 23 : 17
-      f.along(speed, s: 9.2, top: mid + f.width(speed, fit: fitted) / 2, fit: fitted, up: true)
-      f.along([("PROFESSIONAL", font("HelveticaNeue-Bold", 2.6), colour.blended(withFraction: 0.3, of: .white) ?? colour)], s: 14.6, top: 32.6, fit: 25.5, kern: 0.2, up: true, stretch: true)
+      // ILFORD very large over the Δ's point; the speed in a round heavy face, as long as it is on the
+      // cassette, centred on the middle and close past DELTA; PROFESSIONAL by the lip in a paler colour.
+      f.along([("ILFORD", font(heavy, 9.3), ink)], s: -2.6, top: 33.9, fit: 26.6, up: true, stretch: true)
+      let long: CGFloat = iso >= 1000 ? 20.7 : 15.6
+      f.along([("\(iso)", font(round, 7.8), ink)], s: 10.6, top: 20.55 + long / 2, fit: long, up: true, stretch: true)
+      f.along([("PROFESSIONAL", font("AvenirNext-Bold", 2.6), pale)], s: 15.0, top: 32.7, fit: 25.9, kern: 0.2, up: true, stretch: true)
       f.fill(ink, -60, 30, y0: 36.6)
       f.dx(look)
     }
