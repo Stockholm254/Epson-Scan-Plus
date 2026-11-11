@@ -1192,13 +1192,23 @@ struct ContentView: View {
   }
   /// The ends: automatic, the roll as one, or set by hand.
   var levelsSection: some View {
-    PanelSection("色阶", key: "levels", info: "自动：按画面的密度范围设定黑白两端。范围不到 4 档的画面（雾、霾、很平的光）不拉满到黑和白，以中间为准撑开到 4 档，保留它本来的灰和柔；要更硬，调「对比度」或关掉自动。关闭后用黑点、白点和中间调手动设定。\n\n「整卷同一色阶」：整卷用同一组黑白两端，按整卷所有画面一起统计，像冲印店一卷用一个印放曝光：暗的场景就是暗的，亮的就是亮的。每张仍可以用「曝光」微调。关了自动色阶的那一张按你的来。\n\n反转片：自动把最暗的 0.5% 定为黑、最亮的 0.5% 定为白，三个通道用同一对两端，颜色不变；关掉时扫描仪的裸光是白，片子显示得和看片台上一样暗。", reset: resetKey(.levels)) {
+    PanelSection("色阶", key: "levels", info: "自动：按画面的密度范围设定黑白两端。范围不到 4 档的画面（雾、霾、很平的光）不拉满到黑和白，以中间为准撑开到 4 档，保留它本来的灰和柔；要更硬，调「对比度」或关掉自动。关闭后用黑点、白点和中间调手动设定。\n\n上面的直方图是色阶之前的：横轴从自动定出的黑到白，「黑」「中」「白」三条线是黑点、中间调（落在中灰的地方）和白点，可以直接拖；两边暗下去的部分是变成纯黑、纯白的。只在单张里显示。\n\n「整卷同一色阶」：整卷用同一组黑白两端，按整卷所有画面一起统计，像冲印店一卷用一个印放曝光：暗的场景就是暗的，亮的就是亮的。每张仍可以用「曝光」微调。关了自动色阶的那一张按你的来。\n\n反转片：自动把最暗的 0.5% 定为黑、最亮的 0.5% 定为白，三个通道用同一对两端，颜色不变；关掉时扫描仪的裸光是白，片子显示得和看片台上一样暗。", reset: resetKey(.levels)) {
       Toggle("自动", isOn: bool(\.autoLevels)).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
     } content: {
       VStack(alignment: .leading, spacing: 10) {
         if !m.settings.isSlide {
           SwitchRow("整卷同一色阶", isOn: Binding(get: { m.settings.sharedLevels == true }, set: { m.setSharedLevels($0) }),
             off: m.selected == nil || m.isWorking)
+        }
+        // The frame's tones before the black and white points, the three marked on it and dragged.
+        if let range = m.toneRange {
+          LevelsHistogram(range: range, black: m.settings.black, white: m.settings.white, midtone: m.settings.midtone) { which, v in
+            switch which {
+            case .black: m.change("黑点") { $0.black = v }
+            case .white: m.change("白点") { $0.white = v }
+            case .midtone: m.change("中间调") { $0.midtone = v }
+            }
+          }
         }
         slider("黑点", key: \.black, range: 0...0.4)
         slider("白点", key: \.white, range: 0.6...1)

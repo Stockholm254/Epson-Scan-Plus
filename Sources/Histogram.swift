@@ -166,6 +166,103 @@ struct ToneRangeView: View {
   }
 }
 
+/// The levels' histogram: the frame's tones on the scale the black and white points are set on
+/// (the automatic ends' black at 0 and white at 1, what lies past them in the end steps), the black
+/// point, the midtone's mid-grey and the white point marked, and what they send to pure black or
+/// white dimmed. The marks drag, nearest first. Worked out from `ToneRange`, whose counts are past
+/// the black and white points (`q = (q0 - black) / (white - black)`), so it costs no render.
+struct LevelsHistogram: View {
+  enum Mark { case black, midtone, white }
+  let range: ToneRange
+  let black: Double, white: Double, midtone: Double
+  var set: (Mark, Double) -> Void
+  @State private var dragging: Mark?
+  static let bins = 96
+  /// The counts on the scale before the black and white points, `bins` steps from 0 to 1, the
+  /// first and last holding what lies beyond.
+  static func counts(_ range: ToneRange, black: Double, white: Double) -> [[Double]] {
+    let n = range.counts.first?.count ?? 0, d = range.domain
+    let step = (d.upperBound - d.lowerBound) / Double(max(n, 1))
+    var out = [[Double]](repeating: [Double](repeating: 0, count: bins), count: 3)
+    for c in 0..<min(3, range.counts.count) {
+      for i in 0..<n {
+        let q = d.lowerBound + (Double(i) + 0.5) * step
+        let before = black + q * (white - black)
+        out[c][min(bins - 1, max(0, Int(before * Double(bins))))] += range.counts[c][i]
+      }
+    }
+    return out
+  }
+  /// Where the midtone puts mid-grey on that scale: `q^(1/midtone)` is a half at `q = 0.5^midtone`.
+  static func midPoint(black: Double, white: Double, midtone: Double) -> Double {
+    black + pow(0.5, midtone) * (white - black)
+  }
+  /// The midtone that puts mid-grey at `x`, within the slider's range.
+  static func midtone(at x: Double, black: Double, white: Double) -> Double {
+    let q = min(0.98, max(0.02, (x - black) / max(white - black, 0.01)))
+    return min(2, max(0.4, log(q) / log(0.5)))
+  }
+  var body: some View {
+    let counts = Self.counts(range, black: black, white: white)
+    let mid = Self.midPoint(black: black, white: white, midtone: midtone)
+    GeometryReader { geo in
+      Canvas { ctx, size in
+        func x(_ v: Double) -> CGFloat { size.width * CGFloat(min(1, max(0, v))) }
+        let peak = max(1e-9, counts.flatMap { $0.dropFirst().dropLast() }.max() ?? 1)
+        var lit = ctx
+        lit.blendMode = .plusLighter
+        for c in 0..<3 {
+          var p = Path()
+          p.move(to: CGPoint(x: 0, y: size.height))
+          for b in 0..<Self.bins {
+            let y = size.height * (1 - 0.92 * CGFloat(min(1, (counts[c][b] / peak).squareRoot())))
+            p.addLine(to: CGPoint(x: size.width * CGFloat(b) / CGFloat(Self.bins), y: y))
+            p.addLine(to: CGPoint(x: size.width * CGFloat(b + 1) / CGFloat(Self.bins), y: y))
+          }
+          p.addLine(to: CGPoint(x: size.width, y: size.height))
+          p.closeSubpath()
+          lit.fill(p, with: .color(HistogramView.colours[c].opacity(0.45)))
+        }
+        // What the black and white points send to pure black and pure white, dimmed.
+        ctx.fill(Path(CGRect(x: 0, y: 0, width: x(black), height: size.height)), with: .color(.black.opacity(0.5)))
+        ctx.fill(Path(CGRect(x: x(white), y: 0, width: max(0, size.width - x(white)), height: size.height)), with: .color(.black.opacity(0.5)))
+        func mark(_ v: Double, _ label: String, _ on: Bool) {
+          let at = x(v)
+          ctx.stroke(Path { $0.move(to: CGPoint(x: at, y: 10)); $0.addLine(to: CGPoint(x: at, y: size.height)) },
+            with: .color(on ? Hardware.accent : .white.opacity(0.55)), lineWidth: on ? 1.2 : 0.8)
+          ctx.draw(Text(label).font(.system(size: 8, weight: .medium)).foregroundStyle(on ? Hardware.accent : .white.opacity(0.7)),
+            at: CGPoint(x: min(max(at, 5), size.width - 5), y: 5))
+        }
+        mark(black, "黑", dragging == .black)
+        mark(mid, "中", dragging == .midtone)
+        mark(white, "白", dragging == .white)
+      }
+      .contentShape(Rectangle())
+      .gesture(DragGesture(minimumDistance: 0)
+        .onChanged { g in
+          let w = max(1, geo.size.width), v = Double(g.location.x / w)
+          if dragging == nil {
+            // The mark nearest where the drag began, the midtone where black and white stand together.
+            let start = Double(g.startLocation.x / w)
+            dragging = [(Mark.black, black), (.midtone, mid), (.white, white)].min { abs($0.1 - start) < abs($1.1 - start) }?.0
+          }
+          switch dragging {
+          case .black: set(.black, min(0.4, max(0, min(v, white - 0.05))))
+          case .white: set(.white, max(0.6, min(1, max(v, black + 0.05))))
+          case .midtone: set(.midtone, Self.midtone(at: v, black: black, white: white))
+          case nil: break
+          }
+        }
+        .onEnded { _ in dragging = nil })
+    }
+    .frame(height: 56)
+    .padding(4).background(PlotScreen())
+    .accessibilityElement().accessibilityLabel("色阶直方图")
+    .accessibilityValue(String(format: "黑点 %.2f，中间调 %.2f，白点 %.2f", black, midtone, white))
+    .help("色阶之前的直方图：拖「黑」「中」「白」三条线设黑点、中间调和白点；两边暗下去的部分是变成纯黑、纯白的")
+  }
+}
+
 /// A histogram as a camera back draws one, on a dark screen in either look: the three channels as
 /// light added together, so where they overlap they mix towards white, scaled to the tallest count
 /// away from the two ends, which a black border or a clipped sky would otherwise dwarf everything

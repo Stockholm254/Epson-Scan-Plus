@@ -250,5 +250,26 @@ enum ToneTests {
     try check(lumaKept && spread(after, 0) < spread(before, 0) / 3 && spread(after, 2) < spread(before, 2) / 3,
       String(format: "colour noise smoothed away, the lightness (the grain) kept exactly: red speckle %.3f → %.3f, blue %.3f → %.3f",
         spread(before, 0), spread(after, 0), spread(before, 2), spread(after, 2)))
+
+    // 色阶's histogram: a frame of one tone at 0.5 before the black and white points comes out at
+    // (0.5 - black) / (white - black) past them, as `ToneRange` counts it; put back, it is at 0.5
+    // whatever the points. The midtone's mark is where it makes mid-grey, and drags back to it.
+    func range(_ q: Double) -> ToneRange {
+      let n = 400, d = -1.0...3.0
+      var counts = [[Double]](repeating: [Double](repeating: 0, count: n), count: 3)
+      let i = Int((q - d.lowerBound) / (d.upperBound - d.lowerBound) * Double(n))
+      for c in 0..<3 { counts[c][i] = 1 }
+      return ToneRange(counts: counts, domain: d, black: nil, white: nil, stop: nil, pastWhite: 0, atWhite: 0, atBlack: 0, brightest: q)
+    }
+    let peaks = [(0.0, 1.0), (0.1, 0.9), (0.3, 0.7)].map { b, wh -> Int in
+      let c = LevelsHistogram.counts(range((0.5 - b) / (wh - b)), black: b, white: wh)[1]
+      return c.firstIndex(of: c.max()!)!
+    }
+    let midMark = LevelsHistogram.midPoint(black: 0.1, white: 0.9, midtone: 1.4)
+    try check(peaks.allSatisfy { abs($0 - LevelsHistogram.bins / 2) <= 1 }
+      && abs(pow((midMark - 0.1) / 0.8, 1 / 1.4) - 0.5) < 1e-9
+      && abs(LevelsHistogram.midtone(at: midMark, black: 0.1, white: 0.9) - 1.4) < 1e-9
+      && LevelsHistogram.midtone(at: 0.99, black: 0.1, white: 0.9) == 0.4,
+      "色阶's histogram shows a tone where it lies before the black and white points, whatever they are; the midtone's mark is its mid-grey and drags back to the same midtone")
   }
 }
