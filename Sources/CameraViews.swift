@@ -155,7 +155,9 @@ struct CameraStage: View {
         .frame(width: size.width, height: size.height)
     } else {
       VStack(spacing: 8) {
-        Image(systemName: "camera.viewfinder").font(.system(size: 34)).foregroundStyle(.secondary)
+        // The copy stand the live view will come from: the camera over the film, lit from below.
+        CopyStandObject().frame(width: 240, height: 284)
+          .opacity(camera.connected ? 1 : 0.7)
         Text(camera.connected ? "等待实时取景…" : camera.phase == .missing ? "这份 App 没有带 Sony SDK" : "相机还没有连接")
           .font(.system(size: 13)).foregroundStyle(.secondary)
         // The way in where the eye is, as the left panel's key: one click from the empty view.

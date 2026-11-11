@@ -45,6 +45,23 @@ enum Render3DTests {
       try check(false, "the strip of frames is drawn as film")
     }
 
+    // The copy stand on the camera page: drawn on a clear ground, its film carrier's window the
+    // one place lit from within, the light coming up through the film.
+    if let p = pixels(CopyStandRender.renderNow(pixels: CGSize(width: 320, height: 380))) {
+      var drawn = 0, lit = 0
+      for y in stride(from: 0, to: p.h, by: 2) {
+        for x in stride(from: 0, to: p.w, by: 2) {
+          let c = p.at(x, y)
+          if c.w > 0.5 { drawn += 1 }
+          if c.w > 0.95 && c.x > 0.8 && (c.x + c.y + c.z) / 3 > 0.55 { lit += 1 }
+        }
+      }
+      try check(drawn > 2000 && lit > 15 && lit < 800 && p.at(1, 1).w < 0.05,
+        "the copy stand is rendered in 3D, only its film carrier's window lit from below (\(drawn) drawn, \(lit) lit samples)")
+    } else {
+      try check(false, "the copy stand is rendered")
+    }
+
     // A sleeve's plastic: never opaque, brighter on its welds than in the middle.
     if let image = SleevePlastic.shared.image(size: CGSize(width: 280, height: 40), scale: 2), let p = pixels(image) {
       var most = 0.0
