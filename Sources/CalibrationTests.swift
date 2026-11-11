@@ -306,6 +306,7 @@ enum CalibrationTests {
       "a calibration from the generic preset is named after the roll's film and listed as its preset")
     // A preset calibrated from the generic one before, named 本机标定胶片, is no film's: it leaves the roll's film.
     var unnamed = phoenix
+    unnamed.id = "film-copy-0a0b0c"
     unnamed.name = "本机标定胶片 · 翻拍 · 2026-10-30 19:41"
     linked.keepProfile(unnamed)
     linked.chooseProfile(unnamed)
