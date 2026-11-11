@@ -374,7 +374,16 @@ struct GradientSlider: NSViewRepresentable {
     context.coordinator.parent = self
     if slider.minValue != range.lowerBound { slider.minValue = range.lowerBound }
     if slider.maxValue != range.upperBound { slider.maxValue = range.upperBound }
-    if slider.doubleValue != value { slider.doubleValue = value }
+    // Set at once (自动调整, 重置调整), in an animated change, the knob moves there; otherwise, and
+    // while the hand is on it, it is set.
+    if (slider.glideTarget ?? slider.doubleValue) != value {
+      if let _ = context.transaction.animation, !context.transaction.disablesAnimations, slider.window != nil {
+        slider.glide(to: value)
+      } else {
+        slider.stopGlide()
+        slider.doubleValue = value
+      }
+    }
     slider.detent = detent
     slider.isEnabled = context.environment.isEnabled
     if let cell = slider.cell as? GradientSliderCell, cell.colours != colours {
@@ -399,7 +408,37 @@ final class DetentSlider: NSSlider {
     get { GradientSliderCell.self }
     set {}
   }
+  private var glideTimer: Timer?
+  /// Where the knob is gliding to, while it does.
+  private(set) var glideTarget: Double?
+  /// The knob moved to `target` in a little over a quarter of a second, easing out (a tenth with
+  /// Reduce Motion); the value is shown, not sent: it is the setting's already.
+  func glide(to target: Double) {
+    stopGlide()
+    let start = doubleValue, began = CACurrentMediaTime()
+    let duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0.12 : 0.28
+    guard abs(target - start) > 1e-12 else { return }
+    glideTarget = target
+    let timer = Timer(timeInterval: 1 / 60, repeats: true) { [weak self] timer in
+      guard let self else { return timer.invalidate() }
+      let k = min(1, (CACurrentMediaTime() - began) / duration)
+      self.doubleValue = start + (target - start) * (1 - pow(1 - k, 3))
+      if k >= 1 { self.stopGlide() }
+    }
+    RunLoop.main.add(timer, forMode: .common)
+    glideTimer = timer
+  }
+  /// The glide stopped where the knob is, or set by the hand.
+  func stopGlide() {
+    glideTimer?.invalidate()
+    glideTimer = nil
+    if let target = glideTarget {
+      glideTarget = nil
+      doubleValue = target
+    }
+  }
   override func mouseDown(with event: NSEvent) {
+    stopGlide()
     if event.clickCount == 2, let detent {
       doubleValue = detent
       sendAction(action, to: target)

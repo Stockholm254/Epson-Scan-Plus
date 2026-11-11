@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import SwiftUI
 
 /// 自动调整, the wand by the title: one frame's colour and tone set from its own picture, on this
 /// Mac. Nothing is sent anywhere and nothing is learnt; it is the app's own automatic white balance
@@ -292,7 +293,9 @@ extension AppModel {
             return
           }
           let kept = outcome.adjustments
-          self.change("自动调整") { $0 = kept }
+          // The faders move to what was found, as the picture fades to it.
+          withAnimation(Liquid.settle) { self.change("自动调整") { $0 = kept } }
+          self.fadeInNextPicture()
           self.status = "已自动调整第 \(frame.name) 张：" + line + " · ⌘Z 撤销"
           self.noteOnCanvas("自动调整 · " + line)
         }

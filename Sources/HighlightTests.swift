@@ -260,6 +260,14 @@ enum HighlightTests {
       && abs(ToneCurves().target(tried, channel: 0, parametric: false) - ToneCurves.brightness(tried)) < 1e-9
       && abs(ToneCurves().target(tried, channel: 3, parametric: false) - 0.7) < 1e-9,
       "the targeted adjustment takes a point where the colour lies on the curve, moves the one already there, and on the parametric curve moves the zone the colour lies in")
+    // A preset or 重置 moves the drawn curve value by value: half way, each value is half way.
+    let fromLine = CurveSamples(values: [0, 0.25, 0.5, 1]), toLine = CurveSamples(values: [0, 0.35, 0.6, 1])
+    var halfWay = toLine - fromLine
+    halfWay.scale(by: 0.5)
+    let halfLine = fromLine + halfWay
+    try check(zip(halfLine.values, [0, 0.3, 0.55, 1.0]).allSatisfy { abs($0 - $1) < 1e-12 } && (CurveSamples.zero + toLine) == toLine
+      && abs((toLine - fromLine).magnitudeSquared - 0.02) < 1e-12,
+      "a curve's drawn values animate value by value, so a preset or 重置 moves the curve to it")
     try check(onAxis == [31, 31, 31] && asShown[0] != 31 && asShown[1] != 31,
       "the curves' histograms count a picture as it was before them, on their axis: a grey printed at 0.5 and bent by the curves peaks at 0.5 (\(onAxis), as shown \(asShown))")
   }

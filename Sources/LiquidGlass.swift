@@ -19,6 +19,16 @@ enum Liquid {
   static var flow: Animation {
     NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? .easeInOut(duration: 0.15) : .spring(response: 0.42, dampingFraction: 0.72)
   }
+  /// From one module to another: the sidebar and inspector sliding, the pages cross-fading, in a
+  /// third of a second with no overshoot, so modules changed quickly one after another never sway.
+  /// Settings set at once (自动调整, 重置调整, a curve preset): the faders and the curve move to
+  /// them, rather than jump, in a little over a quarter of a second.
+  static var settle: Animation {
+    NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? .easeInOut(duration: 0.12) : .snappy(duration: 0.28)
+  }
+  static var pageChange: Animation {
+    NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? .easeInOut(duration: 0.15) : .smooth(duration: 0.32)
+  }
 }
 
 /// What a piece of Liquid Glass is: clear (the picture seen almost unchanged through it) or

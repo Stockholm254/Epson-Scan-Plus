@@ -22,18 +22,23 @@ extension ContentView {
       Divider()
       ScrollView {
         VStack(alignment: .leading, spacing: 18) {
-          if m.page == .capture {
-            switch m.captureSource {
-            case .scanner: scanTab
-            case .camera: cameraTab
-            }
-          } else {
-            switch m.panelTab {
-            case .film: filmTab
-            case .calibration: calibrationTab
-            case .output: outputTab
+          // One tab over the other as they change, cross-fading, not one under the other.
+          ZStack(alignment: .topLeading) {
+            if m.page == .capture {
+              switch m.captureSource {
+              case .scanner: scanTab.transition(.opacity)
+              case .camera: cameraTab.transition(.opacity)
+              }
+            } else {
+              switch m.panelTab {
+              case .film: filmTab.transition(.opacity)
+              case .calibration: calibrationTab.transition(.opacity)
+              case .output: outputTab.transition(.opacity)
+              }
             }
           }
+          .animation(.easeInOut(duration: 0.18), value: m.panelTab)
+          .animation(.easeInOut(duration: 0.18), value: m.captureSource)
           Spacer(minLength: 16)
         }.padding(16).buttonStyle(.bordered).controlSize(.small)
       }

@@ -427,6 +427,73 @@ enum CanvasTests {
       && zoomCanvas.imageRect == fitted && zoomCanvas.pan == .zero && zoomed.zoomReadout.text == "1.0×"
       && !zoomCanvas.loupe.translatesAutoresizingMaskIntoConstraints && !zoomCanvas.scanHead.translatesAutoresizingMaskIntoConstraints,
       "a pinch and 「适合」 change the canvas alone, publishing nothing (\(published) published, \(figure) shown at 4.3×, back to \(zoomCanvas.imageRect) from \(fitted))")
+    // A glide zooms about the one point that stays put: the picture's point under the anchor stays
+    // under it all the way, the zoom by equal ratios; it lands on the zoom and pan asked for. Near
+    // the middle, as the picture kept over the canvas does not move the point there.
+    let anchor = CGPoint(x: fitted.midX + 30, y: fitted.midY + 20), underAnchor = zoomCanvas.shownNormal(anchor)
+    zoomCanvas.glideZoom(to: 3, about: anchor)
+    let landed = (zoom: zoomed.zoom, pan: zoomCanvas.pan, at: zoomCanvas.shownNormal(anchor))
+    let glide = ZoomGlide(from: (1, .zero), to: (landed.zoom, landed.pan))
+    var drift = 0.0, glideZooms: [Double] = []
+    for s in stride(from: 0.0, through: 1.0, by: 0.125) {
+      let step = glide.at(s)
+      zoomCanvas.place(zoom: step.zoom, pan: step.pan)
+      let q = zoomCanvas.shownNormal(anchor)
+      drift = max(drift, Double(hypot(q.x - underAnchor.x, q.y - underAnchor.y)))
+      glideZooms.append(step.zoom)
+    }
+    let ratios = zip(glideZooms, glideZooms.dropFirst()).map { $1 / $0 }
+    try check(landed.zoom == 3 && hypot(landed.at.x - underAnchor.x, landed.at.y - underAnchor.y) < 1e-3 && drift < 1e-3
+      && (ratios.max() ?? 0) - (ratios.min() ?? 0) < 1e-6 && glide.at(1).zoom == 3 && glide.at(1).pan == landed.pan
+      && ZoomGlide.progress(0) == 0 && ZoomGlide.progress(0.25) > 0.9 && ZoomGlide.progress(ZoomGlide.settles) == 1,
+      "a zoom glides about the point under the pointer, which stays under it (drift \(drift)), by equal ratios, and lands where asked")
+    // Zoomed in by a corner, the picture still covers the canvas: it lands no further off the middle
+    // than it can be moved.
+    zoomCanvas.glideZoom(to: 1, about: nil)
+    zoomCanvas.glideZoom(to: 3, about: CGPoint(x: fitted.minX + 4, y: fitted.minY + 4))
+    let cornerLimit = zoomCanvas.panLimit(zoom: 3), cornerPan = zoomCanvas.pan
+    try check(zoomed.zoom == 3 && abs(cornerPan.x) <= cornerLimit.width + 0.01 && abs(cornerPan.y) <= cornerLimit.height + 0.01 && cornerPan.x > 0,
+      "zoomed in by a corner, the picture is kept over the canvas (pan \(cornerPan), at most \(cornerLimit))")
+    // 「适合」 from the key glides back; off screen, at once.
+    zoomed.glideZoom = { [weak zoomCanvas] zoom, anchor in zoomCanvas?.glideZoom(to: zoom, about: anchor) }
+    zoomed.fitView(animated: true)
+    try check(zoomed.zoom == 1 && zoomCanvas.pan == .zero && zoomCanvas.imageRect == fitted && zoomCanvas.zoomGlide == nil,
+      "「适合」 brings the whole frame back in the middle")
+    // A double click on the single frame zooms in about the point and again back out; a double
+    // click whose first click opened the frame from the table does not.
+    func click(_ p: CGPoint, clicks: Int, at time: TimeInterval) {
+      for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+        let e = NSEvent.mouseEvent(with: type, location: zoomCanvas.convert(p, to: nil), modifierFlags: [], timestamp: time,
+          windowNumber: zoomWindow.windowNumber, context: nil, eventNumber: 0, clickCount: clicks, pressure: 1)!
+        type == .leftMouseDown ? zoomCanvas.mouseDown(with: e) : zoomCanvas.mouseUp(with: e)
+      }
+    }
+    let point = CGPoint(x: fitted.midX - 25, y: fitted.midY - 15), pointAt = zoomCanvas.shownNormal(point)
+    click(point, clicks: 2, at: 100)
+    let unpaired = zoomed.zoom
+    click(point, clicks: 1, at: 200)
+    click(point, clicks: 2, at: 200.2)
+    let doubled = (zoom: zoomed.zoom, at: zoomCanvas.shownNormal(point))
+    click(point, clicks: 1, at: 300)
+    click(point, clicks: 2, at: 300.2)
+    try check(unpaired == 1 && doubled.zoom == FilmCanvasView.doubleClickZoom && hypot(doubled.at.x - pointAt.x, doubled.at.y - pointAt.y) < 1e-3
+      && zoomed.zoom == 1 && zoomCanvas.imageRect == fitted,
+      "a double click zooms in \(FilmCanvasView.doubleClickZoom)× about the point and back out to fit; one begun on the table does not (\(unpaired)×)")
+    // While a fader is dragged its pictures come at once; a change made at once fades in.
+    let undo = UndoManager()
+    undo.groupsByEvent = false
+    zoomed.undoManager = undo
+    zoomed.resetAdjustments()
+    let afterReset = zoomed.picturesFade
+    zoomed.change("曝光") { $0.exposure += 0.1 }
+    zoomed.change("曝光") { $0.exposure += 0.1 }
+    let dragged = zoomed.picturesFade
+    undo.undo()
+    let undone = zoomed.picturesFade
+    zoomed.undoManager = nil
+    zoomed.cancelPictureFade()
+    for _ in 0..<400 where zoomed.rendering { settle(0.05) }
+    try check(afterReset && !dragged && undone, "重置 and ⌘Z fade the new picture in; a fader dragged does not (\(afterReset), \(dragged), \(undone))")
     // The zoom's figure keeps its own size in the bars under the picture, however much room they
     // are given: an AppKit view hugs loosely, and stretched, it took the glass bar round it up over
     // half the picture (0.16.0).

@@ -174,6 +174,16 @@ enum ContactPageTests {
     if case .edit(false, _)? = leaving?.kind { leavingKind = true }
     try check(enteringKind && settling && leavingKind && canvas.change == nil && model.tool == .select,
       "into a frame's crop it settles among its surroundings, and out of it the crop grows to fill the view")
+    // Out of the crop again before its view came: nothing changed on the canvas, nothing plays.
+    model.useTool(.crop)
+    let entryWaiting = canvas.change.map { !$0.started } ?? false
+    model.useTool(.select)
+    let nothingPlayed = canvas.change == nil
+    for _ in 0..<50 where model.rendering { settle(0.1) }
+    settle(0.3)
+    canvas.settleOpening()
+    try check(entryWaiting && nothingPlayed && canvas.change == nil && model.tool == .select,
+      "out of the crop again before its view comes, nothing plays")
     func press(_ key: UInt16) {
       canvas.keyDown(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
         windowNumber: window.windowNumber, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: key)!)
@@ -201,6 +211,16 @@ enum ContactPageTests {
     let sharper = canvas.layer?.animation(forKey: kCATransition) as? CATransition
     try check(same && sharper?.type == .fade && abs((sharper?.duration ?? 0) - 0.35) < 0.01,
       "the same frame come sharper, a full scan for its preview, fades up; a picture of the same size plays nothing")
+    // After a change made at once (自动调整, 重置, ⌘Z) the new picture fades in over the old.
+    canvas.layer?.removeAllAnimations()
+    model.fadeInNextPicture()
+    canvas.transitionPicture(picture(1200), play: true)
+    let fadedIn = canvas.layer?.animation(forKey: kCATransition) as? CATransition
+    model.cancelPictureFade()
+    canvas.layer?.removeAllAnimations()
+    canvas.transitionPicture(picture(1200), play: true)
+    try check(fadedIn?.type == .fade && abs((fadedIn?.duration ?? 0) - 0.22) < 0.01 && canvas.layer?.animation(forKey: kCATransition) == nil,
+      "after 自动调整, 重置 or ⌘Z the frame's new picture fades in; otherwise it is cut to")
     // Back to the table: the view draws back from the frame.
     model.showSingle(false)
     let closing = canvas.change
@@ -213,6 +233,83 @@ enum ContactPageTests {
     if case .close? = closing?.kind { closeKind = true }
     try check(closeKind && drawingBack && canvas.change == nil && !model.singleView,
       "back on the light table the view draws back from the frame to the whole page")
+    if !still {
+      // Opened and straight back out: the opening turns back from where it has got to; caught on
+      // its way back, the frame opens again from there, not from the table at rest.
+      model.showSingle(true)
+      settle(0.12)
+      let wasOpening = canvas.opening != nil
+      model.showSingle(false)
+      let turnedBack = canvas.opening == nil && canvas.caughtTable() != nil && canvas.change == nil
+      settle(0.1)
+      model.showSingle(true)
+      let reopenedFrom = (canvas.opening?.cover.animation(forKey: "transform.scale") as? CABasicAnimation)?.fromValue as? CGFloat
+      for _ in 0..<50 where model.rendering { settle(0.1) }
+      settle(0.8)
+      canvas.settleOpening()
+      try check(wasOpening && turnedBack && (reopenedFrom ?? 1) > 1.01 && canvas.opening == nil && canvas.caughtTable() == nil && model.singleView,
+        "opened and closed again at once, the opening turns back where it is, and opened again on its way back, it grows from there (from \(reopenedFrom.map { String(format: "%.2f×", $0) } ?? "rest"))")
+      // Turned again while turning: the turn goes on from where it is to the new angle; four
+      // quarter turns, and it is as it was.
+      let turnedAt = model.selected?.adjustments.rotation
+      model.turn(clockwise: true)
+      settle(0.1)
+      model.turn(clockwise: true)
+      var further = false
+      if case .orient(2, false, _)? = canvas.change?.kind { further = true }
+      let spunTo = (canvas.change?.cover.animation(forKey: "transform.rotation.z") as? CABasicAnimation)?.toValue as? CGFloat
+      model.turn(clockwise: true)
+      model.turn(clockwise: true)
+      for _ in 0..<50 where model.rendering { settle(0.1) }
+      settle(0.6)
+      canvas.settleOpening()
+      try check(further && abs((spunTo ?? 0) - .pi) < 1e-6 && canvas.change == nil && model.selected?.adjustments.rotation == turnedAt,
+        "turned again while still turning, the picture turns on from where it is to the new angle")
+      // A frame chosen while its own picture is still being made: the film strip's picture of it
+      // slides in meanwhile, and its own fades in over that once it is here.
+      canvas.lastPictureMove = 0
+      let standInFrom = model.displayed
+      press(124)
+      let standInID = model.selectedID
+      canvas.display()
+      let standIn = canvas.interimFace()
+      let stoodIn = canvas.interimShown == standInID && standIn != nil && standIn === standInID.flatMap { model.thumbnails[$0] }
+      for _ in 0..<50 where model.rendering || model.displayed === standInFrom { settle(0.1) }
+      canvas.display()
+      let cameUp = canvas.layer?.animation(forKey: kCATransition) as? CATransition
+      try check(stoodIn && canvas.interimShown == nil && canvas.interimFace() == nil && cameUp?.type == .fade && abs((cameUp?.duration ?? 0) - 0.2) < 0.01,
+        "a frame chosen while its picture is made shows the film strip's picture of it at once, its own fading in over it")
+      press(123)
+      for _ in 0..<50 where model.rendering { settle(0.1) }
+      canvas.display()
+      // Frames flipped through quicker than one slides in cross-fade in briefly.
+      canvas.lastPictureMove = CACurrentMediaTime() + 60
+      canvas.layer?.removeAllAnimations()
+      let flipFrom = model.displayed
+      press(124)
+      for _ in 0..<50 where model.rendering || model.displayed === flipFrom { settle(0.1) }
+      canvas.display()
+      let flipped = canvas.layer?.animation(forKey: kCATransition) as? CATransition
+      canvas.lastPictureMove = 0
+      press(123)
+      for _ in 0..<50 where model.rendering { settle(0.1) }
+      try check(flipped?.type == .fade && abs((flipped?.duration ?? 0) - 0.12) < 0.01,
+        "frames flipped through quicker than one slides in come in with a short cross-fade")
+      model.showSingle(false)
+      for _ in 0..<50 where model.rendering { settle(0.1) }
+      settle(0.8)
+      canvas.settleOpening()
+    }
+    // ← → on the table: the selection's outline slides to the next frame on the page.
+    model.select(model.frames[2].id)
+    canvas.display()
+    let fromBox = model.contactRect(model.frames[2]).cg, toBox = model.contactRect(model.frames[3]).cg
+    press(124)
+    let sliding = canvas.glidingSelectionRect()
+    settle(FilmCanvasView.selectionGlides + 0.1)
+    let between = sliding.map { fromBox.union(toBox).insetBy(dx: -1e-9, dy: -1e-9).contains($0) } ?? false
+    try check(still || (between && canvas.glidingSelectionRect() == nil && model.selectedID == model.frames[3].id),
+      "← → on the light table slide the selection's outline to the next frame, and it lands there")
     model.select(model.frames[35].id)
     press(124)
     let across = model.selectedID == model.frames[36].id && model.contactPage == 1 && !model.singleView

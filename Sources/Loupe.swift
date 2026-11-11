@@ -653,7 +653,8 @@ final class LoupeView: NSView {
     // While it is carried, or the frame under it zoomed, one ray a pixel keeps up with the hand;
     // set down, it is antialiased.
     image = LoupeRenderer.shared.render(
-      frame: frame, scale: window?.backingScaleFactor ?? 2, pose: pose, scene: canvas.loupeScene(), samples: grab == nil && !canvas.zooming ? 4 : 1)
+      frame: frame, scale: window?.backingScaleFactor ?? 2, pose: pose, scene: canvas.loupeScene(),
+      samples: grab == nil && liftTimer == nil && !canvas.zooming ? 4 : 1)
     needsDisplay = true
   }
   override func draw(_ dirtyRect: NSRect) {
@@ -731,16 +732,67 @@ final class LoupeView: NSView {
     canvas?.loupeMoved()
     window?.invalidateCursorRects(for: self)
   }
-  private func animateLift(to target: CGFloat) {
+  /// Raised or lowered to `target` over `duration`, easing out; one ray a pixel on the way, and
+  /// antialiased again once down.
+  private func animateLift(to target: CGFloat, duration: TimeInterval = 0.14) {
     liftTimer?.invalidate()
     let start = lift, began = Date()
     liftTimer = Timer.scheduledTimer(withTimeInterval: 1 / 60, repeats: true) { [weak self] timer in
       guard let self else { return timer.invalidate() }
-      let k = min(1, Date().timeIntervalSince(began) / 0.14)
+      let k = min(1, Date().timeIntervalSince(began) / duration)
       self.lift = start + (target - start) * CGFloat(1 - pow(1 - k, 3))
+      if k >= 1 {
+        timer.invalidate()
+        self.liftTimer = nil
+      }
       self.renderNow()
-      if k >= 1 { timer.invalidate() }
     }
+  }
+  /// Being picked up and put away (`pickUp`): which time, so a loupe set down again meanwhile
+  /// stays.
+  private(set) var leaving: UUID?
+  /// How clear it is on screen this moment, part way through a fade or not.
+  private var shownAlpha: CGFloat { CGFloat(layer?.presentation()?.opacity ?? Float(alphaValue)) }
+  /// Set down on the table: from a little above it, coming into view as it lands. Caught while
+  /// being picked up, it comes back down from as high and as clear as it then is.
+  func setDown() {
+    let caught = leaving != nil
+    leaving = nil
+    let from: CGFloat = caught ? shownAlpha : 0
+    if !caught { lift = radius * 0.6 }
+    alphaValue = from
+    NSAnimationContext.runAnimationGroup { context in
+      context.duration = 0.16 * Double(1 - from)
+      animator().alphaValue = 1
+    }
+    animateLift(to: 0, duration: caught ? 0.2 : 0.3)
+  }
+  /// Shown at once, on the table, as with Reduce Motion or off screen.
+  func stayDown() {
+    leaving = nil
+    alphaValue = 1
+    if grab == nil, liftTimer == nil { lift = 0 }
+  }
+  /// Picked up off the table and out of view, then `done`; not if set down again meanwhile.
+  func pickUp(_ done: @escaping () -> Void) {
+    let token = UUID()
+    leaving = token
+    animateLift(to: radius * 0.45, duration: 0.2)
+    // Caught while being set down, it goes from as clear as it then is.
+    let from = shownAlpha
+    alphaValue = from
+    NSAnimationContext.runAnimationGroup({ context in
+      context.duration = 0.2 * Double(from)
+      animator().alphaValue = 0
+    }, completionHandler: { [weak self] in
+      guard let self, self.leaving == token else { return }
+      self.leaving = nil
+      done()
+      self.liftTimer?.invalidate()
+      self.liftTimer = nil
+      self.lift = 0
+      self.alphaValue = 1
+    })
   }
   override func menu(for event: NSEvent) -> NSMenu? {
     let menu = NSMenu()

@@ -50,9 +50,13 @@ final class AppModel: ObservableObject {
       objectWillChange.send()
       shownPicture = newValue
       pictureShownAt = Date()
+      shownFrameID = nil
     }
   }
   private var shownPicture: CGImage?
+  /// The frame whose own picture the single view shows; nil for the table's. Another frame chosen
+  /// meanwhile, the canvas shows the film strip's picture of it until its own is here.
+  private(set) var shownFrameID: UUID?
   /// When the canvas was last given a picture: the render's progress shows only after a while without one.
   private(set) var pictureShownAt = Date.distantPast
   /// Draws a new picture on the canvas and does what waits for it; the canvas sets it.
@@ -253,6 +257,15 @@ final class AppModel: ObservableObject {
   let zoomReadout = ZoomReadout()
   /// The canvas, told the zoom changed.
   var zoomChanged: (() -> Void)?
+  /// The canvas, asked to glide to a zoom: about a point of it, or, with none, back to the middle.
+  var glideZoom: ((Double, CGPoint?) -> Void)?
+  /// Until when a new picture of what is shown cross-fades in, as after a change made at once
+  /// (自动调整, 重置调整, ⌘Z / ⇧⌘Z, a neutral picked); a fader being dragged clears it, so its
+  /// pictures follow the fingers without a fade.
+  private(set) var picturesFadeUntil: Date?
+  func fadeInNextPicture() { picturesFadeUntil = Date().addingTimeInterval(1.2) }
+  func cancelPictureFade() { picturesFadeUntil = nil }
+  var picturesFade: Bool { picturesFadeUntil.map { Date() < $0 } ?? false }
   /// Where the loupe lies on the light table, as a fraction of the canvas; nil by the edge.
   var loupeCenter: CGPoint?
   @Published var overviewDPI = 150.0
@@ -549,8 +562,10 @@ final class AppModel: ObservableObject {
     return ImageGeometry.transform(
       selected.rect.relative(to: region), settings: selected.adjustments)
   }
-  func fitView() {
+  /// Back to the picture fitting the canvas; `animated`, gliding there, as from 「适合」.
+  func fitView(animated: Bool = false) {
     viewportRevision += 1
+    if animated, singleView, let glideZoom { return glideZoom(1, nil) }
     if zoom != 1 { zoom = 1 } else { zoomChanged?() }
   }
   func focusCanvas() { canvasFocusRevision += 1 }
@@ -1284,7 +1299,9 @@ final class AppModel: ObservableObject {
   func change(_ name: String = "调整", separate: Bool = false, _ mutation: (inout Adjustments) -> Void) {
     guard let i = selectedIndex else { return }
     if separate { lastEdit = nil }
-    recordEdit(name, key: "\(name)-\(frames[i].id)")
+    let key = "\(name)-\(frames[i].id)"
+    if let lastEdit, lastEdit.key == key, Date().timeIntervalSince(lastEdit.at) < 1 { cancelPictureFade() }
+    recordEdit(name, key: key)
     // The roll's measured base belongs to the film, so even a reset keeps it.
     let rollBase = frames[i].adjustments.rollBase, rollSlopes = frames[i].adjustments.rollSlopes
     let picked = frames[i].adjustments.rollBasePicked
@@ -1298,6 +1315,11 @@ final class AppModel: ObservableObject {
   /// The tone and colour settings back to their defaults. How the file is encoded, which way the
   /// frame faces and the roll's own estimates are not settings, so they stay.
   func resetAdjustments() {
+    // The faders move back to their defaults, as the picture fades to it.
+    withAnimation(Liquid.settle) { resettingAdjustments() }
+    fadeInNextPicture()
+  }
+  private func resettingAdjustments() {
     change("重置调整") {
       let kept = $0
       $0 = Adjustments()
@@ -1351,6 +1373,7 @@ final class AppModel: ObservableObject {
     undoManager?.registerUndo(withTarget: self) { $0.restore(current, name: name) }
     undoManager?.setActionName(name)
     lastEdit = nil
+    fadeInNextPicture()
     // What the user edits comes back. Scans, and the film base and slopes the app measures, stay
     // as they are now; a removed frame comes back, an added one goes.
     frames = state.frames.map { old in
@@ -1934,6 +1957,7 @@ final class AppModel: ObservableObject {
   var copyStandRoll: Bool { rollSource == .camera || frames.contains { $0.sensorRead == true } }
   func chooseProfile(_ p: FilmProfile) {
     recordEdit("胶片预设")
+    fadeInNextPicture()
     filmName = p.name
     profile = p
     // A preset chosen is used whole, its calibration with it.
@@ -2962,6 +2986,7 @@ final class AppModel: ObservableObject {
           }
           self.shownSingle = token
           self.shownCurves = negative ? nil : shownSettings.curves
+          self.shownFrameID = frame.id
           self.showOnCanvas(output)
           // Only what changed is set, as setting published state updates the window even to the same.
           if self.canvasRegion != context?.region { self.canvasRegion = context?.region }
@@ -3015,6 +3040,7 @@ final class AppModel: ObservableObject {
         }
         self.shownSingle = token
         self.shownCurves = nil
+        self.shownFrameID = frame.id
         self.showOnCanvas(output)
         if self.canvasRegion != context?.region { self.canvasRegion = context?.region }
         if edit { self.editRegionLock = context?.region }
@@ -3310,6 +3336,8 @@ final class AppModel: ObservableObject {
           width: Double(2 * radius + 1) / Double(r.width) * crop.width, height: Double(2 * radius + 1) / Double(r.height) * crop.height)
         : nil)
     }
+    // The picked balance comes in as a whole, not as a fader's steps.
+    fadeInNextPicture()
     tool = .select
     refresh()
   }

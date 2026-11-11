@@ -77,15 +77,18 @@ struct ContentView: View {
         .navigationSplitViewColumnWidth(min: Preferences.leftWidths.lowerBound, ideal: m.preferences.leftWidth, max: Preferences.leftWidths.upperBound)
     } detail: {
       VStack(spacing: 0) {
-        if m.page == .library {
-          LibraryPage(m: m, shelf: m.shelf)
-        } else if m.page == .leak {
-          LeakPage(m: m, lab: m.leak)
-        } else {
-          workspace
+        // One module over the other as they change, cross-fading, not one under the other.
+        ZStack {
+          if m.page == .library {
+            LibraryPage(m: m, shelf: m.shelf).transition(.opacity)
+          } else if m.page == .leak {
+            LeakPage(m: m, lab: m.leak).transition(.opacity)
+          } else {
+            workspace.transition(.opacity)
+          }
         }
         // The open roll's strip, under the modules that work on it; the library shows every roll.
-        if m.page != .library { filmstrip }
+        if m.page != .library { filmstrip.transition(.move(edge: .bottom).combined(with: .opacity)) }
         if m.page == .leak {
           if m.leak.busy != nil { LeakStatus(lab: m.leak) }
         } else if footerShown {
@@ -94,10 +97,12 @@ struct ContentView: View {
       }
       .animation(Liquid.flow, value: footerShown)
       .inspector(isPresented: inspectorShown) {
-        Group { if m.page == .leak { LeakPanel(m: m, lab: m.leak) } else { rightPanel } }
+        ZStack { if m.page == .leak { LeakPanel(m: m, lab: m.leak).transition(.opacity) } else { rightPanel.transition(.opacity) } }
           .inspectorColumnWidth(min: Preferences.rightWidths.lowerBound, ideal: m.preferences.rightWidth, max: Preferences.rightWidths.upperBound + 40)
       }
     }
+    // From one module to another the sidebar and the inspector slide, the pages cross-fade.
+    .animation(Liquid.pageChange, value: m.page)
     // No sidebar on the library or ③: no key for one.
     .toolbar(removing: m.page == .library || m.page == .leak ? .sidebarToggle : nil)
     .navigationTitle(windowTitle)
@@ -238,7 +243,7 @@ struct ContentView: View {
       // The library has no inspector.
       if m.page != .library {
         Button {
-          inspector.toggle()
+          withAnimation(Liquid.pageChange) { inspector.toggle() }
         } label: {
           Label(inspector ? "隐藏检查器" : "显示检查器", systemImage: "sidebar.trailing")
         }.help(inspector ? "隐藏右边的检查器" : "显示右边的检查器")
@@ -349,7 +354,7 @@ struct ContentView: View {
       if m.singleView {
         Divider().frame(height: 18)
         Button {
-          m.fitView()
+          m.fitView(animated: true)
         } label: {
           Text("适合").font(.system(size: 11))
         }.buttonStyle(.bordered).controlSize(.small).help("缩放回适合窗口")
@@ -602,8 +607,11 @@ struct ContentView: View {
     }
   }
   /// Module ① keeps the roll's name and notes on the right; module ② the adjustments.
-  @ViewBuilder var rightPanel: some View {
-    if m.page == .capture { rollPanel } else { adjustPanel }
+  var rightPanel: some View {
+    // One over the other as the module changes, cross-fading.
+    ZStack {
+      if m.page == .capture { rollPanel.transition(.opacity) } else { adjustPanel.transition(.opacity) }
+    }
   }
   /// Module ②'s sidebar's first tab: the film and where its slopes come from, the film base and
   /// the frame's extent, which are set once for a roll or a frame, before the picture is worked on.
@@ -1100,7 +1108,8 @@ struct ContentView: View {
           set: { value in m.change("曲线") { $0.curves = value.normalized } }),
         histogram: m.histogram, channels: m.channelHistograms, state: m.curveState,
         targeting: Binding(get: { m.tool == .curve }, set: { m.tool = $0 ? .curve : .select }),
-        bypassed: Binding(get: { m.curvesBypassed }, set: { m.curvesBypassed = $0 }))
+        bypassed: Binding(get: { m.curvesBypassed }, set: { m.curvesBypassed = $0 }),
+        settled: { m.fadeInNextPicture() })
     }
   }
   /// Per-frame deconvolution strength, once the scanner has a measured profile.

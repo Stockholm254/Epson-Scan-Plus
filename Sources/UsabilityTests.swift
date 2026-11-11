@@ -29,6 +29,18 @@ enum UsabilityTests {
       "the toolbar's tools have their own symbols, and the two samplers say which is which")
     // The system draws Liquid Glass for this app though it may be built with an earlier SDK.
     try check(SystemGlass.viewClass != nil, "on macOS 26 the system's Liquid Glass is found at run time, for the floating plates and the fader caps")
+    // A fader set at once (自动调整, 重置调整) glides there; the hand on it stops it at the setting.
+    let fader = DetentSlider(value: 0, minValue: -1, maxValue: 1, target: nil, action: nil)
+    fader.glide(to: 1)
+    let glideStart = fader.doubleValue, gliding = fader.glideTarget == 1
+    RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+    let partWay = fader.doubleValue
+    RunLoop.current.run(until: Date().addingTimeInterval(0.35))
+    let landed = fader.doubleValue, ended = fader.glideTarget == nil
+    fader.glide(to: -1)
+    fader.stopGlide()
+    try check(glideStart == 0 && gliding && partWay > 0.05 && partWay < (FilmCanvasView.stillMotion ? 1.01 : 0.99) && landed == 1 && ended && fader.doubleValue == -1,
+      "a fader set at once glides to the value (\(String(format: "%.2f", partWay)) a tenth of a second in) and lands on it; stopped, it is at the setting")
 
     let model = AppModel(libraryURL: folder.appendingPathComponent("usability"), scanner: IdleScanner())
     try check(model.toolHint == nil, "the select tool puts nothing on the canvas")

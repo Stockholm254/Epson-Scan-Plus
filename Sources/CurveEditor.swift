@@ -35,6 +35,8 @@ struct CurveEditor: View {
   var targeting: Binding<Bool>? = nil
   /// The curves left off the picture for a while, to see it without them; nil leaves the key out.
   var bypassed: Binding<Bool>? = nil
+  /// A change made at once (a preset, 重置): the picture's next render fades in.
+  var settled: (() -> Void)? = nil
   @State private var dragging: Int?
   /// The point dragged off the plot and gone, for the rest of that drag.
   @State private var draggedOff = false
@@ -123,15 +125,22 @@ struct CurveEditor: View {
     HStack(spacing: 6) {
       Menu("预设") {
         ForEach(Self.presets, id: \.name) { preset in
-          Button(preset.name) { curves[channel] = Self.preset(preset.levels) }
+          Button(preset.name) { setAtOnce { $0[channel] = Self.preset(preset.levels) } }
         }
       }
       .fixedSize()
       .help("Lightroom 的点曲线预设，用在当前这条曲线上")
       tools
       Spacer(minLength: 0)
-      Button("重置") { curves[channel] = ToneCurve() }.disabled(curves[channel].isIdentity)
+      Button("重置") { setAtOnce { $0[channel] = ToneCurve() } }.disabled(curves[channel].isIdentity)
     }.controlSize(.small).font(.system(size: 11))
+  }
+  /// A preset or 重置: the curve moves to it, and the picture fades to it, rather than jumping.
+  private func setAtOnce(_ change: (inout ToneCurves) -> Void) {
+    var next = curves
+    change(&next)
+    withAnimation(Liquid.settle) { curves = next }
+    settled?()
   }
   private var parametricControls: some View {
     VStack(alignment: .leading, spacing: 4) {
@@ -141,7 +150,7 @@ struct CurveEditor: View {
       HStack(spacing: 6) {
         tools
         Spacer(minLength: 0)
-        Button("重置") { curves.parametric = nil }.disabled(curves.parametric == nil)
+        Button("重置") { setAtOnce { $0.parametric = nil } }.disabled(curves.parametric == nil)
       }.controlSize(.small).font(.system(size: 11))
     }
   }
@@ -207,12 +216,18 @@ struct CurveEditor: View {
     let curve = onParametric ? parametric.curve : curves[channel]
     let color = onParametric ? Hardware.lcdText : Self.colors[channel]
     return ZStack {
-      // A channel's colours: its own where its curve rises above the line, the opposite below.
-      if !onParametric && channel > 0 {
-        LinearGradient(
-          colors: [Self.colors[channel].opacity(0.2), Self.opposites[channel].opacity(0.16)],
-          startPoint: .topLeading, endPoint: .bottomTrailing)
+      // A channel's colours: its own where its curve rises above the line, the opposite below;
+      // another channel's cross-fading in.
+      ZStack {
+        if !onParametric && channel > 0 {
+          LinearGradient(
+            colors: [Self.colors[channel].opacity(0.2), Self.opposites[channel].opacity(0.16)],
+            startPoint: .topLeading, endPoint: .bottomTrailing)
+            .id(channel).transition(.opacity)
+        }
       }
+      .animation(.easeInOut(duration: 0.18), value: channel)
+      .animation(.easeInOut(duration: 0.18), value: onParametric)
       Path { p in
         for (i, v) in histogram.enumerated() {
           let x = Double(i) / Double(max(1, histogram.count - 1)) * size.width
@@ -221,11 +236,15 @@ struct CurveEditor: View {
         }
       }.stroke(Hardware.lcdText.opacity(channels.isEmpty ? 0.12 : 0.05), lineWidth: 2)
       // Each channel's histogram in its colour; the one being edited, or all three for RGB, brighter.
-      ForEach(Array(channels.prefix(3).enumerated()), id: \.offset) { i, values in
-        let tone = Self.colors[i + 1], lit = onParametric || channel == 0 || channel == i + 1
-        histogramShape(values, size).fill(tone.opacity(lit ? 0.16 : 0.06))
-        histogramLine(values, size).stroke(tone.opacity(lit ? 0.55 : 0.2), lineWidth: 0.8)
+      Group {
+        ForEach(Array(channels.prefix(3).enumerated()), id: \.offset) { i, values in
+          let tone = Self.colors[i + 1], lit = onParametric || channel == 0 || channel == i + 1
+          histogramShape(values, size).fill(tone.opacity(lit ? 0.16 : 0.06))
+          histogramLine(values, size).stroke(tone.opacity(lit ? 0.55 : 0.2), lineWidth: 0.8)
+        }
       }
+      // Another channel's histogram brightens as the last one dims.
+      .animation(.easeInOut(duration: 0.18), value: channel)
       Path { p in
         for i in 1..<4 {
           let f = Double(i) / 4
@@ -246,16 +265,22 @@ struct CurveEditor: View {
             p.addLine(to: CGPoint(x: s * size.width, y: size.height))
           }
         }.stroke(Hardware.lcdText.opacity(splitDragged == nil ? 0.25 : 0.5), style: StrokeStyle(lineWidth: 0.8, dash: [2, 3]))
-        if let k = zoneShown { reach(k, size).fill(Hardware.lcdText.opacity(0.14)) }
+        // The zone's reach comes up under the pointer and goes as it leaves.
+        ZStack {
+          if let k = zoneShown { reach(k, size).fill(Hardware.lcdText.opacity(0.14)).id(k).transition(.opacity) }
+        }
+        .animation(.easeOut(duration: 0.15), value: zoneShown)
       } else {
         // Every channel's curve, the one being edited on top.
         ForEach(0..<4, id: \.self) { i in
           if i != channel {
-            path(curves[i], size).stroke(Self.colors[i].opacity(curves[i].isIdentity ? 0.25 : 0.6), lineWidth: 1)
+            CurveLine(curves[i]).stroke(Self.colors[i].opacity(curves[i].isIdentity ? 0.25 : 0.6), lineWidth: 1)
+              .frame(width: size.width, height: size.height)
           }
         }
       }
-      path(curve, size).stroke(color, lineWidth: 1.5).shadow(color: color.opacity(0.6), radius: 2)
+      CurveLine(curve).stroke(color, lineWidth: 1.5).shadow(color: color.opacity(0.6), radius: 2)
+        .frame(width: size.width, height: size.height)
       if let reading = state.reading {
         pointerMarks(reading, size)
       }
@@ -374,15 +399,6 @@ struct CurveEditor: View {
     p.closeSubpath()
     return p
   }
-  private func path(_ curve: ToneCurve, _ size: CGSize) -> Path {
-    Path { p in
-      for i in 0...64 {
-        let x = Double(i) / 64
-        let point = CGPoint(x: x * size.width, y: (1 - curve.value(x)) * size.height)
-        if i == 0 { p.move(to: point) } else { p.addLine(to: point) }
-      }
-    }
-  }
   private func drag(_ size: CGSize) -> some Gesture {
     DragGesture(minimumDistance: 0)
       .onChanged { drag in
@@ -458,6 +474,41 @@ struct CurveEditor: View {
 }
 
 /// A split of the parametric curve under its plot: a small triangle pointing up at it.
+/// A curve drawn through 65 of its values, which a preset or 重置 animates between value by value.
+private struct CurveLine: Shape {
+  var samples: CurveSamples
+  init(_ curve: ToneCurve) { samples = CurveSamples(values: (0...64).map { curve.value(Double($0) / 64) }) }
+  var animatableData: CurveSamples {
+    get { samples }
+    set { samples = newValue }
+  }
+  func path(in rect: CGRect) -> Path {
+    Path { p in
+      let v = samples.values
+      guard v.count > 1 else { return }
+      for (i, y) in v.enumerated() {
+        let point = CGPoint(x: rect.minX + Double(i) / Double(v.count - 1) * rect.width, y: rect.minY + (1 - y) * rect.height)
+        if i == 0 { p.move(to: point) } else { p.addLine(to: point) }
+      }
+    }
+  }
+}
+/// A curve's values, as SwiftUI animates them: added, taken apart and scaled value by value.
+struct CurveSamples: VectorArithmetic {
+  var values: [Double]
+  static var zero: CurveSamples { CurveSamples(values: []) }
+  private static func combine(_ a: CurveSamples, _ b: CurveSamples, _ op: (Double, Double) -> Double) -> CurveSamples {
+    let n = max(a.values.count, b.values.count)
+    return CurveSamples(values: (0..<n).map { i in
+      op(i < a.values.count ? a.values[i] : 0, i < b.values.count ? b.values[i] : 0)
+    })
+  }
+  static func + (a: CurveSamples, b: CurveSamples) -> CurveSamples { combine(a, b, +) }
+  static func - (a: CurveSamples, b: CurveSamples) -> CurveSamples { combine(a, b, -) }
+  mutating func scale(by rhs: Double) { values = values.map { $0 * rhs } }
+  var magnitudeSquared: Double { values.reduce(0) { $0 + $1 * $1 } }
+}
+
 private struct SplitMark: Shape {
   func path(in rect: CGRect) -> Path {
     Path { p in

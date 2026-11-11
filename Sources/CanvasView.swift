@@ -12,6 +12,7 @@ struct ScanCanvas: NSViewRepresentable {
     model.viewWillChange = { [weak v] change in v?.viewWillChange(change) }
     model.pictureChanged = { [weak v] in v?.modelChanged() }
     model.zoomChanged = { [weak v] in v?.zoomChanged() }
+    model.glideZoom = { [weak v] zoom, anchor in v?.glideZoom(to: zoom, about: anchor) }
     return v
   }
   func updateNSView(_ view: FilmCanvasView, context: Context) {
@@ -221,6 +222,10 @@ final class FilmCanvasView: NSView {
   private var regionDrag: (start: CGPoint, original: CGRect?, corner: Int?, edge: Int?)?
   private(set) var regionDraft: CGRect?
   var pan = CGPoint.zero
+  /// A zoom gliding to its end (`glideZoom`), until it lands or the pointer takes over.
+  var zoomGlide: ZoomGlide?
+  /// When the single frame was last clicked, for a double click to zoom.
+  private var singleClickAt: TimeInterval = 0
   var panStart: CGPoint?
   /// A frame clicked on the light table, and where: it opens if the mouse comes up there.
   var clickedFrame: (id: UUID, at: CGPoint)?
@@ -292,11 +297,21 @@ final class FilmCanvasView: NSView {
     cursorArea = area
     window?.invalidateCursorRects(for: self)
   }
+  /// The pan kept within the canvas; not while a zoom glides, whose path keeps it there.
   func clampPan() {
-    let r = imageRect
-    let x = max(0, (r.width - open.width) / 2)
-    let y = max(0, (r.height - open.height) / 2)
-    pan = CGPoint(x: clamp(pan.x, -x, x), y: clamp(pan.y, -y, y))
+    guard zoomGlide == nil else { return }
+    pan = clamped(pan, zoom: model?.zoom ?? 1)
+  }
+  /// How far the picture can be moved off the middle, either way, at `zoom`: as far as it then
+  /// overhangs the canvas.
+  func panLimit(zoom: Double) -> CGSize {
+    guard let cg = shown else { return .zero }
+    let k = fitScale * CGFloat(zoom)
+    return CGSize(width: max(0, (CGFloat(cg.width) * k - open.width) / 2), height: max(0, (CGFloat(cg.height) * k - open.height) / 2))
+  }
+  func clamped(_ p: CGPoint, zoom: Double) -> CGPoint {
+    let limit = panLimit(zoom: zoom)
+    return CGPoint(x: clamp(p.x, -limit.width, limit.width), y: clamp(p.y, -limit.height, limit.height))
   }
   override func setFrameSize(_ newSize: NSSize) {
     super.setFrameSize(newSize)
@@ -531,6 +546,48 @@ final class FilmCanvasView: NSView {
   /// The light table's picture and page last drawn: a new picture of another page slides in.
   private var drawnPicture: CGImage?
   private(set) var drawnPage = 0
+  /// When a page last slid in for another.
+  private var lastPageTurn: CFTimeInterval = 0
+  /// The light table's selection moving by ← → to the next frame on the page: where its outline
+  /// set out from, in the table's coordinates, the frame it goes to, and when.
+  private var selectionGlide: (from: CGRect, to: UUID, start: CFTimeInterval)?
+  private var selectionGlideTimer: Timer?
+  static let selectionGlides: CFTimeInterval = 0.2
+  /// Where the selection's outline is now, in the table's coordinates, while it moves; nil once it
+  /// is on its frame.
+  func glidingSelectionRect() -> CGRect? {
+    // A picture taken of the table (the loupe's, a view's change) has the selection on its frame.
+    guard let g = selectionGlide, !snapshotting, let model, !model.singleView, model.selectedID == g.to,
+      let f = model.contactFrames.first(where: { $0.id == g.to })
+    else { return nil }
+    let t = (CACurrentMediaTime() - g.start) / Self.selectionGlides
+    guard t < 1 else { return nil }
+    let k = CGFloat(1 - pow(1 - max(0, t), 3)), to = model.contactRect(f).cg
+    return CGRect(x: g.from.minX + (to.minX - g.from.minX) * k, y: g.from.minY + (to.minY - g.from.minY) * k,
+      width: g.from.width + (to.width - g.from.width) * k, height: g.from.height + (to.height - g.from.height) * k)
+  }
+  /// ← → on the light table: the selection's outline slides from the frame it was on to the next,
+  /// on the same page; another page turns in instead.
+  func glideTableSelection(from was: UUID?) {
+    guard let model, !model.singleView, !Self.stillMotion, let was, let now = model.selectedID, was != now,
+      let a = model.contactFrames.first(where: { $0.id == was }), model.contactFrames.contains(where: { $0.id == now })
+    else { return }
+    let from = glidingSelectionRect() ?? model.contactRect(a).cg
+    selectionGlide = (from, now, CACurrentMediaTime())
+    selectionGlideTimer?.invalidate()
+    let timer = Timer(timeInterval: 1 / 60, repeats: true) { [weak self] timer in
+      guard let self else { return timer.invalidate() }
+      self.overlay.needsDisplay = true
+      if self.glidingSelectionRect() == nil {
+        timer.invalidate()
+        self.selectionGlideTimer = nil
+        self.selectionGlide = nil
+      }
+    }
+    RunLoop.main.add(timer, forMode: .common)
+    selectionGlideTimer = timer
+    overlay.needsDisplay = true
+  }
   private func turnPage() {
     guard let model, let picture = model.displayed, picture !== drawnPicture else { return }
     defer {
@@ -544,9 +601,12 @@ final class FilmCanvasView: NSView {
     }
     transitionPicture(picture, play: false)
     let slide = CATransition()
-    if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+    // Pages turned quicker than one slides in: each a short cross-fade, keeping up.
+    let at = CACurrentMediaTime(), quick = at - lastPageTurn < 0.37
+    lastPageTurn = at
+    if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion || quick {
       slide.type = .fade
-      slide.duration = 0.2
+      slide.duration = quick ? 0.12 : 0.2
     } else {
       slide.type = .push
       slide.subtype = model.contactPage > drawnPage ? .fromRight : .fromLeft
@@ -560,6 +620,7 @@ final class FilmCanvasView: NSView {
     // The picture's layers go with what is drawn: hidden unless placed below.
     var picturePlaced = false
     defer { if !picturePlaced && !snapshotting { placePicture(nil) } }
+    slideToInterim()
     turnPage()
     NSGraphicsContext.saveGraphicsState()
     defer { NSGraphicsContext.restoreGraphicsState() }
@@ -585,6 +646,19 @@ final class FilmCanvasView: NSView {
     if let opening, model.singleView, !opening.grown || model.displayed === opening.over { return }
     // Turning, the old picture turns in the new one's place.
     if change?.hold == true { return }
+    // Another frame chosen, its own picture on its way: the film strip's picture of it meanwhile.
+    if let face = interimFace() {
+      let r = Self.fitted(CGSize(width: face.width, height: face.height), in: fitArea)
+      drawShadowPlate(around: r)
+      if !snapshotting, window != nil {
+        placePicture((face, r, false, nil))
+        picturePlaced = true
+      } else {
+        NSImage(cgImage: face, size: CGSize(width: face.width, height: face.height)).draw(
+          in: r, from: .zero, operation: .copy, fraction: 1, respectFlipped: true, hints: [.interpolation: NSImageInterpolation.high])
+      }
+      return
+    }
     let rect = imageRect
     let sheet = model.onSheetPage
     if !sheet {
@@ -628,6 +702,8 @@ final class FilmCanvasView: NSView {
     guard let model, shown != nil else { return }
     if let opening, model.singleView, !opening.grown || model.displayed === opening.over { return }
     if change?.hold == true { return }
+    // The marks belong to the frame's own picture, not the film strip's shown meanwhile.
+    if interimFace() != nil { return }
     let rect = imageRect
     let sheet = model.onSheetPage
     if model.singleView, model.canvasCrop == nil, model.straightening {
@@ -710,10 +786,12 @@ final class FilmCanvasView: NSView {
     if !model.singleView && model.scanner.previewSoFar == nil {
       // A new roll's frames come in one after another, each box settling onto its frame.
       noteFrames()
+      let movingSelection = glidingSelectionRect()
       for (n, f) in model.contactFrames.enumerated() {
         let appear = rippleShare(n)
         let r = screen(model.contactRect(f).cg).insetBy(dx: -(1 - appear) * 10, dy: -(1 - appear) * 10)
-        let selected = f.id == model.selectedID
+        // Moving to it by ← →, the selection's outline is on its way there (drawn below).
+        let selected = f.id == model.selectedID && movingSelection == nil
         // Those chosen with it (⌘ / ⇧) in its colour, fainter.
         let chosen = !selected && model.alsoSelected.contains(f.id)
         let solid =
@@ -751,6 +829,12 @@ final class FilmCanvasView: NSView {
             .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
             .foregroundColor: NSColor.black.withAlphaComponent(appear),
           ])
+      }
+      if let moving = movingSelection {
+        NSColor(calibratedRed: 0.95, green: 0.71, blue: 0.38, alpha: 1).setStroke()
+        let path = NSBezierPath(rect: screen(moving))
+        path.lineWidth = 2
+        path.stroke()
       }
       if let draft {
         NSColor.systemOrange.setStroke()
@@ -1455,19 +1539,28 @@ final class FilmCanvasView: NSView {
       loupeHomeFrame = model.selectedID
       loupe.layoutOnTable()
     }
-    if loupe.isHidden != hidden {
-      loupe.isHidden = hidden
+    // Set down or picked up by its key: in the window, lowered onto the table or lifted off it.
+    let shownNow = !loupe.isHidden && loupe.leaving == nil, moves = window?.isVisible == true && !Self.stillMotion
+    if shownNow == hidden {
       if !hidden {
+        loupe.isHidden = false
         loupeHomeFrame = model.selectedID
         loupe.layoutOnTable()
+        if moves && model.preferences.showLoupe { loupe.setDown() } else { loupe.stayDown() }
       } else {
         // Put away, it keeps no full-resolution picture.
-        loupeDetail = nil
-        loupeDetailRequest = nil
-        loupeDetailStale = false
-        loupeRegion = nil
-        turnedLoupeDetail = nil
-        LoupeRenderer.shared.release()
+        let putAway = { [weak self] in
+          guard let self else { return }
+          self.loupe.isHidden = true
+          self.loupeDetail = nil
+          self.loupeDetailRequest = nil
+          self.loupeDetailStale = false
+          self.loupeRegion = nil
+          self.turnedLoupeDetail = nil
+          LoupeRenderer.shared.release()
+        }
+        // Its key pressed, lifted off; gone with the picture under it, at once.
+        if moves, !loupe.isHidden, shown != nil { loupe.pickUp(putAway) } else { putAway() }
       }
     }
     // The picture's size on screen sets the large field over the single frame, as it is zoomed,
@@ -1504,6 +1597,32 @@ final class FilmCanvasView: NSView {
   var change: ViewChangeInFlight?
   /// The single frame or the table's picture as last drawn: its frame, its look and its size.
   var drawnSingle: (id: UUID?, look: [Int], size: CGSize)?
+  /// When one frame last slid in for another: frames flipped through quicker than that cross-fade.
+  var lastPictureMove: CFTimeInterval = 0
+  /// The frame whose film-strip picture slid in for it (`slideToInterim`): its own fades in over it.
+  var interimShown: UUID?
+  /// Another frame chosen in the single view, its own picture still being made: the film strip's
+  /// picture of it, shown in its place meanwhile, so frames flipped through quickly show as they
+  /// go by rather than the last one staying until a picture is made. Not over a negative or the
+  /// raw picture, which the film strip does not have, nor while a change of view plays.
+  func interimFace() -> CGImage? {
+    guard let model, model.singleView, !model.showsNegative, !model.showsOriginal, !model.editingSingle, model.tool != .base,
+      let id = model.selectedID, let shownID = model.shownFrameID, shownID != id,
+      opening == nil, change == nil, turningBack == nil, let face = model.thumbnails[id], face.width > 0, face.height > 0
+    else { return nil }
+    return face
+  }
+  /// The film strip's picture slides in for the frame chosen, as the frame's own would.
+  private func slideToInterim() {
+    guard let model, let layer, let face = interimFace(), let id = model.selectedID, let last = drawnSingle, last.id != id
+    else { return }
+    defer {
+      drawnSingle = (id, last.look, CGSize(width: face.width, height: face.height))
+      interimShown = id
+    }
+    guard !snapshotting, let was = last.id ?? model.shownFrameID, let move = frameMove(from: was, to: id) else { return }
+    layer.add(move, forKey: "picture")
+  }
   /// The frames on the table as last drawn, and a new roll's coming in.
   var drawnFrameIDs: Set<UUID> = []
   var rippleStart: Date?
@@ -1530,7 +1649,10 @@ final class FilmCanvasView: NSView {
       DispatchQueue.main.asyncAfter(deadline: .now() + rippleDuration + 0.1) { [weak self] in self?.open(f.id) }
       return
     }
+    // Caught drawing back to the table, it opens again from where the table and the frame are.
+    let caught = caughtTable()
     finishChange()
+    endTurningBack()
     defer {
       model.singleView = true
       model.refresh()
@@ -1564,6 +1686,7 @@ final class FilmCanvasView: NSView {
     cover.opacity = 0
     CATransaction.commit()
     opening = (cover, picture, model.displayed, false)
+    openedFrom = from
 
     // Grown once it is seen to have arrived: what is left of the spring is too small to see.
     DispatchQueue.main.asyncAfter(deadline: .now() + (still ? 0.2 : 0.55)) { [weak self] in
@@ -1594,8 +1717,8 @@ final class FilmCanvasView: NSView {
       // As the system springs a window or a photo open: half a second, a slight bounce. The
       // table, scaled about the frame as much as the frame grows, and the frame on the same
       // spring, so the frame stays where it lies on the table.
-      Self.springZoom(cover, from: (1, CGPoint(x: bounds.midX, y: bounds.midY)), to: zoomed(showing: from, at: to))
-      Self.spring(picture, from: from)
+      Self.springZoom(cover, from: caught.map { ($0.scale, $0.position) } ?? (1, CGPoint(x: bounds.midX, y: bounds.midY)), to: zoomed(showing: from, at: to))
+      Self.spring(picture, from: caught?.face ?? from)
     }
     CATransaction.commit()
     // Should the frame's picture never come, the single view shows what it has.
@@ -1603,10 +1726,62 @@ final class FilmCanvasView: NSView {
       if self?.opening?.picture === picture { self?.finishOpening() }
     }
   }
+  /// Where the frame opening began, on the table.
+  private var openedFrom: CGRect?
+  /// An opening turned back part way (`turnBackOpening`): the table and the frame on their way
+  /// back, until they are there.
+  private var turningBack: (table: CALayer, face: CALayer)?
+  /// The table and the frame part way back to the table, a close playing or an opening turned
+  /// back: the table's scale and place, as a layer the canvas's size, and the frame's place.
+  func caughtTable() -> (scale: CGFloat, position: CGPoint, face: CGRect)? {
+    var pair = turningBack
+    if pair == nil, let c = change, case .close = c.kind, c.started, c.layers.count == 2 { pair = (c.layers[0], c.layers[1]) }
+    guard let pair, let t = pair.table.presentation(), let f = pair.face.presentation() else { return nil }
+    return ((t.value(forKeyPath: "transform.scale") as? CGFloat) ?? 1, t.position, f.frame)
+  }
+  /// Back to the table while the frame is still opening: the opening turns back from where it is,
+  /// the frame shrinking into its place on the table and the table coming back round it, rather
+  /// than the close starting over from a single view not yet drawn.
+  func turnBackOpening() -> Bool {
+    guard let o = opening, let start = openedFrom, !Self.stillMotion, let t = o.cover.presentation(), let p = o.picture.presentation()
+    else { return false }
+    let scale = (t.value(forKeyPath: "transform.scale") as? CGFloat) ?? 1, position = t.position, clear = t.opacity, face = p.frame
+    opening = nil
+    openedFrom = nil
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    for l in [o.cover, o.picture] { l.removeAllAnimations() }
+    o.cover.opacity = 1
+    o.picture.frame = start
+    o.picture.opacity = 0
+    CATransaction.commit()
+    CATransaction.begin()
+    Self.springZoom(o.cover, from: (scale, position), to: (1, CGPoint(x: bounds.midX, y: bounds.midY)))
+    Self.spring(o.picture, from: face)
+    o.cover.add(Self.fade(from: clear, to: 1, duration: 0.15), forKey: "fade")
+    // The frame's picture gives way to its place on the table as it arrives there.
+    o.picture.add(Self.fade(from: 1, to: 0, duration: 0.2, after: 0.25), forKey: "fade")
+    CATransaction.commit()
+    turningBack = (o.cover, o.picture)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { [weak self] in
+      if self?.turningBack?.table === o.cover { self?.endTurningBack() }
+    }
+    return true
+  }
+  func endTurningBack() {
+    guard let done = turningBack else { return }
+    turningBack = nil
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    done.table.removeFromSuperlayer()
+    done.face.removeFromSuperlayer()
+    CATransaction.commit()
+  }
   /// The opened frame's own picture is drawn: what grew there fades into it.
   private func finishOpening() {
     guard let done = opening else { return }
     opening = nil
+    openedFrom = nil
     needsDisplay = true
     CATransaction.begin()
     CATransaction.setCompletionBlock {
@@ -1681,7 +1856,7 @@ final class FilmCanvasView: NSView {
       loupe.drawingSuppressed = true
       scanHead.drawingSuppressed = true
       // Not what a change of view lays over the canvas meanwhile: the canvas as it draws itself.
-      let over = [opening?.cover, opening?.picture, change?.cover].compactMap { $0 } + (change?.layers ?? [])
+      let over = [opening?.cover, opening?.picture, change?.cover, turningBack?.table, turningBack?.face].compactMap { $0 } + (change?.layers ?? [])
       CATransaction.begin()
       CATransaction.setDisableActions(true)
       let shown = over.filter { !$0.isHidden }
@@ -1956,6 +2131,7 @@ final class FilmCanvasView: NSView {
   }
   override func mouseDown(with event: NSEvent) {
     window?.makeFirstResponder(self)
+    endZoomGlide()
     guard let model, model.displayed != nil, !model.rendering else { return }
     let p = convert(event.locationInWindow, from: nil)
     guard bounds.contains(p), imageRect.contains(p) else { return }
@@ -1999,6 +2175,17 @@ final class FilmCanvasView: NSView {
           draft = CGRect(origin: normal(p), size: .zero)
         }
         return
+      }
+      // A double click zooms in about the point, and again back out to fit, gliding there: both
+      // its clicks on the frame, not the first on the table opening it.
+      if model.tool == .select {
+        if event.clickCount >= 2, event.timestamp - singleClickAt < NSEvent.doubleClickInterval {
+          singleClickAt = 0
+          let zoomedIn = model.zoom > 1.05
+          glideZoom(to: zoomedIn ? 1 : Self.doubleClickZoom, about: zoomedIn ? nil : p)
+          return
+        }
+        singleClickAt = event.timestamp
       }
       panStart = p
       return
@@ -2178,6 +2365,7 @@ final class FilmCanvasView: NSView {
     } else if (model?.zoom ?? 1) > 1 {
       // The picture follows the fingers, as a scroll view's content does with the system's own
       // scrolling direction.
+      endZoomGlide()
       pan.x += event.scrollingDeltaX
       pan.y += event.scrollingDeltaY
       clampPan()
@@ -2201,6 +2389,7 @@ final class FilmCanvasView: NSView {
   }
   func setZoom(_ zoom: Double, anchor: CGPoint) {
     guard model?.singleView == true else { return }
+    endZoomGlide()
     defer { window?.invalidateCursorRects(for: self) }
     let old = imageRect
     guard old.width > 0, old.height > 0 else { return }
@@ -2221,6 +2410,8 @@ final class FilmCanvasView: NSView {
   /// by itself, as the window no longer updates for either.
   func zoomChanged() {
     guard !settingZoom, let model else { return }
+    // Set from elsewhere (another frame, the crop), the glide gives way.
+    endZoomGlide()
     // 「适合」: back in the middle.
     if lastViewportRevision != model.viewportRevision {
       pan = .zero
@@ -2229,6 +2420,18 @@ final class FilmCanvasView: NSView {
     clampPan()
     viewZoomed()
   }
+  /// The zoom and the pan set together, as a glide's step sets them; the pan as given, not kept
+  /// within the canvas, the glide's path keeping it there.
+  func place(zoom: Double, pan p: CGPoint) {
+    settingZoom = true
+    model?.zoom = zoom
+    settingZoom = false
+    pan = p
+    viewZoomed()
+    window?.invalidateCursorRects(for: self)
+  }
+  /// The model's 「适合」 back in the middle, once a glide lands there.
+  func noteViewport() { lastViewportRevision = model?.viewportRevision ?? lastViewportRevision }
   /// What follows the picture's size on the canvas, as an update of the window did when the zoom
   /// was published: the sampler's cursor, the loupe grown with the frame, the scan head.
   private func viewZoomed() {
@@ -2277,7 +2480,9 @@ final class FilmCanvasView: NSView {
       model?.useTool(.select)
     } else if [123, 124].contains(event.keyCode), event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty {
       // The frame before or after, on the light table too, its page turning with it.
+      let was = model?.selectedID
       model?.navigate(event.keyCode == 123 ? -1 : 1)
+      glideTableSelection(from: was)
     } else if event.keyCode == 51 {
       model?.deletePressed()
     } else if event.keyCode == 53 {

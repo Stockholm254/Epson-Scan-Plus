@@ -46,6 +46,18 @@ extension FilmCanvasView {
   /// The model is about to change what the canvas shows.
   func viewWillChange(_ change: AppModel.ViewChange) {
     guard let model, let layer, bounds.width > 0, shown != nil else { return }
+    // Back to the table while the frame still opens: the opening turns back where it is.
+    if change == .close, turnBackOpening() { return }
+    // Turned again while still turning: the turn goes on from where it is to the new angle.
+    if case .orient(let turns, false) = change, model.singleView, turnFurther(by: turns) { return }
+    // Out of the crop before its view came, nothing changed on the canvas and nothing plays; out of
+    // it while the frame settles in, the view grows back from where the frame has got to.
+    var settlingAt: CGRect?
+    if change == .edit(entering: false), let flight = self.change, case .edit(true, _) = flight.kind {
+      if !flight.started { return finishChange() }
+      settlingAt = flight.cover.presentation()?.frame
+    }
+    endTurningBack()
     finishChange()
     guard let shot = tableSnapshot() else { return }
     let kind: ViewChangeInFlight.Kind
@@ -95,7 +107,7 @@ extension FilmCanvasView {
       playOrient(turns: turns, mirror: mirror, from: from, to: to)
     case .edit(false, let from):
       self.change?.started = true
-      playEdit(entering: false, from: from, to: Self.fitted(from.size, in: fitArea))
+      playEdit(entering: false, from: from, to: Self.fitted(from.size, in: fitArea), caught: settlingAt)
     default: break
     }
     // Should the new picture never come, the canvas shows what it has.
@@ -171,7 +183,8 @@ extension FilmCanvasView {
 
   /// Into a frame's crop the frame settles among its surroundings, where its crop lies on them;
   /// out of it, the crop grows to fill the view, the surroundings going off the canvas.
-  private func playEdit(entering: Bool, from: CGRect, to: CGRect) {
+  /// Out of the crop `caught` part way in: from where the frame had got to on screen.
+  private func playEdit(entering: Bool, from: CGRect, to: CGRect, caught: CGRect? = nil) {
     guard let flight = change else { return finishChange() }
     let still = Self.stillMotion
     let cover = flight.cover, start = cover.frame
@@ -187,7 +200,8 @@ extension FilmCanvasView {
       if entering {
         Self.spring(cover, from: start)
       } else {
-        Self.springZoom(cover, from: (1, CGPoint(x: bounds.midX, y: bounds.midY)), to: zoomed(showing: from, at: to))
+        Self.springZoom(cover, from: caught.map { zoomed(showing: from, at: $0) } ?? (1, CGPoint(x: bounds.midX, y: bounds.midY)),
+          to: zoomed(showing: from, at: to))
       }
       // Gone once it lies where the new view has it.
       cover.add(Self.fade(from: 1, to: 0, duration: 0.15, after: 0.4), forKey: "fade")
@@ -206,6 +220,52 @@ extension FilmCanvasView {
       CATransaction.commit()
       playAhead(cover, for: still ? 0.2 : 0.5)
     }
+  }
+  /// The single frame turned again while its last turn still plays: the turning picture goes on
+  /// from the angle, size and place it has reached to the new angle, as large as the frame turned
+  /// that far is shown, rather than the turn starting over from the picture not yet turned.
+  private func turnFurther(by turns: Int) -> Bool {
+    guard var flight = change, flight.started, flight.layers.isEmpty, !Self.stillMotion,
+      case .orient(let had, false, let from) = flight.kind, had != 0, let p = flight.cover.presentation()
+    else { return false }
+    let total = had + turns
+    flight.kind = .orient(turns: total, mirror: false, from: from)
+    change = flight
+    let quarter = total % 2 != 0
+    let to = Self.fitted(quarter ? CGSize(width: from.height, height: from.width) : from.size, in: fitArea)
+    let scale = quarter ? to.width / max(1, from.height) : to.width / max(1, from.width)
+    let target = CGFloat(total) * .pi / 2, reached = CGFloat(had) * .pi / 2
+    // The angle as the picture shows it now, read in a turn's range, taken to the turn it is on.
+    var angle = (p.value(forKeyPath: "transform.rotation.z") as? CGFloat) ?? reached
+    angle += 2 * .pi * ((reached - angle) / (2 * .pi)).rounded()
+    let size = (p.value(forKeyPath: "transform.scale") as? CGFloat) ?? 1, place = p.position
+    let cover = flight.cover
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    cover.removeAllAnimations()
+    cover.position = CGPoint(x: to.midX, y: to.midY)
+    CATransaction.commit()
+    CATransaction.begin()
+    let move = CASpringAnimation(perceptualDuration: 0.4, bounce: 0)
+    move.keyPath = "position"
+    move.fromValue = NSValue(point: place)
+    let spin = CASpringAnimation(perceptualDuration: 0.4, bounce: 0)
+    spin.keyPath = "transform.rotation.z"
+    spin.fromValue = angle
+    spin.toValue = target
+    let grow = CASpringAnimation(perceptualDuration: 0.4, bounce: 0)
+    grow.keyPath = "transform.scale"
+    grow.fromValue = size
+    grow.toValue = scale
+    for a in [move, spin, grow] {
+      a.duration = a.settlingDuration
+      a.fillMode = .forwards
+      a.isRemovedOnCompletion = false
+      cover.add(a, forKey: a.keyPath)
+    }
+    CATransaction.commit()
+    playAhead(cover, for: 0.45)
+    return true
   }
   /// A change played ahead of the new picture gives way to it once both are done.
   private func playAhead(_ cover: CALayer, for duration: TimeInterval) {
@@ -342,16 +402,18 @@ extension FilmCanvasView {
     let look = [model.showsNegative ? 1 : 0, model.showsOriginal ? 1 : 0]
     let now = (id: model.singleView ? model.selectedID : nil, look: look, size: CGSize(width: picture.width, height: picture.height))
     defer { drawnSingle = now }
+    let interim = interimShown
+    interimShown = nil
     guard play, let last = drawnSingle, opening == nil, change == nil else { return }
-    let still = Self.stillMotion
     let move = CATransition()
     move.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-    if model.singleView, let id = now.id, let was = last.id, id != was,
-      let i = model.frames.firstIndex(where: { $0.id == id }), let j = model.frames.firstIndex(where: { $0.id == was })
-    {
-      move.type = still ? .fade : .push
-      move.subtype = i > j ? .fromRight : .fromLeft
-      move.duration = still ? 0.2 : 0.3
+    if model.singleView, let id = now.id, let was = last.id, id != was, let slide = frameMove(from: was, to: id) {
+      layer.add(slide, forKey: "picture")
+      return
+    } else if model.singleView, let id = now.id, interim == id, last.id == id, last.look == now.look {
+      // The frame's own picture over the film strip's that stood in for it: the detail comes up.
+      move.type = .fade
+      move.duration = 0.2
     } else if last.id == now.id, last.look != now.look {
       move.type = .fade
       move.duration = 0.25
@@ -359,10 +421,32 @@ extension FilmCanvasView {
       // A full scan in place of the preview: the detail comes up.
       move.type = .fade
       move.duration = 0.35
+    } else if last.id == now.id, model.picturesFade {
+      // A change made at once (自动调整, 重置, ⌘Z, a neutral picked): the new picture comes in over
+      // the old, not cut to.
+      move.type = .fade
+      move.duration = 0.22
     } else {
       return
     }
     layer.add(move, forKey: "picture")
+  }
+
+  /// One frame for another in the single view: sliding in from the side it lies on; flipped
+  /// through quicker than a frame slides in, a short cross-fade, so the picture keeps up with the
+  /// keys rather than sliding again from where the last slide began.
+  func frameMove(from was: UUID, to id: UUID) -> CATransition? {
+    guard let model, let i = model.frames.firstIndex(where: { $0.id == id }), let j = model.frames.firstIndex(where: { $0.id == was })
+    else { return nil }
+    let still = Self.stillMotion
+    let at = CACurrentMediaTime(), quick = at - lastPictureMove < 0.32
+    lastPictureMove = at
+    let move = CATransition()
+    move.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+    move.type = still || quick ? .fade : .push
+    move.subtype = i > j ? .fromRight : .fromLeft
+    move.duration = quick ? 0.12 : still ? 0.2 : 0.3
+    return move
   }
 
   // MARK: A roll's frames coming in
@@ -398,6 +482,54 @@ extension FilmCanvasView {
     let t = (Date().timeIntervalSince(start) - Double(index) * step) / 0.25
     let x = CGFloat(min(1, max(0, t)))
     return 1 - (1 - x) * (1 - x) * (1 - x)
+  }
+
+  // MARK: Zooming
+
+  /// How far a double click zooms in on the single frame, against fitting the canvas: about the
+  /// film's grain on a 60-megapixel frame on a Retina screen.
+  static let doubleClickZoom = 3.0
+  /// The single frame zoomed to `target`, about `anchor` (that point of the picture staying under
+  /// it), or with none back in the middle: gliding there as a pinch about one point would, a
+  /// third of a second on a spring with no overshoot. Off screen, or with Reduce Motion, at once.
+  func glideZoom(to target: Double, about anchor: CGPoint?) {
+    guard let model, model.singleView, shown != nil else { return }
+    let z0 = model.zoom, p0 = pan, z1 = clamp(target, 0.5, 32)
+    var p1 = CGPoint.zero
+    let r = imageRect
+    if let anchor, r.width > 0, r.height > 0 {
+      let n = CGPoint(x: (anchor.x - r.minX) / r.width, y: (anchor.y - r.minY) / r.height)
+      let k = CGFloat(z1 / z0), w = r.width * k, h = r.height * k
+      // At the new zoom with the pan as it is, the picture keeps its middle.
+      p1 = clamped(CGPoint(x: p0.x + anchor.x - (r.midX - w / 2 + n.x * w), y: p0.y + anchor.y - (r.midY - h / 2 + n.y * h)), zoom: z1)
+    }
+    endZoomGlide()
+    noteViewport()
+    guard window?.isVisible == true, !Self.stillMotion, abs(z1 - z0) > 1e-3 || hypot(p1.x - p0.x, p1.y - p0.y) > 0.5 else {
+      place(zoom: z1, pan: p1)
+      clampPan()
+      return
+    }
+    let glide = ZoomGlide(from: (z0, p0), to: (z1, p1))
+    zoomGlide = glide
+    let link = displayLink(target: self, selector: #selector(stepZoomGlide(_:)))
+    link.add(to: .main, forMode: .common)
+    glide.link = link
+  }
+  @objc func stepZoomGlide(_ link: CADisplayLink) {
+    guard let glide = zoomGlide, glide.link === link else { return link.invalidate() }
+    let s = ZoomGlide.progress(CACurrentMediaTime() - glide.start)
+    let step = glide.at(s)
+    place(zoom: step.zoom, pan: step.pan)
+    if s >= 1 {
+      endZoomGlide()
+      clampPan()
+    }
+  }
+  /// The glide stopped where it is: the pointer took over, or the zoom was set from elsewhere.
+  func endZoomGlide() {
+    zoomGlide?.link?.invalidate()
+    zoomGlide = nil
   }
 
   // MARK: Shared
@@ -463,5 +595,40 @@ extension FilmCanvasView {
       fade.fillMode = .backwards
     }
     return fade
+  }
+}
+
+/// A zoom gliding from one zoom and pan to another about the one point of the canvas that stays
+/// put between them, as a pinch about it would: the zoom by equal ratios each moment, so it never
+/// seems to speed up as it grows, on a critically damped spring.
+final class ZoomGlide {
+  typealias View = (zoom: Double, pan: CGPoint)
+  let from: View, to: View
+  let start = CACurrentMediaTime()
+  var link: CADisplayLink?
+  init(from: View, to: View) {
+    self.from = from
+    self.to = to
+  }
+  /// Half a second, by when the spring is within a fraction of a percent and lands.
+  static let settles: CFTimeInterval = 0.5
+  /// Most of the way in a quarter of a second, no overshoot.
+  static let omega = 2 * Double.pi / 0.4
+  /// How far along, 0–1, `t` seconds in.
+  static func progress(_ t: Double) -> Double {
+    t >= settles ? 1 : max(0, 1 - (1 + omega * t) * exp(-omega * t))
+  }
+  /// The zoom and pan `s` of the way. The picture's middle sits at the canvas's middle plus the
+  /// pan; about the fixed point F the pan goes F + (pan₀ − F)·k, k the zoom's ratio so far, and F
+  /// is where that lands on pan₁ at the end. With the zoom unchanged, the pan moves straight.
+  func at(_ s: Double) -> View {
+    let ratio = to.zoom / from.zoom
+    let zoom = from.zoom * pow(ratio, s)
+    guard abs(1 - ratio) > 1e-4 else {
+      return (zoom, CGPoint(x: from.pan.x + (to.pan.x - from.pan.x) * s, y: from.pan.y + (to.pan.y - from.pan.y) * s))
+    }
+    let f = CGPoint(x: (to.pan.x - ratio * from.pan.x) / (1 - ratio), y: (to.pan.y - ratio * from.pan.y) / (1 - ratio))
+    let k = zoom / from.zoom
+    return (zoom, CGPoint(x: f.x + (from.pan.x - f.x) * k, y: f.y + (from.pan.y - f.y) * k))
   }
 }
