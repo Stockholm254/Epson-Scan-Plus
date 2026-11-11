@@ -587,26 +587,26 @@ enum FilmRender {
       case .blackWhite: base = NSColor(red: 0.36, green: 0.38, blue: 0.41, alpha: 0.95)
       }
       return draw(width: length, height: 35) { ctx, size in
-        // As a cassette's leader is cut: full width out of the lip for 14 mm, then a concave
-        // quarter circle takes the lower edge away, leaving a tongue 20.5 mm wide (the upper
-        // perforations and a strip of the picture area) that runs on to its end, cut square, its
-        // corners rounded, the inner one more.
-        let m = mm, tongue = 20.5 * m, shoulder = 14 * m, radius = size.height - tongue, end = size.width
+        // As a factory cassette's leader is cut (Kodak's, photographed upright): the lower edge
+        // turns up at once out of the lip, steep at first and easing off, in a concave curve some
+        // 16 mm along and 13 mm up, to a tongue 22 mm wide (the upper perforations and a strip of
+        // the picture area) that runs on to its end, cut square, its lower corner well rounded.
+        let m = mm, tongue = 22 * m, shoulder = 1 * m, run = 16 * m, rise = size.height - tongue, end = size.width
         ctx.setFillColor(base.cgColor)
         ctx.fill(CGRect(origin: .zero, size: size))
         ctx.setBlendMode(.clear)
         let k: CGFloat = 0.5523
         let cut = CGMutablePath()
         cut.move(to: CGPoint(x: shoulder, y: size.height))
-        cut.addCurve(to: CGPoint(x: shoulder + radius, y: tongue),
-          control1: CGPoint(x: shoulder, y: size.height - k * radius), control2: CGPoint(x: shoulder + radius - k * radius, y: tongue))
+        cut.addCurve(to: CGPoint(x: shoulder + run, y: tongue),
+          control1: CGPoint(x: shoulder, y: size.height - k * rise), control2: CGPoint(x: shoulder + run - k * run, y: tongue))
         cut.addLine(to: CGPoint(x: end, y: tongue))
         cut.addLine(to: CGPoint(x: end, y: size.height))
         cut.closeSubpath()
         ctx.addPath(cut)
         ctx.fillPath()
-        // The tongue's end: its corners rounded, 1.5 mm at the film's edge, 4 mm at the cut.
-        let outer = 1.5 * m, inner = 4 * m
+        // The tongue's end: its corners rounded, 1 mm at the film's edge, 4.5 mm at the cut.
+        let outer = 1 * m, inner = 4.5 * m
         ctx.fill(CGRect(x: end - inner - 1, y: 0, width: inner + 1, height: tongue))
         ctx.setBlendMode(.normal)
         let tip = CGMutablePath()
@@ -614,7 +614,7 @@ enum FilmRender {
         tip.addLine(to: CGPoint(x: end - outer, y: 0))
         tip.addQuadCurve(to: CGPoint(x: end, y: outer), control: CGPoint(x: end, y: 0))
         tip.addLine(to: CGPoint(x: end, y: tongue - inner))
-        tip.addQuadCurve(to: CGPoint(x: end - inner, y: tongue), control: CGPoint(x: end, y: tongue))
+        tip.addCurve(to: CGPoint(x: end - inner, y: tongue), control1: CGPoint(x: end, y: tongue - inner * (1 - k)), control2: CGPoint(x: end - inner * (1 - k), y: tongue))
         tip.addLine(to: CGPoint(x: end - inner - 1, y: tongue))
         tip.closeSubpath()
         ctx.setFillColor(base.cgColor)
