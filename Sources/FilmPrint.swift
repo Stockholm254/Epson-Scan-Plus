@@ -37,12 +37,12 @@ enum FilmPrint {
     /// Words as they are set: runs in their own fonts and colours, made smaller to be no longer
     /// than `fit` millimetres; or, `stretch`, their letters widened (or narrowed) to be just as long,
     /// as the makers set their names.
-    func runs(_ parts: [(String, NSFont, NSColor)], kern: CGFloat = 0, fit: CGFloat?, stretch: Bool = false, wide: CGFloat = 1) -> NSAttributedString {
+    func runs(_ parts: [(String, NSFont, NSColor)], kern: CGFloat = 0, fit: CGFloat?, stretch: Bool = false, wide: CGFloat = 1, slant: CGFloat = 0) -> NSAttributedString {
       func make(_ k: CGFloat, wide: CGFloat = 1) -> NSAttributedString {
         let a = NSMutableAttributedString()
         for (s, f, c) in parts {
           let font = NSFont(descriptor: f.fontDescriptor, size: f.pointSize * k) ?? f
-          a.append(NSAttributedString(string: s, attributes: [.font: font, .foregroundColor: c, .kern: kern * m * k, .expansion: log(wide)]))
+          a.append(NSAttributedString(string: s, attributes: [.font: font, .foregroundColor: c, .kern: kern * m * k, .expansion: log(wide), .obliqueness: slant]))
         }
         return a
       }
@@ -54,8 +54,8 @@ enum FilmPrint {
     /// A line set along the length, reading from the top end down (its letters' tops towards the
     /// lip), its middle `s` round, starting `top` mm down; reading up from `top` (`up`), the letters'
     /// tops away from the lip.
-    func along(_ parts: [(String, NSFont, NSColor)], s: CGFloat, top: CGFloat, fit: CGFloat, kern: CGFloat = 0, up: Bool = false, stretch: Bool = false, wide: CGFloat = 1, outline: NSColor? = nil) {
-      let a = runs(parts, kern: kern, fit: fit, stretch: stretch, wide: wide)
+    func along(_ parts: [(String, NSFont, NSColor)], s: CGFloat, top: CGFloat, fit: CGFloat, kern: CGFloat = 0, up: Bool = false, stretch: Bool = false, wide: CGFloat = 1, slant: CGFloat = 0, outline: NSColor? = nil) {
+      let a = runs(parts, kern: kern, fit: fit, stretch: stretch, wide: wide, slant: slant)
       let line = a.size()
       ctx.saveGState()
       ctx.translateBy(x: x(s), y: top * m)
@@ -197,12 +197,14 @@ enum FilmPrint {
       if has("HP5") { return ilford("HP5", rgb(0x37A23C), "PLUS", iso) }
       if has("FP4") { return ilford("FP4", rgb(0x2D6DB5), "PLUS", iso) }
       if has("Pan F") { return ilford("PAN F", rgb(0xE2541E), "PLUS", iso) }
-      if has("Delta") { return ilford("DELTA", iso == 100 ? rgb(0x3B9BD6) : iso == 400 ? rgb(0x2FA58C) : rgb(0x8E3B97), "\(iso)", nil, sub: "PROFESSIONAL") }
+      if has("Delta") { return delta(iso, iso == 100 ? rgb(0x3FA2D8) : iso == 400 ? rgb(0x2E9A4C) : rgb(0x64399A)) }
       if has("XP2") { return ilford("XP2", rgb(0xD62B2B), "SUPER", iso, sub: "C41 PROCESS") }
       if has("SFX") { return ilford("SFX", rgb(0x8A1F33), "\(iso)", nil) }
       if has("Ortho") { return ilford("ORTHO", rgb(0x9C2A2A), "PLUS", iso) }
     case "Kentmere":
-      return ilford("PAN", iso == 400 ? rgb(0x5A3B9B) : iso == 200 ? rgb(0x1F8F8A) : rgb(0x2E4BA6), "\(iso)", nil, maker: "KENTMERE")
+      // Harman's own design since 2023, not Ilford's: a gradient all round, each speed its own.
+      return kentmere(iso, iso == 400 ? [rgb(0x3B3FC2), rgb(0x7A3AB8), rgb(0xC24AC9)]
+        : iso == 200 ? [rgb(0x2A6FB8), rgb(0x5E9B3C), rgb(0xC9B83A)] : [rgb(0x1E3E9A), rgb(0x1F7AA8), rgb(0x2FB09A)])
     case "CineStill":
       if has("800T") { return cineStill("800T", rgb(0xDC2A2A), "color film for low light") }
       if has("400D") { return cineStill("400D", rgb(0x7650C5), "color film for daylight") }
@@ -352,18 +354,29 @@ enum FilmPrint {
   /// Fujifilm 200 and 400 (and the Fujicolor sold in Japan): white; a green band by the lip with
   /// the maker in white; the speed large in black; a black strip on the left.
   static func fujiPrint(_ iso: Int) -> Design {
+    // As the Fujifilm 200 and 400 cassettes of 2023 on are printed: a green band round the back with
+    // the speed and length in it, white on the front with a black bar along the lip.
     Design { f, look in
       f.all(paper)
-      // A bright green from the middle on, paler where it meets the white.
-      let green = rgb(0x34A83A)
-      f.fill(green, 0.6, 30)
-      f.shade([rgb(0xA8DA8E), green], -1.0, 0.6)
-      f.along(fujifilm(5.0, white), s: 4.6, top: 4.0, fit: 30, kern: 0.3, wide: 1.18)
-      f.along([("\(iso)", font("AvenirNext-DemiBoldItalic", 6.6), ink)], s: -4.0, top: 13.0, fit: 14)
-      f.fill(rgb(0x141414), -9.6, -7.0, y0: 3.2, y1: 34.8)
-      f.along([("FILM FOR COLOR PRINTS", font("AvenirNext-DemiBold", 1.9), white)], s: -8.3, top: 6.2, fit: 26, kern: 0.12)
-      f.along([("CH-36   \(iso)   PROCESS C-41", font("AvenirNext-Medium", 1.7), ink)], s: -11.6, top: 8.0, fit: 24)
-      f.across([("DX", font("AvenirNext-HeavyItalic", 2.4), ink)], s: -15.0, y: 3.0, centred: true)
+      let green = rgb(0x2E9E48)
+      // The green band, and in it the speed, the length and their labels, reading down.
+      f.fill(green, -60, -7.6)
+      f.fill(white, -12.8, -11.2, y0: 4.0, y1: 8.6)
+      f.along([("CH 135", font("HelveticaNeue-Bold", 1.6), white)], s: -14.0, top: 4.0, fit: 6)
+      f.along([("ISO", font("HelveticaNeue-Bold", 1.4), green)], s: -12.0, top: 4.6, fit: 3.4)
+      f.along([("\(iso)", font("HelveticaNeue-CondensedBlack", 5.2), white)], s: -10.0, top: 9.6, fit: 9)
+      f.fill(white, -12.8, -11.2, y0: 20.0, y1: 24.6)
+      f.along([("EXP", font("HelveticaNeue-Bold", 1.4), green)], s: -12.0, top: 20.6, fit: 3.4)
+      f.along([("36", font("HelveticaNeue-CondensedBlack", 5.2), white)], s: -10.0, top: 25.4, fit: 7)
+      // On the white: DX by the band, the process line, the speed large, the bar with what it is.
+      f.across([("DX", font("AvenirNext-HeavyItalic", 2.6), ink)], s: -5.4, y: 3.0, centred: true)
+      f.frame(ink, -4.6, -3.0, y0: 6.6, y1: 30.0, line: 0.2)
+      f.along([("CN-16 | C-41 | ISO \(iso)", font("HelveticaNeue-Bold", 1.45), ink)], s: -3.8, top: 7.0, fit: 22.6)
+      let din = 1 + Int((10 * log10(Double(max(iso, 1)))).rounded())
+      f.along([("CH-36 · ISO\(iso)/\(din)°", font("HelveticaNeue-Medium", 1.45), ink)], s: -1.6, top: 7.0, fit: 22.6)
+      f.along([("\(iso)", font("HelveticaNeue-CondensedBlack", 6.0), ink)], s: 3.2, top: 6.4, fit: 12)
+      f.fill(rgb(0x141414), 6.8, 9.2, y0: 3.4, y1: 34.6)
+      f.along([("FILM FOR COLOR PRINTS", font("HelveticaNeue-Bold", 1.8), white)], s: 8.0, top: 5.4, fit: 26, kern: 0.12)
       f.dx(look)
     }
   }
@@ -470,18 +483,152 @@ enum FilmPrint {
   /// stock very large in its own colour, then its PLUS (or speed) by a black bar, the speed and
   /// what it is.
   static func ilford(_ word: String, _ colour: NSColor, _ third: String, _ iso: Int?, sub: String? = nil, maker: String = "ILFORD") -> Design {
+    // Measured off a photograph of the HP5 Plus cassette, in millimetres round from the front and
+    // down from the top end; FP4, Pan F, XP2, SFX, Ortho and Kentmere are set the same.
     Design { f, look in
       f.all(paper)
       let heavy = "HelveticaNeue-CondensedBlack"
-      f.along([(maker, font(heavy, 4.6), maker == "ILFORD" ? ink : colour)], s: -12.0, top: 32.6, fit: 25.5, up: true, stretch: true)
-      f.along([(word, font(heavy, 12.4), colour)], s: -5.0, top: 32.6, fit: 25.5, up: true, stretch: true)
-      let t = [(third, font(heavy, 6.0), ink)]
-      f.along(t, s: 2.4, top: 32.6, fit: 13, up: true)
-      let used = min(13, f.width(t))
-      f.fill(ink, 0.3, 4.5, y0: 6.8, y1: 31.6 - used)
-      if let iso { f.along([("\(iso)", font("HelveticaNeue-CondensedBold", 3.6), ink)], s: 6.0, top: 32.6, fit: 8, up: true) }
-      f.along([(sub ?? "BLACK & WHITE FILM", font("HelveticaNeue-Medium", 1.9), ink)], s: 8.8, top: 32.6, fit: 25, up: true)
-      if sub != nil { f.along([("BLACK & WHITE FILM", font("HelveticaNeue-Medium", 1.9), ink)], s: 10.8, top: 32.6, fit: 25, up: true) }
+      // The band round the back in the stock's colour, the table of speeds on it, and beside it on
+      // the white the length and what the film is, in the colour.
+      f.fill(colour, -60, -12.6)
+      f.fill(paper, -17.5, -13.0, y0: 4.0, y1: 31.2)
+      let grey = NSColor(white: 0.6, alpha: 1)
+      f.fill(grey, -14.5, -14.35, y0: 4.0, y1: 31.2)
+      for y in [10.6, 17.4, 24.2] as [CGFloat] { f.fill(grey, -17.5, -13.0, y0: y, y1: y + 0.15) }
+      let rated = look.iso ?? iso ?? 100
+      for (speed, foot) in [(rated * 2, 16.8), (rated, 23.6), (rated / 2, 30.4)] as [(Int, CGFloat)] {
+        f.along([("\(speed)", font("HelveticaNeue", 1.6), NSColor(white: 0.3, alpha: 1))], s: -13.75, top: foot, fit: 5.4, up: true)
+      }
+      let din = 1 + Int((10 * log10(Double(max(rated, 1)))).rounded())
+      // The length and the ISO line in italics, as the photograph has them.
+      f.along([("36", font("HelveticaNeue-BoldItalic", 2.4), colour)], s: -11.6, top: 15.0, fit: 2.4, up: true)
+      f.along([("ISO \(rated)/\(din)° ", font("HelveticaNeue-Italic", 1.7), colour), ("\(word) \(third)", font("HelveticaNeue-BoldItalic", 1.7), colour),
+        (" 36 EXP", font("HelveticaNeue-Italic", 1.7), colour)], s: -10.2, top: 31.0, fit: 21, up: true)
+      // As the cassette prints them: the maker leaning, the stock's name upright and very large in
+      // its colour, each about 20 mm long (PLUS on its bar leans too; the box sets ILFORD upright).
+      f.along([(maker, font(heavy, 5.6), maker == "ILFORD" ? ink : colour)], s: -5.1, top: 29.5, fit: 20.1, up: true, stretch: true, slant: 0.16)
+      f.along([(word, font(heavy, 8.0), colour)], s: 0.3, top: 29.5, fit: 21.3, up: true, stretch: true)
+      // The black bar, its ends breaking up into squares, PLUS (or SUPER) in white on it.
+      let bar0: CGFloat = 5.3, bar1: CGFloat = 9.9, top: CGFloat = 9.0, foot: CGFloat = 29.8, sq: CGFloat = 0.766, frayed: CGFloat = 4
+      f.fill(ink, bar0, bar1, y0: top + frayed * sq, y1: foot - frayed * sq)
+      // Ordered (Bayer) dither: a quarter of the squares by the end, four in five by the solid bar.
+      let bayer = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]
+      for row in 0..<Int(frayed) {
+        for col in 0..<Int(((bar1 - bar0) / sq).rounded()) {
+          guard CGFloat(bayer[row % 4][col % 4]) < CGFloat(row + 1) * 16 / (frayed + 1) else { continue }
+          let s0 = bar0 + CGFloat(col) * sq
+          // Row 0 is the outermost, at the very end; the last row meets the solid bar.
+          f.fill(ink, s0, s0 + sq, y0: top + CGFloat(row) * sq, y1: top + CGFloat(row + 1) * sq)
+          f.fill(ink, s0, s0 + sq, y0: foot - CGFloat(row + 1) * sq, y1: foot - CGFloat(row) * sq)
+        }
+      }
+      let plus = [(third, font(heavy, 5.8), white)]
+      f.along(plus, s: 7.6, top: 19.4 + f.width(plus, fit: 12.5) / 2, fit: 12.5, up: true, slant: 0.16)
+      if let iso { f.along([("\(iso)", font("HelveticaNeue-CondensedBlack", 3.4), ink)], s: 11.3, top: 19.2, fit: 5.6, up: true) }
+      f.along([(sub ?? "BLACK & WHITE FILM", font("HelveticaNeue-Medium", 1.9), ink)], s: 13.6, top: 31.1, fit: 24.5, kern: 0.15, up: true)
+      if sub != nil { f.along([("BLACK & WHITE FILM", font("HelveticaNeue-Medium", 1.9), ink)], s: 15.4, top: 31.1, fit: 24.5, kern: 0.15, up: true) }
+      f.fill(ink, -60, 30, y0: 36.6)
+      f.dx(look)
+    }
+  }
+
+  /// Kentmere Pan, as Harman prints it now: a gradient of the speed's colours all round with paler
+  /// diagonal bands across it; reading up in white, the K mark, PAN bold and the speed light beside
+  /// it, and KENTMERE bold with BLACK & WHITE FILM beside it nearer the lip.
+  static func kentmere(_ iso: Int, _ colours: [NSColor]) -> Design {
+    Design { f, look in
+      f.shade(colours, -60, 30, down: true)
+      // Paler diagonal bands across the gradient.
+      f.ctx.saveGState()
+      f.ctx.setFillColor(NSColor(white: 1, alpha: 0.09).cgColor)
+      for k in stride(from: -60.0, to: 40.0, by: 14.0) {
+        let p = CGMutablePath()
+        p.move(to: CGPoint(x: f.x(CGFloat(k)), y: 0))
+        p.addLine(to: CGPoint(x: f.x(CGFloat(k) + 6), y: 0))
+        p.addLine(to: CGPoint(x: f.x(CGFloat(k) + 22), y: f.size.height))
+        p.addLine(to: CGPoint(x: f.x(CGFloat(k) + 16), y: f.size.height))
+        p.closeSubpath()
+        f.ctx.addPath(p)
+      }
+      f.ctx.fillPath()
+      f.ctx.restoreGState()
+      let bold = "AvenirNext-Bold", light = "AvenirNext-Regular"
+      // The K mark: two triangles meeting at a point, by the foot.
+      f.ctx.setFillColor(white.cgColor)
+      let k0 = f.x(-4.6), kw = 4.2 * f.m, ky = 25.6 * f.m, kh = 4.6 * f.m
+      let mark = CGMutablePath()
+      mark.move(to: CGPoint(x: k0, y: ky)); mark.addLine(to: CGPoint(x: k0 + kw, y: ky)); mark.addLine(to: CGPoint(x: k0, y: ky + kh * 0.55)); mark.closeSubpath()
+      mark.move(to: CGPoint(x: k0, y: ky + kh * 0.62)); mark.addLine(to: CGPoint(x: k0 + kw * 0.8, y: ky + kh)); mark.addLine(to: CGPoint(x: k0, y: ky + kh)); mark.closeSubpath()
+      f.ctx.addPath(mark)
+      f.ctx.fillPath()
+      f.along([("PAN", font(bold, 4.8), white)], s: -2.4, top: 22.4, fit: 10, up: true)
+      f.along([("\(iso)", font(light, 4.8), white)], s: 2.2, top: 22.4, fit: 9, up: true)
+      f.along([("KENTMERE", font(bold, 4.0), white)], s: 8.4, top: 31.0, fit: 24, kern: 0.15, up: true)
+      f.along([("BLACK & WHITE FILM", font("AvenirNext-Medium", 1.9), white)], s: 12.4, top: 31.0, fit: 20, kern: 0.2, up: true)
+      f.fill(ink, -60, 30, y0: 36.6)
+      f.dx(look)
+    }
+  }
+
+  /// Delta Professional, as its cassettes are printed (100 sky blue, 400 green, 3200 violet): white,
+  /// a band of the stock's colour round the back to well before the front, with the speeds to rate
+  /// it at in a white table and the length and rated speed in white on it;
+  /// reading up and upright, not leaning as HP5's, the length and the speed in small type, ILFORD
+  /// very large in black, DELTA as large in the stock's colour cut by fine white lines across, the
+  /// speed in black as large again, and PROFESSIONAL in the colour by the lip.
+  static func delta(_ iso: Int, _ colour: NSColor) -> Design {
+    // Measured off a photograph of the Delta 3200 cassette, in millimetres round from the front and
+    // down from the top end.
+    Design { f, look in
+      f.all(paper)
+      let heavy = "HelveticaNeue-CondensedBlack", round = "AvenirNext-Heavy"
+      let pale = colour.blended(withFraction: 0.3, of: .white) ?? colour
+      // The band round the back, the whole height, to 8 mm before the front.
+      f.fill(colour, -60, -8.0)
+      // On it, by the back, the speeds to rate it at in a white table: a line down it and three
+      // across, 1600, 3200 and 6400 reading up (half, as and twice the speed).
+      f.fill(paper, -17.5, -12.3, y0: 4.0, y1: 31.2)
+      let grey = NSColor(white: 0.6, alpha: 1), table = NSColor(white: 0.3, alpha: 1)
+      f.fill(grey, -13.8, -13.65, y0: 4.0, y1: 31.2)
+      for y in [9.8, 16.0, 24.6] as [CGFloat] { f.fill(grey, -17.5, -12.3, y0: y, y1: y + 0.15) }
+      for (speed, foot) in [(iso * 2, 15.6), (iso, 24.2), (iso / 2, 30.8)] as [(Int, CGFloat)] {
+        f.along([("\(speed)", font("HelveticaNeue", 1.7), table)], s: -13.05, top: foot, fit: 5.6, up: true)
+      }
+      // Beside it in white on the band: the length, bold, and the speed it is rated at along the
+      // length (3200 is rated, not its box speed: EI, as its cassette says; the others ISO).
+      let din = 1 + Int((10 * log10(Double(max(iso, 1)))).rounded())
+      f.along([("36", font("HelveticaNeue-Bold", 2.4), white)], s: -10.8, top: 16.2, fit: 2.4, up: true)
+      f.along([("\(iso >= 3200 ? "EI" : "ISO") \(iso)/\(din)° ", font("HelveticaNeue", 2.1), white), ("DELTA", font("HelveticaNeue-Bold", 2.1), white),
+        (" 36 EXP", font("HelveticaNeue", 2.1), white)], s: -9.1, top: 31.0, fit: 25.4, up: true)
+      // DELTA, in fine stripes along its length (the way it reads), as the stock's name is printed:
+      // thick stripes, narrow gaps, so it stands out from the Δ's thin lines.
+      let pitch: CGFloat = 0.48
+      f.along([("DELTA", font(round, 9.2), colour)], s: 4.6, top: 34.2, fit: 26.9, up: true, stretch: true)
+      var cut: CGFloat = 0
+      while cut < 8.4 {
+        f.fill(paper, cut + 0.37, cut + pitch, y0: 6.5, y1: 34.8)
+        cut += pitch
+      }
+      // The Δ it stands in: its point a little past ILFORD on the far side, a little above the
+      // middle of the length, its base by PROFESSIONAL from 6.8 to 32.7 mm down; drawn in thin lines
+      // on the name's stripes (inside a letter a line lies within its stripe, so the letters stay as
+      // they are and the lines show between and past them, and between ILFORD's letters).
+      let apex = CGPoint(x: -7.5, y: 18.6), base: CGFloat = 13.3, baseTop: CGFloat = 6.8, baseFoot: CGFloat = 32.7
+      var k = (apex.x / pitch).rounded(.down)
+      while k * pitch < base {
+        let s0 = k * pitch + 0.1
+        if s0 > apex.x {
+          let t = (s0 - apex.x) / (base - apex.x)
+          f.fill(colour, s0, s0 + 0.17, y0: apex.y + (baseTop - apex.y) * t, y1: apex.y + (baseFoot - apex.y) * t)
+        }
+        k += 1
+      }
+      // ILFORD very large over the Δ's point; the speed in a round heavy face, as long as it is on the
+      // cassette, centred on the middle and close past DELTA; PROFESSIONAL by the lip in a paler colour.
+      f.along([("ILFORD", font(heavy, 9.3), ink)], s: -2.6, top: 33.9, fit: 26.6, up: true, stretch: true)
+      let long: CGFloat = iso >= 1000 ? 20.7 : 15.6
+      f.along([("\(iso)", font(round, 7.8), ink)], s: 10.6, top: 20.55 + long / 2, fit: long, up: true, stretch: true)
+      f.along([("PROFESSIONAL", font("AvenirNext-Bold", 2.6), pale)], s: 15.0, top: 32.7, fit: 25.9, kern: 0.2, up: true, stretch: true)
       f.fill(ink, -60, 30, y0: 36.6)
       f.dx(look)
     }

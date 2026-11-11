@@ -1,5 +1,6 @@
 # 构建与测试
 
+
 ## 构建
 
 安装 Xcode Command Line Tools 后，在仓库根目录执行（App 默认输出到上一级目录的 `Epson Scan plus.app`）：
@@ -25,6 +26,15 @@ bash build.sh
 
 `--rotation 0|1|2|3` 可在离线导出时覆盖方向，`--mirror` 启用水平镜像（均不改工程）。正常启动支持 `--library PATH`、`--project FILE` 或 `--image FILE`。
 
+## 构建要什么
+
+- **工具**：只需 Xcode Command Line Tools，不需要 Metal 工具链（图像内核在 App 运行时编译），也不依赖第三方 Swift 包。
+- **液态玻璃**：用 Xcode（macOS 26 SDK）构建时，用的是 SwiftUI 的液态玻璃：会流动、会融合、按下会回弹；用 Command Line Tools 构建的是运行时取用的静态玻璃。
+- **Sony Camera Remote SDK 可选**：翻拍默认直连相机自己的 PTP，不需要它；「连接方式」里的 Sony SDK 才要。它不在这个仓库里，受 Sony 的许可约束。
+  - 头文件放在 `../Sony-CrSDK/include`，`libCr_Core.dylib` 和 `CrAdapter/` 放在 `../Sony-CrSDK/lib`，或者用 `EPSON_SCAN_PLUS_CRSDK` 指定位置。
+  - 构建时它会编进相机进程，SDK 的库放进 App 的 `Contents/Frameworks`。
+  - 没有 SDK 时照常构建，翻拍照样直连，只是选 Sony SDK 时会提示缺少它。
+- **钥匙串的辅助程序**：读 OpenAI Key 的 `EpsonScanKey` 按源码编一次、签一次，存在 `~/Library/Application Support/epscan-release/key-helper/`，之后每次构建原样拷进 App，钥匙串的「始终允许」在更新后仍然有效（`KeyHelper/build-key.sh`）。改了它的源码会编出新的一份，钥匙串会再问一次。
 ## 图标
 
 App 图标是 Icon Composer 文档 `Icon/AppIcon.icon`：`icon.json` 加 `Assets/` 里的几层 SVG（暗盒的标签、片口、上下盖、筒身，和胶片片头）。

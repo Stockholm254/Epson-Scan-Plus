@@ -110,7 +110,8 @@ struct LibraryPage: View {
         Text(m.libraryURL.path).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
           .lineLimit(1).truncationMode(.middle)
         Spacer()
-        Text("双击一页打开这一卷，进入 ② 去色罩；鼠标停在一格上可以放大看；右键可以重命名；标签右下角的废纸篓把这一卷移到废纸篓").font(.system(size: 11)).foregroundStyle(.secondary)
+        Text("双击打开 · 停在一格上放大 · 右键重命名或移到废纸篓").font(.system(size: 11)).foregroundStyle(.secondary)
+          .help("双击一页打开这一卷，进入 ② 去色罩；鼠标停在一格上可以放大看；右键可以重命名；标签右下角的废纸篓把这一卷移到废纸篓")
       }.padding(.horizontal, 18).padding(.vertical, 8)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -217,7 +218,7 @@ struct LibraryPage: View {
           ForEach(shown) { e in
             let under = stack(of: e)
             RollSleeve(
-              entry: e, current: m.projectURL?.standardizedFileURL == e.project.standardizedFileURL, shelf: shelf, stacked: under.count,
+              entry: e, model: m, current: m.projectURL?.standardizedFileURL == e.project.standardizedFileURL, shelf: shelf, stacked: under.count,
               spread: { withAnimation(Liquid.flow) { shelf.spread = under } },
               rename: {
                 newName = e.named ? e.title : ""
@@ -253,6 +254,8 @@ struct LibraryPage: View {
 /// from, and a page that lifts a little under the pointer.
 struct RollSleeve: View {
   let entry: RollEntry
+  /// For the film on the label, drawn as the film shelf draws it; none in a bare sleeve.
+  var model: AppModel? = nil
   let current: Bool
   /// Where its pictures are kept between visits to the library.
   var shelf: LibraryShelf? = nil
@@ -326,23 +329,56 @@ struct RollSleeve: View {
     .accessibilityAddTraits(.isButton)
     .accessibilityAction { open() }
   }
-  var details: String {
-    var parts = [entry.film] + (entry.format.map { [$0] } ?? []) + ["\(entry.frames.count) 张"]
-    if entry.fullResolution > 0 { parts.append("全分辨率 \(entry.fullResolution)") }
+  var details: String { Self.details(entry) }
+  /// The label's second line: the film, the format, how many frames and what of them is done.
+  static func details(_ entry: RollEntry) -> String {
+    // A medium format by its frame alone (6×6 is 120 film); 自动 says nothing.
+    let format = entry.format.flatMap { f in f == FilmFormat.auto.rawValue ? nil : f.hasPrefix("120 · ") ? String(f.dropFirst(6)) : f }
+    var parts = [entry.film] + (format.map { [$0] } ?? []) + ["\(entry.frames.count) 张"]
+    // Only where some frames are still previews (a scanned roll part scanned): a copy's or an
+    // import's are all full, and saying so crowded out the rest.
+    if entry.fullResolution > 0, entry.fullResolution < entry.frames.count { parts.append("全分辨率 \(entry.fullResolution)") }
     if entry.exported > 0 { parts.append("已导出 \(entry.exported)") }
     return parts.joined(separator: " · ")
   }
-  /// The paper label, written on.
+  /// The roll's film as the film shelf draws it: its stock in the catalog, found by the roll's film
+  /// or its preset's, as its cassette or (in a 120 format) its roll; else its own name on a plain
+  /// can. Nil when the roll names no film.
+  static func film(_ e: RollEntry, model: AppModel) -> (look: NewProjectSheet.Look, gauge: FilmStock.Gauge)? {
+    // The roll's own film first: a name the catalog does not know is that film, not its preset's.
+    let choice: NewProjectSheet.Choice
+    if let s = FilmCatalog.stock(named: e.film) {
+      choice = .stock(s.id)
+    } else if !e.film.isEmpty {
+      choice = .named(e.film)
+    } else if let s = FilmCatalog.stock(named: e.profile.name) {
+      choice = .stock(s.id)
+    } else {
+      return nil
+    }
+    let format = e.format.flatMap(FilmFormat.init(rawValue:)) ?? .auto
+    return (NewProjectSheet.look(choice, m: model), NewProjectSheet.gauge(choice, format: format))
+  }
+  /// The paper label, written on, the roll's own film beside it.
   var label: some View {
-    VStack(alignment: .leading, spacing: 2) {
-      Text(entry.title).font(.system(size: 13, weight: .semibold, design: .serif)).foregroundStyle(Self.ink).lineLimit(1)
-      Text(details).font(.system(size: 10, design: .monospaced)).foregroundStyle(Self.ink.opacity(0.75)).lineLimit(1)
-      if entry.named || !entry.notes.isEmpty {
-        Text(entry.named ? RollLibrary.title(entry.date) + (entry.notes.isEmpty ? "" : " · " + entry.notes) : entry.notes)
-          .font(.system(size: 11)).foregroundStyle(Self.ink.opacity(0.6)).lineLimit(1)
+    HStack(alignment: .center, spacing: 8) {
+      if let model, let film = Self.film(entry, model: model) {
+        FilmObject(look: film.look, gauge: film.gauge).frame(width: 30, height: 40)
+          .shadow(color: .black.opacity(0.25), radius: 1.5, y: 1)
+          .help(film.look.title)
+      }
+      VStack(alignment: .leading, spacing: 2) {
+        Text(entry.title).font(.system(size: 13, weight: .semibold, design: .serif)).foregroundStyle(Self.ink).lineLimit(1)
+        // A long film's name on a second line rather than cut, beside its film.
+        Text(details).font(.system(size: 10, design: .monospaced)).foregroundStyle(Self.ink.opacity(0.75)).lineLimit(2)
+          .fixedSize(horizontal: false, vertical: true)
+        if entry.named || !entry.notes.isEmpty {
+          Text(entry.named ? RollLibrary.title(entry.date) + (entry.notes.isEmpty ? "" : " · " + entry.notes) : entry.notes)
+            .font(.system(size: 11)).foregroundStyle(Self.ink.opacity(0.6)).lineLimit(1)
+        }
       }
     }
-    .padding(.horizontal, 10).padding(.vertical, 7).padding(.trailing, 22).frame(maxWidth: .infinity, alignment: .leading)
+    .padding(.leading, model == nil ? 10 : 6).padding(.trailing, 10).padding(.vertical, 6).padding(.trailing, 22).frame(maxWidth: .infinity, alignment: .leading)
     .background(LinearGradient(colors: [Self.paper, Self.paper.opacity(0.88)], startPoint: .top, endPoint: .bottom))
     // Moving the roll to the Trash, at hand as well as in its menu: quiet until the page is under
     // the pointer. It asks before anything moves.

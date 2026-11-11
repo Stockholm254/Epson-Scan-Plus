@@ -62,6 +62,10 @@ struct EpsonScanPlusApp: App {
           model.settingsRequests += 1
         }.keyboardShortcut(",").disabled(!model.hasProject)
       }
+      // No help book: the Help menu holds the keys.
+      CommandGroup(replacing: .help) {
+        Button("键盘快捷键") { model.showShortcuts = true }.keyboardShortcut("/")
+      }
       CommandGroup(after: .appInfo) {
         Button("检查更新…") {
           model.showUpdates = true
@@ -108,6 +112,8 @@ struct EpsonScanPlusApp: App {
         }.keyboardShortcut("1").disabled(model.previewShowing && !model.singleView || !model.onRollModule)
         Toggle("看片镜", isOn: Binding(get: { model.preferences.showLoupe }, set: { model.toggleLoupe($0) }))
           .keyboardShortcut("l")
+        // As the toolbar's key: the dust found ringed on the single view.
+        Toggle("除尘标出", isOn: $model.showDust).keyboardShortcut("d", modifiers: [.command, .shift])
         Picker(
           "看片镜型号", selection: Binding(get: { model.preferences.loupeStyle }, set: { model.preferences.loupeStyle = $0 })
         ) {

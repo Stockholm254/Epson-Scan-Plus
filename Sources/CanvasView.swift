@@ -632,6 +632,8 @@ final class FilmCanvasView: NSView {
     let lightTable = model?.singleView != true
     if lightTable { drawLightTable() }
     guard let model, let cg = shown else {
+      // ① with the scanner shows its own empty view, with the preview's key.
+      if model?.emptyScannerTable == true { return }
       let text = "扫描预览" as NSString
       text.draw(
         at: CGPoint(x: reserved.left + open.width / 2 - 30, y: reserved.top + open.height / 2),
@@ -1468,8 +1470,9 @@ final class FilmCanvasView: NSView {
     // mm across, whatever its file's own size; with it, a frame's own size on the film (a 6 × 6
     // its 56 mm), so the loupe takes in as much of it as the real one would.
     if model.onSheetPage, let first = model.contactFrames.first {
-      let page = AppModel.sheetLayout(count: model.contactFrames.count, pages: model.contactPages.count).size
-      let points = imageRect.width / page.width, cell = AppModel.sheetCell
+      // The page shown is the laid-out page, a pixel to a unit of its layout; a one-page roll's is
+      // as wide as its own frames, so it is measured, not laid out again as 3:2 cells.
+      let points = imageRect.width / CGFloat(max(1, cg.width)), cell = AppModel.sheetCell
       if model.formatDPI(first) != nil, let mm = model.frameMM(first), mm.width > 0, mm.height > 0 {
         let positive = !model.showsNegative
         let turned = positive && ((first.adjustments.rotation % 4) + 4) % 2 == 1

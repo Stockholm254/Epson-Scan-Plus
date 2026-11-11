@@ -419,12 +419,59 @@ final class LeakKeychain {
     self.keychain = keychain
   }
   struct Failure: Error { let status: OSStatus }
+  /// The app's key reader, `EpsonScanKey`, beside its executable: the Keychain's 始终允许 is given to
+  /// it, the same program every version, so an update does not ask for the login password again.
+  /// Without it (a test harness, a build without it) the item is read here, as before.
+  static var helper: URL? {
+    let url = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/EpsonScanKey")
+    return Bundle.main.bundleURL.pathExtension == "app" && FileManager.default.isExecutableFile(atPath: url.path) ? url : nil
+  }
+  /// Which way the last call went: through the helper, or here.
+  private(set) static var lastWay = ""
+  /// `EpsonScanKey` run with `arguments` (and the keychain's path, when one is given), `input` on
+  /// its stdin: its exit status and what it wrote; nil when it could not answer (not there, or
+  /// it did not take this app for the app), so the caller reads the Keychain itself.
+  private func helper(_ arguments: [String], input: Data? = nil) -> (status: Int32, output: Data, error: String)? {
+    guard let url = Self.helper else { return nil }
+    var arguments = arguments
+    if let keychain {
+      var length: UInt32 = 1024
+      var path = [CChar](repeating: 0, count: Int(length))
+      guard SecKeychainGetPath(keychain, &length, &path) == errSecSuccess else { return nil }
+      arguments.append(String(cString: path))
+    }
+    let process = Process(), out = Pipe(), err = Pipe(), stdin = Pipe()
+    process.executableURL = url
+    process.arguments = arguments
+    process.standardOutput = out
+    process.standardError = err
+    process.standardInput = stdin
+    do { try process.run() } catch { return nil }
+    if let input { stdin.fileHandleForWriting.write(input) }
+    try? stdin.fileHandleForWriting.close()
+    let output = out.fileHandleForReading.readDataToEndOfFile()
+    let error = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    process.waitUntilExit()
+    // 3: it took this process for something other than the app; 4: it did not know the call.
+    guard ![3, 4].contains(process.terminationStatus) else { return nil }
+    Self.lastWay = "helper"
+    return (process.terminationStatus, output, error)
+  }
+  private func failure(_ answer: (status: Int32, output: Data, error: String)) -> Failure {
+    Failure(status: OSStatus(answer.error.trimmingCharacters(in: .whitespacesAndNewlines)) ?? errSecInternalComponent)
+  }
   private func query() -> [String: Any] {
     var q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
     if let keychain { q[kSecMatchSearchList as String] = [keychain] }
     return q
   }
   func load(interactive: Bool = false) throws -> Data? {
+    if let answer = helper(["read", service, account]) {
+      if answer.status == 2 { return nil }
+      guard answer.status == 0 else { throw failure(answer) }
+      return answer.output
+    }
+    Self.lastWay = "here"
     var q = query()
     q[kSecReturnData as String] = true
     q[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -436,6 +483,11 @@ final class LeakKeychain {
     return data
   }
   func save(_ data: Data) throws {
+    if let answer = helper(["save", service, account, "Epson Scan plus · OpenAI API"], input: data) {
+      guard answer.status == 0 else { throw failure(answer) }
+      return
+    }
+    Self.lastWay = "here"
     let attributes: [String: Any] = [kSecValueData as String: data, kSecAttrLabel as String: "Epson Scan plus · OpenAI API"]
     var status = SecItemUpdate(query() as CFDictionary, attributes as CFDictionary)
     if status == errSecItemNotFound {
@@ -448,6 +500,11 @@ final class LeakKeychain {
     guard status == errSecSuccess else { throw Failure(status: status) }
   }
   func clear() throws {
+    if let answer = helper(["delete", service, account]) {
+      guard answer.status == 0 || answer.status == 2 else { throw failure(answer) }
+      return
+    }
+    Self.lastWay = "here"
     let status = SecItemDelete(query() as CFDictionary)
     guard status == errSecSuccess || status == errSecItemNotFound else { throw Failure(status: status) }
   }

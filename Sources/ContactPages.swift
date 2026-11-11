@@ -105,8 +105,9 @@ extension AppModel {
   /// cell the shape of its frame (`aspects`, width over height), so none leaves black beside it: one
   /// narrower than 3:2 as tall as a 3:2 frame, one wider as wide and lower. Every page of a roll
   /// with more than one has room for six strips of six 3:2 frames, so turning keeps the scale; a
-  /// roll of one page is as tall as its strips, and one of fewer than six frames as wide as they
-  /// are, so the light table shows it as large as it holds rather than in a corner of an empty page.
+  /// roll of one page is as tall as its strips and as wide as its widest strip of its own frames
+  /// (six 6×6 squares are two thirds of six 3:2 frames across), so the light table shows it as
+  /// large as it holds rather than in a corner of an empty page.
   static func sheetLayout(aspects: [CGFloat], pages: Int) -> (size: CGSize, cells: [CGRect], strips: [CGRect]) {
     let cell = sheetCell, gap: CGFloat = 18, rebate: CGFloat = 40, side: CGFloat = 28
     let stripGap: CGFloat = 40, margin: CGFloat = 48
@@ -129,6 +130,10 @@ extension AppModel {
         x += w + gap
       }
       stripRects.append(CGRect(x: margin, y: y, width: x - gap + side - margin, height: stripHeight))
+    }
+    // One page: no wider than its strips.
+    if pages <= 1, let widest = stripRects.map(\.width).max() {
+      return (CGSize(width: margin * 2 + widest, height: size.height), cells, stripRects)
     }
     return (size, cells, stripRects)
   }

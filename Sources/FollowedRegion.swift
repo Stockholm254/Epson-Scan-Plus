@@ -212,6 +212,8 @@ extension ImagePipeline {
   /// in, or the picture is a positive's: the crop is then read less its outer 5% (`analysisPart`).
   func followedRegion(_ image: CGImage, settings: Adjustments) -> NormalRect? {
     guard settings.inputIsNegative || settings.isSlide else { return nil }
+    // The roll's copies are the picture alone: no edge in them to look for.
+    guard settings.filmEdges != .picture else { return nil }
     let s = samples(image, maxDimension: 480)
     let depths = filmEdgeDepths(
       s, slide: settings.isSlide, gamma: settings.inputGamma,

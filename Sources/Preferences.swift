@@ -120,6 +120,9 @@ final class Preferences: ObservableObject {
   /// The loupe on the picture, and which one. Put away until its key is pressed; a new key, since
   /// the loupe that lay beside the film by default now lies on it.
   @Published var showLoupe: Bool { didSet { defaults?.set(showLoupe, forKey: "loupeShown") } }
+  /// The frame's dust ringed on ②'s single view: the toolbar's 除尘标出 and the 除尘 section's
+  /// 标出 are this one switch, kept from launch to launch.
+  @Published var showDustMarks: Bool { didSet { defaults?.set(showDustMarks, forKey: "dustMarksShown") } }
   /// ① shows a camera's raw picture in daylight white balance (`AppModel.rawGains`), else as read:
   /// in daylight by default, where a base the light has made grey in daylight looks grey, as in
   /// the camera's live view and Capture One.
@@ -210,6 +213,7 @@ final class Preferences: ObservableObject {
     let dpi = defaults?.integer(forKey: "previewDPI") ?? 0
     previewDPI = Self.previewResolutions.contains(dpi) ? dpi : 600
     showLoupe = defaults?.object(forKey: "loupeShown") as? Bool ?? false
+    showDustMarks = defaults?.object(forKey: "dustMarksShown") as? Bool ?? true
     balanceRawView = defaults?.object(forKey: "balanceRawView") as? Bool ?? true
     loupeStyle = defaults?.string(forKey: "loupeStyle").flatMap(LoupeStyle.init(rawValue:)) ?? .pentax
     loupeField = defaults?.string(forKey: "loupeField").flatMap(LoupeField.init(rawValue:)) ?? .large

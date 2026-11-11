@@ -82,12 +82,9 @@ extension ContentView {
           Text(m.scanner.ready ? "\(m.scanner.bits * 3)-bit RGB" : "待检测").font(.system(size: 12, design: .monospaced))
         }
         labeled("原始文件") { Text("TIFF · 16-bit 线性").font(.system(size: 12)).foregroundStyle(.secondary) }
-        HStack {
-          Toggle("按行合并扫描", isOn: Binding(get: { m.preferences.rowScanning }, set: { m.preferences.rowScanning = $0 }))
-            .toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11)).disabled(m.isWorking)
-          Spacer()
-          InfoButton(text: "并排的几张一次扫完，再分成每张的原始文件，和单独扫描的一样保存。按 V850 实测，一个装满的 135 片夹（18 张）从约 13 分钟缩短到约 9 分钟。\n\n只在合起来更快时才合并：片夹里只有一条胶片、或一排只勾了一张时照常逐张扫；隔着一条的两张也分开扫。\n\n比一张宽的扫描窗口，扫描仪每次校准的蓝色增益不同（实测 −0.4% 到 +3.8%），黑电平也会漂；每张扫描到达时都和预览对齐，修正后和单独扫描相差不到 0.15%。只用于 48-bit 接口。")
-        }
+        SwitchRow("按行合并扫描", isOn: Binding(get: { m.preferences.rowScanning }, set: { m.preferences.rowScanning = $0 }),
+          info: "并排的几张一次扫完，再分成每张的原始文件，和单独扫描的一样保存。按 V850 实测，一个装满的 135 片夹（18 张）从约 13 分钟缩短到约 9 分钟。\n\n只在合起来更快时才合并：片夹里只有一条胶片、或一排只勾了一张时照常逐张扫；隔着一条的两张也分开扫。\n\n比一张宽的扫描窗口，扫描仪每次校准的蓝色增益不同（实测 −0.4% 到 +3.8%），黑电平也会漂；每张扫描到达时都和预览对齐，修正后和单独扫描相差不到 0.15%。只用于 48-bit 接口。",
+          off: m.isWorking)
       }
       HStack {
         Button("重新连接") { m.scanner.reconnect() }
@@ -112,7 +109,7 @@ extension ContentView {
         "预览后自动识别画面。点接触表上的一张进入单张，在单张里用「画框」细调裁切：拖四角缩放，拖框内移动。漏掉的画面用「手动画框」在接触表上拖出新的画框。「收紧现有边界」只收紧已有画面框，保留逐张调色和原始扫描。")
       labeled("规格") {
         Picker("", selection: Binding(get: { m.format }, set: { m.setFormat($0) })) {
-          ForEach(FilmFormat.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+          ForEach(FilmFormat.offered(keeping: m.format), id: \.self) { Text($0.rawValue).tag($0) }
         }.labelsHidden()
           .help("这一卷的画幅：扫描时按它识别画面，翻拍时按它算画面在胶片上的大小（看片镜的视场、导出的 dpi）；和 ② 去色罩「胶片」里的画幅是同一个")
       }
@@ -155,8 +152,7 @@ extension ContentView {
         Text(String(format: "杂散光 R %.2f%% · G %.2f%% · B %.2f%%", c.flare.r * 100, c.flare.g * 100, c.flare.b * 100)).readout()
         // The patches' 3×3 fit is the slide dyes', which no negative is converted by: not shown.
         note(String(format: "灰阶最大误差 %.3f D，扣除后 %.3f D", c.grayErrorBefore, c.grayError))
-        Toggle("转换前扣除杂散光", isOn: Binding(get: { m.preferences.removeFlare }, set: { m.preferences.removeFlare = $0; m.reapplyScannerCalibration() }))
-          .toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
+        SwitchRow("转换前扣除杂散光", isOn: Binding(get: { m.preferences.removeFlare }, set: { m.preferences.removeFlare = $0; m.reapplyScannerCalibration() }))
       } else {
         note("尚未标定。")
       }
@@ -413,8 +409,7 @@ extension ContentView {
           .help("导出当前这张；在胶片条或接触表上按住 ⌘ 点选、⇧ 连选几张，这里导出选中的这几张")
         Button("导出勾选的 \(m.enabledCount) 张…") { m.exportImages(all: true) }.disabled(m.enabledCount == 0 || m.isWorking)
       }.font(.system(size: 11))
-      Toggle("扫描后自动导出正片", isOn: Binding(get: { m.preferences.autoExport }, set: { m.preferences.autoExport = $0 }))
-        .toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
+      SwitchRow("扫描后自动导出正片", isOn: Binding(get: { m.preferences.autoExport }, set: { m.preferences.autoExport = $0 }))
       Divider()
       titled("接触表", symbol: "square.grid.3x2", info:
         "把勾选的画面排成一张图片，格式同上。\n\n「预览 · 立即导出」按整幅预览的分辨率（600 dpi 预览时每张 35 mm 约 850 像素）直接生成，不扫描；已正式扫描的画面按同样的分辨率读取。\n\n「1200 dpi · 先扫描」时，尚未扫描或低于 1200 dpi 的画面先以 1200 dpi 扫描，结果保存为这些画面的原始文件，再生成 1200 dpi 的接触表。")
@@ -427,10 +422,13 @@ extension ContentView {
           }.labelsHidden()
         }
       }
-      Picker("排列", selection: sheet.style) {
-        Text("胶片条").tag(ContactSheet.Layout.Style.strips)
-        Text("网格").tag(ContactSheet.Layout.Style.grid)
-      }.pickerStyle(.segmented).labelsHidden()
+      // Named as the rows under it are.
+      labeled("排列") {
+        Picker("排列", selection: sheet.style) {
+          Text("胶片条").tag(ContactSheet.Layout.Style.strips)
+          Text("网格").tag(ContactSheet.Layout.Style.grid)
+        }.pickerStyle(.segmented).labelsHidden().fixedSize()
+      }
       labeled(m.preferences.sheet.style == .strips ? "每条" : "每行") {
         Picker("", selection: sheet.columns) {
           Text(m.preferences.sheet.style == .strips ? "自动（6）" : "自动").tag(0)
@@ -449,10 +447,8 @@ extension ContentView {
           Text("胶片方向").tag(false)
         }.labelsHidden()
       }
-      HStack {
-        Toggle("片号", isOn: sheet.numbers).toggleStyle(.switch).tint(Hardware.accent)
-        Toggle("标题", isOn: sheet.title).toggleStyle(.switch).tint(Hardware.accent)
-      }.font(.system(size: 11))
+      SwitchRow("片号", isOn: sheet.numbers)
+      SwitchRow("标题", isOn: sheet.title)
       Button {
         m.exportContactSheet()
       } label: {
@@ -490,7 +486,15 @@ extension ContentView {
             TextField(m.sessionURL.flatMap { RollLibrary.started($0.lastPathComponent) }.map(RollLibrary.title) ?? "卷名", text: $m.rollName)
               .textFieldStyle(.roundedBorder)
           }
-          labeled("胶片") { Text(FilmCalibration.film(m.filmName)).font(.system(size: 12)).lineLimit(1).help(m.filmName) }
+          labeled("胶片") {
+            // The film as the shelf, ②'s film section and the library draw it.
+            HStack(spacing: 6) {
+              let now = NewProjectSheet.current(m)
+              FilmObject(look: NewProjectSheet.look(now, m: m), gauge: NewProjectSheet.gauge(now, format: m.format))
+                .frame(width: 18, height: 24)
+              Text(FilmCalibration.film(m.filmName)).font(.system(size: 12)).lineLimit(1)
+            }.help(m.filmName)
+          }
           labeled("画面") { Text("\(m.frames.count) 张 · 全分辨率 \(full)").readout(10) }
           VStack(alignment: .leading, spacing: 4) {
             Text("备注").font(.system(size: 11)).foregroundStyle(.secondary)

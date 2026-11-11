@@ -141,14 +141,45 @@ enum NewProjectTests {
     let undo = UndoManager()
     undo.groupsByEvent = false
     model.undoManager = undo
-    let before = (model.profile.id, model.filmName, model.format, model.frames.allSatisfy { $0.adjustments.isSlide })
-    model.applyFilm(profile: portra400, filmName: "Kodak Ektacolor Pro 400", reversal: false, format: .six45)
-    let changed = model.profile.id == "portra400" && model.format == .six45 && !model.reversalRoll
+    let before = (model.profile.id, model.filmName, model.format, model.frames.allSatisfy { $0.adjustments.isSlide }, model.filmEdges)
+    model.applyFilm(profile: portra400, filmName: "Kodak Ektacolor Pro 400", reversal: false, format: .six45, edges: .rebate)
+    let changed = model.profile.id == "portra400" && model.format == .six45 && !model.reversalRoll && model.filmEdges == .rebate
+      && model.frames.allSatisfy { $0.adjustments.filmEdges == .rebate }
     undo.undo()
-    let after = (model.profile.id, model.filmName, model.format, model.frames.allSatisfy { $0.adjustments.isSlide })
+    let after = (model.profile.id, model.filmName, model.format, model.frames.allSatisfy { $0.adjustments.isSlide }, model.filmEdges)
     model.undoManager = nil
-    try check(changed && after == before,
-      "one ⌘Z puts the roll's film, its name, negative or slide and its format back as they were: \(after)")
+    try check(changed && after == before && model.frames.allSatisfy { $0.adjustments.filmEdges == nil },
+      "one ⌘Z puts the roll's film, its name, negative or slide, its format and its film edge back as they were: \(after)")
+    // What the makers publish: every catalog film has its entry, on the maker's own site over
+    // https (never filmferrania.it, now someone else's), with what it is for in a line or two.
+    let missing = FilmCatalog.stocks.filter { FilmSheets.of($0.name) == nil }.map(\.name)
+    let links = FilmSheets.byName.values.flatMap { [$0.sheet, $0.page].compactMap { $0 } }
+    try check(missing.isEmpty && FilmSheets.byName.count == FilmCatalog.stocks.count
+      && links.allSatisfy { $0.scheme == "https" && $0.host?.hasSuffix("filmferrania.it") == false }
+      && FilmSheets.byName.values.allSatisfy { !$0.about.isEmpty && $0.about.count <= 120 && $0.specs.count <= 6 },
+      "every film on the shelf has the maker's data sheet or page, over https, and a short note (\(FilmSheets.byName.count) films; missing: \(missing))")
+    // A copy's size by the film's real width where it takes in the edge: 35 mm across a 135 crop
+    // (its short side), 61.5 mm across a 120 one (its long side for 6×6, short for 6×7); the
+    // picture's 24 or 56 mm where it does not; a de-masking region set is the picture either way.
+    let dpi = { (w: CGFloat, h: CGFloat, f: FilmFormat, e: PictureEdges, r: NormalRect?) in AppModel.formatDPI(crop: CGSize(width: w, height: h), region: r, format: f, edges: e) ?? 0 }
+    let at = 25.4 / 35 * 3500
+    try check(abs(dpi(3800, 3500, .mm135, .rebate, nil) - at) < 0.01 && abs(dpi(3600, 2400, .mm135, .picture, nil) - 2540) < 0.01
+      && abs(dpi(3600, 2400, .mm135, .auto, nil) - 2540) < 0.01
+      && abs(dpi(5800, 6150, .six6, .rebate, nil) - 2540) < 0.01 && abs(dpi(7100, 6150, .six7, .rebate, nil) - 2540) < 0.01
+      && abs(dpi(3800, 3500, .mm135, .rebate, NormalRect(x: 0.05, y: 0.16, width: 0.9, height: 2400.0 / 3500)) - 2540) < 0.01
+      && AppModel.formatDPI(crop: CGSize(width: 3800, height: 3500), region: nil, format: .auto, edges: .rebate) == nil,
+      "a copy taking in the film's edge is sized by the film's width (35 mm on 135, 61.5 mm across 120), one of the picture alone by the picture's")
+    // 「120 其他」 is offered no more, but a roll that has it keeps it.
+    try check(!FilmFormat.offered(keeping: .auto).contains(.medium) && !FilmFormat.offered(keeping: .six6).contains(.medium)
+      && FilmFormat.offered(keeping: .medium).contains(.medium) && FilmFormat.offered(keeping: .auto).count == FilmFormat.allCases.count - 1,
+      "the formats offered leave out 120 of a length not given, but a roll already so keeps it")
+    // 6×4.5 lies 41.5 mm along the film by 56 across: drawn narrower than 6×6, not as its square.
+    try check(FormatPiece.size(.six45).width < FormatPiece.size(.six6).width && FormatPiece.size(.six6).width < FormatPiece.size(.six7).width
+      && abs(FormatPiece.size(.six45).width / FormatPiece.size(.six45).height - 49.5 / 61.5) < 0.01,
+      "the format pieces lie as the frames do on the film: 6×4.5 41.5 mm along, narrower than 6×6, 6×7 longer")
+    try check(NewProjectSheet.edgesNote(.rebate, format: .mm135).contains("35 mm") && NewProjectSheet.edgesNote(.rebate, format: .six7).contains("56×69.5")
+      && NewProjectSheet.edgesNote(.picture, format: .six45).contains("56×41.5"),
+      "the shelf says what the film's edge means in millimetres for the format chosen")
     // Exports are named after the roll's own film, not the generic preset it converts with.
     let named = model.exportName(for: model.frames.first)
     let velviaKey = model.exportFilmKey

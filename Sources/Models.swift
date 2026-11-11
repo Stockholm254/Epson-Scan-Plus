@@ -410,6 +410,8 @@ struct Adjustments: Codable, Equatable {
   /// raw (linear off the scanner), so it is shown through its own white balance and ends and
   /// encoded for the screen. Nil for a negative, or a file already made positive, shown as it is.
   var reversal: Bool? = nil
+  /// The roll's copies take in the film's edge or not (`PictureEdges`); nil, 自动: it is looked for.
+  var filmEdges: PictureEdges? = nil
   /// A slide's reading, converted as `reversal` says; never a negative's.
   var isSlide: Bool { reversal == true && !inputIsNegative }
   /// Read as a slide, or as a negative again. A slide's own colour is its picture, so it starts
@@ -645,6 +647,8 @@ struct DeskProject: Codable {
   var flats: [FlatProfile]? = nil
   /// The roll's film format as chosen (`FilmFormat`'s raw value); nil, 自动.
   var format: String? = nil
+  /// Whether its copies take in the film's edge (`PictureEdges`' raw value); nil, 自动.
+  var edges: String? = nil
 }
 
 /// A project names its files by absolute path, which older versions read, and relative to its
@@ -791,6 +795,61 @@ enum FilmFormat: String, CaseIterable {
     case .six45, .six6: return 56
     case .six7: return 69.5
     case .six9: return 84
+    }
+  }
+}
+
+extension FilmFormat {
+  /// The film's width across, in millimetres: 35 for 135; 61.5 for 120 (its backing paper a
+  /// little wider). Nil for 自动.
+  var filmWidthMM: Double? {
+    switch self {
+    case .auto: return nil
+    case .mm135: return 35
+    default: return 61.5
+    }
+  }
+  /// The formats a roll can be given: 120 of a length not given (`medium`, 「120 其他」) only where
+  /// the roll already has it, as an older one may; it opens as it was.
+  static func offered(keeping current: FilmFormat) -> [FilmFormat] {
+    allCases.filter { $0 != .medium || current == .medium }
+  }
+  /// The picture's length along the film, in millimetres: 36 on 135; on 120 41.5 for 6×4.5 (its
+  /// short side runs along the film), 56, 69.5 and 84. Nil for 自动 and 120 of a length not given.
+  var alongMM: Double? {
+    switch self {
+    case .auto, .medium: return nil
+    case .mm135: return 36
+    case .six45: return 41.5
+    case .six6: return 56
+    case .six7: return 69.5
+    case .six9: return 84
+    }
+  }
+  /// The picture's side across the film, in millimetres: 24 on 135, 56 on 120 whatever its length.
+  var pictureAcrossMM: Double? {
+    switch self {
+    case .auto: return nil
+    case .mm135: return 24
+    default: return 56
+    }
+  }
+}
+
+/// What a roll's copies take in round the picture: the film's edge (the rebate with its edge
+/// print and, on 135, the sprocket holes) or not. 自动 looks for it in each crop.
+enum PictureEdges: String, Codable, CaseIterable {
+  case auto = "自动"
+  /// The picture alone: no edge looked for, the crop's sides the picture's.
+  case picture = "不带"
+  /// The film's whole width: across it the crop is the film's width, 35 mm on 135, 61.5 mm on 120.
+  case rebate = "带片边"
+  /// As a roll's summary says it: nothing for 自动.
+  var summary: String {
+    switch self {
+    case .auto: return ""
+    case .picture: return "不带片边"
+    case .rebate: return "带片边"
     }
   }
 }

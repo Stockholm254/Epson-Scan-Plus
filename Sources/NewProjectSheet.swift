@@ -19,6 +19,7 @@ struct NewProjectSheet: View {
   @State private var query = ""
   @State private var reversal = false
   @State private var format = FilmFormat.auto
+  @State private var edges = PictureEdges.auto
   @FocusState private var searching: Bool
   @State private var hovering: Choice?
   /// The last choice came from ↑ or ↓, so the shelf scrolls to it.
@@ -44,12 +45,13 @@ struct NewProjectSheet: View {
       VStack(alignment: .leading, spacing: 14) {
         chosen
         formats
+        edgesRow
         kindRow
       }.padding(.horizontal, 22).padding(.vertical, 16)
       Divider()
       footer.padding(.horizontal, 22).padding(.vertical, 14)
     }
-    .frame(width: 720, height: 690)
+    .frame(width: 720, height: 800)
     .onAppear(perform: start)
   }
 
@@ -218,8 +220,47 @@ struct NewProjectSheet: View {
         if !look.note.isEmpty { Text(look.note).font(.system(size: 12)).lineLimit(1) }
         Text(conversion(look)).font(.system(size: 11)).foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
+        if let sheet = Self.sheet(choice, m: m) { published(sheet) }
       }
       Spacer(minLength: 0)
+    }
+  }
+  /// What the maker publishes about the film: what it is for, the data sheet's facts, and links to
+  /// the sheet and the maker's page, opened in the browser.
+  private func published(_ sheet: FilmSheet) -> some View {
+    VStack(alignment: .leading, spacing: 3) {
+      Text(sheet.about).font(.system(size: 11.5)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+        .padding(.top, 2)
+      if !sheet.specs.isEmpty {
+        Text(sheet.specs.prefix(4).joined(separator: " · ")).font(.system(size: 10.5)).foregroundStyle(.secondary)
+          .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+          .help(sheet.specs.joined(separator: "\n"))
+      }
+      HStack(spacing: 14) {
+        if let url = sheet.sheet {
+          Button { NSWorkspace.shared.open(url) } label: {
+            Label("数据表" + (sheet.title.map { " · \($0)" } ?? ""), systemImage: "doc.text")
+          }.help("在浏览器里打开厂家的数据表：\(url.absoluteString)")
+        } else {
+          Text("厂家没有发布数据表").foregroundStyle(.tertiary)
+        }
+        if let url = sheet.page {
+          Button { NSWorkspace.shared.open(url) } label: { Label("厂家页面", systemImage: "safari") }
+            .help("在浏览器里打开厂家的产品页：\(url.absoluteString)")
+        }
+      }
+      .buttonStyle(.link).font(.system(size: 11))
+    }
+  }
+  /// The maker's data sheet and page for a choice: a catalog film's, or the film a preset of this
+  /// Mac was calibrated from; none for a film outside the catalog.
+  static func sheet(_ item: Choice, m: AppModel) -> FilmSheet? {
+    switch item {
+    case .stock(let id): return FilmSheets.of(id)
+    case .preset(let id):
+      let p = m.profiles.first { $0.id == id }
+      return p.flatMap { FilmCatalog.stock(named: $0.name) }.flatMap { FilmSheets.of($0.name) }
+    case .named: return nil
     }
   }
   private func tag(_ text: String) -> some View {
@@ -233,13 +274,13 @@ struct NewProjectSheet: View {
     HStack(alignment: .bottom, spacing: 0) {
       Text("画幅").font(.system(size: 12, weight: .medium)).frame(width: 44, alignment: .leading).padding(.bottom, 18)
       HStack(alignment: .bottom, spacing: 12) {
-        ForEach(FilmFormat.allCases, id: \.self) { f in
+        ForEach(FilmFormat.offered(keeping: format), id: \.self) { f in
           let on = f == format, offered = offers(f)
           Button {
             withAnimation(.easeOut(duration: 0.15)) { format = f }
           } label: {
             VStack(spacing: 5) {
-              FormatPiece(format: f, kind: reversal ? .slide : look(choice).kind ?? .colour, selected: on)
+              FormatPiece(format: f, kind: reversal ? .slide : look(choice).kind ?? .colour, selected: on, edges: on ? edges : .auto)
                 .frame(width: FormatPiece.width(f), height: 44, alignment: .bottom)
               Text(f == .medium ? "120 其他" : f.rawValue.replacingOccurrences(of: "120 · ", with: ""))
                 .font(.system(size: 10.5, weight: on ? .semibold : .regular))
@@ -253,6 +294,42 @@ struct NewProjectSheet: View {
           .accessibilityAddTraits(on ? .isSelected : [])
         }
       }
+    }
+  }
+  /// Whether the copies take in the film's edge, and what that means in millimetres for the
+  /// format chosen: the film's width, the picture's size, the rebate either side.
+  private var edgesRow: some View {
+    HStack(spacing: 0) {
+      Text("片边").font(.system(size: 12, weight: .medium)).frame(width: 44, alignment: .leading)
+      Picker("片边", selection: $edges) {
+        ForEach(PictureEdges.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+      }.pickerStyle(.segmented).labelsHidden().frame(width: 200)
+        .help("翻拍或导入的照片里，画面四周有没有拍进片边（片基、边字，135 还有齿孔）。它决定照片的尺寸怎么算（看片镜视场、导出的 dpi），以及去色罩从哪里读。")
+      Text(Self.edgesNote(edges, format: format))
+        .font(.system(size: 11)).foregroundStyle(.secondary).padding(.leading, 12).lineLimit(2)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+  }
+  /// What a choice of film edge means for `format`, in its real sizes.
+  static func edgesNote(_ e: PictureEdges, format f: FilmFormat) -> String {
+    func mm(_ x: Double) -> String { x == x.rounded() ? String(Int(x)) : String(format: "%.1f", x) }
+    let picture: String? = f.pictureAcrossMM.map { across in
+      f == .medium ? "\(mm(across)) mm 宽" : "\(mm(across))×\(mm(f.alongMM ?? across)) mm"
+    }
+    switch e {
+    case .auto:
+      return "每张照片的裁切里自动找片边，找到了去色罩只读片边以内；尺寸按裁切的短边是画面的短边算。"
+    case .picture:
+      guard let picture, let short = f.shortMM else { return "照片只拍到画面：不找片边，裁切就是画面。" }
+      return "照片只拍到画面（\(picture)）：不找片边，裁切的短边按 \(mm(short)) mm 算尺寸。"
+    case .rebate:
+      guard let picture, let film = f.filmWidthMM, let across = f.pictureAcrossMM else {
+        return "照片带着片边：选了画幅，才能按胶片的宽度（135 为 35 mm，120 为 61.5 mm）算尺寸。"
+      }
+      let side = mm((film - across) / 2)
+      return f == .mm135
+        ? "胶片宽 35 mm，画面 \(picture)，上下各约 \(side) mm 片边（齿孔、边字）：裁切的短边按 35 mm 算，去色罩只读片边以内。"
+        : "胶片宽 61.5 mm，画面 \(picture)，两边各约 \(side) mm 片边（边字）：裁切横过胶片的一边按 61.5 mm 算，去色罩只读片边以内。"
     }
   }
   private var kindRow: some View {
@@ -327,7 +404,7 @@ struct NewProjectSheet: View {
     return "App 里没有它的数据表：按通用彩色负片转换，胶片名照它记；拍过灰阶或色卡后，可以在本机标定。"
   }
   private var summary: String {
-    (changing ? "将改为：" : "将新建：") + "\(look(choice).maker.map { $0 == "本机标定" || $0 == "目录外" ? "" : $0 + " " } ?? "")\(look(choice).name) · \(reversal ? "反转片" : "负片") · \(format.rawValue)"
+    (changing ? "将改为：" : "将新建：") + "\(look(choice).maker.map { $0 == "本机标定" || $0 == "目录外" ? "" : $0 + " " } ?? "")\(look(choice).name) · \(reversal ? "反转片" : "负片") · \(format.rawValue)" + (edges == .auto ? "" : " · \(edges.summary)")
   }
 
   // MARK: Choosing
@@ -409,9 +486,9 @@ struct NewProjectSheet: View {
   private func begin() {
     let (p, name) = Self.film(choice, m: m)
     if changing {
-      m.applyFilm(profile: p, filmName: name, reversal: reversal, format: format)
+      m.applyFilm(profile: p, filmName: name, reversal: reversal, format: format, edges: edges)
     } else {
-      m.beginNewProject(profile: p, filmName: name, reversal: reversal, format: format)
+      m.beginNewProject(profile: p, filmName: name, reversal: reversal, format: format, edges: edges)
     }
   }
   /// The preset a choice converts with and the film's name the roll keeps.
@@ -442,6 +519,7 @@ struct NewProjectSheet: View {
   private func start() {
     recent = Self.recent(m.shelf.entries, profiles: m.profiles)
     format = m.format
+    edges = m.filmEdges
     let now = Self.current(m)
     if case .named(let name) = now, name.isEmpty {} else { choice = now }
     reversal = m.reversalRoll
@@ -475,7 +553,7 @@ struct NewProjectSheet: View {
     case .auto: what = "扫描时按画面自动识别；翻拍的照片长边按 135 画面的 36 mm 算"
     case .mm135: what = "135：画面 36 × 24 mm"
     case .medium: what = "120，画面长度不定：按短边 56 mm 算"
-    default: what = "\(f.rawValue)：画面 \(f.longMM.map { String(format: "%g", $0) } ?? "?") × 56 mm"
+    default: what = "\(f.rawValue)：画面 \(f.alongMM.map { String(format: "%g", $0) } ?? "?") × 56 mm（沿胶片 × 横过胶片）"
     }
     return what + (offered ? "" : "（这种胶片通常没有这个画幅）")
   }
@@ -501,6 +579,8 @@ struct FormatPiece: View {
   let format: FilmFormat
   let kind: FilmStock.Kind
   let selected: Bool
+  /// What a copy takes in, outlined: the picture alone, or the film's whole width.
+  var edges: PictureEdges = .auto
   /// Points a millimetre of film takes.
   static let scale: CGFloat = 0.52
   static func size(_ f: FilmFormat) -> CGSize {
@@ -508,7 +588,7 @@ struct FormatPiece: View {
     case .auto: return CGSize(width: 34, height: 34)
     case .mm135: return CGSize(width: 44 * scale, height: 35 * scale)
     case .medium: return CGSize(width: 64 * scale, height: 61.5 * scale)
-    default: return CGSize(width: (f.longMM ?? 56) + 8, height: 61.5).applying(CGAffineTransform(scaleX: scale, y: scale))
+    default: return CGSize(width: (f.alongMM ?? 56) + 8, height: 61.5).applying(CGAffineTransform(scaleX: scale, y: scale))
     }
   }
   static func width(_ f: FilmFormat) -> CGFloat { size(f).width + 4 }
@@ -542,7 +622,8 @@ struct FormatPiece: View {
           x += 4.75 * k
         }
       } else {
-        let long = format.longMM ?? 56
+        // The frame as it lies on the film: its length along it, 56 mm across.
+        let long = format.alongMM ?? 56
         window = CGRect(x: piece.midX - long / 2 * k, y: piece.midY - 28 * k, width: long * k, height: 56 * k)
       }
       ctx.fill(Path(roundedRect: window, cornerRadius: 0.8), with: .linearGradient(
@@ -554,6 +635,11 @@ struct FormatPiece: View {
       }
       if selected {
         ctx.stroke(Path(roundedRect: piece.insetBy(dx: -2, dy: -2), cornerRadius: 3), with: .color(amber), lineWidth: 1.6)
+        // What a copy takes in: the picture alone, or the film across its whole width.
+        let taken: CGRect? = edges == .picture ? window : edges == .rebate ? CGRect(x: window.minX - 1.2, y: piece.minY + 0.6, width: window.width + 2.4, height: piece.height - 1.2) : nil
+        if let taken {
+          ctx.stroke(Path(roundedRect: taken, cornerRadius: 1), with: .color(.white.opacity(0.9)), style: StrokeStyle(lineWidth: 1, dash: [2.5, 2]))
+        }
       }
     }
   }
