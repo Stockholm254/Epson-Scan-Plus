@@ -183,8 +183,11 @@ enum FilmCalibration {
   /// "Kodak Portra 160 · 翻拍 · 2026-10-30 19:41", after the copy session (`batch`) it holds for.
   static func name(basedOn base: FilmProfile, copyStand: Bool, batch: String? = nil) -> String {
     let root = calibratedFrom(base)
-    return "\(root.id == "generic" ? "本机标定胶片" : root.name) · \(copyStand ? "翻拍" : "V850")"
-      + (copyStand ? batch.map { " · \($0)" } ?? "" : "")
+    return name(film: root.id == "generic" ? "本机标定胶片" : root.name, copyStand: copyStand, batch: batch)
+  }
+  /// What a preset calibrated for `film` is called: "Harman Phoenix II 200 · 翻拍 · 2026-11-07 13:21".
+  static func name(film: String, copyStand: Bool, batch: String? = nil) -> String {
+    "\(film) · \(copyStand ? "翻拍" : "V850")" + (copyStand ? batch.map { " · \($0)" } ?? "" : "")
   }
 
   /// A preset for this scanner and film, named after the film it started from, also when that was
@@ -194,7 +197,7 @@ enum FilmCalibration {
   /// crosstalk taken out (nil: some were, some not, or it is not known), which the slopes hold for.
   static func profile(
     from fit: Fit, basedOn base: FilmProfile, points: Int, scanner: String, copyStand: Bool = false, unmixed: Bool? = nil,
-    spots: [CalibrationSpot]? = nil, batch: String? = nil
+    spots: [CalibrationSpot]? = nil, batch: String? = nil, named: String? = nil
   ) -> FilmProfile {
     let date = Date().formatted(.iso8601.year().month().day())
     let root = calibratedFrom(base)
@@ -205,7 +208,7 @@ enum FilmCalibration {
       : "只适用于这台扫描仪和同一种胶片"
     return FilmProfile(
       id: "\(root.id == "generic" ? "film" : root.id)-\(copyStand ? "copy" : "v850")-\(UUID().uuidString.prefix(6).lowercased())",
-      name: name(basedOn: base, copyStand: copyStand, batch: batch), aliases: [], iso: base.iso, process: base.process, sourceURL: "",
+      name: named ?? name(basedOn: base, copyStand: copyStand, batch: batch), aliases: [], iso: base.iso, process: base.process, sourceURL: "",
       publication: "\(copyStand ? "翻拍标定" : "本机标定") · \(scanner) · \(date) · \(points) 个中性点", slopes: fit.slopes,
       notes: String(
         format: "由 %d 个中性点反解红、蓝通道的斜率与中性偏移，绿色斜率沿用「%@」。拟合残差 %.3f D，绿色密度跨度 %.2f D。%@；白平衡按标定的中性偏移配平，开着自动也一样。这个中性是在取点时的光下定的，别的光下拍的照片用取中性灰或冷暖调。",

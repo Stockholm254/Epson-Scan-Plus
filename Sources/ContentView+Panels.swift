@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 
 /// The left panel. In module ① the source and its settings, the scanner's (with storage) or the
-/// camera's; in module ② the film with its base and the frame's extent, calibrating the preset, and
-/// the export settings, in three tabs. ⌘, comes back to ①'s.
+/// camera's; in module ② the film with its preset, calibrating it, its base and the frame's extent,
+/// and the export settings, in two tabs. ⌘, comes back to ①'s.
 extension ContentView {
   var leftPanel: some View {
     VStack(spacing: 0) {
@@ -13,7 +13,7 @@ extension ContentView {
             ForEach(AppModel.CaptureSource.allCases, id: \.self) { Text($0.short).tag($0).help($0.rawValue) }
           }
         } else if m.page != .library {
-          // Module ②'s film, its base and the frame's extent; calibrating the preset; exporting.
+          // Module ②'s film, its preset and calibrating it, its base and the frame's extent; exporting.
           Picker("面板", selection: $m.panelTab) {
             ForEach(AppModel.PanelTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
           }
@@ -32,7 +32,6 @@ extension ContentView {
             } else {
               switch m.panelTab {
               case .film: filmTab.transition(.opacity)
-              case .calibration: calibrationTab.transition(.opacity)
               case .output: outputTab.transition(.opacity)
               }
             }
@@ -201,11 +200,16 @@ extension ContentView {
 
   // MARK: Film
 
-  /// Module ②'s sidebar, first tab: calibrating the preset in use from neutral points. The film,
-  /// its preset and where the slopes come from are at the top of the inspector, managing the
-  /// presets (use, export, delete, import) in the presets table its film menu opens.
-  var calibrationTab: some View {
-    calibrationPanel
+  /// Module ②'s film tab, under the film and its preset: calibrating the preset from neutral
+  /// points, for this scanner or this copy session and named after the roll's film, so the film's
+  /// preset menu lists it. Folded until wanted, held open while points are picked; managing the
+  /// presets (use, export, delete, import) is in the presets table.
+  var calibrationSection: some View {
+    let copy = m.copyStandRoll
+    return PanelSection(copy ? "翻拍预设标定" : "本机预设标定", key: "calibration", open: false, info: calibrationInfo(copy: copy),
+      forced: m.tool == .calibrate || !m.calibrationPoints.isEmpty) {
+      calibrationPanel
+    }
   }
   /// Where this frame's channel slopes come from, in a line: the inspector's, with the whole of it
   /// (`conversionBasis`) behind its ⓘ.
@@ -290,6 +294,12 @@ extension ContentView {
     }
     return "通用：每张按自己的画面拉伸各通道。"
   }
+  /// What calibrating does and how, behind the section's ⓘ.
+  func calibrationInfo(copy: Bool) -> String {
+    copy
+      ? "先在上面的「胶片」里选好胶片和预设，再在翻拍的画面上点选明暗不同、本来是中性的东西：白色的牌子或墙、灰色水泥、柏油路，最好是拍在胶片上的灰卡或灰阶：至少 2 个，跨度 0.3 D 以上，建议亮的和暗的各两样以上；可以跨画面、跨卷取点。\n\n原理：中性的东西三个通道反射得一样多，除掉片基以后，同一种光下的中性点从亮到暗落在一条直线上，斜率就是要标定的。所以所有点要在同一种光下：都在阳光下，或都在同一片阴影里（阴影里是天光，比阳光蓝）；中途调过翻拍灯的画面不要和之前的混。\n\n标定的是每个通道的反差（斜率），修好「越亮越偏蓝」这类随亮度变的偏色。预设还记下中性落在哪里，用它时白平衡按这一点配平，开着自动也一样：取点时那种光（比如阳光）下的灰出来是灰，别的光下拍的照片带着光的颜色，用取中性灰或冷暖调。胶片本身的色彩风格保留：不套相机色彩矩阵，也不用色卡。\n\n预设属于这一次翻拍：这台相机、这次架好的灯和这种胶片，名字里带着这一卷开拍的时间。新开的卷不会自动用它；同一次翻拍的其他卷，在胶片菜单里选它。在同一卷上再标定一次，会替换这一卷之前生成的预设，用过旧预设的工程各自留着副本。去串色在标定之前先做，标定不会替换它；标定和使用时，去串色要保持同一个状态（默认打开），预设的说明里记着标定时是哪个状态。\n\n取 4 个以上、其中有很暗的时，还会标定红、蓝通道的暗部趾部。\n\n标定出来的预设按这一卷的胶片命名，列在胶片菜单里这种胶片的预设下；在胶片架上换成这种胶片时，这次翻拍标定过的会自动用上。"
+      : "先在上面的「胶片」里选好胶片和预设，再点选同一种胶片上明暗不同的中性灰（灰卡、白墙、灰色水泥）：至少 2 个，建议 3 个以上；可以跨画面、跨卷取点。\n\n取 4 个以上、其中有很暗的（如灰卡欠曝 2–3 档，绿色密度低于 0.25 D）时，还会标定红、蓝通道的暗部趾部，转换时据此还原暗部的层次和颜色。\n\n标定出来的预设按这一卷的胶片命名，列在胶片菜单里这种胶片的预设下；之后扫描或换成这种胶片时自动用上。"
+  }
   /// Calibrating a preset for this scanner, or for the camera on the copy stand, from neutral points
   /// picked in single view.
   var calibrationPanel: some View {
@@ -305,13 +315,6 @@ extension ContentView {
       ?? (m.calibrationPoints.isEmpty ? (picking ? (copy ? "② 在单张画面上点选本来是中性的东西，比如白牌子、灰水泥。" : "② 在单张画面上点选中性灰。") : "① 点「取中性点」开始。")
       : "② 继续点选更亮或更暗的中性灰，跨度需 0.3 D 以上。")
     return VStack(alignment: .leading, spacing: 8) {
-      HStack {
-        Text(copy ? "翻拍预设标定" : "本机预设标定").font(.system(size: 11, weight: .medium))
-        Spacer()
-        InfoButton(text: copy
-          ? "先在检查器最上面的胶片菜单里选好胶片，再在翻拍的画面上点选明暗不同、本来是中性的东西：白色的牌子或墙、灰色水泥、柏油路，最好是拍在胶片上的灰卡或灰阶：至少 2 个，跨度 0.3 D 以上，建议亮的和暗的各两样以上；可以跨画面、跨卷取点。\n\n原理：中性的东西三个通道反射得一样多，除掉片基以后，同一种光下的中性点从亮到暗落在一条直线上，斜率就是要标定的。所以所有点要在同一种光下：都在阳光下，或都在同一片阴影里（阴影里是天光，比阳光蓝）；中途调过翻拍灯的画面不要和之前的混。\n\n标定的是每个通道的反差（斜率），修好「越亮越偏蓝」这类随亮度变的偏色。预设还记下中性落在哪里，用它时白平衡按这一点配平，开着自动也一样：取点时那种光（比如阳光）下的灰出来是灰，别的光下拍的照片带着光的颜色，用取中性灰或冷暖调。胶片本身的色彩风格保留：不套相机色彩矩阵，也不用色卡。\n\n预设属于这一次翻拍：这台相机、这次架好的灯和这种胶片，名字里带着这一卷开拍的时间。新开的卷不会自动用它；同一次翻拍的其他卷，在胶片菜单里选它。在同一卷上再标定一次，会替换这一卷之前生成的预设，用过旧预设的工程各自留着副本。去串色在标定之前先做，标定不会替换它；标定和使用时，去串色要保持同一个状态（默认打开），预设的说明里记着标定时是哪个状态。\n\n取 4 个以上、其中有很暗的时，还会标定红、蓝通道的暗部趾部。"
-          : "先在检查器最上面的胶片菜单里选好胶片，再点选同一种胶片上明暗不同的中性灰（灰卡、白墙、灰色水泥）：至少 2 个，建议 3 个以上；可以跨画面、跨卷取点。\n\n取 4 个以上、其中有很暗的（如灰卡欠曝 2–3 档，绿色密度低于 0.25 D）时，还会标定红、蓝通道的暗部趾部，转换时据此还原暗部的层次和颜色。")
-      }
       HStack(spacing: 8) {
         Button {
           if resumable != nil { m.resumeCalibration() }

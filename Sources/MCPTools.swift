@@ -167,10 +167,10 @@ enum MCPTools {
   /// some lie off it, the largest group on one line, or that two groups disagree; when they do not
   /// fit together at all, which one left out lets the rest. Read on the main thread, worked out here.
   private static func calibrationReport(_ model: AppModel) -> String {
-    let (points, profile, names, measured, copy, batch) = onMain {
+    let (points, profile, names, measured, made) = onMain {
       (model.calibrationPoints, model.profile, model.calibrationPoints.map { p in model.frames.first { $0.id == p.frame }?.name ?? "?" },
         model.calibrationPoints.allSatisfy { p in model.frames.first { $0.id == p.frame }.map { ($0.adjustments.base ?? $0.adjustments.rollBase) != nil } ?? false },
-        model.copyStandRoll, model.copyBatch)
+        model.calibrationName)
     }
     guard !points.isEmpty else { return "还没有中性点。" }
     let curve = measured ? profile.dataSheetToe : nil
@@ -194,7 +194,7 @@ enum MCPTools {
     if let f = found {
       lines.append(String(format: "拟合：R %.3f · G %.3f · B %.3f，残差 %.3f D", f.slopes.r, f.slopes.g, f.slopes.b, f.residual)
         + (f.toe.map { String(format: "，趾部 R %.2f · B %.2f", $0.r, $0.b) } ?? ""))
-      lines.append("可以 calibration_make_preset，会生成「\(FilmCalibration.name(basedOn: profile, copyStand: copy, batch: batch))」。")
+      lines.append("可以 calibration_make_preset，会生成「\(made)」。")
     } else if points.count >= 3, let i = points.indices.first(where: { j in fit(points.enumerated().filter { $0.offset != j }.map(\.element)) != nil }) {
       lines.append("这些点拟合不到一起；去掉第 \(i + 1) 个以后就可以，它可能不是中性的。")
     } else if points.count >= 2 {

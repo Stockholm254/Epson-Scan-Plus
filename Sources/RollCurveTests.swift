@@ -117,9 +117,11 @@ enum RollCurveTests {
     defer { defaults.removePersistentDomain(forName: suite) }
     let model = AppModel(libraryURL: folder.appendingPathComponent("roll-offline"), preferences: Preferences(defaults: defaults))
     model.keepProfile(calibrated)
+    // From another film: the film's name typed over it takes the film's V850 preset.
+    model.chooseProfile(FilmProfile.builtins.first { $0.id == "generic" }!)
     model.filmName = portra.name
     model.matchFilm()
-    try check(model.profile == calibrated, "typing the film name picks its V850 preset")
+    try check(model.profile == calibrated && model.filmName == portra.name, "typing the film name picks its V850 preset")
     model.chooseProfile(portra)
     try check(model.profile == portra, "the data-sheet preset can still be chosen by hand")
 

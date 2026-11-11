@@ -51,9 +51,10 @@ struct ContentView: View {
   var inspectorShown: Binding<Bool> {
     Binding(get: { m.page != .library && inspector }, set: { if m.page != .library { inspector = $0 } })
   }
-  /// Module ②'s sidebar, opened on calibrating the preset.
+  /// Module ②'s sidebar, opened on calibrating the preset: its film tab, the section unfolded.
   func openCalibration() {
-    m.panelTab = .calibration
+    m.panelTab = .film
+    UserDefaults.standard.set(true, forKey: "panelSection.calibration")
     withAnimation(Liquid.flow) { convertSidebarShown = true }
   }
   /// Module ②'s sidebar, opened on the export settings.
@@ -120,8 +121,8 @@ struct ContentView: View {
       if was != nil, now == nil, !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
     }
     .onChange(of: m.tool) { _, tool in
-      // Picking neutral points calibrates the preset, whose list is in module ②'s sidebar.
-      if tool == .calibrate, m.page == .convert, !convertSidebarShown { openCalibration() }
+      // Picking neutral points calibrates the preset, whose section is in module ②'s film tab.
+      if tool == .calibrate, m.page == .convert, !convertSidebarShown || m.panelTab != .film { openCalibration() }
       // Cropping, the de-masking region and the base pick have their controls in the sidebar's first tab.
       if [.crop, .region, .base].contains(tool), m.page == .convert, convertSidebarShown { m.panelTab = .film }
     }
@@ -660,6 +661,11 @@ struct ContentView: View {
     VStack(alignment: .leading, spacing: 16) {
       // The roll's film stays at hand while exporting, which works from the preset it began with.
       filmSection
+      // Calibrating the preset, under the film and its preset; a slide has no channel slopes.
+      if !m.settings.isSlide {
+        Divider()
+        calibrationSection
+      }
       Group {
         // A slide has no mask to divide by.
         if !m.settings.isSlide {
@@ -732,6 +738,14 @@ struct ContentView: View {
   }
   /// A preset as the film menu names it: with the day it was calibrated where another preset has
   /// its name (two calibrations of one film on the V850 are both "Kodak Portra 160 · V850").
+  /// A preset in the menu, checked when in use.
+  func presetButton(_ p: FilmProfile) -> some View {
+    Button {
+      m.chooseProfile(p)
+    } label: {
+      if p.id == m.profile.id { Label(presetTitle(p), systemImage: "checkmark") } else { Text(presetTitle(p)) }
+    }
+  }
   func presetTitle(_ p: FilmProfile) -> String {
     guard m.profiles.filter({ $0.name == p.name }).count > 1,
       let day = p.publication.range(of: #"\d{4}-\d{2}-\d{2}"#, options: .regularExpression)
@@ -763,12 +777,15 @@ struct ContentView: View {
         .help("这一卷的胶片、片种和画幅：点开胶片架，搜索后换一种，三项一起换，可以撤销")
         // The preset, named as such: under the film it reads as a second film.
         labeled("预设") {
+          // The film's presets first, as the film was chosen: its data sheet's and those calibrated
+          // for it; another film's preset takes the roll to that film.
           Menu {
-            ForEach(m.profiles) { p in
-              Button {
-                m.chooseProfile(p)
-              } label: {
-                if p.id == m.profile.id { Label(presetTitle(p), systemImage: "checkmark") } else { Text(presetTitle(p)) }
+            Section(m.rollFilm.isEmpty ? "预设" : "\(m.rollFilm) 的预设") {
+              ForEach(m.rollPresets) { p in presetButton(p) }
+            }
+            if !m.otherPresets.isEmpty {
+              Menu("其他胶片的预设") {
+                ForEach(m.otherPresets) { p in presetButton(p) }
               }
             }
             Divider()
@@ -779,7 +796,7 @@ struct ContentView: View {
             Text(presetTitle(m.profile)).lineLimit(1)
           }
           .menuStyle(.button).frame(maxWidth: .infinity, alignment: .leading)
-          .help("这一卷用的预设：通道斜率和标定的中性。也可以在下面输入胶片名")
+          .help("这一卷用的预设：通道斜率和标定的中性。先列这种胶片的：数据表的、在这台扫描仪或翻拍时标定的；选别的胶片的预设，这一卷也换成那种胶片")
         }
         // Which film the roll is comes before its preset: a slide is not inverted at all.
         labeled("本卷片种") {
@@ -801,8 +818,9 @@ struct ContentView: View {
           HStack(spacing: 6) {
             TextField("胶片名", text: $m.filmName).textFieldStyle(.roundedBorder).font(.system(size: 12))
               .onSubmit { m.matchFilm() }
-              .help("这一卷的胶片名，库里也显示；回车或「应用」后，收录的胶片换成对应的预设")
-            Button("应用") { m.matchFilm() }.controlSize(.small).help("按胶片名换成收录的预设；没有收录的用通用配置")
+              .help("这一卷的胶片名，库里也显示；改成另一种胶片后回车或「应用」，预设跟着换：这次翻拍或这台扫描仪标定过它的，用标定的，否则用它的数据表，没有收录的用通用配置")
+            Button("应用") { m.matchFilm() }.controlSize(.small)
+              .help("预设跟着胶片名换：标定过的先用，否则用数据表；胶片名没改时预设不动")
           }
         }
         // The roll's switches in the order they act: how the pixels are read, then where the

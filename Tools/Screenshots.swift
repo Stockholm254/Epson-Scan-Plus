@@ -189,7 +189,7 @@ struct ShotFailure: Error { let message: String }
 
     // ② taking the mask off: the light table, the loupe on the frame; the light table cut out.
     model.page = .convert
-    model.panelTab = .calibration
+    model.panelTab = .film
     settle(3)
     // Every frame converted, not the first few over black cells.
     var converting = 0.0
@@ -206,7 +206,9 @@ struct ShotFailure: Error { let message: String }
     try save(main, "main-window.jpg", width: 1600)
     if let cut = Picture.crop(main, to: workArea(Picture.columns(window)), window: window) { try save(cut, "loupe.jpg", width: 1400) }
 
-    // The same with the left panel open, the areas numbered.
+    // The same with the left panel open, the areas numbered: its film tab, the preset's
+    // calibration unfolded under the film.
+    let calibrationFolded = sections(["calibration": true])
     standard.set(true, forKey: "convertSidebarShown")
     settle(1.5)
     freshStatus()
@@ -214,7 +216,7 @@ struct ShotFailure: Error { let message: String }
     let columns = Picture.columns(window)
     try save(Picture.numbered(whole, window: window, columns: columns), "main-annotated.jpg", width: 2000)
 
-    // The left panel's pages, side by side: ① V850, ② 预设标定, ② 输出.
+    // The left panel's pages, side by side: ① V850, ② 胶片 with 预设标定, ② 输出.
     model.panelTab = .output
     settle()
     let outputPanel = try Picture.capture(window, work: work)
@@ -226,8 +228,9 @@ struct ShotFailure: Error { let message: String }
       Picture.crop(outputPanel, to: panel(Picture.columns(window).sidebar), window: window),
     ].compactMap { $0 }
     if panels.count == 3, let row = Picture.sideBySide(panels) { try save(row, "panels.jpg", width: 1600) }
+    calibrationFolded()
     standard.set(false, forKey: "convertSidebarShown")
-    model.panelTab = .calibration
+    model.panelTab = .film
 
     // The single view, the same frame.
     model.toggleLoupe(false)

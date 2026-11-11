@@ -247,6 +247,58 @@ enum CalibrationTests {
     reopened.loadProject(switchRoot.appendingPathComponent("before.epscan"))
     try check(wasOff && reopened.useCalibration && reopened.conversionProfile == grown,
       "the switch is kept with the roll; rolls saved before it convert with their calibration")
+    try check(reopened.filmName == "Kodak Portra 160",
+      "a roll that kept its calibrated preset's name as its film's opens as the film: \(reopened.filmName)")
+
+    // The preset follows the roll's film; the film stays the roll's, whatever preset converts it.
+    let linkSuite = "EpsonScanPlus.tests.\(UUID().uuidString)"
+    let linkDefaults = UserDefaults(suiteName: linkSuite)!
+    defer { linkDefaults.removePersistentDomain(forName: linkSuite) }
+    let linked = AppModel(libraryURL: folder.appendingPathComponent("calibration-linked"), preferences: Preferences(defaults: linkDefaults))
+    linked.rollSource = .camera
+    linked.sessionURL = folder.appendingPathComponent("calibration-linked").appendingPathComponent("2026-10-30_194132_3146")
+    linked.chooseProfile(portra)
+    linked.calibrationPoints = [point(0.4), point(0.9), point(1.4)]
+    linked.makeScannerPreset()
+    let session = linked.profile
+    try check(linked.filmName == "Kodak Portra 160" && session.name == "Kodak Portra 160 · 翻拍 · 2026-10-30 19:41"
+      && linked.rollPresets.contains { $0.id == session.id } && linked.rollPresets.contains { $0.id == portra.id }
+      && !linked.otherPresets.contains { $0.id == session.id } && linked.status.hasPrefix("已生成预设"),
+      "calibrating keeps the roll's film name, not the preset's; the film's presets come first in the menu, its calibration with them")
+    linked.chooseProfile(portra)
+    linked.matchFilm()
+    try check(linked.profile.id == portra.id && linked.filmName == "Kodak Portra 160",
+      "the film's data sheet chosen by hand stays when the film's name is applied again, as when the field loses focus")
+    linked.applyFilm(profile: portra, filmName: "Kodak Portra 160", reversal: false, format: linked.format)
+    try check(linked.profile.id == session.id && linked.filmName == "Kodak Portra 160",
+      "taking the film from the shelf takes this copy session's calibration of it")
+    let ektar = FilmProfile.builtins.first { $0.id == "ektar100" }!
+    linked.chooseProfile(ektar)
+    try check(linked.filmName == "Kodak Ektar 100" && linked.otherPresets.contains { $0.id == session.id } && !linked.rollPresets.contains { $0.id == session.id },
+      "a preset of another film takes the roll to that film, the first film's calibration then under 其他胶片")
+    linked.chooseProfile(session)
+    try check(linked.filmName == "Kodak Portra 160", "and choosing that calibration takes it back to its film")
+    linked.calibrationPoints = [point(0.4), point(0.9), point(1.4)]
+    linked.makeScannerPreset()
+    try check(linked.status.hasPrefix("已更新预设「Kodak Portra 160 · 翻拍 · 2026-10-30 19:41」，替换了") && linked.profile.name == session.name,
+      "making this session's preset again says it replaced the one before, the menu showing the same name: \(linked.status)")
+    // Calibrated from the generic preset, the preset takes the roll's film's name and is listed with it.
+    linked.chooseProfile(FilmProfile.builtins.first { $0.id == "generic" }!)
+    linked.filmName = "Harman Phoenix II 200"
+    linked.calibrationPoints = [point(0.4), point(0.9), point(1.4)]
+    linked.makeScannerPreset()
+    let phoenix = linked.profile
+    try check(phoenix.name == "Harman Phoenix II 200 · 翻拍 · 2026-10-30 19:41" && AppModel.film(of: phoenix) == "Harman Phoenix II 200"
+      && linked.rollPresets.contains { $0.id == phoenix.id } && linked.filmName == "Harman Phoenix II 200"
+      && AppModel.film(of: FilmProfile.builtins.first { $0.id == "generic" }!) == nil,
+      "a calibration from the generic preset is named after the roll's film and listed as its preset")
+    // A preset calibrated from the generic one before, named 本机标定胶片, is no film's: it leaves the roll's film.
+    var unnamed = phoenix
+    unnamed.name = "本机标定胶片 · 翻拍 · 2026-10-30 19:41"
+    linked.keepProfile(unnamed)
+    linked.chooseProfile(unnamed)
+    try check(AppModel.film(of: unnamed) == nil && linked.filmName == "Harman Phoenix II 200" && linked.rollPresets.contains { $0.id == unnamed.id },
+      "an older calibration of no named film keeps the roll's film, and this session's is listed with it")
     let notes = [true, false, nil].map { FilmCalibration.profile(from: fit, basedOn: portra, points: 3, scanner: "A7R IV", copyStand: true, unmixed: $0).notes }
     try check(notes[0].contains("标定时去串色是开着的") && notes[1].contains("标定时没有去串色") && notes[2].contains("有的去了串色、有的没有"),
       "a copy-stand preset says how its points were read, crosstalk taken out or not, as its slopes hold for that")

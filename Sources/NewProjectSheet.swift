@@ -504,8 +504,9 @@ struct NewProjectSheet: View {
       let s = FilmCatalog.stocks.first { $0.id == id }
       return (s?.preset.flatMap { id in FilmProfile.builtins.first { $0.id == id } } ?? generic, s?.name ?? id)
     case .preset(let id):
+      // The film the preset is for, not the preset's name; one for no known film keeps the roll's.
       let p = m.profiles.first { $0.id == id } ?? m.profile
-      return (p, p.name)
+      return (p, AppModel.film(of: p) ?? (m.rollFilm.isEmpty ? p.name : m.rollFilm))
     case .named(let name):
       return (generic, name.isEmpty ? generic.name : name)
     }

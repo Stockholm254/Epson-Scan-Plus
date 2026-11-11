@@ -59,7 +59,7 @@
 <td valign="top"><img src="doc/images/leak-page.jpg" width="100%" alt="③ 去漏光"><br><b>③ 去漏光</b>：用同一张照片的干净参考图修复红色 / 品红漏光。参考图只指导平滑的色彩校正，输出的像素都来自原片。</td>
 </tr>
 <tr>
-<td valign="top"><img src="doc/images/panels.jpg" width="100%" alt="左栏的三页"><br><b>左栏</b>：① 扫描仪的设置、② 的预设标定和输出，各是左栏的一页。</td>
+<td valign="top"><img src="doc/images/panels.jpg" width="100%" alt="左栏的三页"><br><b>左栏</b>：① 扫描仪的设置；② 的胶片页（胶片、预设和它的标定、片基）和输出页。</td>
 <td valign="top"><img src="doc/images/shortcuts.jpg" width="100%" alt="键盘快捷键"><br><b>键盘快捷键</b>：⌘/ 打开一览，包括画面上不在菜单里的单个字母键。</td>
 </tr>
 </table>

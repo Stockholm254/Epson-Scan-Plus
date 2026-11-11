@@ -335,7 +335,8 @@ final class AppModel: ObservableObject {
   /// Module ②'s sidebar tab: calibrating the preset, or the export settings. Module ①'s sidebar
   /// is the capture source's.
   /// Module ②'s sidebar: the film, its base and the frame's extent; calibrating the preset; exporting.
-  enum PanelTab: String, CaseIterable { case film = "胶片", calibration = "预设标定", output = "输出" }
+  /// Module ②'s sidebar: the film, its preset, calibrating it and the base; exporting.
+  enum PanelTab: String, CaseIterable { case film = "胶片", output = "输出" }
   @Published var panelTab = PanelTab.film
   /// The main window's three modules, in the order a roll goes through them: capturing it (the
   /// scanner, the camera or files), taking the orange mask off, and repairing light leaks.
@@ -828,7 +829,7 @@ final class AppModel: ObservableObject {
     guard !isWorking else { return }
     startNewProject()
     // The film's own name, kept with the roll, where it converts as another preset (the generic one).
-    filmName = name ?? p.name
+    filmName = FilmCalibration.film(name ?? p.name)
     profile = p
     useCalibration = true
     preferences.scanReversal = reversal
@@ -886,9 +887,13 @@ final class AppModel: ObservableObject {
       if grouping { undoManager?.endUndoGrouping() }
     }
     recordEdit("换胶片", key: "换胶片 \(UUID().uuidString)")
+    // A film from the shelf converts as calibrated for it here, else as its data sheet; a preset
+    // picked there is used as it is.
+    let film = FilmCalibration.film(name)
+    let p = p.offsets == nil ? linkedPreset(film: film, fallback: p) : p
     if p.id != profile.id || p != profile { chooseProfile(p) }
-    if filmName != name {
-      filmName = name
+    if filmName != film {
+      filmName = film
       saveProject()
     }
     // The format first: a preview's frames are found again by it when the kind changes.
@@ -1989,17 +1994,30 @@ final class AppModel: ObservableObject {
     status = "已同步调色参数到本卷"
   }
   func matchFilm() {
-    let q = filmName.lowercased().replacingOccurrences(of: " ", with: "")
+    let typed = FilmCalibration.film(filmName.trimmingCharacters(in: .whitespaces))
+    let was = Self.film(of: profile)
+    // The film the preset in use is for, applied again (or left in the field as it was): the preset
+    // stays as chosen, calibrated or not.
+    if let was, FilmCatalog.fold(was) == FilmCatalog.fold(typed) {
+      if filmName != typed {
+        filmName = typed
+        saveProject()
+      }
+      return
+    }
+    let q = typed.lowercased().replacingOccurrences(of: " ", with: "")
     let found =
       profiles.first { p in
-        ([p.name] + p.aliases).contains {
-          $0.lowercased().replacingOccurrences(of: " ", with: "") == q
-        }
-      } ?? FilmProfile.builtins.last!
-    // The name typed over is the preset shown before it.
-    recordEdit("胶片预设", filmName: profile.name)
-    // A film calibrated on this scanner is used without having to pick it.
-    profile = calibrated(for: found) ?? found
+        p.offsets == nil && ([p.name] + p.aliases).contains { $0.lowercased().replacingOccurrences(of: " ", with: "") == q }
+      }
+      ?? FilmCatalog.stock(named: typed)?.preset.flatMap { id in FilmProfile.builtins.first { $0.id == id } }
+      ?? FilmProfile.builtins.last!
+    // The name typed over is the film shown before it.
+    recordEdit("胶片预设", filmName: was ?? profile.name)
+    filmName = typed
+    // The film calibrated here (on this scanner, or in this copy session) is used without having to pick it.
+    profile = linkedPreset(film: typed, fallback: found)
+    useCalibration = true
     updateRollSlopes()
     refresh()
     updateThumbnails()
@@ -2031,7 +2049,12 @@ final class AppModel: ObservableObject {
   func chooseProfile(_ p: FilmProfile) {
     recordEdit("胶片预设")
     fadeInNextPicture()
-    filmName = p.name
+    // The roll stays its film: a preset for it, calibrated or not, leaves its name as it is; one for
+    // another film takes the roll to that film. The generic preset is no film's.
+    if let film = Self.film(of: p) {
+      if FilmCatalog.fold(film) != FilmCatalog.fold(rollFilm) { filmName = film }
+    } else if filmName.isEmpty { filmName = p.name }
+    if filmName != rollFilm { filmName = rollFilm }
     profile = p
     // A preset chosen is used whole, its calibration with it.
     useCalibration = true
@@ -2039,6 +2062,45 @@ final class AppModel: ObservableObject {
     refresh()
     updateThumbnails()
     saveProject()
+  }
+  /// The roll's film as it is called, past what a preset's name added to it (rolls saved before
+  /// 0.19.2 took the name of the calibrated preset chosen for them).
+  var rollFilm: String { FilmCalibration.film(filmName) }
+  /// The film a preset is for: its data sheet's, or the film a calibrated one is named after. nil for
+  /// the generic preset and one calibrated from it before calibrations took their roll's film name.
+  static func film(of p: FilmProfile) -> String? {
+    if p.id == "generic" { return nil }
+    let film = FilmCalibration.film(p.name)
+    return film == "本机标定胶片" || film == FilmProfile.builtins.first(where: { $0.id == "generic" })?.name ? nil : film
+  }
+  /// Calibrated for how this roll is read: on the copy stand in this copy session, else on this scanner.
+  func calibratedHere(_ p: FilmProfile) -> Bool {
+    guard p.offsets != nil else { return false }
+    return copyStandRoll ? p.name.hasSuffix(" · 翻拍 · \(copyBatch)") : p.name.hasSuffix(" · V850")
+  }
+  /// Whether `p` is one of the roll's film's presets, as the preset menu lists them first: its data
+  /// sheet's, those calibrated for it, the generic one, and on this roll one calibrated from no known film.
+  func isRollFilmPreset(_ p: FilmProfile) -> Bool {
+    if p.id == "generic" || p.id == profile.id { return true }
+    if let film = Self.film(of: p) { return FilmCatalog.fold(film) == FilmCatalog.fold(rollFilm) }
+    return calibratedHere(p)
+  }
+  var rollPresets: [FilmProfile] { profiles.filter(isRollFilmPreset) }
+  var otherPresets: [FilmProfile] { profiles.filter { !isRollFilmPreset($0) } }
+  /// The preset `film` converts with on this roll, chosen as a film (from the shelf or by name):
+  /// the newest calibrated for it here (in this copy session, or on this scanner), else `fallback`,
+  /// its data sheet's or the generic one.
+  func linkedPreset(film: String, fallback: FilmProfile) -> FilmProfile {
+    profiles.last { p in calibratedHere(p) && Self.film(of: p).map { FilmCatalog.fold($0) == FilmCatalog.fold(film) } == true } ?? fallback
+  }
+  /// What calibrating here names the preset: after the roll's film (on the copy stand with its copy
+  /// session), so it is listed with the film; after the preset's film when the roll has none.
+  var calibrationName: String {
+    let copy = copyStandRoll, film = rollFilm
+    if !film.isEmpty, film != FilmProfile.builtins.first(where: { $0.id == "generic" })?.name {
+      return FilmCalibration.name(film: film, copyStand: copy, batch: copy ? copyBatch : nil)
+    }
+    return FilmCalibration.name(basedOn: profile, copyStand: copy, batch: copy ? copyBatch : nil)
   }
   /// What the roll converts with: its preset, or with the preset's calibration switched off the
   /// film it was calibrated from (`uncalibrated`).
@@ -2247,8 +2309,12 @@ final class AppModel: ObservableObject {
       let made = FilmCalibration.profile(
         from: fit, basedOn: profile, points: calibrationPoints.count,
         scanner: copy ? (camera.model.isEmpty ? "A7R IV" : camera.model) : scanner.name, copyStand: copy,
-        unmixed: readings.count == 1 ? readings.first : nil, spots: spots.isEmpty ? nil : spots, batch: copy ? copyBatch : nil)
+        unmixed: readings.count == 1 ? readings.first : nil, spots: spots.isEmpty ? nil : spots, batch: copy ? copyBatch : nil,
+        named: calibrationName)
       try made.validate()
+      // What it replaces: this copy session's preset for the film, or the one taken up again.
+      let replaced = (copy ? preferences.customProfiles.last { $0.offsets != nil && $0.name == made.name } : nil)
+        ?? resumedCalibration.flatMap { id in preferences.customProfiles.first { $0.id == id } }
       // Calibrating a copy session again replaces its preset, so the menu holds one for each session;
       // points added to a preset taken up again replace that one. Projects that used the old one
       // keep their own copy.
@@ -2260,9 +2326,15 @@ final class AppModel: ObservableObject {
       showCalibrationPoints = true
       if tool == .calibrate { tool = .select }
       chooseProfile(made)
+      // Made again under the same name, it says so: the menu shows the same name as before.
+      let before = replaced.map { old -> String in
+        let parts = old.publication.components(separatedBy: " · ")
+        return parts.count >= 4 ? "\(parts[2]) 用 \(parts[3])生成的" : "之前的"
+      }
       status = String(
-        format: "已生成预设「%@」· R %.3f · G %.3f · B %.3f · 残差 %.3f D", made.name, fit.slopes.r, fit.slopes.g,
-        fit.slopes.b, fit.residual)
+        format: "%@ · R %.3f · G %.3f · B %.3f · 残差 %.3f D",
+        before.map { "已更新预设「\(made.name)」，替换了\($0)那一个（用过它的卷各自留着副本）" } ?? "已生成预设「\(made.name)」",
+        fit.slopes.r, fit.slopes.g, fit.slopes.b, fit.residual)
     } catch { errorText = error.localizedDescription }
   }
   func clearCalibration() {
@@ -2291,7 +2363,7 @@ final class AppModel: ObservableObject {
     if copy != copyStandRoll {
       return copy ? "这是翻拍的预设，要在翻拍的卷里接着标定。" : "这是扫描仪的预设，要在扫描的卷里接着标定。"
     }
-    if copy && p.name != FilmCalibration.name(basedOn: p, copyStand: true, batch: copyBatch) {
+    if copy && !p.name.hasSuffix(" · 翻拍 · \(copyBatch)") {
       return "这是另一次翻拍的预设，要在那次翻拍的卷里接着标定；在这一卷生成会用这一卷的名字。"
     }
     return nil
@@ -4262,7 +4334,8 @@ final class AppModel: ObservableObject {
       let renamed = Self.numberedInOrder(frames) ? Self.renumber(&frames) : Self.renumberRepeats(&frames)
       clearEdits()
       profile = p.profile
-      filmName = p.filmName
+      // The film, past a calibrated preset's name rolls before 0.19.2 kept as theirs.
+      filmName = FilmCalibration.film(p.filmName)
       // A roll saved before the format was kept with it opens as 自动.
       format = p.format.flatMap(FilmFormat.init(rawValue:)) ?? .auto
       filmEdges = p.edges.flatMap(PictureEdges.init(rawValue:)) ?? .auto
