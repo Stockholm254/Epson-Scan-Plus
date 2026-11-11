@@ -470,19 +470,49 @@ enum FilmPrint {
   /// stock very large in its own colour, then its PLUS (or speed) by a black bar, the speed and
   /// what it is.
   static func ilford(_ word: String, _ colour: NSColor, _ third: String, _ iso: Int?, sub: String? = nil, maker: String = "ILFORD") -> Design {
+    // Measured off a photograph of the HP5 Plus cassette, in millimetres round from the front and
+    // down from the top end; FP4, Pan F, XP2, SFX, Ortho and Kentmere are set the same.
     Design { f, look in
       f.all(paper)
       let heavy = "HelveticaNeue-CondensedBlack"
-      // The heavy words lean, as Ilford sets them.
-      f.along([(maker, font(heavy, 4.6), maker == "ILFORD" ? ink : colour)], s: -12.0, top: 32.6, fit: 25.5, up: true, stretch: true, slant: 0.16)
-      f.along([(word, font(heavy, 12.4), colour)], s: -5.0, top: 32.6, fit: 25.5, up: true, stretch: true, slant: 0.16)
-      let t = [(third, font(heavy, 6.0), ink)]
-      f.along(t, s: 2.4, top: 32.6, fit: 13, up: true, slant: 0.16)
-      let used = min(13, f.width(t))
-      f.fill(ink, 0.3, 4.5, y0: 6.8, y1: 31.6 - used)
-      if let iso { f.along([("\(iso)", font("HelveticaNeue-CondensedBold", 3.6), ink)], s: 6.0, top: 32.6, fit: 8, up: true) }
-      f.along([(sub ?? "BLACK & WHITE FILM", font("HelveticaNeue-Medium", 1.9), ink)], s: 8.8, top: 32.6, fit: 25, up: true)
-      if sub != nil { f.along([("BLACK & WHITE FILM", font("HelveticaNeue-Medium", 1.9), ink)], s: 10.8, top: 32.6, fit: 25, up: true) }
+      // The band round the back in the stock's colour, the table of speeds on it, and beside it on
+      // the white the length and what the film is, in the colour.
+      f.fill(colour, -60, -12.6)
+      f.fill(paper, -17.5, -13.0, y0: 4.0, y1: 31.2)
+      let grey = NSColor(white: 0.6, alpha: 1)
+      f.fill(grey, -14.5, -14.35, y0: 4.0, y1: 31.2)
+      for y in [10.6, 17.4, 24.2] as [CGFloat] { f.fill(grey, -17.5, -13.0, y0: y, y1: y + 0.15) }
+      let rated = look.iso ?? iso ?? 100
+      for (speed, foot) in [(rated * 2, 16.8), (rated, 23.6), (rated / 2, 30.4)] as [(Int, CGFloat)] {
+        f.along([("\(speed)", font("HelveticaNeue", 1.6), NSColor(white: 0.3, alpha: 1))], s: -13.75, top: foot, fit: 5.4, up: true)
+      }
+      let din = 1 + Int((10 * log10(Double(max(rated, 1)))).rounded())
+      f.along([("36", font("HelveticaNeue-Bold", 2.4), colour)], s: -11.6, top: 15.0, fit: 2.4, up: true)
+      f.along([("ISO \(rated)/\(din)° ", font("HelveticaNeue", 1.7), colour), ("\(word) \(third)", font("HelveticaNeue-Bold", 1.7), colour),
+        (" 36 EXP", font("HelveticaNeue", 1.7), colour)], s: -10.2, top: 31.0, fit: 21, up: true)
+      // The heavy words lean, as Ilford sets them: the maker, then the stock's name very large in its
+      // colour, each about 20 mm long.
+      f.along([(maker, font(heavy, 5.6), maker == "ILFORD" ? ink : colour)], s: -5.1, top: 29.5, fit: 20.1, up: true, stretch: true, slant: 0.16)
+      f.along([(word, font(heavy, 8.0), colour)], s: 0.3, top: 29.5, fit: 21.3, up: true, stretch: true, slant: 0.16)
+      // The black bar, its ends breaking up into squares, PLUS (or SUPER) in white on it.
+      let bar0: CGFloat = 5.3, bar1: CGFloat = 9.9, top: CGFloat = 9.0, foot: CGFloat = 29.8, sq: CGFloat = 0.766, frayed: CGFloat = 4
+      f.fill(ink, bar0, bar1, y0: top + frayed * sq, y1: foot - frayed * sq)
+      // Ordered (Bayer) dither: a quarter of the squares by the end, four in five by the solid bar.
+      let bayer = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]
+      for row in 0..<Int(frayed) {
+        for col in 0..<Int(((bar1 - bar0) / sq).rounded()) {
+          guard CGFloat(bayer[row % 4][col % 4]) < CGFloat(row + 1) * 16 / (frayed + 1) else { continue }
+          let s0 = bar0 + CGFloat(col) * sq
+          // Row 0 is the outermost, at the very end; the last row meets the solid bar.
+          f.fill(ink, s0, s0 + sq, y0: top + CGFloat(row) * sq, y1: top + CGFloat(row + 1) * sq)
+          f.fill(ink, s0, s0 + sq, y0: foot - CGFloat(row + 1) * sq, y1: foot - CGFloat(row) * sq)
+        }
+      }
+      let plus = [(third, font(heavy, 5.8), white)]
+      f.along(plus, s: 7.6, top: 19.4 + f.width(plus, fit: 12.5) / 2, fit: 12.5, up: true, slant: 0.16)
+      if let iso { f.along([("\(iso)", font("HelveticaNeue-CondensedBlack", 3.4), ink)], s: 11.3, top: 19.2, fit: 5.6, up: true) }
+      f.along([(sub ?? "BLACK & WHITE FILM", font("HelveticaNeue-Medium", 1.9), ink)], s: 13.6, top: 31.1, fit: 24.5, kern: 0.15, up: true)
+      if sub != nil { f.along([("BLACK & WHITE FILM", font("HelveticaNeue-Medium", 1.9), ink)], s: 15.4, top: 31.1, fit: 24.5, kern: 0.15, up: true) }
       f.fill(ink, -60, 30, y0: 36.6)
       f.dx(look)
     }
