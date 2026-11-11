@@ -1001,11 +1001,13 @@ final class ImagePipeline {
   /// fraction of the whole. With `across`, the picture as if `across` pixels wide, when that is
   /// fewer than its own: worked out from the frame's own pixels, then filtered down, for a screen
   /// that shows no more; `scale` says how far.
+  /// `gains`: a camera's raw picture in ① shown in the white balance the table shows it in (日光),
+  /// as `original` does.
   func render(
     _ image: CGImage, region: NormalRect, across: Double? = nil, settings: Adjustments, profile: FilmProfile, analysis: ToneAnalysis?,
-    negative: Bool
+    negative: Bool, gains: RGB? = nil
   ) -> (image: CGImage, region: NormalRect, scale: Double)? {
-    guard var ci = shown(image, settings: settings, profile: profile, analysis: analysis, negative: negative) else { return nil }
+    guard var ci = shown(image, settings: settings, profile: profile, analysis: analysis, negative: negative, gains: gains) else { return nil }
     var scale = 1.0
     if let across, across < ci.extent.width * 0.999, across >= 1 {
       let whole = ci.extent
@@ -1058,12 +1060,20 @@ final class ImagePipeline {
   /// The picture as shown, positive or negative, straightened, turned and mirrored, from the origin.
   private func shown(
     _ image: CGImage, settings: Adjustments, profile: FilmProfile, analysis: ToneAnalysis?,
-    negative: Bool, sharpener: Sharpener? = nil
+    negative: Bool, sharpener: Sharpener? = nil, gains: RGB? = nil
   ) -> CIImage? {
     var ci: CIImage
     if negative {
-      ci = Self.baseNeutral(CIImage(cgImage: image, options: [.colorSpace: NSNull()]), base: analysis?.base ?? settings.base ?? settings.rollBase,
-        gamma: settings.inputGamma)
+      var raw = CIImage(cgImage: image, options: [.colorSpace: NSNull()])
+      // The raw picture's white balance, as `original` takes it, before it is encoded for the screen.
+      if let g = gains {
+        raw = raw.applyingFilter("CIColorMatrix", parameters: [
+          "inputRVector": CIVector(x: g.r, y: 0, z: 0, w: 0),
+          "inputGVector": CIVector(x: 0, y: g.g, z: 0, w: 0),
+          "inputBVector": CIVector(x: 0, y: 0, z: g.b, w: 0),
+        ])
+      }
+      ci = Self.baseNeutral(raw, base: analysis?.base ?? settings.base ?? settings.rollBase, gamma: settings.inputGamma)
       ci = Self.straightened(ci, degrees: settings.angle ?? 0)
       ci = ci.oriented(forExifOrientation: [1, 6, 3, 8][((settings.rotation % 4) + 4) % 4])
       if settings.flipHorizontal == true {

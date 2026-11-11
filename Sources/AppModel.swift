@@ -2798,7 +2798,9 @@ final class AppModel: ObservableObject {
       return DispatchQueue.main.async { completion(nil) }
     }
     let negative = showsNegative || tool == .base, p = conversionProfile, key = loupeDetailKey(frame, single: true)
-    // The raw picture as `ImagePipeline.original` has it: as a negative, with no base to divide by.
+    // The raw picture as `ImagePipeline.original` has it: as a negative, with no base to divide by,
+    // in the white balance the frame around it is shown in (日光), not green as the sensor read it.
+    let gains = original ? rawGains(frame) : nil
     var settings = frame.adjustments
     if original { (settings.base, settings.rollBase) = (nil, nil) }
     if curvesBypassed { settings.curves = nil }
@@ -2814,7 +2816,7 @@ final class AppModel: ObservableObject {
       // for is worked out.
       if let full = self.detailSource?.image,
         let part = ImagePipeline.shared.render(full, region: region, across: across, settings: settings, profile: p,
-          analysis: original ? nil : analysis, negative: negative)
+          analysis: original ? nil : analysis, negative: negative, gains: gains)
       {
         detail = Detail(key: key, region: part.region, image: part.image, scale: part.scale)
       }
