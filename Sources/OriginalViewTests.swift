@@ -196,15 +196,20 @@ enum ProxyTests {
     let direct = try pipe.load(url, maxDimension: Proxies.side), directSmall = try pipe.load(url, maxDimension: 600)
     Proxies.from = 0
     let made = try pipe.load(url, maxDimension: Proxies.side)
+    // This file's copy, by its name: work an earlier suite left running may read big files of its
+    // own while the copies are made here, from any size, and leave theirs beside it.
     let copies = (try? FileManager.default.contentsOfDirectory(atPath: Proxies.root.path))?.filter { $0.hasSuffix(".tif") } ?? []
+    let mine = Proxies.place(of: url)?.lastPathComponent
     let again = try pipe.load(url, maxDimension: Proxies.side), small = try pipe.load(url, maxDimension: 600)
-    try check(copies.count == 1 && same(direct, made) && same(direct, again) && small.width == directSmall.width && small.height == directSmall.height,
+    try check(mine.map(copies.contains) == true && same(direct, made) && same(direct, again) && small.width == directSmall.width && small.height == directSmall.height,
       "a big file read small is kept as a copy of \(Proxies.side) pixels, read back to the very same pixels; smaller reads come from it at the same size")
     // The file written again: its copy is made afresh.
     try pipe.saveTIFF(image, to: url, dpi: 300)
     try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: url.path)
     _ = try pipe.load(url, maxDimension: 800)
     let after = (try? FileManager.default.contentsOfDirectory(atPath: Proxies.root.path))?.filter { $0.hasSuffix(".tif") } ?? []
-    try check(after.count == 2, "a file changed since is read again into a copy of its own")
+    let changed = Proxies.place(of: url)?.lastPathComponent
+    try check(changed != nil && changed != mine && after.contains(changed!) && mine.map(after.contains) == true,
+      "a file changed since is read again into a copy of its own")
   }
 }
