@@ -110,7 +110,7 @@ struct LibraryPage: View {
         Text(m.libraryURL.path).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
           .lineLimit(1).truncationMode(.middle)
         Spacer()
-        Text("双击打开 · 停在一格上放大 · 右键重命名或移到废纸篓").font(.system(size: 11)).foregroundStyle(.secondary)
+        Text("双击打开 · 停在一格上放大 · 右键重命名 · 标签上的 🗑 移到废纸篓").font(.system(size: 11)).foregroundStyle(.secondary)
           .help("双击一页打开这一卷，进入 ② 去色罩；鼠标停在一格上可以放大看；右键可以重命名；标签右下角的废纸篓把这一卷移到废纸篓")
       }.padding(.horizontal, 18).padding(.vertical, 8)
     }
@@ -162,6 +162,7 @@ struct LibraryPage: View {
           Label("导入…", systemImage: "square.and.arrow.down")
         }.disabled(m.isWorking)
           .help("导入（⌘O）：TIFF、PNG、JPEG 导成新的一卷导入的照片，相机 RAW（ARW 等）导成新的一卷翻拍；都复制进库，原文件不动，导入后转到 ② 去色罩")
+        trashMenu
         if shelf.spread != nil {
           Button {
             withAnimation(Liquid.flow) { shelf.spread = nil }
@@ -187,6 +188,29 @@ struct LibraryPage: View {
           Image(systemName: "ellipsis.circle")
         }.menuStyle(.borderlessButton).fixedSize().help("库的选项").accessibilityLabel("库的选项")
       }.buttonStyle(.bordered).controlSize(.regular)
+  }
+  /// The roll open in the window, as the library has it.
+  var openEntry: RollEntry? {
+    guard let open = m.sessionURL?.standardizedFileURL else { return nil }
+    return shelf.entries.first { $0.folder.standardizedFileURL == open }
+  }
+  /// Where rolls go and come back from: the open roll to the Trash, and the Trash in Finder, where
+  /// a roll moved there is put back with 放回原处. Each roll's own 🗑 is on its label.
+  var trashMenu: some View {
+    Menu {
+      if let open = openEntry {
+        Button("把打开的「\(open.title)」移到废纸篓…", role: .destructive) { trashing = open }.disabled(m.isWorking)
+      }
+      Button("在 Finder 中打开废纸篓") {
+        if let trash = FileManager.default.urls(for: .trashDirectory, in: .userDomainMask).first { NSWorkspace.shared.open(trash) }
+      }
+      Divider()
+      Text("别的卷：点它标签右下角的 🗑，或右键「移到废纸篓…」")
+      Text("移走的卷在废纸篓里右键「放回原处」拿回来")
+    } label: {
+      Label("废纸篓", systemImage: "trash")
+    }.menuStyle(.button).buttonStyle(.bordered).fixedSize()
+      .help("把一卷移到废纸篓：每一卷标签右下角的 🗑，或右键「移到废纸篓…」；移走的卷在 Finder 的废纸篓里，右键「放回原处」拿回来")
   }
   /// The drawer of sleeves.
   var drawer: some View {
@@ -380,12 +404,15 @@ struct RollSleeve: View {
     }
     .padding(.leading, model == nil ? 10 : 6).padding(.trailing, 10).padding(.vertical, 6).padding(.trailing, 22).frame(maxWidth: .infinity, alignment: .leading)
     .background(LinearGradient(colors: [Self.paper, Self.paper.opacity(0.88)], startPoint: .top, endPoint: .bottom))
-    // Moving the roll to the Trash, at hand as well as in its menu: quiet until the page is under
-    // the pointer. It asks before anything moves.
+    // Moving the roll to the Trash, at hand as well as in its menu: plain to see on the paper, red
+    // with a plate under it while the page is under the pointer. It asks before anything moves.
     .overlay(alignment: .bottomTrailing) {
       Button(action: trash) {
-        Image(systemName: "trash").font(.system(size: 11, weight: .medium)).foregroundStyle(Self.ink.opacity(hover ? 0.75 : 0.3))
-          .frame(width: 22, height: 22).contentShape(Rectangle())
+        Image(systemName: "trash").font(.system(size: 12, weight: .semibold))
+          .foregroundStyle(hover ? Color(red: 0.78, green: 0.16, blue: 0.12) : Self.ink.opacity(0.6))
+          .frame(width: 24, height: 22)
+          .background(RoundedRectangle(cornerRadius: 5).fill(Self.ink.opacity(hover ? 0.1 : 0)))
+          .contentShape(Rectangle())
       }.buttonStyle(.plain).padding(.trailing, 2).padding(.bottom, 1)
         .help("把这一卷移到废纸篓（会先问一下）")
         .accessibilityLabel("移到废纸篓")
