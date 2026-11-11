@@ -354,18 +354,29 @@ enum FilmPrint {
   /// Fujifilm 200 and 400 (and the Fujicolor sold in Japan): white; a green band by the lip with
   /// the maker in white; the speed large in black; a black strip on the left.
   static func fujiPrint(_ iso: Int) -> Design {
+    // As the Fujifilm 200 and 400 cassettes of 2023 on are printed: a green band round the back with
+    // the speed and length in it, white on the front with a black bar along the lip.
     Design { f, look in
       f.all(paper)
-      // A bright green from the middle on, paler where it meets the white.
-      let green = rgb(0x3BB54A)
-      f.fill(green, 0.6, 30)
-      f.shade([rgb(0xA8DA8E), green], -1.0, 0.6)
-      f.along(fujifilm(5.0, white), s: 4.6, top: 4.0, fit: 30, kern: 0.3, wide: 1.18)
-      f.along([("\(iso)", font("AvenirNext-DemiBoldItalic", 5.8), ink)], s: -4.0, top: 11.0, fit: 12)
-      f.fill(rgb(0x141414), -9.6, -7.0, y0: 3.2, y1: 34.8)
-      f.along([("FILM FOR COLOR PRINTS", font("AvenirNext-DemiBold", 1.9), white)], s: -8.3, top: 6.2, fit: 26, kern: 0.12)
-      f.along([("CH-36   \(iso)   PROCESS C-41", font("AvenirNext-Medium", 1.7), ink)], s: -11.6, top: 8.0, fit: 24)
-      f.across([("DX", font("AvenirNext-HeavyItalic", 2.4), ink)], s: -15.0, y: 3.0, centred: true)
+      let green = rgb(0x2E9E48)
+      // The green band, and in it the speed, the length and their labels, reading down.
+      f.fill(green, -60, -7.6)
+      f.fill(white, -12.8, -11.2, y0: 4.0, y1: 8.6)
+      f.along([("CH 135", font("HelveticaNeue-Bold", 1.6), white)], s: -14.0, top: 4.0, fit: 6)
+      f.along([("ISO", font("HelveticaNeue-Bold", 1.4), green)], s: -12.0, top: 4.6, fit: 3.4)
+      f.along([("\(iso)", font("HelveticaNeue-CondensedBlack", 5.2), white)], s: -10.0, top: 9.6, fit: 9)
+      f.fill(white, -12.8, -11.2, y0: 20.0, y1: 24.6)
+      f.along([("EXP", font("HelveticaNeue-Bold", 1.4), green)], s: -12.0, top: 20.6, fit: 3.4)
+      f.along([("36", font("HelveticaNeue-CondensedBlack", 5.2), white)], s: -10.0, top: 25.4, fit: 7)
+      // On the white: DX by the band, the process line, the speed large, the bar with what it is.
+      f.across([("DX", font("AvenirNext-HeavyItalic", 2.6), ink)], s: -5.4, y: 3.0, centred: true)
+      f.frame(ink, -4.6, -3.0, y0: 6.6, y1: 30.0, line: 0.2)
+      f.along([("CN-16 | C-41 | ISO \(iso)", font("HelveticaNeue-Bold", 1.45), ink)], s: -3.8, top: 7.0, fit: 22.6)
+      let din = 1 + Int((10 * log10(Double(max(iso, 1)))).rounded())
+      f.along([("CH-36 · ISO\(iso)/\(din)°", font("HelveticaNeue-Medium", 1.45), ink)], s: -1.6, top: 7.0, fit: 22.6)
+      f.along([("\(iso)", font("HelveticaNeue-CondensedBlack", 6.0), ink)], s: 3.2, top: 6.4, fit: 12)
+      f.fill(rgb(0x141414), 6.8, 9.2, y0: 3.4, y1: 34.6)
+      f.along([("FILM FOR COLOR PRINTS", font("HelveticaNeue-Bold", 1.8), white)], s: 8.0, top: 5.4, fit: 26, kern: 0.12)
       f.dx(look)
     }
   }
