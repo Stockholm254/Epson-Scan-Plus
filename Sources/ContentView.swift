@@ -1519,7 +1519,7 @@ struct ContentView: View {
                 .padding(.horizontal, 30)
             }
           }.padding(.horizontal, 14).padding(.vertical, 11)
-            .background(FilmBase())
+            .background(FilmBase(look: m.stripLook))
             .padding(.horizontal, 4).padding(.top, 4)
         }.frame(height: 114)
           // Back from the library, the strip comes in on the frame shown.

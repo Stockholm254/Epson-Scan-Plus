@@ -252,6 +252,8 @@ final class AppModel: ObservableObject {
   @Published var showCalibrationPoints = false
   /// The calibration's neutral points shown in 3D, in a popover.
   @Published var showNeutralSpace = false
+  /// The roll being opened from the library in the background, until it is open.
+  @Published private(set) var openingRoll: URL?
   /// The neutral points to mark on `frame`, numbered as listed, in its source: those being picked,
   /// else, asked for, those the current preset was calibrated from.
   func neutralMarks(on frame: FilmFrame) -> [(number: Int, at: CGPoint)] {
@@ -4616,101 +4618,147 @@ final class AppModel: ObservableObject {
   var projectURL: URL? { sessionURL?.appendingPathComponent(projectFileName) }
   /// Opens a roll from the library and goes on to take the mask off it; the open roll is saved
   /// first. The roll already open just goes on.
-  func openRoll(_ entry: RollEntry) {
+  /// Opens a roll from the library and goes on to ② with it. `inBackground`: its file and preview
+  /// read off the main thread (a copy roll's preview is its first frame, a few hundred megabytes,
+  /// up to two seconds), the window working meanwhile and the roll's sleeve saying it is opening.
+  func openRoll(_ entry: RollEntry, inBackground: Bool = false) {
     guard !isWorking else { return }
-    if projectURL?.standardizedFileURL != entry.project.standardizedFileURL {
+    let same = projectURL?.standardizedFileURL == entry.project.standardizedFileURL
+    if !same && inBackground {
+      guard openingRoll == nil else { return }
+      saveProject()
+      openingRoll = entry.project
+      let url = entry.project, flare = overviewFlare
+      DispatchQueue.global(qos: .userInitiated).async {
+        let read = Result { try Self.readProject(url, flare: flare) }
+        DispatchQueue.main.async {
+          guard self.openingRoll == url else { return }
+          self.openingRoll = nil
+          switch read {
+          case .success(let r): self.takeProject(r, url)
+          case .failure(let error): self.errorText = error.localizedDescription
+          }
+          guard self.projectURL?.standardizedFileURL == url.standardizedFileURL else { return }
+          if self.page != .convert { self.page = .convert }
+        }
+      }
+      return
+    }
+    if !same {
       saveProject()
       loadProject(entry.project)
     }
     guard projectURL?.standardizedFileURL == entry.project.standardizedFileURL else { return }
     if page != .convert { page = .convert }
   }
+  /// What the preview's stray light is taken out with, as the scanner was calibrated: read on the
+  /// main thread for a read off it.
+  var overviewFlare: RGB? {
+    preferences.removeFlare ? preferences.scannerCalibration?.offset : nil
+  }
+  /// A project's file and its preview as read, before anything of it is taken in.
+  struct ReadProject {
+    var project: DeskProject
+    var overviewPath: String
+    var overview: CGImage
+  }
+  /// Reads a project's file and its preview; touches nothing of the model, so it may run off the
+  /// main thread.
+  static func readProject(_ url: URL, flare: RGB?) throws -> ReadProject {
+    let p = try JSONDecoder().decode(DeskProject.self, from: Data(contentsOf: url))
+    guard (1...2).contains(p.version) else { throw DeskError.message("不支持的工程版本。") }
+    try p.profile.validate()
+    // Files are found where the project folder is now, wherever it was saved.
+    let folder = url.deletingLastPathComponent()
+    let overviewPath = ProjectFiles.resolve(p.overviewPath, relative: p.overviewFile, in: folder)
+    var cg = try ImagePipeline.shared.load(URL(fileURLWithPath: overviewPath), maxDimension: 2200)
+    if p.scanBackendID == "epson2-linear-v1", let flare { cg = ImagePipeline.shared.removingFlare(flare, from: cg) }
+    return ReadProject(project: p, overviewPath: overviewPath, overview: cg)
+  }
   func loadProject(_ url: URL) {
     do {
-      let p = try JSONDecoder().decode(DeskProject.self, from: Data(contentsOf: url))
-      guard (1...2).contains(p.version) else { throw DeskError.message("不支持的工程版本。") }
-      try p.profile.validate()
-      // Files are found where the project folder is now, wherever it was saved.
-      let folder = url.deletingLastPathComponent()
-      let overviewPath = ProjectFiles.resolve(p.overviewPath, relative: p.overviewFile, in: folder)
-      let cg = overviewWorkingCopy(
-        try ImagePipeline.shared.load(URL(fileURLWithPath: overviewPath), maxDimension: 2200), backend: p.scanBackendID)
-      sessionURL = folder
-      projectFileName = url.lastPathComponent
-      alsoSelected = []
-      // The last roll's single frame is not this one's.
-      sourceSummary = ""
-      overviewURL = URL(fileURLWithPath: overviewPath)
-      overview = cg
-      frames = p.frames.map { saved in
-        var f = saved
-        f.scanPath = f.scanPath.map { ProjectFiles.resolve($0, relative: f.scanFile, in: folder) }
-        f.sourcePath = f.sourcePath.map { ProjectFiles.resolve($0, relative: f.sourceFile, in: folder) }
-        (f.scanFile, f.sourceFile) = (nil, nil)
-        if f.sensorRead == nil, let path = f.sourcePath, f.adjustments.inputGamma == 1 { f.sensorRead = Self.readFromSensor(path) }
-        // Copy shots read from the sensor have their colour noise smoothed, as new ones come in.
-        if f.sensorRead == true && f.adjustments.colourNoise == nil { f.adjustments.colourNoise = 1 }
-        return f
-      }
-      // Pictures a file each are numbered 01, 02, … in their order (up to 0.12.0 a deleted one left
-      // a gap); a scan's frames keep their holder's numbers, a repeat renumbered (up to 0.11.2 a
-      // picture taken after others were deleted could take a name still in use).
-      let renamed = Self.numberedInOrder(frames) ? Self.renumber(&frames) : Self.renumberRepeats(&frames)
-      clearEdits()
-      profile = p.profile
-      // The film, past a calibrated preset's name rolls before 0.19.2 kept as theirs.
-      filmName = FilmCalibration.film(p.filmName)
-      // A roll saved before the format was kept with it opens as 自动.
-      format = p.format.flatMap(FilmFormat.init(rawValue:)) ?? .auto
-      filmEdges = p.edges.flatMap(PictureEdges.init(rawValue:)) ?? .auto
-      startsAsSlides = nil
-      rollName = p.rollName ?? ""
-      rollNotes = p.notes ?? ""
-      poolPictures = p.poolPictures ?? false
-      useCalibration = p.useCalibration ?? true
-      // A frame's blank-frame flat field, kept once with the roll, read back as the frame reads; a
-      // frame that kept its own grid keeps it. One whose flat is not in the roll is left unflattened.
-      rollFlats = p.flats ?? []
-      exportStamps = Dictionary((p.exports ?? [:]).compactMap { key, stamp in UUID(uuidString: key).map { ($0, stamp) } }, uniquingKeysWith: { a, _ in a })
-      // A blank frame shown as it was read, not de-masked: the light and how it falls off (rolls
-      // before 0.19.6 converted it as a negative).
-      let blanks = blankFrameIDs
-      for i in frames.indices where blanks.contains(frames[i].id) { frames[i].adjustments.inputIsNegative = false }
-      pictureSizes = [:]
-      var lostFlats = 0
-      for i in frames.indices where frames[i].flatID != nil && frames[i].flatID != Self.noFlat && frames[i].flatField == nil {
-        if let flat = resolvedFlat(frames[i].flatID, crosstalk: frames[i].crosstalk) {
-          frames[i].flatField = flat
-        } else {
-          frames[i].flatID = nil
-          lostFlats += 1
-        }
-      }
-      rollSource = p.source.flatMap(RollSource.init(rawValue:))
-      dpi = p.scanDPI
-      overviewDPI = p.overviewDPI
-      overviewBackendID = p.scanBackendID
-      overviewInputGamma = p.overviewInputGamma
-      physicalMM = CGSize(width: p.physicalWidthMM, height: p.physicalHeightMM)
-      selectedID = frames.first?.id
-      singleView = false
-      showKeptPositives(folder)
-      updateRollBase()
-      updateRollSlopes()
-      refresh()
-      updateThumbnails()
-      status = overviewPath == p.overviewPath ? "已打开工程" : "已打开工程 · 工程文件夹已移动，按新位置读取文件"
-      if lostFlats > 0 { status += " · \(lostFlats) 张的平场在工程里找不到，没有补平" }
-      if !renamed.isEmpty {
-        status += (Self.numberedInOrder(frames) ? " · 编号按顺序从 01 重排：" : " · 重名的编号改了：")
-          + renamed.prefix(6).map { "\($0.from)→\($0.to)" }.joined(separator: "、") + (renamed.count > 6 ? " 等 \(renamed.count) 张" : "")
-        if !readOnly { saveProject() }
-      }
-      if !readOnly {
-        registerMissingLevels()
-        measureEdgeBases()
-      }
+      takeProject(try Self.readProject(url, flare: overviewFlare), url)
     } catch { errorText = error.localizedDescription }
+  }
+  /// Takes in a project as read.
+  private func takeProject(_ read: ReadProject, _ url: URL) {
+    let p = read.project, overviewPath = read.overviewPath, cg = read.overview
+    let folder = url.deletingLastPathComponent()
+    sessionURL = folder
+    projectFileName = url.lastPathComponent
+    alsoSelected = []
+    // The last roll's single frame is not this one's.
+    sourceSummary = ""
+    overviewURL = URL(fileURLWithPath: overviewPath)
+    overview = cg
+    frames = p.frames.map { saved in
+      var f = saved
+      f.scanPath = f.scanPath.map { ProjectFiles.resolve($0, relative: f.scanFile, in: folder) }
+      f.sourcePath = f.sourcePath.map { ProjectFiles.resolve($0, relative: f.sourceFile, in: folder) }
+      (f.scanFile, f.sourceFile) = (nil, nil)
+      if f.sensorRead == nil, let path = f.sourcePath, f.adjustments.inputGamma == 1 { f.sensorRead = Self.readFromSensor(path) }
+      // Copy shots read from the sensor have their colour noise smoothed, as new ones come in.
+      if f.sensorRead == true && f.adjustments.colourNoise == nil { f.adjustments.colourNoise = 1 }
+      return f
+    }
+    // Pictures a file each are numbered 01, 02, … in their order (up to 0.12.0 a deleted one left
+    // a gap); a scan's frames keep their holder's numbers, a repeat renumbered (up to 0.11.2 a
+    // picture taken after others were deleted could take a name still in use).
+    let renamed = Self.numberedInOrder(frames) ? Self.renumber(&frames) : Self.renumberRepeats(&frames)
+    clearEdits()
+    profile = p.profile
+    // The film, past a calibrated preset's name rolls before 0.19.2 kept as theirs.
+    filmName = FilmCalibration.film(p.filmName)
+    // A roll saved before the format was kept with it opens as 自动.
+    format = p.format.flatMap(FilmFormat.init(rawValue:)) ?? .auto
+    filmEdges = p.edges.flatMap(PictureEdges.init(rawValue:)) ?? .auto
+    startsAsSlides = nil
+    rollName = p.rollName ?? ""
+    rollNotes = p.notes ?? ""
+    poolPictures = p.poolPictures ?? false
+    useCalibration = p.useCalibration ?? true
+    // A frame's blank-frame flat field, kept once with the roll, read back as the frame reads; a
+    // frame that kept its own grid keeps it. One whose flat is not in the roll is left unflattened.
+    rollFlats = p.flats ?? []
+    exportStamps = Dictionary((p.exports ?? [:]).compactMap { key, stamp in UUID(uuidString: key).map { ($0, stamp) } }, uniquingKeysWith: { a, _ in a })
+    // A blank frame shown as it was read, not de-masked: the light and how it falls off (rolls
+    // before 0.19.6 converted it as a negative).
+    let blanks = blankFrameIDs
+    for i in frames.indices where blanks.contains(frames[i].id) { frames[i].adjustments.inputIsNegative = false }
+    pictureSizes = [:]
+    var lostFlats = 0
+    for i in frames.indices where frames[i].flatID != nil && frames[i].flatID != Self.noFlat && frames[i].flatField == nil {
+      if let flat = resolvedFlat(frames[i].flatID, crosstalk: frames[i].crosstalk) {
+        frames[i].flatField = flat
+      } else {
+        frames[i].flatID = nil
+        lostFlats += 1
+      }
+    }
+    rollSource = p.source.flatMap(RollSource.init(rawValue:))
+    dpi = p.scanDPI
+    overviewDPI = p.overviewDPI
+    overviewBackendID = p.scanBackendID
+    overviewInputGamma = p.overviewInputGamma
+    physicalMM = CGSize(width: p.physicalWidthMM, height: p.physicalHeightMM)
+    selectedID = frames.first?.id
+    singleView = false
+    showKeptPositives(folder)
+    updateRollBase()
+    updateRollSlopes()
+    refresh()
+    updateThumbnails()
+    status = overviewPath == p.overviewPath ? "已打开工程" : "已打开工程 · 工程文件夹已移动，按新位置读取文件"
+    if lostFlats > 0 { status += " · \(lostFlats) 张的平场在工程里找不到，没有补平" }
+    if !renamed.isEmpty {
+      status += (Self.numberedInOrder(frames) ? " · 编号按顺序从 01 重排：" : " · 重名的编号改了：")
+        + renamed.prefix(6).map { "\($0.from)→\($0.to)" }.joined(separator: "、") + (renamed.count > 6 ? " 等 \(renamed.count) 张" : "")
+      if !readOnly { saveProject() }
+    }
+    if !readOnly {
+      registerMissingLevels()
+      measureEdgeBases()
+    }
   }
   func openEpson() {
     scanner.close()

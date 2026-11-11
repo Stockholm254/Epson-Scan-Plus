@@ -27,6 +27,24 @@ enum Render3DTests {
       })
     }
 
+    // The strip of frames on film: 135's perforations open to what is behind, 120 without any,
+    // each kind's base its own colour.
+    func strip(_ look: FilmStripMaterial.Look) -> (w: Int, h: Int, at: (Int, Int) -> SIMD4<Double>)? {
+      FilmStripMaterial.shared.tile(height: 96, scale: 2, look: look).flatMap { pixels($0) }
+    }
+    let colour = FilmStripMaterial.Look.colour, roll120 = FilmStripMaterial.Look.of(kind: .colour, mono: false, reversal: false, perforated: false)
+    let mono = FilmStripMaterial.Look.of(kind: .blackWhite, mono: true, reversal: false, perforated: true)
+    if let a = strip(colour), let b = strip(roll120), let c = strip(mono) {
+      // The middle of the first perforation, 3 + 3 points along, 3 + 2.25 down; the base between.
+      let hole = (Int(6 * 2), Int(5.25 * 2)), film = (Int(12 * 2), Int(48 * 2))
+      let orange = a.at(film.0, film.1), grey = c.at(film.0, film.1)
+      try check(a.at(hole.0, hole.1).w < 0.05 && b.at(hole.0, hole.1).w > 0.95 && a.at(film.0, film.1).w > 0.95
+        && orange.x > orange.z * 2.5 && abs(grey.x - grey.z) < 0.06 && a.w == Int(FilmStripMaterial.tileWidth * 2),
+        "the strip of frames is film: 135 perforated through to what is behind, 120 not, a colour negative's base orange and black and white's grey")
+    } else {
+      try check(false, "the strip of frames is drawn as film")
+    }
+
     // A sleeve's plastic: never opaque, brighter on its welds than in the middle.
     if let image = SleevePlastic.shared.image(size: CGSize(width: 280, height: 40), scale: 2), let p = pixels(image) {
       var most = 0.0

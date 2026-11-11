@@ -249,13 +249,14 @@ struct LibraryPage: View {
             let under = stack(of: e)
             RollSleeve(
               entry: e, model: m, current: m.projectURL?.standardizedFileURL == e.project.standardizedFileURL, shelf: shelf, stacked: under.count,
+              opening: m.openingRoll == e.project,
               spread: { withAnimation(Liquid.flow) { shelf.spread = under } },
               rename: {
                 newName = e.named ? e.title : ""
                 renaming = e
               },
               trash: { trashing = e }
-            ) { m.openRoll(e) }
+            ) { m.openRoll(e, inBackground: true) }
           }
         }.padding(.horizontal, 28).padding(.vertical, 30)
       }.background {
@@ -291,6 +292,8 @@ struct RollSleeve: View {
   var shelf: LibraryShelf? = nil
   /// How many rolls of the same film lie in its stack, itself included; 0 when it lies alone.
   var stacked = 0
+  /// Being opened: its film turns on the label until the roll is open.
+  var opening = false
   var spread: () -> Void = {}
   var rename: () -> Void = {}
   var trash: () -> Void = {}
@@ -395,12 +398,18 @@ struct RollSleeve: View {
   var label: some View {
     HStack(alignment: .center, spacing: 8) {
       if let model, let film = Self.film(entry, model: model) {
-        FilmObject(look: film.look, gauge: film.gauge, turns: true).frame(width: 30, height: 40).zIndex(1)
+        FilmObject(look: film.look, gauge: film.gauge, turns: true, spinning: opening).frame(width: 30, height: 40).zIndex(1)
           .shadow(color: .black.opacity(0.25), radius: 1.5, y: 1)
           .help(film.look.title)
       }
       VStack(alignment: .leading, spacing: 2) {
-        Text(entry.title).font(.system(size: 13, weight: .semibold, design: .serif)).foregroundStyle(Self.ink).lineLimit(1)
+        HStack(spacing: 6) {
+          Text(entry.title).font(.system(size: 13, weight: .semibold, design: .serif)).foregroundStyle(Self.ink).lineLimit(1)
+          if opening {
+            ProgressView().controlSize(.mini).tint(Self.ink)
+            Text("正在打开…").font(.system(size: 10)).foregroundStyle(Self.ink.opacity(0.7)).lineLimit(1)
+          }
+        }
         // A long film's name on a second line rather than cut, beside its film.
         Text(details).font(.system(size: 10, design: .monospaced)).foregroundStyle(Self.ink.opacity(0.75)).lineLimit(2)
           .fixedSize(horizontal: false, vertical: true)

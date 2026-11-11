@@ -227,6 +227,19 @@ enum LibraryTests {
       && model.page == .convert,
       "imported pictures make a new roll of their own, unnamed, which the library lists; imported from the library, it opens in ② 去色罩")
 
+    // Opened as the library opens it, in the background: the call comes straight back, the roll's
+    // sleeve says it is opening, and soon after the roll is open on ②.
+    model.page = .library
+    let seaAgain = RollLibrary.scan([(lib, false)]).first { $0.folder.lastPathComponent == scanned.lastPathComponent }!
+    let asked = Date()
+    model.openRoll(seaAgain, inBackground: true)
+    let returned = Date().timeIntervalSince(asked)
+    let saidOpening = model.openingRoll == seaAgain.project && model.page == .library
+    for _ in 0..<60 where model.openingRoll != nil { settle(0.1) }
+    try check(saidOpening && returned < 0.25 && model.openingRoll == nil
+      && model.sessionURL?.standardizedFileURL == scanned.standardizedFileURL && model.page == .convert && model.rollName == "海边与天空",
+      String(format: "a roll opened from the library is read in the background (the click came back in %.0f ms), its sleeve saying so, and opens on ②", returned * 1000))
+
     // MARK: The bubble on the canvas
 
     model.openRoll(RollLibrary.scan([(lib, false)]).first { $0.folder.lastPathComponent == scanned.lastPathComponent }!)

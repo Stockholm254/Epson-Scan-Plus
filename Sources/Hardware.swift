@@ -530,20 +530,36 @@ struct ValueField: View {
 
 /// 135 film base behind the thumbnails, perforated along both edges.
 struct FilmBase: View {
+  /// The film's base and whether it is perforated (135) or not (120).
+  var look: FilmStripMaterial.Look = .colour
   @Environment(\.colorScheme) private var scheme
+  @Environment(\.displayScale) private var displayScale
   var body: some View {
-    // The perforations show what lies behind the film: the dark console, or light glass.
+    GeometryReader { g in
+      if let tile = FilmStripMaterial.shared.tile(height: g.size.height, scale: displayScale, look: look) {
+        // Shaded once for its height, repeated along it; the perforations open to what is behind.
+        Image(decorative: tile, scale: displayScale).resizable(resizingMode: .tile)
+          .frame(width: g.size.width, height: g.size.height)
+      } else {
+        flat
+      }
+    }
+  }
+  /// Without Metal: the base, a gradient, and the perforations in what lies behind the film.
+  var flat: some View {
     let hole = scheme == .light ? Color(white: 0.84) : Color(white: 0.085)
+    let base = Color(.sRGB, red: Double(look.base.x).squareRoot(), green: Double(look.base.y).squareRoot(), blue: Double(look.base.z).squareRoot())
     return Canvas { ctx, size in
-      ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Hardware.filmBase))
+      ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(base))
       ctx.fill(
         Path(CGRect(origin: .zero, size: size)),
         with: .linearGradient(
           Gradient(colors: [.white.opacity(0.07), .clear, .black.opacity(0.12)]),
           startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height)))
-      let perforation = CGSize(width: 6, height: 4.5)
+      guard look.perforated else { return }
+      let perforation = FilmStripMaterial.hole
       for y in [3, size.height - 3 - perforation.height] {
-        for x in stride(from: 3, to: size.width - perforation.width, by: 12) {
+        for x in stride(from: 3, to: size.width - perforation.width, by: FilmStripMaterial.pitch) {
           ctx.fill(
             Path(roundedRect: CGRect(origin: CGPoint(x: x, y: y), size: perforation), cornerRadius: 1.2),
             with: .color(hole))

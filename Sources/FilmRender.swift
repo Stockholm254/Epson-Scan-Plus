@@ -721,6 +721,9 @@ struct FilmObject: View {
   let look: NewProjectSheet.Look
   let gauge: FilmStock.Gauge
   var turns = false
+  /// Turning on its own, whatever the pointer does: while its roll opens. Each time it becomes
+  /// true it turns once more, round after round while it stays so.
+  var spinning = false
   @State private var image: NSImage?
   @State private var turning: (stage: FilmRender.Stage, widen: CGFloat, id: Int)?
   /// The turn's first frame is on screen: the still under it can go.
@@ -742,6 +745,8 @@ struct FilmObject: View {
         if let turning {
           FilmTurnView(stage: turning.stage, id: turning.id, shown: { live = true }) {
             if self.turning?.id == turning.id { self.turning = nil; live = false }
+            // Still opening: round again.
+            if spinning { startTurn(g.size) }
           }
           .frame(width: g.size.width * turning.widen, height: g.size.height * turning.widen)
           .allowsHitTesting(false)
@@ -756,12 +761,11 @@ struct FilmObject: View {
         let asked = turnCount, size = g.size
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
           guard resting, asked == turnCount, turning == nil else { return }
-          FilmRender.turning(look, gauge: gauge, points: size) { stage, widen in
-            guard resting, asked == turnCount, turning == nil else { return }
-            live = false
-            turning = (stage, widen, asked)
-          }
+          startTurn(size)
         }
+      }
+      .onChange(of: spinning) { _, on in
+        if on, turning == nil, !reduceMotion { startTurn(g.size) }
       }
       .task(id: "\(look.renderKey)|\(gauge.rawValue)|\(Int(g.size.width))x\(Int(g.size.height))") {
         let size = g.size
@@ -772,6 +776,19 @@ struct FilmObject: View {
           }
         }
       }
+    }
+  }
+}
+
+extension FilmObject {
+  /// Builds the film's scene and turns it once round.
+  fileprivate func startTurn(_ size: CGSize) {
+    turnCount += 1
+    let asked = turnCount
+    FilmRender.turning(look, gauge: gauge, points: size) { stage, widen in
+      guard asked == turnCount, turning == nil, resting || spinning else { return }
+      live = false
+      turning = (stage, widen, asked)
     }
   }
 }
