@@ -1610,6 +1610,12 @@ final class AppModel: ObservableObject {
   @Published var baseFlash: BaseFlash?
   /// A line over the picture for a few seconds (`noteOnCanvas`).
   @Published var canvasNote: String?
+  /// The note `announceAutoBase` last put over the picture, so that it takes back only its own.
+  private var baseNote: String?
+  private func baseNoteOnCanvas(_ text: String) {
+    baseNote = text
+    noteOnCanvas(text)
+  }
   /// Shows `text` over the picture for `seconds`, unless another note takes its place.
   func noteOnCanvas(_ text: String, seconds: Double = 4) {
     canvasNote = text
@@ -1622,9 +1628,12 @@ final class AppModel: ObservableObject {
   /// edges, marked for three seconds and faded; or, where its edges showed none, a note saying
   /// whose it uses instead, or that the picture's own clearest film stands in. What was shown for
   /// the frame before goes, so nothing lingers over another frame or the light table.
-  func announceAutoBase() {
+  /// `keepingOthers` when the edges' look comes in on its own later: it takes back only the note it
+  /// put up itself, not one shown since for something done (the wand's 「自动调整 · …」, which a late
+  /// look used to wipe a moment after it came up).
+  func announceAutoBase(keepingOthers: Bool = false) {
     baseFlash = nil
-    canvasNote = nil
+    if !keepingOthers || canvasNote == baseNote { canvasNote = nil }
     let r = selected?.rect
     guard singleView, !liveViewShown, let f = selected,
       let i = frames.firstIndex(where: { $0.id == f.id }), isSinglePicture(f), f.adjustments.inputIsNegative,
@@ -1632,11 +1641,11 @@ final class AppModel: ObservableObject {
       abs(r.x) < 1e-3, abs(r.y) < 1e-3, abs(r.width - 1) < 1e-3, abs(r.height - 1) < 1e-3
     else { return }
     guard let from = edgeBaseSource(i) else {
-      return noteOnCanvas("片边上没找到片基，按画面里最透的地方估计 · 可按 B 手动取")
+      return baseNoteOnCanvas("片边上没找到片基，按画面里最透的地方估计 · 可按 B 手动取")
     }
     guard from == i else {
       let why = look.base == nil ? "这张片边上没找到片基" : "这张片边上的片基和别的张颜色对不上"
-      return noteOnCanvas("\(why)，用第 \(frames[from].name) 张片边的")
+      return baseNoteOnCanvas("\(why)，用第 \(frames[from].name) 张片边的")
     }
     let flash = BaseFlash(id: f.id, start: CACurrentMediaTime())
     baseFlash = flash
@@ -1691,7 +1700,7 @@ final class AppModel: ObservableObject {
     refresh()
     updateThumbnails()
     saveProject()
-    if let id = selectedID, looks.contains(where: { $0.id == id }) { announceAutoBase() }
+    if let id = selectedID, looks.contains(where: { $0.id == id }) { announceAutoBase(keepingOthers: true) }
   }
   /// Looks for the unexposed film at the edges of the roll's pictures not yet looked at, apart from
   /// the main thread, then converts with what it found. `wait` looks before returning.
