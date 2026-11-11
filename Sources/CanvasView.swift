@@ -121,8 +121,8 @@ final class FilmCanvasView: NSView {
     super.displayIfNeeded()
     overlay.displayIfNeeded()
   }
-  /// A picture taken of the canvas has its picture drawn into it, with what lies over it: the
-  /// picture's own layers are not drawn.
+  /// A picture taken of the canvas has its picture drawn into it, with what lies over it; its
+  /// picture's own layers are hidden meanwhile (`tableSnapshot`), as the system draws them too.
   override func cacheDisplay(in rect: NSRect, to bitmapImageRep: NSBitmapImageRep) {
     let was = snapshotting
     snapshotting = true
@@ -697,11 +697,18 @@ final class FilmCanvasView: NSView {
         hints: [.interpolation: pixelsPerPixel >= 2 ? NSImageInterpolation.none : .high])
     }
   }
+  /// Whether the marks over the picture (the frames' outlines and numbers on the table, the crop) are
+  /// drawn now. Not while a change of view (back to the table, into or out of the crop, a turn) or an
+  /// opening turned back plays: what it moves is a picture of the canvas with its marks in it, and
+  /// the marks drawn over that, already where the change ends, stood beside its own (0.19.0: two sets
+  /// of frame outlines, one still large, as the table drew back). In a picture taken of the canvas
+  /// they are drawn, so what plays has them.
+  var marksShown: Bool { snapshotting || (change == nil && turningBack == nil) }
   /// What lies over the picture, drawn by `overlay` above the picture's layers: the crop and its
   /// handles, the grid, the frames on the light table, the marks of what was picked or found, the
   /// crop's lens. Nothing while the canvas shows no picture, or a change of view covers it.
   func drawOverlays() {
-    guard let model, shown != nil else { return }
+    guard let model, shown != nil, marksShown else { return }
     if let opening, model.singleView, !opening.grown || model.displayed === opening.over { return }
     if change?.hold == true { return }
     // The marks belong to the frame's own picture, not the film strip's shown meanwhile.
@@ -1493,23 +1500,48 @@ final class FilmCanvasView: NSView {
     let side = min(bounds.width, bounds.height)
     if model.singleView {
       guard let perMM = loupePointsPerMM else { return min(130, max(70, side * 0.14)) * CGFloat(style.baseMM / 48) }
-      return min(side * 0.45, max(44, CGFloat(style.baseMM / 2) * perMM))
+      return singleLoupeRadius(style, perMM: perMM)
     }
     guard let perMM = loupePointsPerMM else { return 70 }
     return min(110, max(44, CGFloat(style.baseMM / 2) * perMM))
   }
-  /// Over the single frame no more than the frame's pixels can show, half again past one to a
-  /// point, and never under 2×; nil on the light table, where the loupe's field decides it.
+  private func singleLoupeRadius(_ style: LoupeStyle, perMM: CGFloat) -> CGFloat {
+    min(min(bounds.width, bounds.height) * 0.45, max(44, CGFloat(style.baseMM / 2) * perMM))
+  }
+  /// The single frame as it fits the canvas, not zoomed or moved: what the loupe over it is
+  /// measured against, so that zooming the view leaves the loupe's field on the film as it was.
+  var fitImageRect: CGRect {
+    guard let cg = shown else { return .zero }
+    let size = CGSize(width: CGFloat(cg.width) * fitScale, height: CGFloat(cg.height) * fitScale)
+    return CGRect(
+      x: reserved.left + (open.width - size.width) / 2, y: reserved.top + (open.height - size.height) / 2,
+      width: size.width, height: size.height)
+  }
+  /// Over the single frame: as the frame fits the canvas, no more than its pixels can show, half
+  /// again past one to a point, and never under 2×; zoomed, that over how much larger the film under
+  /// the lens is shown, so the lens takes in the same part of the frame however the view is zoomed,
+  /// as a loupe does on the film (it grew with the zoom: 0.19.0 and before). Nil on the light table,
+  /// where the loupe's field decides it.
   func loupeMagnification(for style: LoupeStyle) -> Double? {
     guard let model, model.singleView else { return nil }
-    // The frame's own pixels under the lens once they are here, else the picture shown.
+    let fit = fitImageRect.width, now = imageRect.width
+    guard fit > 0, now > 0 else { return nil }
+    // The frame's own pixels under the lens once they are here, else the picture shown, to a point
+    // of the frame as it fits.
     let perPoint: Double
     if let region = loupeRegion, region.key == model.selected.map({ model.loupeDetailKey($0, single: true) }) {
-      perPoint = Double(region.image.width) / max(1, region.region.width * Double(imageRect.width))
+      perPoint = Double(region.image.width) / max(1, region.region.width * Double(fit))
     } else {
-      perPoint = Double(shown?.width ?? 0) / Double(max(1, imageRect.width))
+      perPoint = Double(shown?.width ?? 0) / Double(fit)
     }
-    return min(style.magnification, max(2, perPoint * 1.5))
+    let atFit = min(style.magnification, max(2, perPoint * 1.5))
+    // Lying on the film at its scale, the loupe is drawn larger as the film is (as far as the
+    // canvas holds), its lens with it; looked into, its lens keeps its size on the canvas.
+    var grown = 1.0
+    if loupe.field == .actual, let perMM = loupePointsPerMM, perMM > 0 {
+      grown = Double(singleLoupeRadius(style, perMM: perMM) / max(1, singleLoupeRadius(style, perMM: perMM * fit / now)))
+    }
+    return atFit * grown / Double(now / fit)
   }
   /// The frame the loupe was put on: it stays there as the canvas changes, until it is shown
   /// again, the view changes or it is put back on the selected frame.
@@ -1774,6 +1806,8 @@ final class FilmCanvasView: NSView {
   func endTurningBack() {
     guard let done = turningBack else { return }
     turningBack = nil
+    // The table's own marks again, with what is drawn under them.
+    needsDisplay = true
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     done.table.removeFromSuperlayer()
@@ -1859,7 +1893,12 @@ final class FilmCanvasView: NSView {
       loupe.drawingSuppressed = true
       scanHead.drawingSuppressed = true
       // Not what a change of view lays over the canvas meanwhile: the canvas as it draws itself.
-      let over = [opening?.cover, opening?.picture, change?.cover, turningBack?.table, turningBack?.face].compactMap { $0 } + (change?.layers ?? [])
+      // Nor its picture's layers: the picture is drawn into the snapshot as it is now, and the
+      // window server's copy can still hold the last one placed, as on the way back to the table
+      // the single frame, large, until the canvas next draws (0.19.0: it stood over the table as it
+      // drew back). The system does draw a view's sublayers into a picture taken of it.
+      let over = [pictureLayer, detailLayer, opening?.cover, opening?.picture, change?.cover, turningBack?.table, turningBack?.face]
+        .compactMap { $0 } + (change?.layers ?? [])
       CATransaction.begin()
       CATransaction.setDisableActions(true)
       let shown = over.filter { !$0.isHidden }

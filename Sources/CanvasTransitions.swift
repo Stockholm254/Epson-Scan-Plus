@@ -98,6 +98,8 @@ extension FilmCanvasView {
     if case .orient = kind { hold = true }
     let flight = ViewChangeInFlight(kind: kind, cover: cover, over: model.displayed, turnBefore: turn, hold: hold)
     self.change = flight
+    // Its marks are in the picture it plays; none drawn over it (`marksShown`).
+    overlay.needsDisplay = true
     // Where the frame goes is known now in single view, so the change plays at once, ahead of
     // the new picture, as the system turns a photo the moment it is asked.
     switch kind {

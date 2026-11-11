@@ -233,15 +233,19 @@ enum ContactPageTests {
     // Back to the table: the view draws back from the frame.
     model.showSingle(false)
     let closing = canvas.change
+    let marksWhileWaiting = canvas.marksShown
     for _ in 0..<50 where model.rendering { settle(0.1) }
     canvas.settleOpening()
     let drawingBack = canvas.change?.started == true && (still || canvas.change?.layers.first?.animation(forKey: "transform.scale") != nil)
+    let marksWhileDrawingBack = canvas.marksShown
     settle(0.8)
     canvas.settleOpening()
     var closeKind = false
     if case .close? = closing?.kind { closeKind = true }
     try check(closeKind && drawingBack && canvas.change == nil && !model.singleView,
       "back on the light table the view draws back from the frame to the whole page")
+    try check(!marksWhileWaiting && !marksWhileDrawingBack && canvas.marksShown,
+      "the frames' outlines are drawn on the table only once it has drawn back: none over it, already where it ends, as it plays")
     if !still {
       // Opened and straight back out: the opening turns back from where it has got to; caught on
       // its way back, the frame opens again from there, not from the table at rest.

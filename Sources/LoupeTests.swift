@@ -350,6 +350,26 @@ enum LoupeTests {
     try check(single.detail != nil && canvas.imageRect.insetBy(dx: -1, dy: -1).contains(single.detailRect)
       && single.detailRect.insetBy(dx: -1, dy: -1).contains(under.intersection(canvas.imageRect)) && magnification >= 2 && magnification <= loupe.style.magnification,
       String(format: "it reads what lies under its lens at the frame's own resolution, magnified %.1f×, no further than its pixels allow", magnification))
+    // Zoomed in, the loupe takes in the same part of the frame, as a loupe on the film does: its
+    // lens as large on the canvas, magnifying the picture, shown three times larger, a third as
+    // much. It took in less and less as the view zoomed (0.19.0 and before).
+    let fieldAtFit = canvas.loupeField / canvas.imageRect.width, lensAtFit = loupe.eyepiece?.lens ?? 0
+    canvas.place(zoom: 3, pan: .zero)
+    let fieldZoomed = canvas.loupeField / canvas.imageRect.width, lensZoomed = loupe.eyepiece?.lens ?? 0
+    let zoomedMagnification = canvas.loupeMagnification(for: loupe.style) ?? 0
+    canvas.place(zoom: 1, pan: .zero)
+    try check(abs(fieldZoomed / max(1e-9, fieldAtFit) - 1) < 0.01 && abs(lensZoomed - lensAtFit) < 0.5 && abs(zoomedMagnification * 3 - magnification) < 1e-6,
+      String(format: "zoomed 3×, the loupe takes in the same part of the frame (%.3f of its width, as it fits %.3f), its lens as large, magnifying %.2f×", fieldZoomed, fieldAtFit, zoomedMagnification))
+    model.preferences.loupeField = .actual
+    canvas.updateLoupe()
+    let actualAtFit = canvas.loupeField / canvas.imageRect.width
+    canvas.place(zoom: 2, pan: .zero)
+    let actualZoomed = canvas.loupeField / canvas.imageRect.width
+    canvas.place(zoom: 1, pan: .zero)
+    model.preferences.loupeField = .large
+    canvas.updateLoupe()
+    try check(abs(actualZoomed / max(1e-9, actualAtFit) - 1) < 0.01,
+      String(format: "lying on the film at its scale too, zoomed 2× it takes in the same part (%.3f, as it fits %.3f)", actualZoomed, actualAtFit))
     // A sampler picks through the lens the point it shows there, magnified; the loupe stays put.
     let lensCentre = loupe.center!, off = CGPoint(x: lensCentre.x + (loupe.eyepiece?.lens ?? 0) * 0.5, y: lensCentre.y)
     let through = loupe.pictureThroughLens(off), shrink = (1 - loupe.style.pincushion * 0.25) / (loupe.magnification ?? 1)

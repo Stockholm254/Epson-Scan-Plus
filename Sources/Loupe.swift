@@ -583,7 +583,8 @@ final class LoupeView: NSView {
   func lensReach(_ field: LoupeField) -> CGFloat? {
     guard let canvas, let share = field.share else { return nil }
     let side = min(canvas.bounds.width, canvas.bounds.height)
-    if field == .large, canvas.model?.singleView == true { return min(canvas.imageRect.width / 2, side * 0.5) }
+    // As wide as the picture as it fits the canvas: zoomed, the same lens on the same film.
+    if field == .large, canvas.model?.singleView == true { return min(canvas.fitImageRect.width / 2, side * 0.5) }
     if field == .large, let perMM = canvas.loupePointsPerMM {
       let whole = CGFloat(style.fieldMM / 2) * perMM * Self.tableMagnification / style.rimReach
       return min(max(share * side, whole), side * 0.46)

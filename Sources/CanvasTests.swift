@@ -113,6 +113,37 @@ enum CanvasTests {
     let strip = frames.map { canvas.screen($0.rect.cg) }
     try check(zip(strip, strip.dropFirst()).allSatisfy { $1.maxX < $0.minX + 1 && abs($1.midY - $0.midY) < 1 } && strip[0].width > strip[0].height,
       "and the strip runs across, frame 01 at the right end as on a holder turned clockwise")
+    // A picture taken of the canvas (what a change of view zooms, what the loupe looks at) has the
+    // canvas as it draws now, not what its picture's layer last held: on the way back to the table
+    // the layer still held the single frame, large, and the table drew back with it on it (0.19.0).
+    let red = CGContext(data: nil, width: 8, height: 8, bitsPerComponent: 8, bytesPerRow: 0,
+      space: pipe.outputSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    red.setFillColor(red: 1, green: 0, blue: 0, alpha: 1)
+    red.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    canvas.pictureLayer.contents = red.makeImage()
+    canvas.pictureLayer.frame = canvas.bounds
+    canvas.pictureLayer.isHidden = false
+    CATransaction.commit()
+    // A size not snapshotted before, so the picture is taken now.
+    canvas.setFrameSize(NSSize(width: 901, height: 600))
+    func reddest(_ image: CGImage?) -> Int {
+      guard let image else { return -1 }
+      let w = 64, h = max(1, image.height * 64 / max(1, image.width))
+      var px = [UInt8](repeating: 0, count: w * h * 4)
+      let read = CGContext(data: &px, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+        space: pipe.outputSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+      read.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+      return (0..<(w * h)).filter { px[$0 * 4] > 200 && px[$0 * 4 + 1] < 60 && px[$0 * 4 + 2] < 60 }.count
+    }
+    let staleTaken = reddest(canvas.tableSnapshot())
+    let layerShown = !canvas.pictureLayer.isHidden
+    canvas.setFrameSize(NSSize(width: 900, height: 600))
+    canvas.needsDisplay = true
+    canvas.displayIfNeeded()
+    try check(staleTaken == 0 && layerShown,
+      "a picture taken of the canvas has what it draws now, not what its picture's layer last held (\(staleTaken) red points), and leaves the layer shown")
     func event(_ type: NSEvent.EventType, _ p: CGPoint, clicks: Int = 1) -> NSEvent {
       NSEvent.mouseEvent(with: type, location: canvas.convert(p, to: nil), modifierFlags: [], timestamp: 0,
         windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: clicks, pressure: 1)!
