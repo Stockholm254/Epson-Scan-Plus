@@ -81,13 +81,18 @@ struct GlassToast: View {
 }
 
 extension CropLens {
-  /// A whole small picture under a glass bubble, filling most of it: the library's loupe.
+  /// A whole small picture under a glass bubble, the whole frame in it, its corners just inside
+  /// the rim: the library's loupe. Its rim bends the picture only at the very edge, a fraction of
+  /// the crop bubble's: the frame's own edges lay where the crop bubble's rim begins, and bent as
+  /// much they bowed out like a fish-eye's, the corners squeezed in (0.19.6 and before). The
+  /// glass's light and edge are the same.
+  static let loupeBend = 0.05, loupeBendStart = 0.9, loupeSplit = 0.003
   static func loupe(_ picture: CGImage, diameter: CGFloat = 112, backing: CGFloat = 2) -> CGImage? {
     let pixels = Int(diameter * backing)
-    let scale = 0.86 * CGFloat(pixels) / CGFloat(max(picture.width, picture.height, 1))
+    let scale = 0.93 * CGFloat(pixels) / max(1, hypot(CGFloat(picture.width), CGFloat(picture.height)))
     return render(
       picture, center: CGPoint(x: CGFloat(picture.width) / 2, y: CGFloat(picture.height) / 2), scale: scale,
-      crop: nil, dimOutside: 0, pixels: pixels)
+      crop: nil, dimOutside: 0, pixels: pixels, bend: loupeBend, bendStart: loupeBendStart, split: loupeSplit)
   }
 }
 

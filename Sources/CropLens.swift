@@ -17,13 +17,16 @@ enum CropLens {
 
   /// The bubble, `pixels` across: `picture` about `center` (its pixels, from the top left), at
   /// `scale` bubble pixels per picture pixel, with `crop` (picture pixels) outlined and outside it
-  /// darkened by `dimOutside`. Where the bubble reaches past the picture it shows the canvas.
+  /// darkened by `dimOutside`. Where the bubble reaches past the picture it shows the canvas. The
+  /// rim bends the picture out by `bend` (from `bendStart` of the radius) and splits its colours
+  /// by `split`: the crop bubble's own unless given.
   static func render(
-    _ picture: CGImage, center: CGPoint, scale: CGFloat, crop: CGRect?, dimOutside: Double = 0.5, pixels: Int
+    _ picture: CGImage, center: CGPoint, scale: CGFloat, crop: CGRect?, dimOutside: Double = 0.5, pixels: Int,
+    bend bendReach: Double = rimReach, bendStart: Double = rimStart, split: Double = dispersion
   ) -> CGImage? {
     guard pixels > 4, scale > 0 else { return nil }
     // The patch of the picture the bubble can reach, drawn once into memory.
-    let reach = Double(pixels) / 2 / Double(scale) * (1 + rimReach) * (1 + dispersion) + 2
+    let reach = Double(pixels) / 2 / Double(scale) * (1 + bendReach) * (1 + split) + 2
     let patch = CGRect(x: center.x - reach, y: center.y - reach, width: 2 * reach, height: 2 * reach).integral
     let w = Int(patch.width), h = Int(patch.height)
     guard w > 0, h > 0 else { return nil }
@@ -69,14 +72,14 @@ enum CropLens {
         let rho = (dx * dx + dy * dy).squareRoot() / radius
         let alpha = min(max((1 - rho) * radius + 0.5, 0), 1)
         if alpha <= 0 { continue }
-        let rim = smoothstep(rimStart, 1, rho)
-        let bend = 1 + rimReach * rim * rim
+        let rim = smoothstep(bendStart, 1, rho)
+        let bend = 1 + bendReach * rim * rim
         let along = bend / Double(scale)
         // Where the green looks, and the red and blue a hair either side of it at the rim.
         let gx = Double(center.x) + dx * along, gy = Double(center.y) + dy * along
         var colour = [0.0, 0.0, 0.0]
         for c in 0..<3 {
-          let spread = c == 1 ? 1 : 1 + (c == 0 ? dispersion : -dispersion) * rim
+          let spread = c == 1 ? 1 : 1 + (c == 0 ? split : -split) * rim
           let x = Double(center.x) + dx * along * spread - patch.minX
           let y = Double(center.y) + dy * along * spread - patch.minY
           colour[c] = sample(x, y, c)

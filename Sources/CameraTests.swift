@@ -157,6 +157,28 @@ enum CameraTests {
       "a step carries the magnifier, for the process to put back should it switch the camera to manual focus, which ends it")
     let loupe = CropLens.loupe(picture(160, 107))
     try check(loupe?.width == 224, "the library's loupe is drawn at the screen's resolution")
+    // A straight line near the frame's edge stays straight in it: the rim bends only past the
+    // frame. Bent as the crop bubble's, it bowed some 9 pixels in (0.19.6 and before).
+    let ruled = CGContext(data: nil, width: 160, height: 107, bitsPerComponent: 8, bytesPerRow: 0,
+      space: ImagePipeline.shared.outputSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    ruled.setFillColor(CGColor(gray: 1, alpha: 1))
+    ruled.fill(CGRect(x: 0, y: 0, width: 160, height: 107))
+    ruled.setFillColor(CGColor(gray: 0, alpha: 1))
+    ruled.fill(CGRect(x: 149, y: 0, width: 2, height: 107))
+    func lineColumn(_ image: CGImage?, row: Int) -> Int {
+      guard let image else { return -1 }
+      var px = [UInt8](repeating: 0, count: image.width * image.height * 4)
+      let read = CGContext(data: &px, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: image.width * 4,
+        space: ImagePipeline.shared.outputSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+      read.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+      // Rows counted from the top; the darkest point right of the middle.
+      let y = image.height - 1 - row
+      return (image.width / 2..<image.width).min { px[(y * image.width + $0) * 4 + 1] < px[(y * image.width + $1) * 4 + 1] } ?? -1
+    }
+    let ruledLoupe = CropLens.loupe(ruled.makeImage()!)
+    let middle = lineColumn(ruledLoupe, row: 112), high = lineColumn(ruledLoupe, row: 70)
+    try check(middle > 180 && abs(middle - high) <= 1,
+      "in the library's loupe a straight line by the frame's edge stays straight (at x \(middle) across its middle, \(high) higher up)")
     camera.running = { ["com.apple.finder"] }
     camera.receive(#"{"event":"error","stage":"enum","code":"0x8000","message":"没有找到相机"}"#)
     try check(camera.phase == .failed && camera.message == "没有找到相机（0x8000）", "a failure is shown as the process says it")
