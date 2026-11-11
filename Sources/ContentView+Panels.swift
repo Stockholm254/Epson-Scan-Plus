@@ -378,14 +378,27 @@ extension ContentView {
   }
   // MARK: Output
 
+  /// What goes out, how, where and how big, then the key: the frames chosen, ticked or changed
+  /// since their export, written straight into the folder shown. Under it the contact sheet, drawn
+  /// as it will come out.
   var outputTab: some View {
     let format = Binding(
       get: { ExportFormat(rawValue: m.exportType) ?? .tiff },
       set: { m.exportType = $0.rawValue; m.preferences.exportFormat = $0 })
     let sheet = Binding(get: { m.preferences.sheet }, set: { m.preferences.sheet = $0 })
+    let changed = m.changedSinceExport
+    let scope = changed.isEmpty && m.exportScope == .changed ? AppModel.ExportScope.chosen : m.exportScope
+    let items = m.exportItems(scope)
+    let ticked = m.frames.filter(\.enabled)
     return VStack(alignment: .leading, spacing: 18) {
       titled("导出", symbol: "square.and.arrow.up", info:
-        "sRGB 以外的色彩空间在转换后嵌入 ICC 配置文件，饱和度推到 sRGB 以外的颜色会保留；ProPhoto 请配合 16-bit 格式。\n\n文件名：{film} 胶片简称（如 portra160、velvia50）　{name} 胶片名　{frame} 片号　{roll} 工程文件夹　{date} 扫描日期。同名文件已存在时自动加序号，不会覆盖。导出文件写入胶片、片号、扫描仪和扫描日期等元数据。\n\n扫描保存的是保留色罩的原始负片（Originals）；打开自动导出时，去色罩的正片在整批扫完后按当前调整和上面的格式导出到工程的 Exports 文件夹。之后改了调整需要重新导出；为接触表进行的扫描不单独导出。")
+        "上面选导出哪些：当前这张（⌘ / ⇧ 在胶片条或灯箱上点选几张时是所选的几张）、勾选的画面，或导出以后又改过调整的画面。按下面的键直接写进「位置」里的文件夹，不再弹出窗口；工具栏的「导出」和 ⌘E 仍会先问位置和格式；⌥⇧⌘E 和这个键一样，直接导出当前或所选的。\n\n胶片条上画面右上角的 ✓ 表示导出过、之后没再改；铅笔表示导出以后又改过调整或换了预设，再导出一次才是现在的样子。导出时等着的画面带虚线圈，正在写的那张带箭头；状态栏里有进度和「停止」，写完正在写的那张就停，写好的文件留着。\n\nsRGB 以外的色彩空间在转换后嵌入 ICC 配置文件，饱和度推到 sRGB 以外的颜色会保留；ProPhoto 请配合 16-bit 格式。\n\n文件名：{film} 胶片简称（如 portra160、velvia50）　{name} 胶片名　{frame} 片号　{roll} 工程文件夹　{date} 扫描日期。同名文件已存在时自动加序号，不会覆盖。导出文件写入胶片、片号、扫描仪和扫描日期等元数据。\n\n大小按画面的裁切、拉直和方向算；TIFF 不压缩，是准的，PNG 和 JPEG 按胶片扫描通常的压缩估计。\n\n扫描保存的是保留色罩的原始负片（Originals）；打开自动导出时，去色罩的正片在整批扫完后按当前调整和上面的格式导出到工程的 Exports 文件夹。为接触表进行的扫描不单独导出。")
+      Picker("导出哪些", selection: Binding(get: { scope }, set: { m.exportScope = $0 })) {
+        Text(m.multiSelected ? "所选 \(m.selection.count) 张" : "当前这张").tag(AppModel.ExportScope.chosen)
+        Text("勾选 \(ticked.count) 张").tag(AppModel.ExportScope.ticked)
+        if !changed.isEmpty { Text("改过 \(changed.count) 张").tag(AppModel.ExportScope.changed) }
+      }.pickerStyle(.segmented).labelsHidden()
+        .help("导出哪些画面：当前这张（或 ⌘ / ⇧ 点选的几张）、勾选的，或导出以后又改过的")
       labeled("格式") {
         Picker("", selection: format) { ForEach(ExportFormat.allCases) { Text($0.title).tag($0) } }.labelsHidden()
       }
@@ -399,7 +412,7 @@ extension ContentView {
           }
           Fader(title: "JPEG 质量", value: Binding(get: { m.preferences.jpegQuality }, set: { m.preferences.jpegQuality = $0 }),
             range: 0.6...1, detent: 0.97)
-        }
+        }.transition(.opacity.combined(with: .move(edge: .top)))
       }
       labeled("色彩空间") {
         Picker("", selection: Binding(get: { m.preferences.exportColorSpace }, set: { m.preferences.exportColorSpace = $0 })) {
@@ -410,23 +423,80 @@ extension ContentView {
         Text("ProPhoto 请配合 16-bit 格式，8-bit 容易出现色阶断层。").font(.system(size: 11)).foregroundStyle(.orange)
           .fixedSize(horizontal: false, vertical: true)
       }
-      labeled("文件名") {
-        TextField(ExportNaming.standard, text: Binding(get: { m.preferences.exportNameTemplate }, set: { m.preferences.exportNameTemplate = $0 }))
-          .textFieldStyle(.roundedBorder).font(.system(size: 11, design: .monospaced))
+      VStack(alignment: .leading, spacing: 4) {
+        labeled("文件名") {
+          TextField(ExportNaming.standard, text: Binding(get: { m.preferences.exportNameTemplate }, set: { m.preferences.exportNameTemplate = $0 }))
+            .textFieldStyle(.roundedBorder).font(.system(size: 11, design: .monospaced))
+        }
+        // What it comes to, for the frame shown.
+        Text("例：" + m.exportName(for: m.selected))
+          .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.secondary)
+          .lineLimit(1).truncationMode(.middle).frame(maxWidth: .infinity, alignment: .trailing)
+          .help("按上面的模板，这一张导出时的文件名；同名已存在时自动加序号")
       }
-      // What it comes to, for the frame shown.
-      Text("例：" + m.exportName(for: m.selected)).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.secondary)
-        .lineLimit(1).truncationMode(.middle).frame(maxWidth: .infinity, alignment: .trailing)
-        .help("按上面的模板，这一张导出时的文件名；同名已存在时自动加序号")
-      HStack {
-        Button(m.exportSelectionTitle) { m.exportImages(all: false) }.disabled(m.selected == nil || m.isWorking)
-          .help("导出当前这张；在胶片条或接触表上按住 ⌘ 点选、⇧ 连选几张，这里导出选中的这几张")
-        Button("导出勾选的 \(m.enabledCount) 张…") { m.exportImages(all: true) }.disabled(m.enabledCount == 0 || m.isWorking)
-      }.font(.system(size: 11))
+      labeled("位置") { exportFolderMenu }
+      exportSummary(items, format: format.wrappedValue)
+      VStack(spacing: 6) {
+        if m.exporting && m.exportProgress.total > 0 {
+          // While it runs the key is its progress, with the key that stops it.
+          VStack(alignment: .leading, spacing: 5) {
+            HStack {
+              Text(m.exportProgress.label).font(.system(size: 11)).monospacedDigit().lineLimit(1)
+              Spacer()
+              Button("停止") { m.stopExports() }.controlSize(.small).help("写完正在写的这张就停；写好的文件留着")
+            }
+            ProgressView(value: m.exportProgress.fraction)
+          }.frame(minHeight: 28)
+            .transition(.opacity.combined(with: .scale(scale: 0.97)))
+        } else {
+          Button {
+            m.exportHere(items)
+          } label: {
+            Label(exportKeyTitle(items.count, scope: scope), systemImage: "square.and.arrow.up")
+              .lineLimit(1).truncationMode(.middle).frame(maxWidth: .infinity)
+          }.buttonStyle(KeyStyle(prominent: true)).controlSize(.regular)
+            .disabled(items.isEmpty || m.isWorking || m.exportFolder == nil)
+            .help("按上面的格式写进「位置」里的文件夹，不再弹出窗口")
+            .transition(.opacity.combined(with: .scale(scale: 0.97)))
+        }
+        Button("导出到其他位置…") { m.exportImages(items) }.buttonStyle(.link).font(.system(size: 11))
+          .disabled(items.isEmpty || m.isWorking)
+          .help("先选文件夹和格式，再导出这些画面")
+      }.animation(.snappy(duration: 0.25), value: m.exporting)
+      // The last export, its files a click away.
+      if let done = m.exported, !m.exporting {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+          Image(systemName: "checkmark.circle.fill").symbolRenderingMode(.palette).foregroundStyle(.white, ExportMarkView.green)
+          Text(done.status).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
+          Spacer(minLength: 0)
+          Button("在 Finder 中显示") { NSWorkspace.shared.activateFileViewerSelecting(done.files) }
+            .buttonStyle(.link).font(.system(size: 11)).help("在 Finder 中选中导出的 \(done.files.count) 个文件")
+        }.transition(.move(edge: .top).combined(with: .opacity))
+      }
+      if !changed.isEmpty && scope != .changed {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+          Image(systemName: "pencil.circle.fill").symbolRenderingMode(.palette).foregroundStyle(.black, Hardware.amber)
+          Text("\(changed.count) 张导出以后又改过：" + changed.prefix(6).map(\.name).joined(separator: "、") + (changed.count > 6 ? "…" : ""))
+            .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+          Spacer(minLength: 0)
+          Button("选它们") { withAnimation(.snappy) { m.exportScope = .changed } }.buttonStyle(.link).font(.system(size: 11))
+        }.transition(.opacity)
+      }
       SwitchRow("扫描后自动导出正片", isOn: Binding(get: { m.preferences.autoExport }, set: { m.preferences.autoExport = $0 }))
       Divider()
       titled("接触表", symbol: "square.grid.3x2", info:
-        "把勾选的画面排成一张图片，格式同上。\n\n「预览 · 立即导出」按整幅预览的分辨率（600 dpi 预览时每张 35 mm 约 850 像素）直接生成，不扫描；已正式扫描的画面按同样的分辨率读取。\n\n「1200 dpi · 先扫描」时，尚未扫描或低于 1200 dpi 的画面先以 1200 dpi 扫描，结果保存为这些画面的原始文件，再生成 1200 dpi 的接触表。")
+        "把勾选的画面排成一张图片，格式同上；上面的小图就是它排出来的样子，改排列、每行张数、背景和方向时跟着变。\n\n「预览 · 立即导出」按整幅预览的分辨率（600 dpi 预览时每张 35 mm 约 850 像素）直接生成，不扫描；已正式扫描的画面按同样的分辨率读取。\n\n「1200 dpi · 先扫描」时，尚未扫描或低于 1200 dpi 的画面先以 1200 dpi 扫描，结果保存为这些画面的原始文件，再生成 1200 dpi 的接触表。")
+      // As wide as the panel, as tall as the sheet's shape asks, within reason.
+      SheetPreview(frames: ticked, thumbnails: m.thumbnails, layout: m.preferences.sheet)
+        .aspectRatio(max(0.9, SheetPreview.aspect(ticked, thumbnails: m.thumbnails, layout: m.preferences.sheet)), contentMode: .fit)
+        .frame(maxWidth: .infinity, maxHeight: 240)
+        .animation(.spring(response: 0.42, dampingFraction: 0.82), value: m.preferences.sheet)
+        .overlay {
+          if ticked.isEmpty {
+            Text("没有勾选的画面").font(.system(size: 11)).foregroundStyle(.secondary)
+          }
+        }
       // Only frames on the scanner's preview are scanned for it; pictures of their own files are used as they are.
       if m.frames.contains(where: { $0.sourcePath == nil }) {
         labeled("清晰度") {
@@ -453,7 +523,7 @@ extension ContentView {
         Picker("", selection: sheet.whitePaper) {
           Text("白色相纸").tag(true)
           Text("黑色").tag(false)
-        }.labelsHidden()
+        }.pickerStyle(.segmented).labelsHidden().fixedSize()
       }
       labeled("方向") {
         Picker("", selection: sheet.followRotation) {
@@ -466,9 +536,77 @@ extension ContentView {
       Button {
         m.exportContactSheet()
       } label: {
-        Label("导出接触表…", systemImage: "square.grid.3x2")
-      }.buttonStyle(KeyStyle(prominent: true)).disabled(m.enabledCount == 0 || m.isWorking)
+        Label("导出接触表 · \(ticked.count) 张…", systemImage: "square.grid.3x2").frame(maxWidth: .infinity)
+      }.buttonStyle(KeyStyle(prominent: true)).controlSize(.regular).disabled(ticked.isEmpty || m.isWorking)
     }
+    .animation(.snappy(duration: 0.22), value: format.wrappedValue)
+    .animation(.snappy(duration: 0.22), value: changed.count)
+    .animation(.snappy(duration: 0.3), value: m.exportsDone)
+  }
+  /// The output key's words: how many, and where.
+  func exportKeyTitle(_ count: Int, scope: AppModel.ExportScope) -> String {
+    let what = scope == .chosen && count == 1 ? "导出这张" : "导出 \(count) 张"
+    guard let folder = m.exportFolder else { return what }
+    return what + "到「" + (m.exportsIntoRoll ? "本卷 Exports" : folder.lastPathComponent) + "」"
+  }
+  /// Where the output key writes: this roll's Exports, or a folder of its own for every roll.
+  var exportFolderMenu: some View {
+    let folder = m.exportFolder
+    let intoRoll = m.exportsIntoRoll
+    return Menu {
+      Button {
+        m.exportIntoRoll()
+      } label: {
+        Label("每一卷自己的 Exports 文件夹", systemImage: intoRoll ? "checkmark" : "folder")
+      }
+      if let folder, !intoRoll {
+        Button {} label: { Label(folder.path, systemImage: "checkmark") }.disabled(true)
+      }
+      Button("选择其他文件夹…") { m.chooseExportFolder() }
+      Divider()
+      Button("在 Finder 中显示") { if let folder { reveal(folder) } }.disabled(folder == nil)
+    } label: {
+      HStack(spacing: 4) {
+        Image(systemName: intoRoll ? "archivebox" : "folder")
+        Text(folder == nil ? "—" : intoRoll ? "本卷 Exports" : folder!.lastPathComponent).lineLimit(1).truncationMode(.middle)
+      }.font(.system(size: 12))
+    }
+    .menuStyle(.borderlessButton).fixedSize()
+    .help(folder.map { "导出到 " + $0.path + (intoRoll ? "（每一卷导出到自己的 Exports）" : "") } ?? "还没有打开的卷")
+  }
+  /// How big the files come out, and whether they fit where they go.
+  func exportSummary(_ items: [FilmFrame], format: ExportFormat) -> some View {
+    let pixels = items.compactMap(m.exportPixels)
+    let shown = (m.selected.flatMap { s in items.first { $0.id == s.id } } ?? items.first).flatMap(m.exportPixels)
+    let quality = m.preferences.jpegQuality
+    let total = pixels.reduce(0) { $0 + ExportEstimate.bytes($1, format: format, quality: quality) }
+    let free = m.exportFolder.flatMap(ExportEstimate.freeSpace)
+    let previews = items.filter { !$0.hasFullResolution }.count
+    // Labels dim, figures lit, as on the scanner's LCD.
+    func row(_ label: String, _ value: String, warn: Bool = false) -> some View {
+      HStack {
+        Text(label).foregroundStyle(Hardware.lcdText.opacity(0.5))
+        Spacer()
+        Text(value).foregroundStyle(warn ? Color.orange : Hardware.lcdText.opacity(0.95))
+      }
+    }
+    return VStack(alignment: .leading, spacing: 3) {
+      if let s = shown {
+        row("\(Int(s.width)) × \(Int(s.height))", String(format: "%.1f MP", s.width * s.height / 1e6))
+      }
+      row(items.count == 1 ? "1 个文件" : "\(items.count) 个文件", (format == .tiff || format == .tiff8 ? "" : "约 ") + ExportEstimate.text(total))
+      if let free { row("剩余", ExportEstimate.text(free), warn: free < total * 1.05) }
+      if previews > 0 {
+        Text("其中 \(previews) 张还没正式扫描，按预览的分辨率导出").foregroundStyle(.orange).font(.system(size: 10.5))
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+    .readout(10)
+    .padding(.horizontal, 10).padding(.vertical, 8)
+    .background(PlotScreen())
+    .contentTransition(.numericText())
+    .animation(.snappy, value: items.count)
+    .accessibilityElement(children: .combine)
   }
 
   // MARK: Camera

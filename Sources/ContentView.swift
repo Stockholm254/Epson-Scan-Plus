@@ -12,7 +12,10 @@ extension View {
 }
 
 struct ContentView: View {
-  @ObservedObject var m: AppModel
+  /// The model, observed through its gate (`WindowGate`): while a slider is dragged the window is
+  /// updated ten times a second, not with every step.
+  @Gated var m: AppModel
+  init(m: AppModel) { _m = Gated(wrappedValue: m) }
   @State var showInfo = false
   /// The strip's frame a dragged frame is over, to take its place.
   @State var dropTarget: UUID?
@@ -114,9 +117,9 @@ struct ContentView: View {
     .onChange(of: m.activityStatus) { showStatus() }
     // An export done shows, also one whose words are those the line said last.
     .onChange(of: m.exportsDone) { showStatus() }
-    // A batch of scans takes minutes a frame: the Dock icon counts the frames done, and once the
-    // batch ends with the app behind another, it bounces once.
-    .onChange(of: m.scanBatch.badge) { was, now in
+    // A batch of scans takes minutes a frame, an export of a roll a while: the Dock icon counts
+    // the frames done, and once the batch ends with the app behind another, it bounces once.
+    .onChange(of: m.scanBatch.badge ?? m.exportProgress.badge) { was, now in
       NSApp.dockTile.badgeLabel = now
       if was != nil, now == nil, !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
     }
@@ -237,7 +240,12 @@ struct ContentView: View {
         // Exporting, with its settings behind it in the sidebar.
         Menu {
           Button(m.exportSelectionTitle) { m.exportImages(all: false) }.disabled(m.selected == nil || m.isWorking)
+          Button(m.quickExportTitle) { m.exportHere(m.selection) }.disabled(m.selected == nil || m.isWorking || m.exportFolder == nil)
           Button("导出勾选的 \(m.enabledCount) 张…") { m.exportImages(all: true) }.disabled(m.enabledCount == 0 || m.isWorking)
+          let changed = m.changedSinceExport
+          if !changed.isEmpty {
+            Button("导出改过的 \(changed.count) 张…") { m.exportImages(changed) }.disabled(m.isWorking)
+          }
           Button("导出接触表…") { m.exportContactSheet() }.disabled(m.enabledCount == 0 || m.isWorking)
           Divider()
           Button("导出设置…") { openExportSettings() }
@@ -1416,6 +1424,10 @@ struct ContentView: View {
                     }
                   }.opacity(f.enabled ? 1 : 0.35)
                 }.frame(width: 84, height: 60)
+                // Exported as it is now, changed since, or on its way out: in ②, where frames are exported.
+                .overlay(alignment: .topTrailing) {
+                  if m.page == .convert { ExportMarkView(mark: m.exportMark(f)).padding(3) }
+                }
                 .accessibilityValue(f.enabled ? "已勾选" : "未勾选")
                 .overlay(
                   // The frame shown, and those chosen with it (⌘ / ⇧) fainter.
@@ -1523,7 +1535,6 @@ struct ContentView: View {
   /// The workspace's status line, and a scan's progress at its end with the key to cancel it.
   var footer: some View {
     HStack(spacing: 12) {
-      if m.exporting { ProgressView().controlSize(.small) }
       HStack(spacing: 10) {
         Text(m.activityStatus).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
         // The export just done, its files selected in Finder.
@@ -1533,11 +1544,14 @@ struct ContentView: View {
         }
       }.frame(maxWidth: .infinity, alignment: .leading)
       UpdateNotice(m: m, updater: m.updater)
+      // Frame by frame, with the key that stops it.
+      if m.exporting && m.exportProgress.total > 0 { ExportProgressBar(m: m) }
       if m.scanBatch.isActive || m.scanner.busy {
         scanProgress
         Button("取消") { m.cancel() }.disabled(m.scanBatch.phase == .cancelling).controlSize(.small)
       }
     }.padding(.horizontal, 18).padding(.vertical, 7)
+      .animation(.snappy(duration: 0.25), value: m.exporting)
   }
   var profileInfo: some View {
     VStack(alignment: .leading, spacing: 18) {
@@ -1637,7 +1651,7 @@ struct RenderProgress: View {
 /// modules: on the toolbar's shared glass the two ran together through a neck. Its name dims
 /// with the window, as the toolbar's own keys do.
 struct AssistantKey<Panel: View>: View {
-  @ObservedObject var m: AppModel
+  @Gated var m: AppModel
   let panel: Panel
   @State private var open = false
   @Environment(\.controlActiveState) private var windowState

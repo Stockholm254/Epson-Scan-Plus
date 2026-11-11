@@ -838,6 +838,12 @@ final class FilmCanvasView: NSView {
             .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
             .foregroundColor: NSColor.black.withAlphaComponent(appear),
           ])
+        // Exported as it is now, changed since, or on its way out, beside its number, as the strip marks it.
+        if model.page == .convert, let mark = Self.markImage(model.exportMark(f)) {
+          mark.draw(
+            in: NSRect(x: label.maxX + 3, y: label.minY + 1, width: 17, height: 17), from: .zero, operation: .sourceOver,
+            fraction: appear, respectFlipped: true, hints: nil)
+        }
       }
       if let moving = movingSelection {
         NSColor(calibratedRed: 0.95, green: 0.71, blue: 0.38, alpha: 1).setStroke()
@@ -1887,6 +1893,7 @@ final class FilmCanvasView: NSView {
       h.combine(f.id)
       h.combine(f.name)
       h.combine(f.enabled)
+      h.combine(model.page == .convert ? model.exportMark(f) : .notExported)
       let r = model.contactRect(f)
       for v in [r.x, r.y, r.width, r.height] { h.combine(v) }
     }
@@ -1895,6 +1902,22 @@ final class FilmCanvasView: NSView {
     h.combine(dragID)
     return h.finalize()
   }
+  /// The strip's export marks as the light table draws them, made once each.
+  private static let markImages: [ExportMark: NSImage] = {
+    func symbol(_ name: String, _ colours: [NSColor]) -> NSImage? {
+      let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium).applying(.init(paletteColors: colours))
+      return NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(config)
+    }
+    let green = NSColor(srgbRed: 0.3, green: 0.72, blue: 0.4, alpha: 1)
+    let amber = NSColor(Hardware.amber)
+    var images = [ExportMark: NSImage]()
+    images[.waiting] = symbol("circle.dotted", [NSColor.white.withAlphaComponent(0.75)])
+    images[.writing] = symbol("arrow.up.circle.fill", [.white, NSColor(Hardware.accent)])
+    images[.exported] = symbol("checkmark.circle.fill", [.white, green])
+    images[.changed] = symbol("pencil.circle.fill", [.black, amber])
+    return images
+  }()
+  static func markImage(_ mark: ExportMark) -> NSImage? { markImages[mark] }
   private func tableDrawn() {
     guard !snapshotting else { return }
     let key = tableKey

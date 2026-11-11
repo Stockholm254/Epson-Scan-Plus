@@ -650,6 +650,8 @@ struct DeskProject: Codable {
   var format: String? = nil
   /// Whether its copies take in the film's edge (`PictureEdges`' raw value); nil, 自动.
   var edges: String? = nil
+  /// What each frame (by `FilmFrame.id`) was last exported with; nil, none exported.
+  var exports: [String: ExportStamp]? = nil
 }
 
 /// A project names its files by absolute path, which older versions read, and relative to its

@@ -168,6 +168,10 @@ struct EpsonScanPlusApp: App {
           "e", modifiers: [.command, .shift]).disabled(model.enabledCount == 0 || model.isWorking || !model.onRollModule)
         Button("导出接触表…") { model.exportContactSheet() }.keyboardShortcut(
           "e", modifiers: [.command, .option]).disabled(model.enabledCount == 0 || model.isWorking || !model.onRollModule)
+        // As the output tab's key: its format, its folder, no panel.
+        Button(model.quickExportTitle) { model.exportHere(model.selection) }.keyboardShortcut(
+          "e", modifiers: [.command, .option, .shift])
+          .disabled(model.selected == nil || model.isWorking || !model.onRollModule || model.exportFolder == nil)
       }
     }
   }
