@@ -2082,6 +2082,14 @@ final class AppModel: ObservableObject {
     let film = FilmCalibration.film(p.name)
     return film == "本机标定胶片" || film == FilmProfile.builtins.first(where: { $0.id == "generic" })?.name ? nil : film
   }
+  /// What 单张一起做整卷估计 changes on this roll now. Its channel slopes, and which single pictures
+  /// 整卷同一白平衡 / 色阶 take as one roll; with the calibration in use the slopes are the
+  /// calibration's, so only those groups, or, with neither shared, nothing at all.
+  enum PoolEffect { case slopes, sharedOnly, nothing }
+  var poolEffect: PoolEffect {
+    guard profile.offsets != nil, useCalibration else { return .slopes }
+    return settings.sharedLevels == true || settings.sharedBalance == true ? .sharedOnly : .nothing
+  }
   /// Calibrated for how this roll is read: on the copy stand in this copy session, else on this scanner.
   func calibratedHere(_ p: FilmProfile) -> Bool {
     guard p.offsets != nil else { return false }

@@ -855,8 +855,20 @@ struct ContentView: View {
             .disabled(m.isWorking || m.selected == nil)
         }
         if m.hasSinglePictures {
-          filmSwitch("单张一起做整卷估计", isOn: Binding(get: { m.poolPictures }, set: { m.setPoolPictures($0) }),
-            info: "一张一个文件的画面（翻拍，或一张张导入的扫描）算作一卷：一起估计通道斜率，「整卷同一白平衡 / 色阶」也把它们当一卷。只在它们是同一卷、用同样的设备和设置拍或扫时打开；读法不同（Gamma、位深）的文件不会混在一起。App 里翻拍的卷自动打开。\n\n它不管标定：用着标定时，斜率按标定，整卷估计只在 ⓘ 里作对照。")
+          // With the calibration in use the slopes are its own: dimmed and said so where the switch
+          // changes nothing, and what it still does where the roll shares its balance or levels.
+          let effect = m.poolEffect
+          VStack(alignment: .leading, spacing: 3) {
+            filmSwitch("单张一起做整卷估计", isOn: Binding(get: { m.poolPictures }, set: { m.setPoolPictures($0) }),
+              info: "一张一个文件的画面（翻拍，或一张张导入的扫描）算作一卷：一起估计通道斜率，「整卷同一白平衡 / 色阶」也把它们当一卷。只在它们是同一卷、用同样的设备和设置拍或扫时打开；读法不同（Gamma、位深）的文件不会混在一起。App 里翻拍的卷自动打开。\n\n斜率的先后是本机标定、整卷估计、数据表：用着标定时，斜率按标定，整卷估计不参与转换，只在 ⓘ 里作对照；这时它只决定「整卷同一白平衡 / 色阶」把哪些单张当一卷。关掉「\(calibrationSwitchTitle)」后，整卷估计排在数据表前面。")
+              .opacity(effect == .nothing ? 0.5 : 1)
+            if effect != .slopes {
+              Text(effect == .nothing
+                ? "用着标定，斜率来自标定，整卷估计不参与转换"
+                : "用着标定，斜率来自标定；这项只决定「整卷同一白平衡 / 色阶」把哪些单张当一卷")
+                .font(.system(size: 10.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+          }
         }
         Text(conversionBasisShort).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
           .fixedSize(horizontal: false, vertical: true)
