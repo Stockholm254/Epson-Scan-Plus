@@ -385,17 +385,18 @@ enum FilmRender {
     let r: CGFloat = 12.0, h: CGFloat = 62
     let paper = SCNCylinder(radius: r, height: h)
     paper.radialSegmentCount = 96
-    paper.materials = [material(Label.backing(look), metal: 0, rough: 0.78), material(NSColor(white: 0.1, alpha: 1), metal: 0, rough: 0.8)]
+    // The backing paper and the seal round it, as each maker prints them (`Roll120Print`).
+    paper.materials = [material(Roll120Print.paper(look), metal: 0, rough: 0.78), material(NSColor(white: 0.1, alpha: 1), metal: 0, rough: 0.8)]
     let paperNode = SCNNode(geometry: paper)
     paperNode.eulerAngles.y = -.pi / 2 + 0.35
     node.addChildNode(paperNode)
-    // The seal round its middle.
-    let seal = SCNTube(innerRadius: r + 0.01, outerRadius: r + 0.14, height: 18)
+    let printed = Roll120Print.seal(look)
+    let seal = SCNTube(innerRadius: r + 0.01, outerRadius: r + 0.14, height: printed.height)
     seal.radialSegmentCount = 96
-    seal.materials = [material(Label.seal(look), metal: 0, rough: 0.42, coat: 0.3), material(NSColor(white: 0.95, alpha: 1), metal: 0, rough: 0.5)]
+    seal.materials = [material(printed.image, metal: 0, rough: 0.42, coat: 0.3), material(NSColor(white: 0.95, alpha: 1), metal: 0, rough: 0.5)]
     let sealNode = SCNNode(geometry: seal)
     sealNode.eulerAngles.y = paperNode.eulerAngles.y
-    sealNode.position.y = 2
+    sealNode.position.y = printed.rise
     node.addChildNode(sealNode)
     // The spool's flanges, a little wider than the paper, and its ends.
     for (y, top) in [(h / 2, true), (-h / 2, false)] {
