@@ -1321,16 +1321,37 @@ final class FilmCanvasView: NSView {
     let menu = NSMenu()
     menu.autoenablesItems = false
     let chosen = model.selection
+    let free = !model.isWorking
     if chosen.count > 1, chosen.contains(where: { $0.id == frame.id }) {
-      menu.addItem(ActionMenuItem("导出所选的 \(chosen.count) 张…", symbol: "square.and.arrow.up.on.square", enabled: !model.isWorking) { [weak model] in
+      // The frames chosen, all at once, as the film strip's menu has them.
+      let n = chosen.count
+      menu.addItem(ActionMenuItem("导出所选的 \(n) 张…", symbol: "square.and.arrow.up.on.square", enabled: free) { [weak model] in
         guard let model else { return }
         model.exportImages(model.selection)
       })
+      menu.addItem(.separator())
+      menu.addItem(ActionMenuItem("顺时针旋转所选的 \(n) 张", symbol: "rotate.right", enabled: free) { [weak model] in model?.turnRoll(clockwise: true) })
+      menu.addItem(ActionMenuItem("逆时针旋转所选的 \(n) 张", symbol: "rotate.left", enabled: free) { [weak model] in model?.turnRoll(clockwise: false) })
+      menu.addItem(ActionMenuItem(model.tableMirrored ? "取消所选的水平镜像" : "水平镜像所选的 \(n) 张",
+        symbol: "arrow.left.and.right.righttriangle.left.righttriangle.right", enabled: free) { [weak model] in model?.mirrorRoll() })
+      let ticked = model.selectionEnabled
+      menu.addItem(ActionMenuItem(ticked ? "取消勾选所选的 \(n) 张" : "勾选所选的 \(n) 张", symbol: ticked ? "circle" : "checkmark.circle", enabled: free) {
+        [weak model] in model?.setSelectionEnabled(!ticked)
+      })
+      menu.addItem(ActionMenuItem("删除所选的 \(n) 张", symbol: "trash", enabled: free) { [weak model] in
+        guard let model else { return }
+        model.remove(model.selectionIDs)
+      })
     } else {
-      menu.addItem(ActionMenuItem("导出这张…", symbol: "square.and.arrow.up", enabled: !model.isWorking) { [weak model] in
+      menu.addItem(ActionMenuItem("导出这张…", symbol: "square.and.arrow.up", enabled: free) { [weak model] in
         guard let model, let now = model.frames.first(where: { $0.id == frame.id }) else { return }
         model.exportImages([now])
       })
+      menu.addItem(.separator())
+      menu.addItem(ActionMenuItem(frame.enabled ? "取消勾选" : "勾选", symbol: frame.enabled ? "circle" : "checkmark.circle", enabled: free) { [weak model] in
+        model?.setEnabled(frame.id, enabled: !frame.enabled)
+      })
+      menu.addItem(ActionMenuItem("删除这张", symbol: "trash", enabled: free) { [weak model] in model?.remove(frame.id) })
     }
     return menu
   }

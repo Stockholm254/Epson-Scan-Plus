@@ -9,6 +9,7 @@ enum RegressionTests {
     try ScanProgressTests.run(folder: folder)
     try SaneScannerTests.run(folder: folder)
     try OrientationTests.run(folder: folder)
+    try MultiSelectTests.run(folder: folder)
     try StraightenTests.run(folder: folder)
     try ToneTests.run(folder: folder)
     try HighlightTests.run(folder: folder)

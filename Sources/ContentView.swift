@@ -485,18 +485,18 @@ struct ContentView: View {
         m.turn(clockwise: false)
       } label: {
         Image(systemName: "rotate.left")
-      }.help(m.syncOrientation ? "全部逆时针旋转 90° · ⇧⌘R" : "逆时针旋转 90° · ⇧⌘R")
+      }.help(m.syncOrientation ? "全部逆时针旋转 90° · ⇧⌘R" : m.multiSelected ? "所选的 \(m.selection.count) 张逆时针旋转 90° · ⇧⌘R" : "逆时针旋转 90° · ⇧⌘R")
       Button {
         m.turn(clockwise: true)
       } label: {
         Image(systemName: "rotate.right")
-      }.help(m.syncOrientation ? "全部顺时针旋转 90° · ⌘R" : "顺时针旋转 90° · ⌘R")
+      }.help(m.syncOrientation ? "全部顺时针旋转 90° · ⌘R" : m.multiSelected ? "所选的 \(m.selection.count) 张顺时针旋转 90° · ⌘R" : "顺时针旋转 90° · ⌘R")
       Button {
         m.toggleMirror()
       } label: {
         Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
       }.buttonStyle(KeyStyle(latched: m.settings.flipHorizontal == true)).help(
-        m.syncOrientation ? "全部水平镜像：修正整卷胶片正反面方向" : "水平镜像：修正胶片正反面方向")
+        m.syncOrientation ? "全部水平镜像：修正整卷胶片正反面方向" : m.multiSelected ? "所选的 \(m.selection.count) 张水平镜像" : "水平镜像：修正胶片正反面方向")
       Button {
         m.syncOrientation.toggle()
       } label: {
@@ -511,17 +511,19 @@ struct ContentView: View {
         m.turnRoll(clockwise: false)
       } label: {
         Image(systemName: "rotate.left")
-      }.help("全卷逆时针旋转 90°：改变每张在单张视图和导出中的方向；转过 90° 的画面在横排的灯箱上也正立").disabled(m.frames.isEmpty)
+      }.help(m.multiSelected ? "所选的 \(m.selection.count) 张逆时针旋转 90°" : "全卷逆时针旋转 90°：改变每张在单张视图和导出中的方向；转过 90° 的画面在横排的灯箱上也正立；⌘ 或 ⇧ 点选几张时只转所选的").disabled(m.frames.isEmpty)
       Button {
         m.turnRoll(clockwise: true)
       } label: {
         Image(systemName: "rotate.right")
-      }.help("全卷顺时针旋转 90°：改变每张在单张视图和导出中的方向；转过 90° 的画面在横排的灯箱上也正立").disabled(m.frames.isEmpty)
+      }.help(m.multiSelected ? "所选的 \(m.selection.count) 张顺时针旋转 90°" : "全卷顺时针旋转 90°：改变每张在单张视图和导出中的方向；转过 90° 的画面在横排的灯箱上也正立；⌘ 或 ⇧ 点选几张时只转所选的").disabled(m.frames.isEmpty)
       Button {
         m.mirrorRoll()
       } label: {
         Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
-      }.buttonStyle(KeyStyle(latched: m.rollMirrored)).help(m.rollMirrored ? "取消全卷水平镜像" : "全卷水平镜像：修正胶片正反面放反").disabled(m.frames.isEmpty)
+      }.buttonStyle(KeyStyle(latched: m.tableMirrored)).help(
+        m.multiSelected ? (m.tableMirrored ? "取消所选的 \(m.selection.count) 张水平镜像" : "所选的 \(m.selection.count) 张水平镜像")
+          : m.rollMirrored ? "取消全卷水平镜像" : "全卷水平镜像：修正胶片正反面放反").disabled(m.frames.isEmpty)
     }
   }
   /// What floats over the picture: the render in progress, the frame's resolution, the tool's hint.
@@ -689,7 +691,8 @@ struct ContentView: View {
         HStack {
           sectionTitle("调整", symbol: "slider.horizontal.3")
           Spacer()
-          Button("重置") { m.resetAdjustments() }.font(.system(size: 11))
+          Button(m.multiSelected ? "重置所选" : "重置") { m.resetAdjustments() }.font(.system(size: 11))
+            .help(m.multiSelected ? "把所选的 \(m.selection.count) 张都恢复成新照片的调整" : "把这一张恢复成新照片的调整")
             .help("把这一张的调整恢复默认；输入 Gamma、方向和整卷估计保留")
             .disabled(frameControlsOff)
         }
@@ -720,11 +723,11 @@ struct ContentView: View {
       VStack(spacing: 0) {
         Divider()
         Button {
-          m.applyToRoll()
+          m.syncSettings()
         } label: {
-          Label("同步到本卷", systemImage: "square.on.square").frame(maxWidth: .infinity)
+          Label(m.multiSelected ? "同步到所选的 \(m.selection.count) 张" : "同步到本卷", systemImage: "square.on.square").frame(maxWidth: .infinity)
         }.buttonStyle(.bordered).controlSize(.regular)
-          .help("把这一张的调整用到本卷每一张")
+          .help(m.multiSelected ? "把这一张的调整用到所选的每一张（⌘ 或 ⇧ 点胶片条选的）" : "把这一张的调整用到本卷每一张；⌘ 或 ⇧ 点胶片条多选几张时，只用到所选的")
           .disabled(frameControlsOff)
           .padding(.horizontal, 18).padding(.vertical, 10)
       }.background(.bar)
@@ -1446,22 +1449,32 @@ struct ContentView: View {
                     // The frames chosen together when this is one of them, else this one.
                     let chosen = m.selection
                     if chosen.count > 1, chosen.contains(where: { $0.id == f.id }) {
+                      // The frames chosen, all at once: what Lightroom's filmstrip does with several.
                       Button("导出所选的 \(chosen.count) 张…", systemImage: "square.and.arrow.up.on.square") { m.exportImages(m.selection) }
                         .disabled(m.isWorking)
+                      Divider()
+                      Button("顺时针旋转所选的 \(chosen.count) 张", systemImage: "rotate.right") { m.turnRoll(clockwise: true) }.disabled(m.isWorking)
+                      Button("逆时针旋转所选的 \(chosen.count) 张", systemImage: "rotate.left") { m.turnRoll(clockwise: false) }.disabled(m.isWorking)
+                      Button(m.tableMirrored ? "取消所选的水平镜像" : "水平镜像所选的 \(chosen.count) 张", systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right") {
+                        m.mirrorRoll()
+                      }.disabled(m.isWorking)
+                      Button(m.selectionEnabled ? "取消勾选所选的 \(chosen.count) 张" : "勾选所选的 \(chosen.count) 张",
+                        systemImage: m.selectionEnabled ? "circle" : "checkmark.circle") { m.setSelectionEnabled(!m.selectionEnabled) }.disabled(m.isWorking)
+                      Button("删除所选的 \(chosen.count) 张", systemImage: "trash", role: .destructive) { m.remove(m.selectionIDs) }.disabled(m.isWorking)
                     } else {
                       Button("导出这张…", systemImage: "square.and.arrow.up") {
                         if let now = m.frames.first(where: { $0.id == f.id }) { m.exportImages([now]) }
                       }.disabled(m.isWorking)
+                      Divider()
+                      Button(f.enabled ? "取消勾选" : "勾选", systemImage: f.enabled ? "circle" : "checkmark.circle") {
+                        m.setEnabled(f.id, enabled: !f.enabled)
+                      }.disabled(m.isWorking)
+                      Button("在去漏光里打开", systemImage: "wand.and.rays") { m.openInLeak(f.id) }.disabled(m.isWorking)
+                      if m.isLinearPicture(f) && !m.blankFrameIDs.contains(f.id) {
+                        Button("设成平场（这张是空白帧）", systemImage: "square.dashed") { m.makeFlat(from: f) }.disabled(m.flatsBlocked != nil)
+                      }
+                      Button("删除这张", systemImage: "trash", role: .destructive) { m.remove(f.id) }.disabled(m.isWorking)
                     }
-                    Divider()
-                    Button(f.enabled ? "取消勾选" : "勾选", systemImage: f.enabled ? "circle" : "checkmark.circle") {
-                      m.setEnabled(f.id, enabled: !f.enabled)
-                    }.disabled(m.isWorking)
-                    Button("在去漏光里打开", systemImage: "wand.and.rays") { m.openInLeak(f.id) }.disabled(m.isWorking)
-                    if m.isLinearPicture(f) && !m.blankFrameIDs.contains(f.id) {
-                      Button("设成平场（这张是空白帧）", systemImage: "square.dashed") { m.makeFlat(from: f) }.disabled(m.flatsBlocked != nil)
-                    }
-                    Button("删除这张", systemImage: "trash", role: .destructive) { m.remove(f.id) }.disabled(m.isWorking)
                   }
                 }
                 // Edge print, as exposed along the film beside each frame.

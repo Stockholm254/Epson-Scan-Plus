@@ -1268,8 +1268,25 @@ final class AppModel: ObservableObject {
     }
   }
   func removeSelected() {
+    if multiSelected { return remove(selectionIDs) }
     guard let id = selectedID else { return }
     remove(id)
+  }
+  /// Takes several frames out of the roll as one edit; the frame after the first of them is shown.
+  func remove(_ ids: Set<UUID>) {
+    guard !isWorking, let first = frames.firstIndex(where: { ids.contains($0.id) }) else { return }
+    let count = frames.filter { ids.contains($0.id) }.count
+    recordEdit("删除 \(count) 张画面")
+    for id in ids { thumbnails[id] = nil }
+    frames.removeAll { ids.contains($0.id) }
+    alsoSelected = []
+    if Self.numberedInOrder(frames) { Self.renumber(&frames) }
+    if let shown = selectedID, ids.contains(shown) { selectedID = frames.isEmpty ? nil : frames[min(first, frames.count - 1)].id }
+    status = "已删除 \(count) 张画面 · ⌘Z 撤销"
+    updateRollBase()
+    updateRollSlopes()
+    refresh()
+    saveProject()
   }
   /// Takes a frame out of the roll, an edit ⌘Z undoes; its files stay in the roll's folder. Taken
   /// while selected, the one after it is selected in its place, or for the last the one before.
@@ -1392,23 +1409,43 @@ final class AppModel: ObservableObject {
     fadeInNextPicture()
   }
   private func resettingAdjustments() {
-    change("重置调整") {
-      let kept = $0
-      $0 = Adjustments()
-      $0.inputGamma = kept.inputGamma
-      $0.inputIsNegative = kept.inputIsNegative
-      // Which film it is, not a setting: a slide comes back a slide, its own colour kept.
-      if kept.isSlide { $0.setReversal(true) }
-      $0.rotation = kept.rotation
-      $0.flipHorizontal = kept.flipHorizontal
-      $0.angle = kept.angle
-      // Part of the picture, as the crop is: reset on its own (跟随画面).
-      $0.analysisRegion = kept.analysisRegion
-      // How the picture was read, not a setting: a copy shot keeps its colour noise reduction.
-      $0.colourNoise = kept.colourNoise
-      // The roll's print is the roll's, not this frame's.
-      ($0.sharedBalance, $0.sharedLevels, $0.rollPrint) = (kept.sharedBalance, kept.sharedLevels, kept.rollPrint)
+    if multiSelected { return changeSelection("重置所选的 \(selection.count) 张", Self.resetAll) }
+    change("重置调整", Self.resetAll)
+  }
+  /// The same change to every frame chosen, as one edit; the roll's measured base kept, as `change`
+  /// keeps it.
+  func changeSelection(_ name: String, _ mutation: (inout Adjustments) -> Void) {
+    let ids = selectionIDs
+    guard !ids.isEmpty else { return }
+    recordEdit(name)
+    for i in frames.indices where ids.contains(frames[i].id) {
+      let a = frames[i].adjustments
+      mutation(&frames[i].adjustments)
+      (frames[i].adjustments.rollBase, frames[i].adjustments.rollSlopes, frames[i].adjustments.rollBasePicked) = (a.rollBase, a.rollSlopes, a.rollBasePicked)
     }
+    status = name + " · ⌘Z 撤销"
+    refresh()
+    updateThumbnails()
+    saveProject()
+  }
+  /// A frame's settings back to a new frame's: what the picture is, how it faces, and the roll's
+  /// own switches kept.
+  static func resetAll(_ a: inout Adjustments) {
+    let kept = a
+    a = Adjustments()
+    a.inputGamma = kept.inputGamma
+    a.inputIsNegative = kept.inputIsNegative
+    // Which film it is, not a setting: a slide comes back a slide, its own colour kept.
+    if kept.isSlide { a.setReversal(true) }
+    a.rotation = kept.rotation
+    a.flipHorizontal = kept.flipHorizontal
+    a.angle = kept.angle
+    // Part of the picture, as the crop is: reset on its own (跟随画面).
+    a.analysisRegion = kept.analysisRegion
+    // How the picture was read, not a setting: a copy shot keeps its colour noise reduction.
+    a.colourNoise = kept.colourNoise
+    // The roll's print is the roll's, not this frame's.
+    (a.sharedBalance, a.sharedLevels, a.rollPrint) = (kept.sharedBalance, kept.sharedLevels, kept.rollPrint)
   }
 
   // MARK: Undo
@@ -1959,15 +1996,29 @@ final class AppModel: ObservableObject {
   /// Most of the roll's frames mirrored: what the contact view's mirror key shows and takes back,
   /// on a page laid out from files of their own too, where the table itself is not mirrored.
   var rollMirrored: Bool { frames.filter { $0.adjustments.flipHorizontal == true }.count * 2 > frames.count }
+  /// What the light table's mirror key shows and takes back: the frames chosen, when more than one
+  /// is, else the roll.
+  var tableMirrored: Bool {
+    guard multiSelected else { return rollMirrored }
+    let chosen = selection
+    return chosen.filter { $0.adjustments.flipHorizontal == true }.count * 2 > chosen.count
+  }
   func mirrorRoll() {
     guard !frames.isEmpty else { return }
-    let mirrored = !rollMirrored
+    let mirrored = !tableMirrored
     viewWillChange?(.orient(turns: 0, mirror: true))
     orient(mirrored ? "水平镜像" : "取消水平镜像", roll: true) { $0.flipHorizontal = mirrored }
   }
+  /// Turns or mirrors the frames chosen when more than one is, from the single view or the light
+  /// table (the roll synced in the single view stays the whole roll); else the light table's keys
+  /// the whole roll, and the single view's the frame shown, or every frame synced.
   private func orient(_ action: String, roll: Bool = false, _ mutation: (inout Adjustments) -> Void) {
     recordEdit(action)
-    if syncOrientation || roll {
+    if multiSelected && (roll || !syncOrientation) {
+      let ids = selectionIDs
+      for i in frames.indices where ids.contains(frames[i].id) { mutation(&frames[i].adjustments) }
+      status = "已对所选的 \(ids.count) 张\(action)"
+    } else if syncOrientation || roll {
       guard !frames.isEmpty else { return }
       for i in frames.indices { mutation(&frames[i].adjustments) }
       status = "已对全部 \(frames.count) 张\(action)"
@@ -1979,10 +2030,15 @@ final class AppModel: ObservableObject {
     updateThumbnails()
     saveProject()
   }
-  func applyToRoll() {
+  /// 同步: the frame shown's settings to the frames chosen with it, when more than one is, else to
+  /// the roll.
+  func syncSettings() { multiSelected ? applyToRoll(only: selectionIDs) : applyToRoll() }
+  /// The frame shown's settings to every frame of the roll, or only to `only`, each keeping how it
+  /// faces, its crop's region and what was read off its own picture.
+  func applyToRoll(only: Set<UUID>? = nil) {
     guard let s = selected else { return }
-    recordEdit("同步到本卷")
-    for i in frames.indices {
+    recordEdit(only == nil ? "同步到本卷" : "同步到所选")
+    for i in frames.indices where only?.contains(frames[i].id) ?? true {
       let own = frames[i].adjustments
       frames[i].adjustments = s.adjustments
       frames[i].adjustments.rotation = own.rotation
@@ -2002,7 +2058,7 @@ final class AppModel: ObservableObject {
     refresh()
     updateThumbnails()
     saveProject()
-    status = "已同步调色参数到本卷"
+    status = only.map { "已同步调色参数到所选的 \($0.count) 张" } ?? "已同步调色参数到本卷"
   }
   func matchFilm() {
     let typed = FilmCalibration.film(filmName.trimmingCharacters(in: .whitespaces))
@@ -3979,6 +4035,22 @@ final class AppModel: ObservableObject {
   @Published var alsoSelected = Set<UUID>()
   /// The frames chosen, in the roll's order: the one shown and those chosen with it.
   var selection: [FilmFrame] { frames.filter { $0.id == selectedID || alsoSelected.contains($0.id) } }
+  /// More than one frame chosen: turning, mirroring, ticking, deleting, resetting and syncing act on
+  /// them all, as in Lightroom.
+  var multiSelected: Bool { selection.count > 1 }
+  var selectionIDs: Set<UUID> { Set(selection.map(\.id)) }
+  /// Every frame chosen ticked: what the menus' tick for the chosen frames shows and takes back.
+  var selectionEnabled: Bool { selection.allSatisfy(\.enabled) }
+  /// Ticks the frames chosen, or unticks them, as one edit.
+  func setSelectionEnabled(_ enabled: Bool) {
+    let ids = selectionIDs
+    guard !isWorking, frames.contains(where: { ids.contains($0.id) && $0.enabled != enabled }) else { return }
+    recordEdit(enabled ? "勾选所选" : "取消勾选所选")
+    for i in frames.indices where ids.contains(frames[i].id) { frames[i].enabled = enabled }
+    status = (enabled ? "已勾选" : "已取消勾选") + "所选的 \(ids.count) 张"
+    saveProject()
+    focusCanvas()
+  }
   /// What exporting the chosen frames is called where it is offered.
   var exportSelectionTitle: String { selection.count > 1 ? "导出所选的 \(selection.count) 张…" : "导出当前…" }
   /// A click on a frame (the film strip, the light table) with `modifiers`: true when it chose

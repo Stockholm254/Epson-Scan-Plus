@@ -141,9 +141,16 @@ struct EpsonScanPlusApp: App {
         Divider()
         // Which frames a batch scans and exports; on the light table's strip as well, by its menu.
         // ③ exports on its own, so its page ticks nothing.
-        Button(model.selected?.enabled == true ? "取消勾选当前画面" : "勾选当前画面") {
-          if let id = model.selectedID { model.setEnabled(id, enabled: model.selected?.enabled != true) }
-        }.disabled(model.selected == nil || model.isWorking || !model.onRollModule)
+        // With several chosen (⌘ or ⇧ on the strip or the light table), all of them.
+        if model.multiSelected {
+          Button(model.selectionEnabled ? "取消勾选所选的 \(model.selection.count) 张" : "勾选所选的 \(model.selection.count) 张") {
+            model.setSelectionEnabled(!model.selectionEnabled)
+          }.disabled(model.isWorking || !model.onRollModule)
+        } else {
+          Button(model.selected?.enabled == true ? "取消勾选当前画面" : "勾选当前画面") {
+            if let id = model.selectedID { model.setEnabled(id, enabled: model.selected?.enabled != true) }
+          }.disabled(model.selected == nil || model.isWorking || !model.onRollModule)
+        }
         Button("全部勾选") { model.setAllEnabled(true) }.disabled(model.frames.isEmpty || model.isWorking || !model.onRollModule)
         Button("全部不勾选") { model.setAllEnabled(false) }.disabled(model.enabledCount == 0 || model.isWorking || !model.onRollModule)
         Divider()
