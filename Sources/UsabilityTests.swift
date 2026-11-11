@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 
@@ -30,7 +31,13 @@ enum UsabilityTests {
     // The system draws Liquid Glass for this app though it may be built with an earlier SDK.
     try check(SystemGlass.viewClass != nil, "on macOS 26 the system's Liquid Glass is found at run time, for the floating plates and the fader caps")
     // A fader set at once (自动调整, 重置调整) glides there; the hand on it stops it at the setting.
+    // In a window, as the inspector's are: an NSSlider never in one, its value changed and then let
+    // go in the same turn of the run loop, traps in AppKit a moment later (macOS 27.2).
+    let faderWindow = NSWindow(contentRect: NSRect(x: -9000, y: -9000, width: 300, height: 60), styleMask: [.borderless], backing: .buffered, defer: false)
+    faderWindow.isReleasedWhenClosed = false
     let fader = DetentSlider(value: 0, minValue: -1, maxValue: 1, target: nil, action: nil)
+    fader.frame = NSRect(x: 10, y: 10, width: 200, height: 24)
+    faderWindow.contentView?.addSubview(fader)
     fader.glide(to: 1)
     let glideStart = fader.doubleValue, gliding = fader.glideTarget == 1
     RunLoop.current.run(until: Date().addingTimeInterval(0.1))
@@ -39,7 +46,11 @@ enum UsabilityTests {
     let landed = fader.doubleValue, ended = fader.glideTarget == nil
     fader.glide(to: -1)
     fader.stopGlide()
-    try check(glideStart == 0 && gliding && partWay > 0.05 && partWay < (FilmCanvasView.stillMotion ? 1.01 : 0.99) && landed == 1 && ended && fader.doubleValue == -1,
+    let stopped = fader.doubleValue
+    RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+    fader.removeFromSuperview()
+    withExtendedLifetime(faderWindow) {}
+    try check(glideStart == 0 && gliding && partWay > 0.05 && partWay < (FilmCanvasView.stillMotion ? 1.01 : 0.99) && landed == 1 && ended && stopped == -1,
       "a fader set at once glides to the value (\(String(format: "%.2f", partWay)) a tenth of a second in) and lands on it; stopped, it is at the setting")
 
     let model = AppModel(libraryURL: folder.appendingPathComponent("usability"), scanner: IdleScanner())
