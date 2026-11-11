@@ -887,10 +887,10 @@ final class AppModel: ObservableObject {
       if grouping { undoManager?.endUndoGrouping() }
     }
     recordEdit("换胶片", key: "换胶片 \(UUID().uuidString)")
-    // A film from the shelf converts as calibrated for it here, else as its data sheet; a preset
-    // picked there is used as it is.
+    // What the shelf shows is what the roll takes: a film's data sheet, or a calibration of it,
+    // each its own choice there (0.19.3 took this session's calibration for a film picked, so
+    // picking the film's data sheet on a calibrated roll changed nothing).
     let film = FilmCalibration.film(name)
-    let p = p.offsets == nil ? linkedPreset(film: film, fallback: p) : p
     if p.id != profile.id || p != profile { chooseProfile(p) }
     if filmName != film {
       filmName = film
@@ -2090,8 +2090,10 @@ final class AppModel: ObservableObject {
   /// The preset `film` converts with on this roll, chosen as a film (from the shelf or by name):
   /// the newest calibrated for it here (in this copy session, or on this scanner), else `fallback`,
   /// its data sheet's or the generic one.
-  func linkedPreset(film: String, fallback: FilmProfile) -> FilmProfile {
-    profiles.last { p in calibratedHere(p) && Self.film(of: p).map { FilmCatalog.fold($0) == FilmCatalog.fold(film) } == true } ?? fallback
+  func linkedPreset(film: String, fallback: FilmProfile) -> FilmProfile { calibration(for: film) ?? fallback }
+  /// The newest preset calibrated here (in this copy session, or on this scanner) for `film`.
+  func calibration(for film: String) -> FilmProfile? {
+    profiles.last { p in calibratedHere(p) && Self.film(of: p).map { FilmCatalog.fold($0) == FilmCatalog.fold(film) } == true }
   }
   /// What calibrating here names the preset: after the roll's film (on the copy stand with its copy
   /// session), so it is listed with the film; after the preset's film when the roll has none.

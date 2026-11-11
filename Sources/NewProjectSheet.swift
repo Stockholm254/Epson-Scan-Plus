@@ -181,6 +181,14 @@ struct NewProjectSheet: View {
       VStack(spacing: 3) {
         FilmObject(look: look, gauge: gauge)
           .frame(width: 70, height: 92)
+          // A calibration of the film, on a tab where it was calibrated.
+          .overlay(alignment: .topTrailing) {
+            if let c = look.calibration {
+              Text(Self.calibrationTab(c)).font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.white).padding(.horizontal, 4).padding(.vertical, 1.5)
+                .background(Capsule().fill(Hardware.accent))
+            }
+          }
           // The format its roll was, on a tab, where it is 120.
           .overlay(alignment: .bottomTrailing) {
             if let used, used != .mm135 {
@@ -215,7 +223,13 @@ struct NewProjectSheet: View {
       FilmObject(look: look, gauge: gauge(for: choice)).frame(width: 84, height: 112)
       VStack(alignment: .leading, spacing: 5) {
         if let maker = look.maker { Text(maker).font(.system(size: 11)).foregroundStyle(.secondary) }
-        Text(look.name).font(.system(size: 19, weight: .semibold, design: .serif)).lineLimit(1)
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+          Text(look.name).font(.system(size: 19, weight: .semibold, design: .serif)).lineLimit(1)
+          if let c = look.calibration, !look.calibrated {
+            Text(c.hasPrefix("翻拍") ? "翻拍标定" + c.dropFirst(2) : c + " 标定")
+              .font(.system(size: 13, weight: .medium)).foregroundStyle(Hardware.amberText).lineLimit(1)
+          }
+        }
         HStack(spacing: 5) { ForEach(look.tags, id: \.self) { tag($0) } }
         if !look.note.isEmpty { Text(look.note).font(.system(size: 12)).lineLimit(1) }
         Text(conversion(look)).font(.system(size: 11)).foregroundStyle(.secondary)
@@ -259,7 +273,7 @@ struct NewProjectSheet: View {
     case .stock(let id): return FilmSheets.of(id)
     case .preset(let id):
       let p = m.profiles.first { $0.id == id }
-      return p.flatMap { FilmCatalog.stock(named: $0.name) }.flatMap { FilmSheets.of($0.name) }
+      return p.flatMap { AppModel.film(of: $0) }.flatMap { FilmCatalog.stock(named: $0) }.flatMap { FilmSheets.of($0.name) }
     case .named: return nil
     }
   }
@@ -363,6 +377,8 @@ struct NewProjectSheet: View {
     var iso: Int?
     var kind: FilmStock.Kind?
     var calibrated = false
+    /// A calibration of the film, on a tab over its cassette or roll: "翻拍 · 2026-10-30 19:41", "V850".
+    var calibration: String?
     var named = false
     var mono = false
     var tags: [String] = []
@@ -382,11 +398,23 @@ struct NewProjectSheet: View {
       return Look(maker: s.maker, name: s.stock, title: s.stock, iso: s.iso, kind: s.kind, mono: s.mono, tags: tags, note: s.note,
         help: "\(s.name) · ISO \(s.iso) · \(s.kind.rawValue)" + (s.preset != nil ? " · 有数据表" : "") + "（双击直接开始）")
     case .preset(let id):
+      // A calibration is of a film: drawn as the film's own cassette or roll, the same picture as
+      // the film itself, its calibration on a tab. One of no known film keeps the plain can.
       let p = m.profiles.first { $0.id == id } ?? m.profile
-      let base = FilmCatalog.stock(named: p.name)
-      return Look(maker: "本机标定", name: p.name, title: Self.shortTitle(p), iso: p.iso > 0 ? Optional(p.iso) : base?.iso,
-        kind: base?.kind ?? .colour, calibrated: true, tags: ["标定", p.publication.isEmpty ? "本机" : String(p.publication.prefix(28))],
-        help: p.name + "：在这台 Mac 上标定的预设（双击直接开始）")
+      let film = AppModel.film(of: p), stock = film.flatMap { FilmCatalog.stock(named: $0) }
+      let calibration = Self.calibration(p)
+      let tags = [p.offsets == nil ? "导入" : "标定", p.publication.isEmpty ? "本机" : String(p.publication.prefix(28))]
+      let help = p.name + (p.offsets == nil ? "：导入的预设" : "：在这台 Mac 上标定的预设") + "（双击直接开始）"
+      if let s = stock {
+        return Look(maker: s.maker, name: s.stock, title: Self.shortTitle(p), iso: s.iso, kind: s.kind, calibration: calibration, mono: s.mono,
+          tags: tags, help: help)
+      }
+      if let film {
+        return Look(maker: "目录外", name: film, title: Self.shortTitle(p), iso: p.iso > 0 ? Optional(p.iso) : nil, kind: .colour,
+          calibration: calibration, named: true, tags: tags, help: help)
+      }
+      return Look(maker: "本机标定", name: p.name, title: Self.shortTitle(p), iso: p.iso > 0 ? Optional(p.iso) : nil,
+        kind: .colour, calibrated: true, calibration: calibration, tags: tags, help: help)
     case .named(let name):
       return Look(maker: "目录外", name: name.isEmpty ? "未命名胶片" : name, title: name.isEmpty ? "未命名" : name, kind: .colour, named: true,
         tags: ["按通用彩色负片转换"], help: "用「\(name)」作这一卷的胶片名，按通用彩色负片转换（双击直接开始）")
@@ -394,17 +422,26 @@ struct NewProjectSheet: View {
   }
   private func conversion(_ look: Look) -> String {
     if reversal { return "反转片不去色罩、不用通道斜率；扫描或翻拍的读数就是画面。" }
-    if look.calibrated { return "用这台 Mac 上标定的通道斜率和中性。" }
+    if look.calibrated || look.calibration != nil { return "用这台 Mac 上标定的通道斜率和中性。" }
+    // The film calibrated here already: the data sheet as picked, the calibration a pick away.
+    let here: String = {
+      guard changing, case .stock(let id) = choice, let s = FilmCatalog.stocks.first(where: { $0.id == id }),
+        let c = m.calibration(for: s.name) else { return "" }
+      return "这一卷的\(m.copyStandRoll ? "这次翻拍" : "扫描仪")为它标定过「\(c.name)」：要用标定的，在「本机标定」里选它。"
+    }()
     if case .stock(let id) = choice, let s = FilmCatalog.stocks.first(where: { $0.id == id }), let preset = s.preset,
       let p = FilmProfile.builtins.first(where: { $0.id == preset }) {
-      return "用 \(p.publication) 的通道斜率（数据表读出的近似值）；拍过灰阶或色卡后，可以在本机标定得更准。"
+      return "用 \(p.publication) 的通道斜率（数据表读出的近似值）。" + (here.isEmpty ? "拍过灰阶或色卡后，可以在本机标定得更准。" : here)
     }
+    if !here.isEmpty { return "按通用彩色负片转换。" + here }
     if look.kind == .blackWhite { return "App 里没有它的数据：按通用负片转换，三个通道一样的斜率，自动白平衡按画面拉齐。" }
     if look.kind == .cine { return "电影负片（去掉 remjet 后）按通用彩色负片转换；自动白平衡按画面拉齐各通道。" }
     return "App 里没有它的数据表：按通用彩色负片转换，胶片名照它记；拍过灰阶或色卡后，可以在本机标定。"
   }
   private var summary: String {
-    (changing ? "将改为：" : "将新建：") + "\(look(choice).maker.map { $0 == "本机标定" || $0 == "目录外" ? "" : $0 + " " } ?? "")\(look(choice).name) · \(reversal ? "反转片" : "负片") · \(format.rawValue)" + (edges == .auto ? "" : " · \(edges.summary)")
+    let look = look(choice)
+    let calibration = look.calibrated ? "" : look.calibration.map { "（\($0.hasPrefix("翻拍") ? "翻拍标定" + $0.dropFirst(2) : $0 + " 标定")）" } ?? ""
+    return (changing ? "将改为：" : "将新建：") + "\(look.maker.map { $0 == "本机标定" || $0 == "目录外" ? "" : $0 + " " } ?? "")\(look.name)\(calibration) · \(reversal ? "反转片" : "负片") · \(format.rawValue)" + (edges == .auto ? "" : " · \(edges.summary)")
   }
 
   // MARK: Choosing
@@ -566,6 +603,16 @@ struct NewProjectSheet: View {
 
   /// A calibrated preset on the shelf: its film, then where and when, as 「Kodak Portra 160」 over
   /// 「翻拍 11-07」.
+  /// What calibration a preset is past its film: "翻拍 · 2026-10-30 19:41", "V850"; nil for one
+  /// that is not calibrated.
+  static func calibration(_ p: FilmProfile) -> String? {
+    guard p.offsets != nil else { return nil }
+    let past = p.name.components(separatedBy: " · ").dropFirst().joined(separator: " · ")
+    if !past.isEmpty { return past }
+    return p.id.contains("-copy-") || p.publication.hasPrefix("翻拍标定") ? "翻拍" : "V850"
+  }
+  /// The tab over a calibration's cassette: where it was calibrated.
+  static func calibrationTab(_ calibration: String) -> String { calibration.hasPrefix("翻拍") ? "翻拍" : "V850" }
   static func shortTitle(_ p: FilmProfile) -> String {
     let parts = p.name.components(separatedBy: " · ")
     guard parts.count > 1 else { return p.name }

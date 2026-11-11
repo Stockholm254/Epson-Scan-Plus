@@ -269,9 +269,21 @@ enum CalibrationTests {
     linked.matchFilm()
     try check(linked.profile.id == portra.id && linked.filmName == "Kodak Portra 160",
       "the film's data sheet chosen by hand stays when the film's name is applied again, as when the field loses focus")
+    // On the shelf the film's data sheet and its calibration are each a choice: what is picked is taken.
+    linked.chooseProfile(session)
     linked.applyFilm(profile: portra, filmName: "Kodak Portra 160", reversal: false, format: linked.format)
-    try check(linked.profile.id == session.id && linked.filmName == "Kodak Portra 160",
-      "taking the film from the shelf takes this copy session's calibration of it")
+    let sheetTaken = linked.profile.id == portra.id
+    linked.applyFilm(profile: session, filmName: "Kodak Portra 160", reversal: false, format: linked.format)
+    try check(sheetTaken && linked.profile.id == session.id && linked.filmName == "Kodak Portra 160" && linked.calibration(for: "Kodak Portra 160")?.id == session.id,
+      "on the shelf the film's data sheet picked on its calibrated roll is taken, and the calibration picked is taken too")
+    // A calibration is drawn as its film, a tab saying where it was calibrated; the plain can is for one of no known film.
+    let drawn = NewProjectSheet.look(.preset(session.id), m: linked)
+    let stockID = FilmCatalog.stock(named: "Kodak Portra 160")!.id
+    let asFilm = NewProjectSheet.look(.stock(stockID), m: linked)
+    try check(drawn.maker == "Kodak" && drawn.name == asFilm.name && drawn.renderKey == asFilm.renderKey && !drawn.calibrated
+      && drawn.calibration == "翻拍 · 2026-10-30 19:41" && NewProjectSheet.calibrationTab(drawn.calibration!) == "翻拍"
+      && asFilm.calibration == nil && NewProjectSheet.sheet(.preset(session.id), m: linked) != nil,
+      "a calibration on the shelf is its film's own cassette with a 翻拍 tab, and has the film's data sheet")
     let ektar = FilmProfile.builtins.first { $0.id == "ektar100" }!
     linked.chooseProfile(ektar)
     try check(linked.filmName == "Kodak Ektar 100" && linked.otherPresets.contains { $0.id == session.id } && !linked.rollPresets.contains { $0.id == session.id },
@@ -299,6 +311,10 @@ enum CalibrationTests {
     linked.chooseProfile(unnamed)
     try check(AppModel.film(of: unnamed) == nil && linked.filmName == "Harman Phoenix II 200" && linked.rollPresets.contains { $0.id == unnamed.id },
       "an older calibration of no named film keeps the roll's film, and this session's is listed with it")
+    let plainCan = NewProjectSheet.look(.preset(unnamed.id), m: linked), outside = NewProjectSheet.look(.preset(phoenix.id), m: linked)
+    try check(plainCan.calibrated && plainCan.maker == "本机标定" && plainCan.calibration != nil
+      && outside.maker == FilmCatalog.stock(named: "Harman Phoenix II 200").map { $0.maker } ?? "目录外" && !outside.calibrated,
+      "only a calibration of no known film is the plain 本机标定 can; one of a named film is drawn as that film")
     let notes = [true, false, nil].map { FilmCalibration.profile(from: fit, basedOn: portra, points: 3, scanner: "A7R IV", copyStand: true, unmixed: $0).notes }
     try check(notes[0].contains("标定时去串色是开着的") && notes[1].contains("标定时没有去串色") && notes[2].contains("有的去了串色、有的没有"),
       "a copy-stand preset says how its points were read, crosstalk taken out or not, as its slopes hold for that")
