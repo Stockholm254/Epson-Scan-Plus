@@ -179,9 +179,11 @@ enum FilmPrint {
       if has("Pro Image") { return kodakPro("PRO IMAGE 100", ground: rgb(0x3A2A22), light: true) }
       if has("Vision3") { return kodakPro(name.replacingOccurrences(of: "Vision3", with: "VISION3"), ground: rgb(0x111111), light: false) }
       if has("Double-X") { return kodakPro("DOUBLE-X 5222", ground: rgb(0x111111), light: false) }
-      if has("Gold") || has("UltraMax") || has("ColorPlus") || has("Kodacolor") { return kodakConsumer(iso) }
+      if has("Kodacolor") { return kodacolor(iso) }
+      if has("ColorPlus") { return kodakStripes(iso) }
+      if has("Gold") || has("UltraMax") { return kodakConsumer(iso) }
       if has("Ektachrome") { return kodakChrome }
-      if has("Tri-X") { return kodakMono(name: "\(iso)TX", line: "TRI-X \(iso) FILM", field: kodakYellow, colour: rgb(0x23864A), triX: true) }
+      if has("Tri-X") { return kodakMono(name: "\(iso)TX", line: "TRI-X \(iso) FILM", field: rgb(0xD5D7D8), colour: ink, triX: true) }
       if has("T-Max") { return kodakMono(name: iso == 3200 ? "P3200TMAX" : "\(iso)TMAX", line: iso == 3200 ? "T-MAX P3200 FILM" : "T-MAX \(iso) FILM", field: rgb(0xD5D7D8), colour: ink, triX: false) }
       if has("Ektapan") { return kodakMono(name: iso == 3200 ? "P3200 EKTAPAN" : "\(iso) EKTAPAN", line: "EKTAPAN \(iso) FILM", field: rgb(0xD5D7D8), colour: ink, triX: false) }
     case "Fujifilm":
@@ -296,6 +298,51 @@ enum FilmPrint {
       f.dx(look)
     }
   }
+  /// Kodacolor 100 and 200 as their cassettes of 2024 on are printed (measured off a photograph):
+  /// Kodak yellow all round; a black band just right of the front with the name in white along it,
+  /// the speed very large in black beside it, three small lines on the left, a red tab by the lip,
+  /// and round the back a black band with the speed and length in white.
+  static func kodacolor(_ iso: Int) -> Design {
+    Design { f, look in
+      let yellow = rgb(0xFDAE08), red = rgb(0xE2271C)
+      f.all(yellow)
+      f.fill(ink, 1.2, 7.2)
+      f.along([("KODACOLOR", font("Futura-Bold", 5.0), white)], s: 4.2, top: 3.3, fit: 32, stretch: true)
+      f.along([("\(iso)", font("Futura-Bold", 8.8), ink)], s: -3.4, top: 12.0, fit: 14.6, stretch: true)
+      f.along([("35MM COLOR NEGATIVE FILM", font("AvenirNext-Bold", 1.9), ink)], s: -10.2, top: 7.7, fit: 23)
+      f.along([("PROCESS C-41", font("AvenirNext-Bold", 1.9), ink)], s: -12.3, top: 11.5, fit: 8.9)
+      f.along([("Kodacolor \(iso)-36", font("AvenirNext-DemiBold", 1.7), ink)], s: -14.6, top: 12.4, fit: 15)
+      // A plain red tab where the maker's mark is, the name small in it.
+      f.fill(red, 9.8, 14.4, y0: 15, y1: 23.5)
+      f.along([("KODAK", font("AvenirNext-Bold", 1.3), white)], s: 13.3, top: 18.4, fit: 4)
+      f.fill(ink, -24, -17.4)
+      f.along([("\(iso)", font("AvenirNext-Heavy", 4.2), white), ("  36 ", font("AvenirNext-Heavy", 4.2), white), ("EXP", font("AvenirNext-Heavy", 2.6), white)],
+        s: -20.7, top: 3, fit: 32)
+      f.dx(look)
+    }
+  }
+  /// ColorPlus, whose cassettes are printed Kodacolor in the earlier style (measured off a
+  /// photograph): Kodak yellow; fine black stripes along the cassette by the lip, the speed very
+  /// large in white edged black over them and the name small by the lip; 35 mm Film for Color Prints
+  /// in two lines on the front, the speed and length small, DX; a black band round the back with
+  /// the speed and length in white.
+  static func kodakStripes(_ iso: Int) -> Design {
+    Design { f, look in
+      f.all(kodakYellow)
+      var s: CGFloat = 3.7
+      while s < 13 { f.fill(ink, s, s + 0.24, y0: 1.6, y1: 37); s += 0.78 }
+      f.along([("\(iso)", font("AvenirNext-Bold", 7.6), white)], s: 6.8, top: 19.4, fit: 17.8, stretch: true, outline: ink)
+      f.along([("Kodacolor", font("AvenirNext-Bold", 2.6), ink)], s: 13.6, top: 3.1, fit: 14)
+      f.along([("35 mm Film", font("HelveticaNeue-Bold", 3.4), ink)], s: 0.2, top: 4.7, fit: 12.4)
+      f.along([("for Color Prints", font("HelveticaNeue-Bold", 3.4), ink)], s: -3.2, top: 4.7, fit: 21.7)
+      f.along([("KODAK \(iso) • 36", font("HelveticaNeue", 1.7), ink)], s: -6.3, top: 14.7, fit: 10.9)
+      f.along([("DX", font("AvenirNext-HeavyItalic", 3.0), ink)], s: -5.7, top: 29.5, fit: 5)
+      f.fill(ink, -19, -9.8)
+      f.along([("\(iso)", font("HelveticaNeue-Bold", 4.6), white), ("  36 ", font("HelveticaNeue-Bold", 4.6), white), ("EXP.", font("HelveticaNeue-Bold", 2.8), white)],
+        s: -12.6, top: 3.5, fit: 30)
+      f.dx(look)
+    }
+  }
   /// Ektachrome: royal blue; the yellow notes strip on the left under the process, a yellow strip
   /// by the lip with the maker; the stock very large in white, its name and what it is beside.
   static let kodakChrome = Design { f, look in
@@ -312,39 +359,28 @@ enum FilmPrint {
     f.along([("Color Reversal Film", font("AvenirNext-Regular", 2.5), white)], s: -9.0, top: 6.0, fit: 24)
     f.dx(look)
   }
-  /// Kodak's black-and-white films: a white band at the top with B&W; the stock large; its film's
-  /// line and the maker by the lip; Tri-X on Kodak yellow in green, T-Max on silver in black.
+  /// Kodak's black-and-white films as their cassettes are printed now (Tri-X and T-Max measured off
+  /// photographs): silver; a white band at the top with B&W; the yellow notes strip on the left;
+  /// the stock large, what it is beside it; a black band by the lip with the film's line and the
+  /// maker in white. Tri-X's 400TX in Kodak's wide capitals, T-Max's TMAX in heavy italics.
   static func kodakMono(name: String, line: String, field: NSColor, colour: NSColor, triX: Bool) -> Design {
     Design { f, look in
-      if triX {
-        f.all(field)
-      } else {
-        f.all(field)
-        f.shade([rgb(0xB8BBBD), rgb(0xE6E8E9), rgb(0xC9CCCE)], -10.6, 7.8)
-        f.fill(kodakYellow, -18.5, -10.6)
-      }
-      f.fill(paper, 7.8, 22)
-      f.fill(paper, -60, 30, y1: 4.6)
-      f.across([("B&W", font("Georgia-Bold", 3.1), ink)], s: -1.5, y: 1.0, centred: true)
-      // The stock in Kodak's wide capitals with their small serifs; T-Max's TMAX in heavy italics,
-      // its T tall.
+      f.all(field)
+      f.shade([rgb(0xBFC2C4), rgb(0xE8EAEB), rgb(0xCDD0D2)], -5.2, 7.2)
+      f.fill(kodakYellow, -18.5, -5.2)
+      f.fill(ink, 7.2, 30)
+      f.fill(paper, -60, 7.2, y1: 4.6)
+      f.across([("B&W", font("Georgia-Bold", 3.1), ink)], s: -4.1, y: 1.0, centred: true)
       let serif = "Copperplate-Bold", digits = String(name.prefix { $0.isNumber || $0 == "P" })
       let title: [(String, NSFont, NSColor)] = triX ? [(name, font(serif, 8.6), colour)]
         : [(digits, font(serif, 8.6), colour), (String(name.dropFirst(digits.count).prefix(1)), font("AvenirNext-HeavyItalic", 10.4), colour),
            (String(name.dropFirst(digits.count + 1)), font("AvenirNext-HeavyItalic", 7.2), colour)]
-      f.along(title, s: -1.4, top: 5.4, fit: 28.5)
-      f.along([(line, font(triX ? "HelveticaNeue-Bold" : "HelveticaNeue-Medium", 2.0), ink)], s: 3.2, top: 5.6, fit: 20, kern: triX ? 0.05 : 0.25)
-      f.along(kodakProfessional(2.9, ink, maker: triX ? rgb(0xD7261E) : nil), s: 6.0, top: 6.0, fit: 22)
-      f.along([("BLACK & WHITE NEGATIVE FILM", font(triX ? "HelveticaNeue-Bold" : "HelveticaNeue-Medium", 2.3), ink)], s: -6.4, top: 5.8, fit: 27)
-      f.along([("NOTES", font(triX ? "HelveticaNeue-Bold" : "HelveticaNeue", 1.8), ink)], s: triX ? -9.4 : -11.8, top: 6.0, fit: 8, kern: 0.15)
-      if triX {
-        let big = font(serif, 5.4)
-        f.along([("\(look.iso ?? 400)", big, colour)], s: -10.0, top: 26.6, fit: 10)
-        f.along([("\(look.iso ?? 400)", big, colour)], s: -14.2, top: 26.6, fit: 10)
-        f.along([("\(name)•36", font("HelveticaNeue-Bold", 1.5), ink)], s: -16.4, top: 26.6, fit: 8)
-        f.fill(paper, -23, -17.4)
-        f.along([(name, font(serif, 4.6), colour)], s: -19.6, top: 4.6, fit: 20)
-      }
+      f.along(title, s: 2.4, top: 5.4, fit: 28.5)
+      f.along([("BLACK & WHITE NEGATIVE FILM", font("HelveticaNeue-Medium", 2.3), ink)], s: -2.8, top: 5.8, fit: 27)
+      f.along([("NOTES", font("HelveticaNeue", 1.8), ink)], s: -6.7, top: 6.0, fit: 8, kern: 0.15)
+      f.along([(line, font("HelveticaNeue-Medium", 1.9), white)], s: 8.3, top: 5.8, fit: 20, kern: 0.2)
+      f.along(kodakProfessional(2.9, white), s: 10.9, top: 6.0, fit: 22)
+      f.along([("\(name) • 36", font("HelveticaNeue-Medium", 1.5), ink)], s: -11.4, top: 24, fit: 10)
       f.dx(look)
     }
   }

@@ -71,5 +71,14 @@ enum UIDayTests {
     try check(film35?.look.maker == "Kodak" && film35?.look.name.contains("Portra") == true && film35?.gauge == .mm135 && film120?.gauge == .mm120,
       "a roll's label shows its film from the catalog: Portra 160 as its cassette, in a 6×6 roll as its 120 roll")
     try check(RollSleeve.film(own, model: model)?.look.named == true, "a film the catalog does not know shows its own name on a plain can")
+    // The cassettes as the real ones are printed now: Kodacolor and ColorPlus each their own, and
+    // Tri-X's 120 paper reading 400TX as its cassette does.
+    func shelf(_ name: String) -> NewProjectSheet.Look? {
+      FilmCatalog.stock(named: name).map { NewProjectSheet.look(.stock($0.id), m: model) }
+    }
+    let names = ["Kodak Kodacolor 100", "Kodak ColorPlus 200", "Kodak Gold 200", "Kodak Tri-X 400"]
+    try check(names.allSatisfy { shelf($0).flatMap(FilmPrint.design) != nil }
+      && shelf("Kodak Tri-X 400").map(Roll120Print.stockName) == "400TX" && shelf("Kodak Portra 400").map(Roll120Print.stockName)?.contains("Portra") == true,
+      "Kodacolor, ColorPlus, Gold and Tri-X each have a print of their own; Tri-X's 120 paper reads 400TX")
   }
 }

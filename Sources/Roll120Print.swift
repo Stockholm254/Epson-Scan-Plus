@@ -43,8 +43,11 @@ enum Roll120Print {
     default: return .other
     }
   }
-  /// The stock's name without its maker, as the roll prints it (PORTRA 400).
-  static func stockName(_ look: Look) -> String { look.name }
+  /// The stock's name without its maker, as the roll prints it (PORTRA 400); Tri-X's paper reads
+  /// 400TX, as its cassette does.
+  static func stockName(_ look: Look) -> String {
+    look.name.contains("Tri-X") ? "\(look.iso ?? 400)TX" : look.name
+  }
 
   // MARK: The backing paper
 
