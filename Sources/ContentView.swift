@@ -700,11 +700,9 @@ struct ContentView: View {
         Divider()
         curvesSection
         Divider()
-        // The scanner's measured MTF is no lens's: on the copy stand only where it was set, to be taken off.
-        if !m.copyStandRoll || (m.selected.map(Sharpening.strength(for:)) ?? 0) > 0 {
-          sharpeningSection
-          Divider()
-        }
+        // A scan sharpens by the scanner's measured MTF, a camera copy by the copy stand's camera's.
+        sharpeningSection
+        Divider()
         inputSection
         }.disabled(frameControlsOff)
       }.padding(18)
@@ -1172,15 +1170,26 @@ struct ContentView: View {
         settled: { m.fadeInNextPicture() })
     }
   }
-  /// Per-frame deconvolution strength, once the scanner has a measured profile.
+  /// Per-frame deconvolution strength: a scan's by the scanner's measured profile, once there is
+  /// one; a camera copy's by the copy stand's camera's, measured on the resolution target, its
+  /// default by its shots and magnification.
   var sharpeningSection: some View {
-    let imported = m.selected?.sourcePath != nil
-    let strength = m.selected.map(Sharpening.strength(for:)) ?? 0
-    return PanelSection("锐化", key: "sharpening", open: false, info: m.preferences.sharpening == nil
-      ? "在 ① 采集 · V850 的「扫描仪锐化」导入一张分辨率标靶的扫描，测出这台扫描仪的 MTF 后可用。"
-      : "按扫描仪实测的 MTF 在线性扫描数据上反卷积；默认温和，推到 0 关闭。导入的图像默认不锐化，它们可能来自其他扫描仪或相机。"
-    ) {
-      if m.preferences.sharpening == nil {
+    let frame = m.selected
+    let shots = frame.flatMap(Sharpening.copyShots)
+    let usable = shots != nil || m.preferences.sharpening != nil
+    let strength = frame.map(m.sharpeningStrength) ?? 0
+    let fallback = frame.map { f in shots.map { Sharpening.copyDefault($0, magnification: m.copyMagnification(f)) } ?? (f.sourcePath != nil ? 0 : Sharpening.defaultStrength) } ?? 0
+    let info: String
+    if let shots {
+      let magnification = frame.flatMap(m.copyMagnification).map { String(format: "，约 %.2f 倍", $0) } ?? ""
+      info = "翻拍按相机实测的模糊在线性数据上反卷积：A7R IV 和适马 70mm 微距在 f/4.5 下约 1.4 个传感器像素，在分辨率标靶上量出（0.39 倍和 0.96 倍一样大），所以同一份配置用于任何放大倍率。\n\n默认强度按合成方式：单张 20%、像素位移 4 张 30%、16 张 40%；放大倍率低于约 0.55 倍时再少 10%，那时胶片颗粒正好落在锐化提升最多的那一段。16 张的默认能拿回相机模糊掉的大部分细节（MTF50 提高约一半），暗部噪点仍不比不锐化的单张多；单张本来噪点和伪色就多，加得少些。再往上加，清晰度涨得慢，噪点涨得快。\n\n这一张：\(shots.title)\(magnification)。"
+    } else if m.preferences.sharpening == nil {
+      info = "在 ① 采集 · V850 的「扫描仪锐化」导入一张分辨率标靶的扫描，测出这台扫描仪的 MTF 后可用。翻拍的照片用相机自己的配置，不用这个。"
+    } else {
+      info = "按扫描仪实测的 MTF 在线性扫描数据上反卷积；默认温和，推到 0 关闭。导入的图像默认不锐化，它们可能来自其他扫描仪或相机。"
+    }
+    return PanelSection("锐化", key: "sharpening", open: false, info: info) {
+      if !usable {
         Text("未配置").readout()
       } else {
         ValueField(title: "锐化强度", text: strength == 0 ? "关" : "\(Int((strength * 100).rounded()))%", value: strength, range: 0...1, scale: 100) { v in
@@ -1188,11 +1197,16 @@ struct ContentView: View {
         }.disabled(m.selected == nil)
       }
     } content: {
-      if m.preferences.sharpening != nil {
-        Fader(
-          title: "锐化强度",
-          value: Binding(get: { strength }, set: { v in m.change("锐化") { $0.sharpening = v } }),
-          range: 0...1, detent: imported ? 0 : Sharpening.defaultStrength)
+      if usable {
+        VStack(alignment: .leading, spacing: 4) {
+          Fader(
+            title: "锐化强度",
+            value: Binding(get: { strength }, set: { v in m.change("锐化") { $0.sharpening = v } }),
+            range: 0...1, detent: fallback)
+          if let shots {
+            Text("相机配置 · \(shots.title) · 默认 \(Int((fallback * 100).rounded()))%").font(.system(size: 11)).foregroundStyle(.secondary)
+          }
+        }
       } else {
         Text("还没有这台扫描仪的锐化配置。").font(.system(size: 11)).foregroundStyle(.secondary)
       }

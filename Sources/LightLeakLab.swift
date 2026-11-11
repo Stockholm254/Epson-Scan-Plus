@@ -1075,13 +1075,16 @@ extension AppModel {
   /// would convert it.
   func leakPositive(_ origin: LeakJob.Origin) throws -> CGImage {
     // What the open roll says, read on the main thread: the lab asks from its own queue.
-    let read = { (self.projectPath, self.frames.first { $0.id == origin.frame }, self.preferences.sharpening) }
+    let read = { (self.projectPath, self.frames.first { $0.id == origin.frame }.map(self.sharpened), self.preferences.sharpening) }
     let (path, found, sharpening) = Thread.isMainThread ? read() : DispatchQueue.main.sync(execute: read)
     guard path == origin.project, var frame = found else {
       let roll = URL(fileURLWithPath: origin.project).deletingLastPathComponent().lastPathComponent
       throw DeskError.message("请先打开第 \(origin.frameName) 张所在的工程「\(roll)」。")
     }
+    // The job's conversion, the frame's sharpening as the roll works it out when the job set none.
+    let strength = frame.adjustments.sharpening
     frame.adjustments = origin.adjustments
+    if frame.adjustments.sharpening == nil { frame.adjustments.sharpening = strength }
     let image = try source(for: frame, full: true)
     let sharpener = Sharpening.sharpener(sharpening, frame: frame, maxDimension: nil)
     // Unclipped, as the renderer computes it: the engine converts it into Adobe RGB exactly.

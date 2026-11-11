@@ -958,6 +958,8 @@ final class AppModel: ObservableObject {
     overviewInputGamma = 1
     pendingShift = []
     startsAsSlides = nil
+    // A new roll is a negative until said otherwise, whatever the last one was.
+    preferences.scanReversal = false
     sourceSummary = ""
     status = (had ? "上一卷已存进库 · " : "") + "新建工程：下一次预览、导入或拍摄存进新的一卷"
     refresh()
@@ -2632,6 +2634,25 @@ final class AppModel: ObservableObject {
     let side = min(w, h)
     return side > 1 ? side / short * 25.4 : nil
   }
+  /// A camera copy's magnification: the film's dpi as the roll's format gives it against the
+  /// sensor's the copy is stored at; nil without a format, or for a scan.
+  func copyMagnification(_ frame: FilmFrame) -> Double? {
+    guard Sharpening.copyShots(frame) != nil, let film = formatDPI(frame), let sensor = frame.scanDPI, sensor > 0 else { return nil }
+    return film / Double(sensor)
+  }
+  /// How strongly `frame` is sharpened: as set, else a copy's own default for its shots and
+  /// magnification, else a scan's or an import's.
+  func sharpeningStrength(_ frame: FilmFrame) -> Double {
+    if let set = frame.adjustments.sharpening { return set }
+    if let shots = Sharpening.copyShots(frame) { return Sharpening.copyDefault(shots, magnification: copyMagnification(frame)) }
+    return Sharpening.strength(for: frame)
+  }
+  /// `frame` with its strength written in, for a render or an export off the main thread.
+  func sharpened(_ frame: FilmFrame) -> FilmFrame {
+    var f = frame
+    f.adjustments.sharpening = sharpeningStrength(frame)
+    return f
+  }
   /// The dpi a frame's file is at: a copy's from the roll's format when given, else as stored.
   func pixelDPI(_ frame: FilmFrame) -> Double? {
     formatDPI(frame) ?? frame.scanDPI.flatMap { $0 > 0 ? Double($0) : nil }
@@ -2876,7 +2897,7 @@ final class AppModel: ObservableObject {
     if !edit { editRegionLock = nil }
     rendering = true
     let request = SingleRender(
-      token: token, frame: frame, profile: conversionProfile, edit: edit, negative: showsNegative || tool == .base, original: showsOriginal,
+      token: token, frame: sharpened(frame), profile: conversionProfile, edit: edit, negative: showsNegative || tool == .base, original: showsOriginal,
       bypassed: curvesBypassed, sharpening: preferences.sharpening, previewDPI: Int(overviewDPI), analysisKey: analysisKey(frame),
       overview: overview)
     wantedLock.lock()
@@ -3944,6 +3965,8 @@ final class AppModel: ObservableObject {
   }
   func export(items: [FilmFrame], to directory: URL, completion: (() -> Void)? = nil) {
     beginExport()
+    // Each frame's sharpening as it is shown, a copy's default worked out here, on the main thread.
+    let items = items.map(sharpened)
     // Named after the roll's preset; converted, and recorded, with what the roll converts with.
     let p = profile, film = conversionProfile
     // Named after the roll's own film (a film converted as the generic preset keeps its name).
@@ -4074,7 +4097,7 @@ final class AppModel: ObservableObject {
   func composeContactSheet(
     ids: [UUID], to url: URL, format: ExportFormat, fromPreview: Bool = false, completion: ((Error?) -> Void)? = nil
   ) {
-    let items = ids.compactMap { id in frames.first { $0.id == id } }
+    let items = ids.compactMap { id in frames.first { $0.id == id } }.map(sharpened)
     let p = conversionProfile, layout = preferences.sheet, quality = preferences.jpegQuality
     let previewDPI = overviewDPI
     let title = "\(filmName) · \(Date().formatted(.iso8601.year().month().day())) · \(items.count) 张"

@@ -118,13 +118,91 @@ struct Sharpener {
 enum Sharpening {
   static let defaultStrength = 0.4
   /// Own scans are sharpened gently by default; imported images may come from another
-  /// scanner or a camera, so they start unsharpened.
+  /// scanner or a camera, so they start unsharpened. A copy's default is its own (`copyDefault`),
+  /// set by the roll (`AppModel.sharpened`), which knows its magnification.
   static func strength(for frame: FilmFrame) -> Double {
     frame.adjustments.sharpening ?? (frame.sourcePath == nil ? defaultStrength : 0)
   }
+
+  // MARK: The copy stand's camera
+
+  /// The A7R IV with the Sigma 70 mm F2.8 DG Macro Art at f/4.5 on the copy stand, measured off the
+  /// edges of a resolution target's white square at 0.39× (2026-11-09, 16 shots supersampled), where
+  /// the target's own blur is negligible: about 1.4 sensor pixels, the same at 0.96× and whatever
+  /// the mode, as the blur lies on the camera's side. In cycles per millimetre on the sensor at the
+  /// dpi copies are stored at (their long side as 36 mm: 6773 dpi a sensor pixel), so one kernel
+  /// serves every magnification, and a 16-shot frame at twice the sensor (13547 dpi) gets it twice
+  /// as wide in its own pixels.
+  static let camera: SharpeningProfile = {
+    let perPixel: [(Double, Double)] = [
+      (0, 1), (0.025, 0.963), (0.05, 0.908), (0.075, 0.818), (0.1, 0.72), (0.125, 0.618), (0.15, 0.523),
+      (0.175, 0.433), (0.2, 0.353), (0.225, 0.285), (0.25, 0.222), (0.275, 0.177), (0.3, 0.136), (0.325, 0.104),
+      (0.35, 0.079), (0.375, 0.058), (0.4, 0.043),
+    ]
+    let perMM = 6773 / 25.4
+    let curve = perPixel.map { SharpeningProfile.Point(cyclesPerMM: $0.0 * perMM, mtf: $0.1) }
+    return SharpeningProfile(
+      source: "A7R IV · Sigma 70mm F2.8 DG Macro Art · f/4.5 · 分辨率标靶 0.39×", measured: Date(timeIntervalSince1970: 1_794_182_400),
+      targetDPI: 6773, targetGamma: 1, horizontal: curve, vertical: curve, horizontalEdges: 2, verticalEdges: 2)
+  }()
+  /// What a copy was composed from.
+  enum Shots: Equatable {
+    case one, four, sixteen, sixteenDouble
+    var title: String {
+      switch self {
+      case .one: return "单张"
+      case .four: return "像素位移 4 张"
+      case .sixteen: return "像素位移 16 张（超采样）"
+      case .sixteenDouble: return "像素位移 16 张（2 倍）"
+      }
+    }
+  }
+  private static let shotsLock = NSLock()
+  private static var shotsRead = [String: Shots]()
+  /// A camera copy's shots: a pixel-shift group's picture is named after its folder in Captures,
+  /// whose RAWs it counts; any other copy is one shot. Nil for scans and imported pictures.
+  static func copyShots(_ frame: FilmFrame) -> Shots? {
+    guard frame.sensorRead == true, let path = frame.sourcePath else { return nil }
+    shotsLock.lock()
+    defer { shotsLock.unlock() }
+    if let known = shotsRead[path] { return known }
+    let url = URL(fileURLWithPath: path), folder = url.deletingLastPathComponent()
+    var shots = Shots.one
+    if folder.lastPathComponent == "Decoded" {
+      let group = folder.deletingLastPathComponent().appendingPathComponent("Captures", isDirectory: true)
+        .appendingPathComponent(url.deletingPathExtension().lastPathComponent, isDirectory: true)
+      let raws = ((try? FileManager.default.contentsOfDirectory(atPath: group.path)) ?? [])
+        .filter { AppModel.rawExtensions.contains(($0 as NSString).pathExtension.lowercased()) }.count
+      if raws >= 16 {
+        shots = ImagePipeline.shared.info(url).width > 12000 ? .sixteenDouble : .sixteen
+      } else if raws >= 4 {
+        shots = .four
+      }
+    }
+    shotsRead[path] = shots
+    return shots
+  }
+  /// How much a copy is sharpened by default, measured on the target at 0.39× and 0.96×
+  /// (outputs/锐化研究-2026-11-10): enough to take most of what the camera's blur hides, no more
+  /// noise in the shadows than a single shot unsharpened. One shot has the most noise and false
+  /// colour, 16 the least; below about half life size the film's grain falls where the kernel
+  /// boosts most, so a little less.
+  static func copyDefault(_ shots: Shots, magnification: Double?) -> Double {
+    var s: Double
+    switch shots {
+    case .one: s = 0.2
+    case .four: s = 0.3
+    case .sixteen, .sixteenDouble: s = 0.4
+    }
+    if let m = magnification, m < 0.55 { s -= 0.1 }
+    return s
+  }
+
   /// The kernel for `frame`'s full-resolution source, loaded with `maxDimension` (nil for the
-  /// file's own size). Previews and frames without a profile are left alone.
+  /// file's own size). Previews and frames without a profile are left alone; a camera copy has the
+  /// copy stand's camera's (`camera`), whatever the scanner's.
   static func sharpener(_ profile: SharpeningProfile?, frame: FilmFrame, maxDimension: Int?) -> Sharpener? {
+    let profile = copyShots(frame) != nil ? camera : profile
     guard let profile, frame.hasFullResolution, let path = frame.scanPath ?? frame.sourcePath else { return nil }
     let strength = strength(for: frame)
     guard strength > 0 else { return nil }
