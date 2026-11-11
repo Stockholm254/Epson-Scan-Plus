@@ -543,6 +543,7 @@ struct FilmProfile: Codable, Identifiable, Equatable {
         "https://www.kodakprofessional.com/sites/default/files/wysiwyg/pro/resources/e4046_ektar_100.pdf",
       publication: "Kodak E-4046 · 2016 · p.4", slopes: RGB(r: 0.56, g: 0.57, b: 0.65),
       notes: approximation),
+  ] + FilmDataSheets.presets + [
     FilmProfile(
       id: "generic", name: "通用彩色负片", aliases: ["generic", "通用"], iso: 0, process: "彩色负片",
       sourceURL: "", publication: "通用起点 · 未匹配文档", slopes: RGB(r: 0.55, g: 0.55, b: 0.55),

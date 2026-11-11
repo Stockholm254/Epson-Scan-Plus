@@ -19,6 +19,7 @@ enum RegressionTests {
     try CalibrationTests.run(folder: folder)
     try RollCurveTests.run(folder: folder)
     try FilmCurveTests.run(folder: folder)
+    try DataSheetTests.run(folder: folder)
     try IT8Tests.run(folder: folder)
     try LightTableTests.run(folder: folder)
     try LoupeTests.run(folder: folder)
