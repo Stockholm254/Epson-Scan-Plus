@@ -26,6 +26,9 @@ struct ViewChangeInFlight {
   var playsUntil: Date?
   /// The canvas draws no picture under it meanwhile: the turned picture plays in its place.
   var hold: Bool
+  /// The frames chosen on the light table that a turn or a mirror changes, each playing in its
+  /// own place; none for one frame or the whole roll.
+  var cells: [UUID] = []
 }
 
 /// How the canvas animates the model's changes of view. Each one takes the canvas's picture
@@ -96,7 +99,9 @@ extension FilmCanvasView {
     CATransaction.commit()
     var hold = false
     if case .orient = kind { hold = true }
-    let flight = ViewChangeInFlight(kind: kind, cover: cover, over: model.displayed, turnBefore: turn, hold: hold)
+    var flight = ViewChangeInFlight(kind: kind, cover: cover, over: model.displayed, turnBefore: turn, hold: hold)
+    // Several frames chosen on the light table turn each in its place.
+    if case .orient = kind, !model.singleView, model.multiSelected { flight.cells = model.selection.map(\.id) }
     self.change = flight
     // Its marks are in the picture it plays; none drawn over it (`marksShown`).
     overlay.needsDisplay = true
@@ -295,6 +300,10 @@ extension FilmCanvasView {
       playAhead(cover, for: 0.25)
       return
     }
+    // The frames chosen turned, the table as it lay: each turns in its own place.
+    if turns == 0, !mirror, !flight.cells.isEmpty, case .orient(let asked, let askedMirror, _) = flight.kind {
+      return playCells(flight.cells, turns: asked, mirror: askedMirror)
+    }
     guard turns != 0 || mirror else {
       // Its frames turned, the table did not: the new picture fades in.
       change?.hold = false
@@ -378,6 +387,89 @@ extension FilmCanvasView {
     }
     CATransaction.commit()
     playAhead(cover, for: 0.5)
+  }
+
+  /// The frames chosen turned, or mirrored, on a table that lies as it did: each frame's picture as
+  /// it was turns, or turns over edge-on, in its own place, as large as it will lie there turned,
+  /// then gives way to the table's new picture under it.
+  private func playCells(_ ids: [UUID], turns: Int, mirror: Bool) {
+    guard let model, let layer, let flight = change, let contents = flight.cover.contents else { return finishChange() }
+    let shot = contents as! CGImage
+    let r = flight.cover.frame, k = CGFloat(shot.width) / max(1, r.width)
+    var cells: [(CALayer, CGRect)] = []
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    change?.hold = false
+    needsDisplay = true
+    flight.cover.opacity = 0
+    for id in ids {
+      guard let f = model.contactFrames.first(where: { $0.id == id }) else { continue }
+      let c = screen(model.contactRect(f).cg).intersection(r)
+      let crop = CGRect(x: (c.minX - r.minX) * k, y: (c.minY - r.minY) * k, width: c.width * k, height: c.height * k).integral
+      guard c.width > 2, c.height > 2, let picture = shot.cropping(to: crop) else { continue }
+      // Under it, the table's own light just beside the cell, so the frame's new picture shows only
+      // once it has turned, not behind it as it turns.
+      let backing = CALayer()
+      backing.frame = c
+      if let lit = Self.colour(in: shot, at: CGPoint(x: max(0, crop.minX - 3 * k) / CGFloat(shot.width), y: crop.midY / CGFloat(shot.height))) {
+        backing.backgroundColor = CGColor(colorSpace: shot.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!, components: [lit.r, lit.g, lit.b, 1])
+      }
+      layer.addSublayer(backing)
+      let cell = CALayer()
+      cell.frame = c
+      cell.contents = picture
+      layer.addSublayer(cell)
+      cells.append((cell, c))
+      cells.append((backing, c))
+    }
+    CATransaction.commit()
+    change?.layers += cells.map(\.0)
+    let now = CACurrentMediaTime(), turnFor = 0.4
+    for (cell, c) in cells {
+      // A backing stays as it lies and goes with its picture.
+      if cell.contents == nil {
+        let fade = Self.fade(from: 1, to: 0, duration: 0.14)
+        fade.beginTime = now + turnFor * 0.85
+        fade.fillMode = .both
+        fade.isRemovedOnCompletion = false
+        cell.add(fade, forKey: "fade")
+        continue
+      }
+      var animations: [CAAnimation] = []
+      if mirror {
+        let over = CAKeyframeAnimation(keyPath: "transform.scale.x")
+        over.values = [1, 0, -1]
+        over.keyTimes = [0, 0.5, 1]
+        over.timingFunctions = [CAMediaTimingFunction(name: .easeIn), CAMediaTimingFunction(name: .easeOut)]
+        over.duration = turnFor
+        animations.append(over)
+      } else {
+        // A quarter turn lays it the other way in the same cell, so smaller.
+        let quarter = turns % 2 != 0, fit = quarter ? min(c.width / c.height, c.height / c.width) : 1
+        let spin = CASpringAnimation(perceptualDuration: turnFor, bounce: 0)
+        spin.keyPath = "transform.rotation.z"
+        spin.fromValue = 0
+        spin.toValue = CGFloat(turns) * .pi / 2
+        let shrink = CASpringAnimation(perceptualDuration: turnFor, bounce: 0)
+        shrink.keyPath = "transform.scale"
+        shrink.fromValue = 1
+        shrink.toValue = fit
+        for s in [spin, shrink] { s.duration = s.settlingDuration }
+        animations += [spin, shrink]
+      }
+      for a in animations {
+        a.fillMode = .forwards
+        a.isRemovedOnCompletion = false
+        cell.add(a, forKey: (a as? CAPropertyAnimation)?.keyPath)
+      }
+      // Turned, it fades into the new picture of itself under it.
+      let fade = Self.fade(from: 1, to: 0, duration: 0.14)
+      fade.beginTime = now + turnFor * 0.85
+      fade.fillMode = .both
+      fade.isRemovedOnCompletion = false
+      cell.add(fade, forKey: "fade")
+    }
+    playAhead(flight.cover, for: turnFor + 0.15)
   }
 
   /// Done, or given up: the canvas draws its own picture again.
