@@ -2,7 +2,7 @@ import SwiftUI
 
 /// ② 去色罩's dust: looked for on this frame or the whole roll, marked by hand, kept or filled.
 struct DustSection: View {
-  @ObservedObject var m: AppModel
+  @Gated var m: AppModel
   @AppStorage("dustSensitivity") private var sensitivity = DustSensitivity.medium.rawValue
   static let info = """
     「找灰尘」在负片上找比周围的胶片密得多的小点：灰尘、毛发和纤维挡住的光，三个颜色一样多，所以三个通道都比颗粒高出很多才算。画面里本来就小而亮的东西（树叶间的亮点、车灯）按胶片三层的反差走，绿比红多，不算；但水面和金属的反光也可能被当成灰尘，看一下标出的圆圈，点一下就留下。

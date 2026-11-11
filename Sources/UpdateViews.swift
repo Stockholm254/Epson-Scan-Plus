@@ -51,7 +51,7 @@ struct UpdateSheet: View {
 /// In the workspace's status line while a newer version is on offer or ready: what it is, and the
 /// key to see it.
 struct UpdateNotice: View {
-  @ObservedObject var m: AppModel
+  @Gated var m: AppModel
   @ObservedObject var updater: Updater
   var body: some View {
     if let r = updater.release {

@@ -60,6 +60,7 @@ enum Shortcuts {
       Key(keys: "⌘ 点选 · ⇧ 连选", does: "选几张一起导出"),
       Key(keys: "⌘E", does: "导出当前（或选中的几张）"),
       Key(keys: "⇧⌘E · ⌥⌘E", does: "导出勾选的 · 导出接触表"),
+      Key(keys: "⌥⇧⌘E", does: "直接导出到「输出」里的位置，不弹窗口"),
       Key(keys: "⌥⌘L", does: "在去漏光里打开"),
     ]),
   ]

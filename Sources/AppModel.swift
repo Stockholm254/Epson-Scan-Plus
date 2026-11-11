@@ -213,6 +213,12 @@ final class AppModel: ObservableObject {
   @Published private(set) var exported: (status: String, files: [URL])?
   /// Exports finished, for the status line to show each, also one saying what the last said.
   @Published private(set) var exportsDone = 0
+  /// The exports running, frame by frame, for the status line's bar and the strip's marks.
+  @Published private(set) var exportProgress = ExportProgress()
+  /// What each frame was last exported with, saved with the roll.
+  @Published private(set) var exportStamps = [UUID: ExportStamp]()
+  /// One for each export running: 停止 sets them all.
+  private var exportStops = [StopFlag]()
   @Published var errorText: String?
   @Published var rendering = false
   @Published var detectingFrames = false
@@ -443,6 +449,16 @@ final class AppModel: ObservableObject {
   @Published var showShortcuts = false
   /// Keeps a copy in Applications up to date; started with the app.
   lazy var updater = Updater(preferences: preferences)
+  /// What the window observes: the model's changes, fewer while a slider is dragged.
+  lazy var windowGate = WindowGate(self)
+  /// When the frame's settings were changed last and the time before (`change`).
+  private var changedAt = (previous: CFTimeInterval(0), last: CFTimeInterval(0))
+  /// A slider is being dragged, or a key held: the frame's settings changed twice within a
+  /// slider's step, the last just now.
+  var adjustingContinuously: Bool {
+    let now = CACurrentMediaTime()
+    return now - changedAt.last < Self.slideStep && changedAt.last - changedAt.previous < Self.slideStep
+  }
   /// The 去漏光 page, made when it is first shown.
   lazy var leak: LeakLab = makeLeakLab()
   /// New previews and imports create their project folders here.
@@ -954,6 +970,7 @@ final class AppModel: ObservableObject {
     singleView = false
     frames = []
     thumbnails = [:]
+    exportStamps = [:]
     tablePrint = nil
     selectedID = nil
     clearEdits()
@@ -1002,6 +1019,7 @@ final class AppModel: ObservableObject {
       poolPictures = false
       useCalibration = true
       rollFlats = []
+      exportStamps = [:]
       rollSource = nil
       clearEdits()
       let root = try makeSession()
@@ -1353,6 +1371,8 @@ final class AppModel: ObservableObject {
   /// `separate` (an assistant's calls, each one step however quickly they come).
   func change(_ name: String = "调整", separate: Bool = false, _ mutation: (inout Adjustments) -> Void) {
     guard let i = selectedIndex else { return }
+    // Before anything is set, so the window's gate knows this step for one of a drag's.
+    changedAt = (changedAt.last, CACurrentMediaTime())
     if separate { lastEdit = nil }
     let key = "\(name)-\(frames[i].id)"
     if let lastEdit, lastEdit.key == key, Date().timeIntervalSince(lastEdit.at) < 1 { cancelPictureFade() }
@@ -1365,7 +1385,16 @@ final class AppModel: ObservableObject {
     frames[i].adjustments.rollSlopes = rollSlopes
     frames[i].adjustments.rollBasePicked = picked
     refresh()
-    saveProject()
+    // A drag's steps saved once it stops: a copy roll's project is near a megabyte, some 17 ms a save.
+    if adjustingContinuously { saveProjectAfterDrag() } else { saveProject() }
+  }
+  /// The save a slider's drag waits for: 0.4 s after its last step, unless something saves first.
+  private var pendingSave: DispatchWorkItem?
+  private func saveProjectAfterDrag() {
+    pendingSave?.cancel()
+    let save = DispatchWorkItem { [weak self] in self?.saveProject() }
+    pendingSave = save
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: save)
   }
   /// The tone and colour settings back to their defaults. How the file is encoded, which way the
   /// frame faces and the roll's own estimates are not settings, so they stay.
@@ -3979,6 +4008,7 @@ final class AppModel: ObservableObject {
       poolPictures = false
       useCalibration = true
       rollFlats = []
+      exportStamps = [:]
       rollSource = nil
       let root = try makeSession()
       let src = root.appendingPathComponent("Originals")
@@ -4075,6 +4105,12 @@ final class AppModel: ObservableObject {
   }
   /// What exporting the chosen frames is called where it is offered.
   var exportSelectionTitle: String { selection.count > 1 ? "导出所选的 \(selection.count) 张…" : "导出当前…" }
+  /// Exporting the chosen frames with no panel, into the output tab's folder, as it is offered.
+  var quickExportTitle: String {
+    let what = selection.count > 1 ? "所选的 \(selection.count) 张" : "当前这张"
+    guard let folder = exportFolder else { return "直接导出" + what }
+    return "直接导出" + what + "到「" + (exportsIntoRoll ? "本卷 Exports" : folder.lastPathComponent) + "」"
+  }
   /// A click on a frame (the film strip, the light table) with `modifiers`: true when it chose
   /// frames with ⌘ or ⇧, which leaves the frame shown; false when the frame is to be opened, the
   /// frames chosen with the last one let go. Control-click is the Mac's right click, so ⌘ adds.
@@ -4134,6 +4170,77 @@ final class AppModel: ObservableObject {
     let exports = roll.appendingPathComponent("Exports", isDirectory: true)
     return fm.fileExists(atPath: exports.path) ? exports : roll
   }
+  /// Where the output tab exports, with no panel: the folder last exported to when it is one of
+  /// its own, as `exportStart` takes it, else this roll's Exports (made when first written to).
+  var exportFolder: URL? {
+    if let path = preferences.lastExportFolder, FileManager.default.fileExists(atPath: path) {
+      let last = URL(fileURLWithPath: path, isDirectory: true)
+      if !Self.withinRoll(last) { return last }
+    }
+    return sessionURL?.appendingPathComponent("Exports", isDirectory: true)
+  }
+  /// The output tab exports into this roll's own Exports.
+  var exportsIntoRoll: Bool {
+    guard let folder = exportFolder, let roll = sessionURL else { return false }
+    return folder.standardizedFileURL == roll.appendingPathComponent("Exports", isDirectory: true).standardizedFileURL
+  }
+  /// Back to each roll's own Exports.
+  func exportIntoRoll() { preferences.lastExportFolder = nil }
+  /// A folder of its own for every roll's exports, chosen in a panel.
+  func chooseExportFolder() {
+    let panel = NSOpenPanel()
+    panel.canChooseFiles = false
+    panel.canChooseDirectories = true
+    panel.canCreateDirectories = true
+    panel.prompt = "导出到此文件夹"
+    panel.message = "之后每一卷都导出到这里；选在某一卷的文件夹里时，导出回到各卷自己的 Exports"
+    panel.directoryURL = exportFolder.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil } ?? exportStart()
+    guard panel.runModal() == .OK, let folder = panel.url else { return }
+    preferences.lastExportFolder = folder.path
+  }
+  /// The frames the output tab's key exports: those chosen (or the one shown), those ticked, or
+  /// those changed since they were exported.
+  enum ExportScope: String, CaseIterable { case chosen, ticked, changed }
+  @Published var exportScope = ExportScope.chosen
+  func exportItems(_ scope: ExportScope) -> [FilmFrame] {
+    switch scope {
+    case .chosen: return selection
+    case .ticked: return frames.filter(\.enabled)
+    case .changed: return changedSinceExport
+    }
+  }
+  /// Exports `items` straight into `exportFolder`, in the output tab's format: no panel, only the
+  /// question about frames not yet scanned.
+  func exportHere(_ items: [FilmFrame]) {
+    guard !items.isEmpty, !isWorking, let folder = exportFolder else { return }
+    let previews = items.filter { !$0.hasFullResolution }.count
+    if previews > 0 {
+      let alert = NSAlert()
+      alert.messageText = "包含 \(previews) 张低清预览"
+      alert.informativeText = "这些画面尚未正式扫描。导出不会增加实际细节；如需成片，请先扫描。"
+      alert.addButton(withTitle: "仅导出预览 / 继续")
+      alert.addButton(withTitle: "取消")
+      guard alert.runModal() == .alertFirstButtonReturn else { return }
+    }
+    export(items: items, to: folder)
+  }
+  /// The pixels `f` is written with: its crop of the full picture, straightened and turned. File
+  /// sizes read once (`filePixels`), as the output tab asks again with every change.
+  func exportPixels(_ f: FilmFrame) -> CGSize? {
+    let crop: CGSize
+    if let path = f.sourcePath {
+      crop = f.rect.pixels(filePixels(path)).size
+    } else if let path = f.scanPath, f.hasFullResolution {
+      crop = f.rect.relative(to: f.captureRect).pixels(filePixels(path)).size
+    } else if let overview = overviewURL {
+      crop = f.rect.pixels(filePixels(overview.path)).size
+    } else { return nil }
+    guard crop.width > 0, crop.height > 0 else { return nil }
+    let degrees = f.adjustments.angle ?? 0
+    let keep = abs(degrees) > 0.0001 ? ImageGeometry.keep(degrees, aspect: Double(crop.width / crop.height)) : 1
+    let w = (crop.width * CGFloat(keep)).rounded(.down), h = (crop.height * CGFloat(keep)).rounded(.down)
+    return ((f.adjustments.rotation % 4) + 4) % 2 == 1 ? CGSize(width: h, height: w) : CGSize(width: w, height: h)
+  }
   /// Whether a folder is a roll's or lies in one: it, or a folder above it, holds a project.
   static func withinRoll(_ folder: URL) -> Bool {
     var at = folder.standardizedFileURL
@@ -4144,16 +4251,66 @@ final class AppModel: ObservableObject {
     return false
   }
   /// Exports can overlap (an auto-export while the next scan runs), so `exporting` counts them.
-  private func beginExport() {
+  /// Each adds its frames to the progress, and gets a flag 停止 sets.
+  private func beginExport(_ ids: [UUID] = [], sheet: Bool = false) -> StopFlag {
     exportsRunning += 1
     exporting = true
+    let stop = StopFlag()
+    exportStops.append(stop)
+    exportProgress.total += ids.count
+    exportProgress.waiting.formUnion(ids)
+    if sheet { exportProgress.sheet = true }
+    return stop
   }
-  private func endExport() {
+  /// `left` are the frames it was asked for and did not write (stopped, or an error).
+  private func endExport(_ stop: StopFlag, left: [UUID] = []) {
     exportsRunning = max(0, exportsRunning - 1)
     exporting = exportsRunning > 0
+    exportStops.removeAll { $0 === stop }
+    exportProgress.total -= left.count
+    exportProgress.waiting.subtract(left)
+    if let w = exportProgress.writing, left.contains(w) {
+      exportProgress.writing = nil
+      exportProgress.writingName = nil
+    }
+    if exportsRunning == 0 { exportProgress = ExportProgress() }
   }
+  /// Stops every export running after the frame it is writing; the files written stay.
+  func stopExports() {
+    guard exporting else { return }
+    exportStops.forEach { $0.stop() }
+    status = "正在停止导出：写完这张就停…"
+  }
+  /// A frame being written, then written with `stamp`.
+  private func writing(_ f: FilmFrame) {
+    exportProgress.waiting.remove(f.id)
+    exportProgress.writing = f.id
+    exportProgress.writingName = f.name
+  }
+  private func wrote(_ id: UUID, stamp: ExportStamp?) {
+    if let stamp { exportStamps[id] = stamp }
+    exportProgress.done += 1
+    if exportProgress.writing == id {
+      exportProgress.writing = nil
+      exportProgress.writingName = nil
+    }
+  }
+  /// How the strip marks `f`: waiting or being written while an export runs, else exported as it
+  /// is now, or changed since.
+  func exportMark(_ f: FilmFrame) -> ExportMark {
+    if exportProgress.writing == f.id { return .writing }
+    if exportProgress.waiting.contains(f.id) { return .waiting }
+    guard let stamp = exportStamps[f.id] else { return .notExported }
+    return stamp.settings == f.adjustments && stamp.film == conversionProfile.id ? .exported : .changed
+  }
+  /// The frames exported and changed since, in the roll's order.
+  var changedSinceExport: [FilmFrame] { frames.filter { exportMark($0) == .changed } }
   func export(items: [FilmFrame], to directory: URL, completion: (() -> Void)? = nil) {
-    beginExport()
+    let stop = beginExport(items.map(\.id))
+    status = "正在导出 \(items.count) 张到 \(directory.lastPathComponent)…"
+
+    // What each frame is stamped with: its own settings, before a copy's sharpening is filled in.
+    let own = Dictionary(items.map { ($0.id, $0.adjustments) }, uniquingKeysWith: { a, _ in a })
     // Each frame's sharpening as it is shown, a copy's default worked out here, on the main thread.
     let items = items.map(sharpened)
     // Named after the roll's preset; converted, and recorded, with what the roll converts with.
@@ -4170,12 +4327,16 @@ final class AppModel: ObservableObject {
     let fileDPI = Dictionary(items.map { ($0.id, pixelDPI($0).map { Int($0.rounded()) }) }, uniquingKeysWith: { a, _ in a })
     let rollFormat = self.format.shortMM == nil ? nil : self.format.rawValue
     let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+    let filmID = film.id
     exportQueue.async {
+      var written = [URL](), writtenIDs = Set<UUID>()
       do {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        var written = [URL]()
         // Each frame's pictures let go before the next: a 60-megapixel frame holds half a gigabyte.
-        for f in items { try autoreleasepool {
+        for f in items {
+          if stop.stopped { break }
+          DispatchQueue.main.async { self.writing(f) }
+          let url = try autoreleasepool { () throws -> URL in
           let image = try self.source(for: f, full: true)
           let sharpener = Sharpening.sharpener(sharpening, frame: f, maxDimension: nil)
           let safeName = Self.exportFrameName(f.name)
@@ -4206,20 +4367,32 @@ final class AppModel: ObservableObject {
           encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
           try encoder.encode(sidecar).write(
             to: url.appendingPathExtension("json"), options: .atomic)
+          return url
+          }
           written.append(url)
-        } }
+          writtenIDs.insert(f.id)
+          let stamp = ExportStamp(at: Date(), file: url.path, settings: own[f.id] ?? f.adjustments, film: filmID)
+          DispatchQueue.main.async { self.wrote(f.id, stamp: stamp) }
+        }
         let files = written
+        let left = items.map(\.id).filter { !writtenIDs.contains($0) }
         DispatchQueue.main.async {
-          self.endExport()
-          self.status = "已导出 \(items.count) 张到 \(directory.lastPathComponent)"
-          self.exported = (self.status, files)
+          self.endExport(stop, left: left)
+          self.status = left.isEmpty
+            ? "已导出 \(items.count) 张到 \(directory.lastPathComponent)"
+            : "已停止导出：写出了 \(files.count) / \(items.count) 张到 \(directory.lastPathComponent)"
+          self.exported = files.isEmpty ? nil : (self.status, files)
           self.exportsDone += 1
+          self.saveProject()
           completion?()
         }
       } catch {
+        let files = written
+        let left = items.map(\.id).filter { !writtenIDs.contains($0) }
         DispatchQueue.main.async {
-          self.endExport()
+          self.endExport(stop, left: left)
           self.errorText = error.localizedDescription
+          if !files.isEmpty { self.saveProject() }
           completion?()
         }
       }
@@ -4309,24 +4482,43 @@ final class AppModel: ObservableObject {
         size: { self.fullSourceSize(for: f) })
     }
     let sheetDPI = fromPreview ? Int(previewDPI) : ContactSheet.scanDPI
-    beginExport()
+    let ids = items.map(\.id)
+    let stop = beginExport(ids, sheet: true)
     status = "正在生成接触表 · \(items.count) 张…"
     exportQueue.async {
+      // Frames whose drawing began; all before the last of them are drawn.
+      var reached = 0
       do {
         let size = try ContactSheet.export(
           tiles, profile: p, layout: layout, title: title, filmCode: filmCode, to: url,
-          format: format, quality: quality, dpi: sheetDPI)
+          format: format, quality: quality, dpi: sheetDPI
+        ) { i in
+          // The frame before this one drawn, this one being drawn.
+          if stop.stopped { throw ExportStopped() }
+          reached = i + 1
+          let f = items[i]
+          DispatchQueue.main.async {
+            if i > 0 { self.wrote(ids[i - 1], stamp: nil) }
+            self.writing(f)
+          }
+        }
         DispatchQueue.main.async {
-          self.endExport()
+          if let last = ids.last { self.wrote(last, stamp: nil) }
+          self.endExport(stop)
           self.status = "接触表已导出：\(url.lastPathComponent) · \(Int(size.width)) × \(Int(size.height))"
           self.exported = (self.status, [url])
           self.exportsDone += 1
           completion?(nil)
         }
       } catch {
+        let left = Array(ids.dropFirst(max(0, reached - 1)))
         DispatchQueue.main.async {
-          self.endExport()
-          self.errorText = error.localizedDescription
+          self.endExport(stop, left: left)
+          if error is ExportStopped {
+            self.status = "已停止生成接触表，没有写出文件"
+          } else {
+            self.errorText = error.localizedDescription
+          }
           completion?(error)
         }
       }
@@ -4343,6 +4535,8 @@ final class AppModel: ObservableObject {
   /// way stay in memory, and the project file is left as it was.
   var readOnly = false
   func saveProject() {
+    pendingSave?.cancel()
+    pendingSave = nil
     guard !readOnly, let root = sessionURL, let overviewURL else { return }
     var saved = frames
     var stripped = false
@@ -4369,6 +4563,9 @@ final class AppModel: ObservableObject {
     project.flats = rollFlats.isEmpty ? nil : rollFlats
     project.format = format == .auto ? nil : format.rawValue
     project.edges = filmEdges == .auto ? nil : filmEdges.rawValue
+    let kept = Set(frames.map(\.id))
+    let stamps = exportStamps.filter { kept.contains($0.key) }
+    project.exports = stamps.isEmpty ? nil : Dictionary(uniqueKeysWithValues: stamps.map { ($0.key.uuidString, $0.value) })
     // Older versions would open a roll whose frames lack their grids as if not flattened: they
     // refuse it instead.
     if stripped { project.version = 2 }
@@ -4464,6 +4661,7 @@ final class AppModel: ObservableObject {
       // A frame's blank-frame flat field, kept once with the roll, read back as the frame reads; a
       // frame that kept its own grid keeps it. One whose flat is not in the roll is left unflattened.
       rollFlats = p.flats ?? []
+      exportStamps = Dictionary((p.exports ?? [:]).compactMap { key, stamp in UUID(uuidString: key).map { ($0, stamp) } }, uniquingKeysWith: { a, _ in a })
       // A blank frame shown as it was read, not de-masked: the light and how it falls off (rolls
       // before 0.19.6 converted it as a negative).
       let blanks = blankFrameIDs

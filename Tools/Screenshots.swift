@@ -34,11 +34,12 @@ struct ShotFailure: Error { let message: String }
   static let roll = "2026-11-07_132152_9EA1"
   /// Its frame on the light table under the loupe, in the single view and on the leak page.
   static let frame = "06"
-  /// The library's sleeves: the copy rolls with no people in them (Phoenix 6×6, Portra 160 and
-  /// Ektar frames of lakes, bridges, signs and test charts), so the films on their labels differ.
+  /// The library's sleeves: the copy rolls with no people in them (Phoenix II 6×6, Portra 160,
+  /// CineStill 800T and Ektar 100 frames of bridges, hills, beaches, cliffs, dunes and test charts),
+  /// so the films on their labels differ. A roll no longer in the library is left out of the shot.
   static let shelf = [
-    "2026-11-07_132152_9EA1", "2026-11-07_125356_8778", "2026-10-30_194132_3146", "2026-10-30_091410_A34F",
-    "2026-10-28_220205_CF4A", "2026-10-31_220844_7A73", "2026-10-28_203123_8045",
+    "2026-11-07_132152_9EA1", "2026-10-30_194132_3146", "2026-10-31_220844_7A73",
+    "2026-11-10_222408_BC1A", "2026-11-10_230708_22BC",
   ]
   /// A copy roll from the A7R IV: Harman Phoenix II 200 in 6×6, with dust found on its first frame.
   static let copyRoll = "2026-11-07_132152_9EA1"

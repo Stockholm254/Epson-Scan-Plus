@@ -83,6 +83,10 @@
 <td valign="top"><img src="doc/images/demo-multi-rotate.gif" width="100%" alt="灯箱上选三张一起旋转"><br><b>多选</b>：⌘ / ⇧ 点选几张后，旋转、镜像、勾选、删除、重置和同步都对所选的每一张起作用；灯箱上每张在自己的格子里转过去。</td>
 <td valign="top"><img src="doc/images/demo-shelf.gif" width="100%" alt="新建工程时在胶片架上挑胶片"><br><b>胶片架</b>：新建工程时用 ↑ ↓ 挑胶片，下面跟着换成这一款的暗盒或 120 卷、厂家资料和数据表。</td>
 </tr>
+<tr>
+<td valign="top"><img src="doc/images/demo-export.gif" width="100%" alt="选三张导出，胶片条和灯箱上标出等着的、正在写的和导出过的"><br><b>导出</b>：在「输出」里选导出哪些、放到哪里，看好多大，一个键直接导出；等着的、正在写的、导出过的和导出后又改过的，胶片条和灯箱上都标着（动画快放 2.5 倍）。</td>
+<td valign="top"><img src="doc/images/demo-sheet.gif" width="100%" alt="改接触表的排列和背景，小图跟着重排"><br><b>接触表</b>：改胶片条 / 网格、背景和每行几张时，「输出」里的小图先排给你看，各张滑到新的位置。</td>
+</tr>
 </table>
 
 ## 原理

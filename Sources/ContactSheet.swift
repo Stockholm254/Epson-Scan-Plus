@@ -112,7 +112,7 @@ enum ContactSheet {
   @discardableResult
   static func export(
     _ tiles: [Tile], profile: FilmProfile, layout: Layout, title: String, filmCode: String, to url: URL,
-    format: ExportFormat, quality: Double, dpi: Int = scanDPI
+    format: ExportFormat, quality: Double, dpi: Int = scanDPI, progress: ((Int) throws -> Void)? = nil
   ) throws -> CGSize {
     guard !tiles.isEmpty else { throw DeskError.message("没有可放进接触表的画面。") }
     let pipe = ImagePipeline.shared
@@ -178,6 +178,8 @@ enum ContactSheet {
     }
     if let r = g.title { text(title, in: r, size: 0.14 * u, color: ink, mono: false) }
     for (i, t) in tiles.enumerated() {
+      // Before each frame: the frame about to be drawn, and the chance to stop.
+      try progress?(i)
       try autoreleasepool {
         var ci = try pipe.output(try t.source(), settings: settings(t), profile: profile, sharpener: t.sharpener)
         let fit = min(cell.width / sizes[i].width, cell.height / sizes[i].height, 1)
