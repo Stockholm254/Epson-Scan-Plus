@@ -179,7 +179,7 @@ struct NewProjectSheet: View {
       withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) { pick(item, format: used) }
     } label: {
       VStack(spacing: 3) {
-        FilmObject(look: look, gauge: gauge)
+        FilmObject(look: look, gauge: gauge, turns: true)
           .frame(width: 70, height: 92)
           // A calibration of the film, on a tab where it was calibrated.
           .overlay(alignment: .topTrailing) {
@@ -214,13 +214,15 @@ struct NewProjectSheet: View {
     .help(look.help)
     .accessibilityLabel(look.title + "，" + look.kindText)
     .accessibilityAddTraits(on ? .isSelected : [])
+    // Over its neighbours, as its leader swings out when it turns.
+    .zIndex(hovering == item ? 1 : 0)
   }
 
   /// The film taken, large, and what converts it.
   private var chosen: some View {
     let look = self.look(choice)
     return HStack(alignment: .center, spacing: 16) {
-      FilmObject(look: look, gauge: gauge(for: choice)).frame(width: 84, height: 112)
+      FilmObject(look: look, gauge: gauge(for: choice), turns: true).frame(width: 84, height: 112).zIndex(1)
       VStack(alignment: .leading, spacing: 5) {
         if let maker = look.maker { Text(maker).font(.system(size: 11)).foregroundStyle(.secondary) }
         HStack(alignment: .firstTextBaseline, spacing: 8) {

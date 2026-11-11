@@ -129,6 +129,10 @@ struct LeakTonePolicy: Codable, Equatable {
   var maxBrightenEV = 0.25, highlightStart = 0.25, highlightEnd = 0.55
   var neutralDarkenEV = 5.0, neutralNightStart = 0.65, neutralNightEnd = 0.9
   var neutralEdgeInner = 0.10, neutralEdgeOuter = 0.24
+  /// How much of the leak's darkening reaches the highlights where the leak is sure: a yellow
+  /// veil over a bright sky is taken down as well as recoloured. Nil in models fitted before it,
+  /// which keep the highlights as they were.
+  var leakHighlights: Double? = 0.6
   static let hybrid = LeakTonePolicy()
 }
 
@@ -1100,8 +1104,15 @@ extension LeakEngine {
   static func leakEvidence(_ a: SIMD3<Double>, _ b: SIMD3<Double>) -> Double {
     let sa = a.x + a.y + a.z, sb = b.x + b.y + b.z
     if sa <= 0.003 || sb <= 0.003 { return 0 }
-    // An exposure change alone keeps the chromatic fractions: a leak lowers red's share and red itself.
-    return smooth(0.025, 0.18, a.x / sa - b.x / sb) * smooth(0.05, 0.5, (a.x - b.x) / (a.x + 0.03))
+    // An exposure change alone keeps the chromatic fractions: a red or magenta leak raises red's
+    // share and red itself, which the clean picture lowers again.
+    let red = smooth(0.025, 0.18, a.x / sa - b.x / sb) * smooth(0.05, 0.5, (a.x - b.x) / (a.x + 0.03))
+    // A yellow or orange one leaves blue as it was and adds red and green: blue's share falls,
+    // red and green together rise. In these encoded values a strong one moves blue's share by
+    // only some 0.05 (a yellow veil of a third of the sky's light on roll 9EA1's kind of sky).
+    let rg = a.x + a.y, cleanRG = b.x + b.y
+    let yellow = smooth(0.01, 0.06, b.z / sb - a.z / sa) * smooth(0.03, 0.18, (rg - cleanRG) / (rg + 0.06))
+    return max(red, yellow)
   }
   static func fitVeilField(_ samples: [Sample], _ W: Int, _ H: Int, aspect: Double) -> LeakField {
     var values = [Double]()
@@ -1246,9 +1257,12 @@ extension LeakEngine {
     let night = clamp(c.nightWeight), leak = clamp(c.leakConfidence)
     let other = p.dayOtherDarkenEV * (1 - night) + p.nightOtherDarkenEV * night
     let cap = p.dayLeakDarkenEV * (1 - night) + p.nightLeakDarkenEV * night
-    let headroom = (1 - smooth(p.highlightStart, p.highlightEnd, Y)) * (1 - clamp(c.emissive))
+    let open = 1 - smooth(p.highlightStart, p.highlightEnd, Y)
+    let lamp = 1 - clamp(c.emissive)
+    let headroom = (open + (1 - open) * leak * clamp(p.leakHighlights ?? 0)) * lamp
     let darken = (other + (cap - other) * leak) * headroom
-    return (max(darken, p.neutralDarkenEV * clamp(c.neutralConfidence) * (1 - clamp(c.emissive))), p.maxBrightenEV * headroom)
+    // Brightening stays out of the highlights: a leak only ever adds light.
+    return (max(darken, p.neutralDarkenEV * clamp(c.neutralConfidence) * lamp), p.maxBrightenEV * open * lamp)
   }
   /// The reference's colour at a luminance it may move to only within the limits; a colour outside
   /// the gamut is drawn toward neutral at that luminance through a smooth knee, never clipped.

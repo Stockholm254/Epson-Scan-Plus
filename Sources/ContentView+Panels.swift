@@ -325,6 +325,17 @@ extension ContentView {
         }.buttonStyle(KeyStyle(latched: picking)).disabled(m.selected == nil)
         .help(resumable != nil ? "把「\(m.profile.name)」的中性点取回来，在上面接着加点" : picking ? "结束取点" : "在单张画面上点选中性灰")
         Text(String(format: "%d 点 · %.2f D", m.calibrationPoints.count, span)).readout()
+        Spacer(minLength: 0)
+        // The points in density space, to turn and see which lie off the line.
+        Button {
+          m.showNeutralSpace.toggle()
+        } label: {
+          Label("3D", systemImage: "cube.transparent")
+        }.disabled(m.calibrationPoints.count < 2)
+          .help("在红、绿、蓝密度组成的空间里转着看这些中性点和它们该落的直线")
+          .popover(isPresented: $m.showNeutralSpace, arrowEdge: .leading) {
+            NeutralSpaceView(points: m.calibrationPoints, fit: m.calibrationFit)
+          }
       }
       Text(step).font(.system(size: 11)).foregroundStyle(ready ? Hardware.amberText : Color.secondary)
       // Where the points are: those being picked, else those the preset in use was made from, a

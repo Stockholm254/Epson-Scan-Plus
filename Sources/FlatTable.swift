@@ -104,6 +104,8 @@ struct FlatManagerSheet: View {
   @State private var renaming: FlatProfile?
   @State private var newName = ""
   @State private var deleting: [FlatRow]?
+  /// The flat drawn as surfaces in 3D rather than as its blank.
+  @State private var surface = false
   var body: some View {
     let rows = m.flatRows(rolls)
     let chosen = rows.filter { flatSelection.contains($0.id) }
@@ -242,12 +244,20 @@ struct FlatManagerSheet: View {
     VStack(alignment: .leading, spacing: 6) {
       ZStack {
         RoundedRectangle(cornerRadius: 4).fill(Color.primary.opacity(0.06))
-        if let field, let image = FlatTable.picture(field) {
+        if let field, surface {
+          FlatSurfaceView(flat: field)
+        } else if let field, let image = FlatTable.picture(field) {
           Image(nsImage: image).resizable().interpolation(.high).aspectRatio(CGFloat(field.width) / CGFloat(field.height), contentMode: .fit)
         } else {
           Text("选一个平场看它的暗角").font(.system(size: 11)).foregroundStyle(.secondary)
         }
       }.frame(width: 220, height: 147)
+      // As the evened-out blank looks, or each light's fall-off as a surface to turn.
+      Picker("", selection: $surface) {
+        Text("平面").tag(false)
+        Text("3D").tag(true)
+      }.pickerStyle(.segmented).labelsHidden().controlSize(.small).disabled(field == nil)
+        .help("3D：红、绿、蓝各一层，高低是这一处的光有多少；三层分开的地方，边上就偏色")
       if let field {
         Text("最暗处 R · G · B：" + FlatTable.shares(field)).font(.system(size: 11)).monospacedDigit()
       }

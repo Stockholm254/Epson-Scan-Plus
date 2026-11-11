@@ -244,6 +244,8 @@ final class AppModel: ObservableObject {
   @Published var calibrationPoints = [NeutralPoint]()
   /// The current preset's neutral points marked on their frames; on once a preset is made.
   @Published var showCalibrationPoints = false
+  /// The calibration's neutral points shown in 3D, in a popover.
+  @Published var showNeutralSpace = false
   /// The neutral points to mark on `frame`, numbered as listed, in its source: those being picked,
   /// else, asked for, those the current preset was calibrated from.
   func neutralMarks(on frame: FilmFrame) -> [(number: Int, at: CGPoint)] {
@@ -2385,13 +2387,21 @@ final class AppModel: ObservableObject {
       try e.encode(profile).write(to: url, options: .atomic)
     } catch { errorText = error.localizedDescription }
   }
+  /// The picked neutrals' frames all have their base measured, so the data sheet's toe can be used.
+  var calibrationMeasured: Bool {
+    calibrationPoints.allSatisfy { point in
+      frames.first { $0.id == point.frame }.map { ($0.adjustments.base ?? $0.adjustments.rollBase) != nil } ?? false
+    }
+  }
+  /// The line the picked neutrals make, as the preset would be made from them; nil while they make none.
+  var calibrationFit: FilmCalibration.Fit? {
+    try? FilmCalibration.fit(calibrationPoints, greenSlope: profile.slopes.g, curve: calibrationMeasured ? profile.dataSheetToe : nil)
+  }
   /// Solves this scanner's preset for the current film from the picked neutral points, keeps it
   /// and applies it to the project. The current preset supplies the film and the green slope.
   func makeScannerPreset() {
     do {
-      let measured = calibrationPoints.allSatisfy { point in
-        frames.first { $0.id == point.frame }.map { ($0.adjustments.base ?? $0.adjustments.rollBase) != nil } ?? false
-      }
+      let measured = calibrationMeasured
       let fit = try FilmCalibration.fit(calibrationPoints, greenSlope: profile.slopes.g, curve: measured ? profile.dataSheetToe : nil)
       let copy = copyStandRoll
       // How the points' frames were read: the slopes hold for that reading.

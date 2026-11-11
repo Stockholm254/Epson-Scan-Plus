@@ -777,8 +777,8 @@ struct ContentView: View {
           m.changingFilm = true
         } label: {
           HStack(spacing: 10) {
-            FilmObject(look: NewProjectSheet.look(now, m: m), gauge: NewProjectSheet.gauge(now, format: m.format))
-              .frame(width: 38, height: 50)
+            FilmObject(look: NewProjectSheet.look(now, m: m), gauge: NewProjectSheet.gauge(now, format: m.format), turns: true)
+              .frame(width: 38, height: 50).zIndex(1)
             VStack(alignment: .leading, spacing: 2) {
               Text(FilmCalibration.film(m.filmName)).font(.system(size: 12, weight: .semibold)).lineLimit(1)
               Text("\(m.reversalRoll ? "反转片" : "负片") · \(m.format.rawValue)").font(.system(size: 10.5)).foregroundStyle(.secondary)

@@ -125,6 +125,36 @@ enum NewProjectTests {
     try check(cassette.map { $0.middle > 0.9 && $0.corner < 0.05 } == true && roll.map { $0.middle > 0.9 && $0.corner < 0.05 } == true,
       "the shelf's films are rendered in 3D, a 135 cassette and a 120 roll, standing on a clear ground")
 
+    // Rested on, a film turns once round in a view wider than its picture: all the way round the
+    // leader stays inside that view, and turned to the front its middle is the still picture.
+    func alphas(_ image: NSImage?) -> (w: Int, h: Int, a: [Double])? {
+      guard let image, let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+      let ctx = CGContext(data: nil, width: cg.width, height: cg.height, bitsPerComponent: 8, bytesPerRow: cg.width * 4,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+      ctx.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+      guard let data = ctx.data else { return nil }
+      let px = data.bindMemory(to: UInt8.self, capacity: cg.width * cg.height * 4)
+      return (cg.width, cg.height, (0..<(cg.width * cg.height)).map { Double(px[$0 * 4 + 3]) / 255 })
+    }
+    let cell = CGSize(width: 140, height: 184)
+    var edgeMost = 0.0, middleOff = 1.0
+    for gauge in [FilmStock.Gauge.mm135, .mm120] {
+      let widen = FilmRender.turnWiden(gauge, aspect: cell.width / cell.height)
+      for step in 0..<8 {
+        guard let t = alphas(FilmRender.renderNow(shelved, gauge: gauge, pixels: cell, turn: CGFloat(step) * .pi / 4, widen: widen)) else { edgeMost = 1; continue }
+        // The film itself (not the soft shadow on the floor) at the sides of the view.
+        for y in 0..<t.h { edgeMost = max(edgeMost, t.a[y * t.w], t.a[y * t.w + t.w - 1]) }
+        if step == 0, gauge == .mm135, let still = alphas(FilmRender.renderNow(shelved, gauge: gauge, pixels: cell)) {
+          let x0 = (t.w - still.w) / 2, y0 = (t.h - still.h) / 2
+          var off = 0.0
+          for y in 0..<still.h { for x in 0..<still.w { off += abs(still.a[y * still.w + x] - t.a[(y + y0) * t.w + x + x0]) } }
+          middleOff = off / Double(still.w * still.h)
+        }
+      }
+    }
+    try check(edgeMost < 0.35 && middleOff < 0.04,
+      String(format: "a film turns once round inside its wider view (most at its sides %.2f), and starts from its still picture (%.3f apart)", edgeMost, middleOff))
+
     // ②'s film section opens the same shelf on the open roll: its film, kind and format change together.
     model.loadProject(copyRoll.appendingPathComponent(AppModel.projectFile))
     let opened = NewProjectSheet.current(model)

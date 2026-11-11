@@ -223,7 +223,13 @@ struct LibraryPage: View {
         }
         if shelf.loaded && shown.isEmpty {
           VStack(spacing: 8) {
-            Image(systemName: "tray").font(.system(size: 30)).foregroundStyle(.secondary)
+            if shelf.entries.isEmpty || !filtering {
+              // A new roll, waiting: a reloadable cassette with nothing on its tape yet.
+              FilmObject(look: NewProjectSheet.Look(name: "新的一卷", title: "新的一卷", named: true), gauge: .mm135, turns: true)
+                .frame(width: 64, height: 84)
+            } else {
+              Image(systemName: "tray").font(.system(size: 30)).foregroundStyle(.secondary)
+            }
             if shelf.entries.isEmpty || !filtering {
               Text("还没有卷").font(.system(size: 14, weight: .medium))
               Text("点「新建工程」去预览扫描或翻拍，或「导入…」照片；每卷都会自动放进这里。").font(.system(size: 11)).foregroundStyle(.secondary)
@@ -333,6 +339,8 @@ struct RollSleeve: View {
     }
     .overlay(alignment: .topTrailing) { indexTab.offset(x: -14, y: -16) }
     .overlay(RoundedRectangle(cornerRadius: 3).stroke(current ? Hardware.amber : .clear, lineWidth: 1.5))
+    // Held up to the light under the pointer.
+    .modifier(SleeveTilt())
     .offset(y: hover ? -4 : 0)
     .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hover)
     .onHover { hover = $0 }
@@ -387,7 +395,7 @@ struct RollSleeve: View {
   var label: some View {
     HStack(alignment: .center, spacing: 8) {
       if let model, let film = Self.film(entry, model: model) {
-        FilmObject(look: film.look, gauge: film.gauge).frame(width: 30, height: 40)
+        FilmObject(look: film.look, gauge: film.gauge, turns: true).frame(width: 30, height: 40).zIndex(1)
           .shadow(color: .black.opacity(0.25), radius: 1.5, y: 1)
           .help(film.look.title)
       }
@@ -446,6 +454,8 @@ struct RollSleeve: View {
             pocket(c < rows[r].count ? rows[r][c] : nil)
           }
         }.padding(2).background(Color.primary.opacity(0.05))
+          // Each strip under its own clear plastic, welded along its top and bottom.
+          .overlay(SleevePlasticOverlay(seed: r))
           .zIndex(rows[r].contains { $0.id == hovered } ? 10 : 0)
       }
       if entry.frames.count > shownFrames.count {
@@ -453,10 +463,6 @@ struct RollSleeve: View {
       }
     }
     .padding(.vertical, 8).padding(.trailing, 8)
-    .overlay {
-      LinearGradient(colors: [.white.opacity(0.11), .clear, .white.opacity(0.04)], startPoint: .topLeading, endPoint: .bottomTrailing)
-        .allowsHitTesting(false)
-    }
   }
   /// What shows round a frame that does not fill its 3:2 pocket (a 6×6, a crop with its sprocket
   /// strips): the orange film base behind a negative, as on the film, and a print's neutral black

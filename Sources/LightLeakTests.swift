@@ -63,6 +63,43 @@ enum LightLeakTests {
       String(format: "the leak is found where it is: confidence %.2f at the left edge, %.2f across", model.veilField.sample(0.03, 0.5), model.veilField.sample(0.9, 0.5)))
     try check(error(repaired, clean) < error(leaked, clean) * 0.3,
       String(format: "the leak is taken out: mean error to the clean picture %.4f → %.4f", error(leaked, clean), error(repaired, clean)))
+    // A yellow leak over the bright sky from the top right (red and green added, blue left as it
+    // was), as on roll 9EA1: found, taken back to the sky's blue, and the sky taken down too,
+    // though it is bright.
+    func yellowed(_ w: Int, _ h: Int) -> LeakImage {
+      var image = picture(w, h, leaked: false)
+      for j in 0..<h {
+        for i in 0..<w {
+          let x = (Double(i) + 0.5) / Double(w), y = (Double(j) + 0.5) / Double(h)
+          let k = exp(-(1 - x) / 0.25) * exp(-y / 0.5)
+          for (c, add) in [(0, 0.34), (1, 0.22)] {
+            let n = (j * w + i) * 3 + c, v = pow(Double(image.data[n]) / 65535, 2.2) + k * add
+            image.data[n] = UInt16((min(1, pow(v, 1 / 2.2)) * 65535).rounded())
+          }
+        }
+      }
+      return image
+    }
+    let yellow = yellowed(1200, 800)
+    let yellowFit = try LeakEngine.fitReference(base: yellow, guide: guide, params: LeakParams(), baseID: "yellow")
+    let yellowFixed = try LeakEngine.result(yellow, base: yellow, params: yellowFit)
+    func skyCorner(_ image: LeakImage) -> (blueShare: Double, luma: Double) {
+      var rgb = SIMD3<Double>(repeating: 0), n = 0.0
+      for j in 40..<120 {
+        for i in 1060..<1160 {
+          let k = (j * 1200 + i) * 3
+          rgb += SIMD3(Double(image.data[k]), Double(image.data[k + 1]), Double(image.data[k + 2])) / 65535
+          n += 1
+        }
+      }
+      rgb /= n
+      return (rgb.z / (rgb.x + rgb.y + rgb.z), LeakEngine.luminance(LeakEngine.decode(rgb)))
+    }
+    let (yb, yl) = skyCorner(yellow), (fb, fl) = skyCorner(yellowFixed), (cb, cl) = skyCorner(clean)
+    let yellowSure = yellowFit.referenceModel?.veilField.sample(0.93, 0.1) ?? 0
+    try check(yellowSure > 0.3 && abs(fb - cb) < abs(yb - cb) * 0.35 && abs(fl - cl) < abs(yl - cl) * 0.5,
+      String(format: "a yellow leak over a bright sky is found (confidence %.2f), its blue given back (share %.3f → %.3f, clean %.3f) and its light taken down (%.3f → %.3f, clean %.3f)",
+        yellowSure, yb, fb, cb, yl, fl, cl))
     var off = fitted
     off.referenceModel?.strength = 0
     try check(try LeakEngine.result(leaked, base: leaked, params: off).data == leaked.data, "at strength 0 every pixel stays as it was")

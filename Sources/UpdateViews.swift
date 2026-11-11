@@ -8,6 +8,11 @@ struct UpdateSheet: View {
   @Environment(\.dismiss) private var dismiss
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
+      HStack(alignment: .top, spacing: 14) {
+      // A new roll: the version on offer, or the one in use, written on a reloadable cassette's tape.
+      FilmObject(look: Self.roll(updater.release?.version ?? updater.version), gauge: .mm135, turns: true)
+        .frame(width: 46, height: 60).zIndex(1)
+      VStack(alignment: .leading, spacing: 8) {
       HStack(alignment: .firstTextBaseline) {
         Text("更新").font(.system(size: 15, weight: .semibold))
         Text("在用 \(updater.version)（\(updater.build)）").font(.system(size: 12)).foregroundStyle(.secondary)
@@ -16,6 +21,8 @@ struct UpdateSheet: View {
       }
       Text(updater.status).font(.system(size: 12)).foregroundStyle(updater.release == nil ? Color.secondary : Hardware.amberText)
         .fixedSize(horizontal: false, vertical: true)
+      }
+      }
       if let r = updater.release {
         VStack(alignment: .leading, spacing: 3) {
           ForEach(Array(r.notes.prefix(8).enumerated()), id: \.offset) { _, line in
@@ -45,6 +52,10 @@ struct UpdateSheet: View {
     }
     .padding(20)
     .frame(width: 420)
+  }
+  /// A version as a roll of film: a reloadable cassette with the version on its tape.
+  static func roll(_ version: String) -> NewProjectSheet.Look {
+    NewProjectSheet.Look(name: version, title: "Epson Scan plus " + version, named: true)
   }
 }
 

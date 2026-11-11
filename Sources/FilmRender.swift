@@ -41,28 +41,54 @@ enum FilmRender {
     let look = NewProjectSheet.look(now, m: m), gauge = NewProjectSheet.gauge(now, format: m.format)
     image(look, gauge: gauge, points: CGSize(width: 38, height: 50), scale: max(2, NSScreen.main?.backingScaleFactor ?? 2)) { _ in }
   }
-  /// The same, at once, for a test or a window shot.
-  static func renderNow(_ look: NewProjectSheet.Look, gauge: FilmStock.Gauge, pixels: CGSize) -> NSImage? {
-    queue.sync { render(look, gauge: gauge, pixels: pixels) }
+  /// The same, at once, for a test or a window shot; turned `turn` radians about its axis and
+  /// seen `widen` times as wide, as its turn shows it.
+  static func renderNow(_ look: NewProjectSheet.Look, gauge: FilmStock.Gauge, pixels: CGSize, turn: CGFloat = 0, widen: CGFloat = 1) -> NSImage? {
+    queue.sync { render(look, gauge: gauge, pixels: pixels, turn: turn, widen: widen) }
+  }
+  /// A film's scene to turn live, for a picture of `points`, made on the render queue (its labels
+  /// take a moment to print) and handed back on the main thread, with how much wider than the
+  /// picture its view is.
+  static func turning(_ look: NewProjectSheet.Look, gauge: FilmStock.Gauge, points: CGSize, completion: @escaping (Stage, CGFloat) -> Void) {
+    let aspect = points.width / max(1, points.height)
+    let widen = turnWiden(gauge, aspect: aspect)
+    queue.async {
+      let set = stage(look, gauge: gauge, aspect: aspect, widen: widen)
+      DispatchQueue.main.async { completion(set, widen) }
+    }
   }
 
   // MARK: The scene
 
-  private static func render(_ look: NewProjectSheet.Look, gauge: FilmStock.Gauge, pixels: CGSize) -> NSImage? {
+  private static func render(_ look: NewProjectSheet.Look, gauge: FilmStock.Gauge, pixels: CGSize, turn: CGFloat = 0, widen: CGFloat = 1) -> NSImage? {
     if renderer == nil {
       guard let device = MTLCreateSystemDefaultDevice() else { return nil }
       renderer = SCNRenderer(device: device, options: nil)
     }
     guard let renderer else { return nil }
+    let set = stage(look, gauge: gauge, aspect: pixels.width / max(1, pixels.height), widen: widen)
+    set.film.eulerAngles.y = turn
+    renderer.scene = set.scene
+    renderer.pointOfView = set.camera
+    return renderer.snapshot(atTime: 0, with: CGSize(width: (pixels.width * widen).rounded(), height: (pixels.height * widen).rounded()), antialiasingMode: .multisampling4X)
+  }
+
+  /// A film's scene and the camera on it, for a picture of `aspect`: the film, its floor and its
+  /// lights. `widen` sees that many times as far across and up from the same place, so the
+  /// picture's middle is the picture itself: room for the leader as the cassette turns.
+  struct Stage {
+    var scene: SCNScene
+    var camera: SCNNode
+    /// What turns, about the film's own axis.
+    var film: SCNNode
+  }
+  static func stage(_ look: NewProjectSheet.Look, gauge: FilmStock.Gauge, aspect: CGFloat, widen: CGFloat = 1) -> Stage {
     let scene = SCNScene()
     scene.background.contents = NSColor.clear
     scene.lightingEnvironment.contents = studio
     let film = gauge == .mm135 ? cassette(look) : roll(look)
     scene.rootNode.addChildNode(film)
-    // Where it stands and how far it reaches: the cassette from its spool's foot to its knob, its
-    // leader out to the right; the roll from flange end to flange end.
-    let (bottom, top): (CGFloat, CGFloat) = gauge == .mm135 ? (-22.0, 33) : (-33.7, 33.7)
-    let (left, right): (CGFloat, CGFloat) = gauge == .mm135 ? (-23, 25) : (-13.6, 13.6)
+    let (bottom, top, left, right) = extent(gauge)
     // A floor that only takes the shadow.
     let floor = SCNFloor()
     floor.reflectivity = 0
@@ -82,7 +108,8 @@ enum FilmRender {
     key.light!.shadowRadius = 9
     key.light!.shadowSampleCount = 32
     key.light!.shadowColor = NSColor(white: 0, alpha: 0.5)
-    key.light!.orthographicScale = 70
+    // Over all the floor the leader may reach as it turns, where the view is wider.
+    key.light!.orthographicScale = 70 * widen
     key.light!.zFar = 400
     key.position = SCNVector3(-80, 120, 90)
     key.look(at: SCNVector3(0, bottom, 0))
@@ -103,23 +130,39 @@ enum FilmRender {
     // A long lens from a little above, the film and its leader filling the frame.
     let camera = SCNNode()
     camera.camera = SCNCamera()
-    camera.camera!.fieldOfView = 16
+    let lens: CGFloat = 16
+    camera.camera!.fieldOfView = 2 * atan(widen * tan(lens / 2 * .pi / 180)) * 180 / .pi
     camera.camera!.zNear = 10
     camera.camera!.zFar = 2000
     camera.camera!.wantsHDR = true
     camera.camera!.wantsExposureAdaptation = false
     camera.camera!.exposureOffset = 0.1
-    let aspect = pixels.width / max(1, pixels.height)
-    let fit = max((top - bottom) * 1.14, (right - left) * 1.1 / aspect)
-    let distance = fit / 2 / tan(CGFloat(16) / 2 * .pi / 180)
+    let fit = framing(gauge, aspect: aspect)
+    let distance = fit / 2 / tan(lens / 2 * .pi / 180)
     let centre = SCNVector3((left + right) / 2, (top + bottom) / 2, 0)
     let elevation: CGFloat = gauge == .mm135 ? 0.4 : 0.2
     camera.position = SCNVector3(centre.x, centre.y + distance * sin(elevation), distance * cos(elevation))
     camera.look(at: SCNVector3(centre.x, centre.y - 0.5, 0))
     scene.rootNode.addChildNode(camera)
-    renderer.scene = scene
-    renderer.pointOfView = camera
-    return renderer.snapshot(atTime: 0, with: pixels, antialiasingMode: .multisampling4X)
+    return Stage(scene: scene, camera: camera, film: film)
+  }
+  /// Where a film stands and how far it reaches, in millimetres: the cassette from its spool's foot
+  /// to its knob, its leader out to the right; the roll from flange end to flange end.
+  static func extent(_ gauge: FilmStock.Gauge) -> (bottom: CGFloat, top: CGFloat, left: CGFloat, right: CGFloat) {
+    gauge == .mm135 ? (-22.0, 33, -23, 25) : (-33.7, 33.7, -13.6, 13.6)
+  }
+  /// How tall the view is, in millimetres at the film, for a picture of `aspect`.
+  static func framing(_ gauge: FilmStock.Gauge, aspect: CGFloat) -> CGFloat {
+    let e = extent(gauge)
+    return max((e.top - e.bottom) * 1.14, (e.right - e.left) * 1.1 / max(0.01, aspect))
+  }
+  /// How much wider than its picture a film's turn needs: the leader, curled back round behind
+  /// the cassette, reaches some 44 mm from its axis, and nearer the camera it looks larger.
+  static func turnWiden(_ gauge: FilmStock.Gauge, aspect: CGFloat) -> CGFloat {
+    let e = extent(gauge), reach: CGFloat = gauge == .mm135 ? 44 : 13.6
+    let across = framing(gauge, aspect: aspect) * aspect
+    let needed = 2 * (reach * 1.22 + abs(e.left + e.right) / 2 + 2)
+    return max(1, needed / across)
   }
 
   /// The studio the metal reflects: dark, a large softbox up to the left, a strip to the right.
@@ -544,31 +587,44 @@ enum FilmRender {
       case .blackWhite: base = NSColor(red: 0.36, green: 0.38, blue: 0.41, alpha: 0.95)
       }
       return draw(width: length, height: 35) { ctx, size in
-        let m = mm, tongue = 18 * m, shoulder = 12 * m, tip = 9 * m
+        // As a cassette's leader is cut: full width out of the lip for 14 mm, then a concave
+        // quarter circle takes the lower edge away, leaving a tongue 20.5 mm wide (the upper
+        // perforations and a strip of the picture area) that runs on to its end, cut square, its
+        // corners rounded, the inner one more.
+        let m = mm, tongue = 20.5 * m, shoulder = 14 * m, radius = size.height - tongue, end = size.width
         ctx.setFillColor(base.cgColor)
         ctx.fill(CGRect(origin: .zero, size: size))
         ctx.setBlendMode(.clear)
-        // Below the tongue, past the shoulder: nothing.
+        let k: CGFloat = 0.5523
         let cut = CGMutablePath()
         cut.move(to: CGPoint(x: shoulder, y: size.height))
-        cut.addCurve(to: CGPoint(x: shoulder + 6 * m, y: tongue), control1: CGPoint(x: shoulder + 1 * m, y: tongue + (size.height - tongue) * 0.3), control2: CGPoint(x: shoulder + 2 * m, y: tongue))
-        cut.addLine(to: CGPoint(x: size.width, y: tongue))
-        cut.addLine(to: CGPoint(x: size.width, y: size.height))
+        cut.addCurve(to: CGPoint(x: shoulder + radius, y: tongue),
+          control1: CGPoint(x: shoulder, y: size.height - k * radius), control2: CGPoint(x: shoulder + radius - k * radius, y: tongue))
+        cut.addLine(to: CGPoint(x: end, y: tongue))
+        cut.addLine(to: CGPoint(x: end, y: size.height))
         cut.closeSubpath()
         ctx.addPath(cut)
         ctx.fillPath()
-        // The tongue's rounded end.
-        ctx.fill(CGRect(x: size.width - tip, y: 0, width: tip, height: tongue))
+        // The tongue's end: its corners rounded, 1.5 mm at the film's edge, 4 mm at the cut.
+        let outer = 1.5 * m, inner = 4 * m
+        ctx.fill(CGRect(x: end - inner - 1, y: 0, width: inner + 1, height: tongue))
         ctx.setBlendMode(.normal)
-        ctx.saveGState()
-        ctx.clip(to: CGRect(x: size.width - tip, y: 0, width: tip, height: tongue))
+        let tip = CGMutablePath()
+        tip.move(to: CGPoint(x: end - inner - 1, y: 0))
+        tip.addLine(to: CGPoint(x: end - outer, y: 0))
+        tip.addQuadCurve(to: CGPoint(x: end, y: outer), control: CGPoint(x: end, y: 0))
+        tip.addLine(to: CGPoint(x: end, y: tongue - inner))
+        tip.addQuadCurve(to: CGPoint(x: end - inner, y: tongue), control: CGPoint(x: end, y: tongue))
+        tip.addLine(to: CGPoint(x: end - inner - 1, y: tongue))
+        tip.closeSubpath()
         ctx.setFillColor(base.cgColor)
-        ctx.fillEllipse(in: CGRect(x: size.width - 2 * tip, y: 0, width: 2 * tip, height: tongue))
-        ctx.restoreGState()
+        ctx.addPath(tip)
+        ctx.fillPath()
+        let tipRoom = outer + 0.6 * m
         // The perforations: along the top all the way, along the bottom up to the shoulder.
         ctx.setBlendMode(.clear)
         var x = 1.2 * m
-        while x + 2.8 * m < size.width - tip {
+        while x + 2.8 * m < size.width - tipRoom {
           ctx.addPath(CGPath(roundedRect: CGRect(x: x, y: 2 * m, width: 2.8 * m, height: 1.98 * m), cornerWidth: 0.5 * m, cornerHeight: 0.5 * m, transform: nil))
           if x + 2.8 * m < shoulder {
             ctx.addPath(CGPath(roundedRect: CGRect(x: x, y: size.height - 2 * m - 1.98 * m, width: 2.8 * m, height: 1.98 * m), cornerWidth: 0.5 * m, cornerHeight: 0.5 * m, transform: nil))
@@ -659,19 +715,54 @@ enum FilmRender {
 }
 
 /// A film, rendered, in a SwiftUI view: drawn once per film and size, faded in when it comes.
+/// `turns`: rested on with the pointer, it turns once round in its own light, the leader swinging
+/// out over what is beside it, and settles where it was.
 struct FilmObject: View {
   let look: NewProjectSheet.Look
   let gauge: FilmStock.Gauge
+  var turns = false
   @State private var image: NSImage?
+  @State private var turning: (stage: FilmRender.Stage, widen: CGFloat, id: Int)?
+  /// The turn's first frame is on screen: the still under it can go.
+  @State private var live = false
+  @State private var resting = false
+  @State private var turnCount = 0
   @Environment(\.displayScale) private var displayScale
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   var body: some View {
     GeometryReader { g in
       ZStack {
         if let image {
           Image(nsImage: image).resizable().interpolation(.high).transition(.opacity)
+            .opacity(turning != nil && live ? 0 : 1)
         }
       }
       .frame(width: g.size.width, height: g.size.height)
+      .overlay {
+        if let turning {
+          FilmTurnView(stage: turning.stage, id: turning.id, shown: { live = true }) {
+            if self.turning?.id == turning.id { self.turning = nil; live = false }
+          }
+          .frame(width: g.size.width * turning.widen, height: g.size.height * turning.widen)
+          .allowsHitTesting(false)
+        }
+      }
+      .onHover { inside in
+        guard turns, !reduceMotion else { return }
+        resting = inside
+        guard inside, turning == nil else { return }
+        // Only when the pointer stays a moment, not as it passes over the shelf.
+        turnCount += 1
+        let asked = turnCount, size = g.size
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+          guard resting, asked == turnCount, turning == nil else { return }
+          FilmRender.turning(look, gauge: gauge, points: size) { stage, widen in
+            guard resting, asked == turnCount, turning == nil else { return }
+            live = false
+            turning = (stage, widen, asked)
+          }
+        }
+      }
       .task(id: "\(look.renderKey)|\(gauge.rawValue)|\(Int(g.size.width))x\(Int(g.size.height))") {
         let size = g.size
         await withCheckedContinuation { done in
@@ -682,5 +773,52 @@ struct FilmObject: View {
         }
       }
     }
+  }
+}
+
+/// A film turning once round, live: its scene as the still picture's, seen wider from the same
+/// place, on a clear ground, its shadow turning with it on the floor. Done, it says so.
+struct FilmTurnView: NSViewRepresentable {
+  let stage: FilmRender.Stage
+  let id: Int
+  var shown: () -> Void
+  var done: () -> Void
+  /// Says once when the first frame has been drawn.
+  final class Coordinator: NSObject, SCNSceneRendererDelegate {
+    var shown: (() -> Void)?
+    func renderer(_ renderer: SCNSceneRenderer, didRenderScene scene: SCNScene, atTime time: TimeInterval) {
+      guard let said = shown else { return }
+      shown = nil
+      DispatchQueue.main.async { said() }
+    }
+  }
+  func makeCoordinator() -> Coordinator {
+    let c = Coordinator()
+    c.shown = shown
+    return c
+  }
+  /// One turn: slow away, quicker round the back, slow into place.
+  static let duration: TimeInterval = 2.2
+  func makeNSView(context: Context) -> SCNView {
+    let view = SCNView(frame: .zero, options: nil)
+    view.scene = stage.scene
+    view.pointOfView = stage.camera
+    view.backgroundColor = .clear
+    view.antialiasingMode = .multisampling4X
+    view.allowsCameraControl = false
+    view.wantsLayer = true
+    view.layer?.isOpaque = false
+    view.delegate = context.coordinator
+    view.isPlaying = true
+    let spin = SCNAction.rotateBy(x: 0, y: .pi * 2, z: 0, duration: Self.duration)
+    spin.timingMode = .easeInEaseOut
+    let finished = done
+    stage.film.runAction(spin) { DispatchQueue.main.async { finished() } }
+    return view
+  }
+  func updateNSView(_ view: SCNView, context: Context) {}
+  static func dismantleNSView(_ view: SCNView, coordinator: ()) {
+    view.isPlaying = false
+    view.scene = nil
   }
 }
