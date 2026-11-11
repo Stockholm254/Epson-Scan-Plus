@@ -515,30 +515,33 @@ enum FilmPrint {
         (" 36 EXP", font("HelveticaNeue-Medium", 1.55), ink)], s: -7.7, top: 32.6, fit: 20, up: true)
       // DELTA, in fine stripes along its length (the way it reads), as the stock's name is printed.
       let pitch: CGFloat = 0.48
-      f.along([("DELTA", font(heavy, 6.2), colour)], s: 2.8, top: 32.6, fit: 25.5, up: true, stretch: true)
-      var cut: CGFloat = 0.0
-      while cut < 6.0 {
-        f.fill(paper, cut + 0.33, cut + pitch, y0: 6.0, y1: 33.2)
+      f.along([("DELTA", font(heavy, 7.2), colour)], s: 3.2, top: 32.6, fit: 25.5, up: true, stretch: true)
+      // Thick stripes, narrow gaps: the letters stand out from the Δ's thin lines.
+      var cut: CGFloat = -pitch
+      while cut < 6.6 {
+        f.fill(paper, cut + 0.37, cut + pitch, y0: 6.0, y1: 33.2)
         cut += pitch
       }
-      // The Δ it stands in: its point by ILFORD at the middle of the length, its base by
+      // The Δ it stands in: its point a little past ILFORD on the far side, at the middle of the
+      // length (ILFORD printed over it), its base by
       // PROFESSIONAL as long as the name, drawn in thin lines on the name's stripes (inside a letter
       // a line lies within its stripe, so the letters stay as they are and the lines show between
       // and past them).
-      let apex: CGFloat = -1.0, base: CGFloat = 13.2, mid: CGFloat = 19.85
+      let apex: CGFloat = -7.0, base: CGFloat = 13.2, mid: CGFloat = 19.85
       var k = (apex / pitch).rounded(.down)
       while k * pitch < base {
-        let s0 = k * pitch + 0.06
+        let s0 = k * pitch + 0.1
         if s0 > apex {
           let long = 25.5 * (s0 - apex) / (base - apex)
-          f.fill(colour, s0, s0 + 0.22, y0: mid - long / 2, y1: mid + long / 2)
+          f.fill(colour, s0, s0 + 0.17, y0: mid - long / 2, y1: mid + long / 2)
         }
         k += 1
       }
       // ILFORD over the Δ's point, and the speed as large as ILFORD over its lines.
       f.along([("ILFORD", font(heavy, 6.6), ink)], s: -3.4, top: 32.6, fit: 25.5, up: true, stretch: true)
-      let speed = [("\(iso)", font(heavy, 8.6), ink)]
-      f.along(speed, s: 9.2, top: 31.0, fit: iso >= 1000 ? 23 : 17, up: true)
+      // The speed centred on the middle of the length, as the names and the Δ are.
+      let speed = [("\(iso)", font(heavy, 8.6), ink)], fitted: CGFloat = iso >= 1000 ? 23 : 17
+      f.along(speed, s: 9.2, top: mid + f.width(speed, fit: fitted) / 2, fit: fitted, up: true)
       f.along([("PROFESSIONAL", font("HelveticaNeue-Bold", 2.6), colour.blended(withFraction: 0.3, of: .white) ?? colour)], s: 14.6, top: 32.6, fit: 25.5, kern: 0.2, up: true, stretch: true)
       f.fill(ink, -60, 30, y0: 36.6)
       f.dx(look)
