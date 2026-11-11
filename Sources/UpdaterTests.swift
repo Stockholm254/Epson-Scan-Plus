@@ -165,5 +165,24 @@ enum UpdaterTests {
     sheet.frame = NSRect(x: 0, y: 0, width: 420, height: 300)
     sheet.layoutSubtreeIfNeeded()
     try check(sheet.fittingSize.width >= 400 && sheet.fittingSize.height > 100, "the update window lays out")
+
+    // 「现在更新并重新打开」 is in a sheet, and AppKit will not quit while one is up: the quit is
+    // asked only once the sheet has been put away.
+    let window = NSWindow(contentRect: NSRect(x: -4000, y: -4000, width: 400, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    window.orderFront(nil)
+    let panel = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
+    window.beginSheet(panel)
+    for _ in 0..<50 where window.attachedSheet == nil { RunLoop.current.run(until: Date().addingTimeInterval(0.02)) }
+    let sheetWasUp = window.attachedSheet != nil
+    var sheetsAtQuit: Int?
+    Updater.quitOnceSheetsClose(windows: { [window] }) { sheetsAtQuit = window.attachedSheet == nil ? 0 : 1 }
+    for _ in 0..<150 where sheetsAtQuit == nil { RunLoop.current.run(until: Date().addingTimeInterval(0.02)) }
+    window.orderOut(nil)
+    try check(sheetWasUp && sheetsAtQuit == 0,
+      "现在更新并重新打开 quits only once its sheet is put away, as AppKit will not quit with a sheet up")
+    var quitAtOnce = false
+    Updater.quitOnceSheetsClose(windows: { [] }) { quitAtOnce = true }
+    try check(quitAtOnce, "with no sheet up the quit is asked at once")
   }
 }

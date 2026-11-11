@@ -32,7 +32,11 @@ struct UpdateSheet: View {
           Button("下载 \(r.version)") { updater.prepare(r) }
         }
         if case .ready = updater.phase {
-          Button("现在更新并重新打开") { updater.install(relaunch: true) }
+          // The sheet put away first: the app cannot quit while it is up.
+          Button("现在更新并重新打开") {
+            dismiss()
+            updater.install(relaunch: true)
+          }
             .disabled(m.isWorking).help(m.isWorking ? "扫描或导出完了再更新" : "退出、换上新版本、再打开")
         }
         Spacer()

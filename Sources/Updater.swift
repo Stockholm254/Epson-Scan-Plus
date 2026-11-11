@@ -219,10 +219,22 @@ final class Updater: ObservableObject {
       try launchInstaller(new: staged, build: release.build, over: bundleURL, parked: parkedURL(version: version, build: build), relaunch: relaunch)
       launched = true
       phase = .installing(release)
-      if relaunch { NSApp.terminate(nil) }
+      if relaunch { Self.quitOnceSheetsClose() }
     } catch {
       phase = .failed(error.localizedDescription)
     }
+  }
+  /// Quits once no window has a sheet up. AppKit will not quit while one does (「App termination
+  /// blocked by modal sheet」), and 「现在更新并重新打开」 is in the update sheet: asked from there,
+  /// the quit was refused, the installer waited, and the sheet stood at 「正在更新到…」 until the
+  /// user quit some other way. So the sheets are ended first, and the quit asked once they have
+  /// gone, or after `tries` turns of 50 ms whatever is still up.
+  static func quitOnceSheetsClose(windows: @escaping () -> [NSWindow] = { NSApp.windows }, tries: Int = 40,
+                                  quit: @escaping () -> Void = { NSApp.terminate(nil) }) {
+    let open = windows().compactMap(\.attachedSheet)
+    for sheet in open { sheet.sheetParent?.endSheet(sheet) }
+    guard !open.isEmpty, tries > 0 else { quit(); return }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { quitOnceSheetsClose(windows: windows, tries: tries - 1, quit: quit) }
   }
   /// Where the copy replaced goes: named by its version, never over one kept before.
   func parkedURL(version: String, build: Int) -> URL {
