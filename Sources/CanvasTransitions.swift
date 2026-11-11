@@ -612,7 +612,10 @@ extension FilmCanvasView {
   }
   @objc func stepZoomGlide(_ link: CADisplayLink) {
     guard let glide = zoomGlide, glide.link === link else { return link.invalidate() }
-    let s = ZoomGlide.progress(CACurrentMediaTime() - glide.start)
+    let now = CACurrentMediaTime()
+    let start = glide.start ?? now
+    glide.start = start
+    let s = ZoomGlide.progress(now - start)
     let step = glide.at(s)
     place(zoom: step.zoom, pan: step.pan)
     if s >= 1 {
@@ -698,7 +701,9 @@ extension FilmCanvasView {
 final class ZoomGlide {
   typealias View = (zoom: Double, pan: CGPoint)
   let from: View, to: View
-  let start = CACurrentMediaTime()
+  /// When it began, as its first frame was drawn: a frame that comes late (the canvas busy as the
+  /// glide is asked for) then does not take the glide's first part with it, as a jump.
+  var start: CFTimeInterval?
   var link: CADisplayLink?
   init(from: View, to: View) {
     self.from = from
