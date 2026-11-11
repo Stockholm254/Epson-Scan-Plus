@@ -491,6 +491,11 @@ struct NewProjectSheet: View {
       m.beginNewProject(profile: p, filmName: name, reversal: reversal, format: format, edges: edges)
     }
   }
+  /// The kind the sheet opens on: changing the film keeps the roll's; a new roll is a negative,
+  /// unless the film it opens on is a slide film, whatever the last roll was.
+  static func startsAsSlides(_ item: Choice, changing: Bool, m: AppModel) -> Bool {
+    changing ? m.reversalRoll : look(item, m: m).kind == .slide
+  }
   /// The preset a choice converts with and the film's name the roll keeps.
   static func film(_ item: Choice, m: AppModel) -> (FilmProfile, String) {
     let generic = FilmProfile.builtins.first { $0.id == "generic" } ?? m.profile
@@ -522,7 +527,7 @@ struct NewProjectSheet: View {
     edges = m.filmEdges
     let now = Self.current(m)
     if case .named(let name) = now, name.isEmpty {} else { choice = now }
-    reversal = m.reversalRoll
+    reversal = Self.startsAsSlides(choice, changing: changing, m: m)
     if let preselect { pick(preselect) }
     DispatchQueue.main.async { searching = true }
   }

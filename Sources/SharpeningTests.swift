@@ -108,5 +108,74 @@ enum SharpeningTests {
     let cleared = Preferences(defaults: defaults)
     cleared.sharpening = nil
     try check(Preferences(defaults: defaults).sharpening == nil, "removing the profile clears it from settings")
+    try cameraCopies(folder: folder, target: target, check: check)
+  }
+
+  /// A camera copy is sharpened by the copy stand's camera, measured on the resolution target,
+  /// whatever the scanner's profile, by default as much as its shots and magnification allow.
+  static func cameraCopies(folder: URL, target: URL, check: (Bool, String) throws -> Void) throws {
+    let fm = FileManager.default
+    // Three rolls' copies named as a pixel-shift group's picture is: 16 RAWs, 4, and none.
+    func copy(_ roll: String, raws: Int, ext: String = "ARW") throws -> FilmFrame {
+      let base = folder.appendingPathComponent("camera-sharpening", isDirectory: true).appendingPathComponent(roll, isDirectory: true)
+      try? fm.removeItem(at: base)
+      let decoded = base.appendingPathComponent("Decoded", isDirectory: true), group = base.appendingPathComponent("Captures/G1", isDirectory: true)
+      try fm.createDirectory(at: decoded, withIntermediateDirectories: true)
+      try fm.createDirectory(at: group, withIntermediateDirectories: true)
+      for i in 0..<raws { fm.createFile(atPath: group.appendingPathComponent(String(format: "DSC%05d.%@", i, ext)).path, contents: Data()) }
+      let picture = decoded.appendingPathComponent("G1.tif")
+      try fm.copyItem(at: target, to: picture)
+      var f = FilmFrame(name: "01", rect: .full, format: "翻拍")
+      f.sourcePath = picture.path
+      f.sensorRead = true
+      f.scanDPI = 6773
+      f.adjustments.inputGamma = 1
+      return f
+    }
+    let sixteen = try copy("sixteen", raws: 16), four = try copy("four", raws: 4, ext: "arq"), one = try copy("one", raws: 0)
+    var imported = one
+    imported.sensorRead = false
+    try check(Sharpening.copyShots(sixteen) == .sixteen && Sharpening.copyShots(four) == .four && Sharpening.copyShots(one) == .one
+      && Sharpening.copyShots(imported) == nil,
+      "a copy's shots are counted off its group's RAWs in Captures (16, 4, a single shot); an import is no copy")
+    try check(Sharpening.copyDefault(.one, magnification: 1) == 0.2 && Sharpening.copyDefault(.four, magnification: 1) == 0.3
+      && Sharpening.copyDefault(.sixteen, magnification: 0.7) == 0.4 && Sharpening.copyDefault(.sixteenDouble, magnification: nil) == 0.4
+      && abs(Sharpening.copyDefault(.sixteen, magnification: 0.42) - 0.3) < 1e-9 && abs(Sharpening.copyDefault(.one, magnification: 0.4) - 0.1) < 1e-9,
+      "copies are sharpened by default 20% for one shot, 30% for 4, 40% for 16, 10% less under half life size")
+
+    // The camera's kernel: per sensor pixel, so twice as wide on a 16-shot frame at twice the sensor.
+    guard let native = Sharpening.camera.sharpener(dpi: 6773, strength: 0.4, gamma: 1),
+      let double = Sharpening.camera.sharpener(dpi: 13547, strength: 0.4, gamma: 1)
+    else { throw DeskError.message("FAIL: the camera profile gives a kernel at the sensor's 6773 dpi and at twice that") }
+    let sum = native.kernel.reduce(0, +)
+    try check(abs(sum - 1) < 1e-4 && native.kernel.contains { $0 < 0 } && double.radius > native.radius,
+      "the camera profile gives a sharpening kernel at the sensor's dpi (radius \(native.radius)), wider at twice that (\(double.radius))")
+    var set = sixteen
+    set.adjustments.sharpening = 0.4
+    try check(Sharpening.sharpener(nil, frame: set, maxDimension: nil) != nil,
+      "a copy is sharpened by the camera's profile with no scanner profile measured")
+    set.adjustments.sharpening = 0
+    try check(Sharpening.sharpener(nil, frame: set, maxDimension: nil) == nil, "and not at all at 0")
+
+    // The roll works out a copy's default from its magnification: the film's dpi against the sensor's.
+    let suite = "EpsonScanPlus.tests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let model = AppModel(libraryURL: folder.appendingPathComponent("camera-sharpening-library", isDirectory: true), preferences: Preferences(defaults: defaults))
+    model.format = .auto
+    let unknown = model.sharpeningStrength(sixteen)
+    model.format = .mm135
+    // The target's 1000 px short side as 24 mm: 1058 dpi on the film against the sensor's 6773, 0.16×.
+    let small = model.copyMagnification(sixteen) ?? 0, smallStrength = model.sharpeningStrength(sixteen)
+    var close = sixteen
+    close.scanDPI = 1000
+    let closeStrength = model.sharpeningStrength(close)
+    try check(unknown == 0.4 && abs(small - 1058.3 / 6773) < 0.01 && abs(smallStrength - 0.3) < 1e-9 && closeStrength == 0.4,
+      String(format: "a 16-shot copy is sharpened 40%% by default, 30%% at %.2f× (under half life size)", small))
+    var scan = FilmFrame(name: "02", rect: .full, format: "135")
+    scan.scanPath = target.path
+    try check(model.sharpeningStrength(scan) == Sharpening.defaultStrength && model.sharpeningStrength(imported) == 0
+      && abs((model.sharpened(one).adjustments.sharpening ?? 0) - 0.1) < 1e-9 && model.sharpened(set).adjustments.sharpening == 0,
+      "scans keep their default and imports none; a copy's default (a single shot at 0.16×: 10%) is written in for renders and exports, a set strength kept")
   }
 }

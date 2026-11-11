@@ -213,6 +213,20 @@ enum NewProjectTests {
     model.applyFilm(profile: generic, filmName: "Fujifilm Velvia 50", reversal: true, format: .six7)
     try check(model.frames.isEmpty && model.reversalRoll && model.format == .six7,
       "a roll with nothing in it yet changed to a slide film comes in as slides")
+    // The next new roll is a negative again, whatever the last was: the sheet opens on 负片 (on 反转片
+    // only for a slide film), changing the film keeps the roll's kind.
+    let slidesOpen = model.reversalRoll
+    model.beginNewProject(profile: portra400, filmName: "Kodak Portra 400", reversal: true, format: .mm135)
+    let crossProcessed = model.reversalRoll
+    model.newProject()
+    try check(slidesOpen && crossProcessed && !model.reversalRoll && !model.preferences.scanReversal
+      && !NewProjectSheet.startsAsSlides(.stock(FilmCatalog.stock(named: "Kodak Portra 400")?.id ?? ""), changing: false, m: model)
+      && !NewProjectSheet.startsAsSlides(.named("Aerocolor 100"), changing: false, m: model)
+      && NewProjectSheet.startsAsSlides(.stock(velviaID), changing: false, m: model),
+      "after a roll read as slides, a new roll starts as a negative: the sheet on 负片 but for a slide film, the scanner on negatives")
+    model.beginNewProject(profile: portra400, filmName: "Kodak Portra 400", reversal: true, format: .mm135)
+    try check(NewProjectSheet.startsAsSlides(.stock(FilmCatalog.stock(named: "Kodak Portra 400")?.id ?? ""), changing: true, m: model),
+      "changing the film of a roll read as slides keeps it slides")
     try check(lately.map(\.choice) == [.stock(velviaID), .stock(hp5ID), .stock(velviaID), .preset(own.id), .named("Aerocolor 100")]
       && lately.map(\.format) == [.six7, nil, nil, nil, nil],
       "the shelf starts with the films of the rolls last begun, newest first, each once in 120 (in its newest roll's format) and once in 135, a preset of this Mac as itself: \(lately.map { "\($0.choice) \($0.format?.rawValue ?? "-")" })")
