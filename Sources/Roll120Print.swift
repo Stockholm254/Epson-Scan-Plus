@@ -32,7 +32,7 @@ enum Roll120Print {
     ctx.setFillColor(c.cgColor)
     ctx.fill(CGRect(x: 0, y: y0 * mm, width: width, height: (y1 - y0) * mm))
   }
-  enum Family { case kodak, fujichrome, fujicolor, ilford, kentmere, lomography, other }
+  enum Family { case kodak, fujichrome, fujicolor, ilford, kentmere, lomography, cinestill, other }
   static func family(_ look: Look) -> Family {
     switch look.maker ?? "" {
     case "Kodak": return .kodak
@@ -40,6 +40,7 @@ enum Roll120Print {
     case "Ilford": return .ilford
     case "Kentmere": return .kentmere
     case "Lomography": return .lomography
+    case "CineStill": return .cinestill
     default: return .other
     }
   }
@@ -84,6 +85,25 @@ enum Roll120Print {
           line("120", font("HelveticaNeue-Bold", 3.0), .white, s: at, y: 4.2, width: w)
           line("FUJIFILM", font("AvenirNext-DemiBold", 3.2), .white, s: at, y: 53.0, fit: 20, kern: 0.3, width: w)
         }
+      case .cinestill:
+        // CineStill's: plain white paper, the wound end of it showing as a thin grey line that
+        // runs round the roll on a slant, above the seal and below it.
+        band(ctx, rgb(0xF4F4F2), 0, 62, width: w)
+        for (x0, y0, x1, y1) in [(0.18, 0.0, 0.62, 21.0), (0.42, 42.0, 0.9, 62.0)] as [(CGFloat, CGFloat, CGFloat, CGFloat)] {
+          let line = CGMutablePath()
+          line.move(to: CGPoint(x: w * x0, y: y0 * mm))
+          line.addCurve(to: CGPoint(x: w * x1, y: y1 * mm), control1: CGPoint(x: w * (x0 + 0.12), y: (y0 + (y1 - y0) * 0.2) * mm),
+            control2: CGPoint(x: w * (x1 - 0.05), y: (y0 + (y1 - y0) * 0.75) * mm))
+          ctx.addPath(line)
+          ctx.setStrokeColor(rgb(0xB9B9B6).cgColor)
+          ctx.setLineWidth(0.22 * mm)
+          ctx.strokePath()
+          // The paper's edge throws a faint shadow on the turn under it.
+          ctx.addPath(line.copy(using: [CGAffineTransform(translationX: 0, y: 0.25 * mm)])!)
+          ctx.setStrokeColor(rgb(0xDCDCD9).cgColor)
+          ctx.setLineWidth(0.35 * mm)
+          ctx.strokePath()
+        }
       case .ilford, .kentmere, .lomography, .other:
         // Plain pale paper, the maker's name small round the ends where it has one.
         band(ctx, rgb(0xE9E9E6), 0, 62, width: w)
@@ -106,6 +126,7 @@ enum Roll120Print {
     case .ilford: return ilfordSeal(look)
     case .kentmere: return kentmereSeal(look)
     case .lomography: return lomographySeal(look)
+    case .cinestill: return cinestillSeal(look)
     case .other: return otherSeal(look)
     }
   }
@@ -237,6 +258,39 @@ enum Roll120Print {
       }
     }
     return Seal(image: image, height: tall, rise: -1.0)
+  }
+  /// CineStill's: a narrow white edge over a band of the stock's colour (800T red, 400D purple,
+  /// 50D blue), and on it the CineStill film mark in white: Cine over Still, its C and S large
+  /// and round, film upright beside till.
+  static func cinestillSeal(_ look: Look) -> Seal {
+    let tall: CGFloat = 24, edge: CGFloat = 3.6
+    let name = look.name.uppercased()
+    let colour = name.contains("400D") ? rgb(0x67308F) : name.contains("50D") ? rgb(0x2C64B4) : rgb(0xD3262E)
+    let image = FilmRender.Label.draw(width: round + 0.9, height: tall) { ctx, size in
+      let w = size.width
+      band(ctx, rgb(0xF6F6F4), 0, tall, width: w)
+      band(ctx, colour, edge, tall, width: w)
+      let thin = "AvenirNext-Medium", big = "AvenirNext-Regular"
+      for at in [0, round / 2] as [CGFloat] {
+        let x = w * FilmRender.Label.front + at * mm
+        // Cine: a large C, ine beside it; Still under it the same; film upright after till.
+        func word(_ first: String, _ rest: String, top: CGFloat) -> CGFloat {
+          let a = NSMutableAttributedString(string: first, attributes: [.font: font(big, 9.6), .foregroundColor: NSColor.white, .kern: -0.6 * mm])
+          a.append(NSAttributedString(string: rest, attributes: [.font: font(thin, 6.0), .foregroundColor: NSColor.white, .kern: -0.15 * mm]))
+          a.draw(at: CGPoint(x: x - 7.2 * mm, y: top * mm))
+          return a.size().width
+        }
+        _ = word("C", "ine", top: edge + 0.6)
+        let still = word("S", "till", top: edge + 8.6)
+        ctx.saveGState()
+        let film = NSAttributedString(string: "film", attributes: [.font: font(thin, 2.6), .foregroundColor: NSColor.white])
+        ctx.translateBy(x: x - 7.2 * mm + still + 0.4 * mm, y: (edge + 18.4) * mm)
+        ctx.rotate(by: -.pi / 2)
+        film.draw(at: .zero)
+        ctx.restoreGState()
+      }
+    }
+    return Seal(image: image, height: tall, rise: 2.0)
   }
   /// Any other maker's: white, a band of the maker's colour with its name, the stock and speed.
   static func otherSeal(_ look: Look) -> Seal {
