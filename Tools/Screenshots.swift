@@ -16,9 +16,9 @@ import UniformTypeIdentifiers
 /// - A shot that looks like the file already there (a mean difference under 1/255) leaves that
 ///   file as it is, so a rebuild does not rewrite every JPEG.
 /// - The close-ups (the scan head, the loupes, the crop glass) are drawn by hand and not taken here.
-/// - The README's features each have a picture: the film shelf, ① with the scanner, a copy roll's
-///   light table, the two crops, dust, the curves and the shortcuts, cut from the window where only
-///   a part of it says what the feature is. The copy roll is the user's Phoenix 6×6 roll.
+/// - The README's features each have a picture: the film shelf, ① with the scanner and with the
+///   camera (the copy stand), a copy roll's light table, the two crops, dust, the curves and the
+///   shortcuts, cut from the window where only a part of it says what the feature is. The copy roll is the user's Phoenix 6×6 roll.
 final class ShotWindow: NSWindow {
   override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
   override var canBecomeKey: Bool { true }
@@ -184,6 +184,13 @@ struct ShotFailure: Error { let message: String }
     let capturePanel = try Picture.capture(window, work: work)
     let captureColumns = Picture.columns(window)
     try save(capturePanel, "capture.jpg", width: 1600)
+    // ① with the camera, not connected (nothing is asked of a camera): the copy stand the live view
+    // will come from, rendered in 3D, its light coming up through the film; the camera's panel.
+    model.captureSource = .camera
+    settle(3)
+    try save(try Picture.capture(window, work: work), "capture-camera.jpg", width: 1600)
+    model.captureSource = .scanner
+    settle()
 
     model.loadProject(rollURL.appendingPathComponent(AppModel.projectFile))
     guard !model.frames.isEmpty else { throw ShotFailure(message: "截图用的那一卷打不开：\(rollURL.path)") }

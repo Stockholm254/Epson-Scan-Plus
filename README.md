@@ -44,11 +44,18 @@
 <td colspan="2" valign="top"><img src="doc/images/film-closeup.jpg" width="100%" alt="暗盒和 120 卷的近照"><br><b>暗盒和 120 卷的细节</b>：120 卷也照实物画，包括各家的背纸和封条，片轴是薄薄的黑色轴挡，中间凹着卷片钮的键孔；暗盒的印刷、顶盖和片口都对照过实物照片。</td>
 </tr>
 <tr>
+<td colspan="2" valign="top"><img src="doc/images/3d-turn.jpg" width="100%" alt="暗盒转一圈，旁边是一卷 120"><br><b>会转的胶片</b>：鼠标在胶片架、② 的胶片页或库的标签上停一下，暗盒就在原地转一圈，片头从旁边扫过去，影子跟着在地上转；从库里打开一卷时，它一直转到这卷打开。片头照原厂暗盒切：一出暗盒口，下边就顺着一道内凹的弧收成舌头。</td>
+</tr>
+<tr>
 <td colspan="2" valign="top"><img src="doc/images/shelf-detail.jpg" width="100%" alt="胶片架下方：厂家资料、画幅和片边"><br><b>厂家资料、画幅和片边</b>：选中一款，下面是厂家怎么介绍它、数据表里的关键数据，以及数据表和厂家页面的链接。「片边」说照片里有没有拍进片边，尺寸按胶片的实际宽度算：135 为 35 mm，120 为 61.5 mm。</td>
 </tr>
 <tr>
 <td valign="top"><img src="doc/images/capture.jpg" width="100%" alt="① 采集：V850 的设置和等着预览的灯箱"><br><b>① V850 扫描</b>：片夹放好后先扫一张 48-bit 线性整幅预览，自动识别 135 和 120 的画面，按行合并扫描，扫完自动导出正片。</td>
 <td valign="top"><img src="doc/images/copy-table.jpg" width="100%" alt="翻拍卷的灯箱"><br><b>① A7R IV 翻拍</b>：直连相机的 PTP，支持 4 张或 16 张像素位移。翻拍的卷按画幅排在灯箱上，先去串色、再除以平场。</td>
+</tr>
+<tr>
+<td valign="top"><img src="doc/images/capture-camera.jpg" width="100%" alt="① 采集：A7R IV 等着实时取景"><br><b>① A7R IV 等着实时取景</b>：照着作者的翻拍架做的 3D：带刻度的立柱、三维调平云台上镜头朝下的相机；光从片夹底下透上来，只有片窗亮着。</td>
+<td valign="top"><img src="doc/images/3d-views.jpg" width="100%" alt="翻拍架、标定的中性点和平场的 3D 图"><br><b>3D 看标定和平场</b>：标定的中性点放在红、绿、蓝密度组成的空间里，偏离中性轴 0.03 D 以上的点是红的；平场的三个通道各是一层曲面，三层分开的地方就是边上偏色。都能拖着转、用滚轮缩放。</td>
 </tr>
 <tr>
 <td valign="top"><img src="doc/images/single-view.jpg" width="100%" alt="② 去色罩：单张和检查器"><br><b>② 去色罩</b>：除以片基，按整卷估计或本机标定的通道斜率拉齐三层反差。右栏按调色的顺序排：白平衡、影调、色阶、色彩，每一节都能单独复位。</td>
