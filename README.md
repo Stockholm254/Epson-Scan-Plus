@@ -15,6 +15,7 @@
 
 <p align="center">
   <a href="#一览">一览</a> ·
+  <a href="#操作演示">操作演示</a> ·
   <a href="#原理">原理</a> ·
   <a href="#安装">安装</a> ·
   <a href="#快速开始">快速开始</a> ·
@@ -40,6 +41,9 @@
 <td colspan="2" valign="top"><img src="doc/images/cassettes.jpg" width="100%" alt="胶片架上的暗盒"><br><b>照实物画的暗盒</b>：每一款的印刷都照着真暗盒的照片画，包括颜色、版式、字体和读的方向，暗盒顶盖和片口也照实物做。</td>
 </tr>
 <tr>
+<td colspan="2" valign="top"><img src="doc/images/film-closeup.jpg" width="100%" alt="暗盒和 120 卷的近照"><br><b>暗盒和 120 卷的细节</b>：120 卷也照实物画，包括各家的背纸和封条，片轴是薄薄的黑色轴挡，中间凹着卷片钮的键孔；暗盒的印刷、顶盖和片口都对照过实物照片。</td>
+</tr>
+<tr>
 <td colspan="2" valign="top"><img src="doc/images/shelf-detail.jpg" width="100%" alt="胶片架下方：厂家资料、画幅和片边"><br><b>厂家资料、画幅和片边</b>：选中一款，下面是厂家怎么介绍它、数据表里的关键数据，以及数据表和厂家页面的链接。「片边」说照片里有没有拍进片边，尺寸按胶片的实际宽度算：135 为 35 mm，120 为 61.5 mm。</td>
 </tr>
 <tr>
@@ -61,6 +65,23 @@
 <tr>
 <td valign="top"><img src="doc/images/panels.jpg" width="100%" alt="左栏的三页"><br><b>左栏</b>：① 扫描仪的设置；② 的胶片页（胶片、预设和它的标定、片基）和输出页。</td>
 <td valign="top"><img src="doc/images/shortcuts.jpg" width="100%" alt="键盘快捷键"><br><b>键盘快捷键</b>：⌘/ 打开一览，包括画面上不在菜单里的单个字母键。</td>
+</tr>
+</table>
+
+## 操作演示
+
+<table>
+<tr>
+<td width="50%" valign="top"><img src="doc/images/demo-open.gif" width="100%" alt="从灯箱打开一张，再回到灯箱"><br><b>打开一张</b>：点灯箱上的一张，它从原位放大到单张视图；回灯箱时缩回它的格子里。</td>
+<td width="50%" valign="top"><img src="doc/images/demo-switch.gif" width="100%" alt="单张视图里一张张往后换"><br><b>换张</b>：← → 或点胶片条，下一张从它所在的那一边滑进来。</td>
+</tr>
+<tr>
+<td valign="top"><img src="doc/images/demo-zoom.gif" width="100%" alt="放大到三倍再缩回"><br><b>缩放</b>：双击照片放大到 3 倍，指着的地方不动；再双击或点「适合」，平滑缩回。</td>
+<td valign="top"><img src="doc/images/demo-neutral.gif" width="100%" alt="在栈桥的白栏杆上取中性灰"><br><b>取中性灰</b>：按 N，在应该是灰的地方点一下（这里是栈桥的白栏杆），照片淡到新的白平衡。</td>
+</tr>
+<tr>
+<td valign="top"><img src="doc/images/demo-multi-rotate.gif" width="100%" alt="灯箱上选三张一起旋转"><br><b>多选</b>：⌘ / ⇧ 点选几张后，旋转、镜像、勾选、删除、重置和同步都对所选的每一张起作用；灯箱上每张在自己的格子里转过去。</td>
+<td valign="top"><img src="doc/images/demo-shelf.gif" width="100%" alt="新建工程时在胶片架上挑胶片"><br><b>胶片架</b>：新建工程时用 ↑ ↓ 挑胶片，下面跟着换成这一款的暗盒或 120 卷、厂家资料和数据表。</td>
 </tr>
 </table>
 
