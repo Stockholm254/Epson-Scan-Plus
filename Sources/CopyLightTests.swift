@@ -207,6 +207,27 @@ enum CopyLightTests {
     try capture(negative, 8)
     try check(toB && noneOK && flatModel.frames.last?.flatID == flatB?.id && flatModel.frames.last?.flatField == flatB?.variant(nil),
       "a frame given another flat and then none is read so; a new picture takes the flat of the roll's last one")
+    // 应用平场 off: no flat at all, not even the copy light's; on again: its blank's. A flat chosen for
+    // the frame, then 应用到本卷: the roll's frames take it, blanks and pictures of another size not.
+    // Blank frames are shown as they were read, not de-masked.
+    flatModel.select(ids[2])
+    flatModel.setFlatApplied(false)
+    let offOK = flatModel.frames[2].flatID == AppModel.noFlat && flatModel.frames[2].flatField == nil
+      && !flatModel.flatApplied(flatModel.frames[2]) && flatModel.flatName(flatModel.frames[2]) == "不补"
+    flatModel.setFlatApplied(true)
+    let backOn = flatModel.frames[2].flatID == flatA?.id && flatModel.flatApplied(flatModel.frames[2])
+    let choices = flatModel.flatChoices(for: flatModel.frames[2]).map(\.id)
+    flatModel.chooseFlat(flatB?.id ?? "")
+    let chosen = flatModel.frames[2].flatID == flatB?.id
+    flatModel.applySelectedFlatToRoll()
+    let rollTook = [1, 2, 4, 5, 7].allSatisfy { flatModel.frames[$0].flatID == flatB?.id } && flatModel.frames[6].flatID == nil
+      && flatModel.frames[0].flatID == nil && flatModel.frames[3].flatID == nil
+    let blanksAsRead = !flatModel.frames[0].adjustments.inputIsNegative && !flatModel.frames[3].adjustments.inputIsNegative
+      && flatModel.frames[1].adjustments.inputIsNegative
+    for _ in 0..<4 { flatEdits.undo() }
+    try check(offOK && backOn && chosen && rollTook && blanksAsRead && choices == [flatA?.id, flatB?.id].compactMap { $0 }
+      && flatModel.frames[2].flatID == flatA?.id && flatModel.frames[1].flatID == nil,
+      "应用平场 off divides by no flat, on by its blank's; a flat chosen and given to the roll skips blanks and another size; blanks are not de-masked; each step undone")
     // A base picked at a frame's edge and shared moves where it was picked when the flats change.
     flatModel.select(ids[4])
     flatModel.setFilmBase(RGB(r: 0.3, g: 0.2, b: 0.15), at: NormalRect(x: 0.01, y: 0.01, width: 0.02, height: 0.02))

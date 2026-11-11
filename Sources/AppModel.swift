@@ -1853,6 +1853,8 @@ final class AppModel: ObservableObject {
   /// The flat field a frame read through `crosstalk` is divided by: the roll's flat `flatID` names,
   /// read alike; without one, the copy light's when the crosstalk is out, else none.
   func resolvedFlat(_ flatID: String?, crosstalk: Crosstalk?) -> FlatField? {
+    // 应用平场 switched off: no flat at all, not even the copy light's.
+    if flatID == Self.noFlat { return nil }
     if let flatID { return rollFlats.first { $0.id == flatID }?.variant(crosstalk) }
     return crosstalk != nil ? preferences.lightCalibration?.flat : nil
   }
@@ -4366,9 +4368,13 @@ final class AppModel: ObservableObject {
       // A frame's blank-frame flat field, kept once with the roll, read back as the frame reads; a
       // frame that kept its own grid keeps it. One whose flat is not in the roll is left unflattened.
       rollFlats = p.flats ?? []
+      // A blank frame shown as it was read, not de-masked: the light and how it falls off (rolls
+      // before 0.19.6 converted it as a negative).
+      let blanks = blankFrameIDs
+      for i in frames.indices where blanks.contains(frames[i].id) { frames[i].adjustments.inputIsNegative = false }
       pictureSizes = [:]
       var lostFlats = 0
-      for i in frames.indices where frames[i].flatID != nil && frames[i].flatField == nil {
+      for i in frames.indices where frames[i].flatID != nil && frames[i].flatID != Self.noFlat && frames[i].flatField == nil {
         if let flat = resolvedFlat(frames[i].flatID, crosstalk: frames[i].crosstalk) {
           frames[i].flatField = flat
         } else {

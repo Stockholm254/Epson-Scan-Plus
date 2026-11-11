@@ -6,6 +6,8 @@ import ImageIO
 /// light): made from a frame of the roll, kept in a library, and given to groups of the roll's
 /// frames, each frame divided by its own (`FilmFrame.flatID`, set only through `relight`).
 extension AppModel {
+  /// A frame's flat id with 应用平场 switched off: divided by no flat, not even the copy light's.
+  static let noFlat = "none"
   /// The roll's blank frames: those its flats were made from.
   var blankFrameIDs: Set<UUID> { Set(rollFlats.map(\.sourceFrame)) }
   /// A picture a blank frame's flat could divide: a linear file, as a camera's are decoded.
@@ -30,6 +32,7 @@ extension AppModel {
   func flatProfile(of f: FilmFrame) -> FlatProfile? { f.flatID.flatMap { id in rollFlats.first { $0.id == id } } }
   /// What frame `f` is divided by, in a few words: a blank frame's flat, the copy light's, or none.
   func flatName(_ f: FilmFrame) -> String {
+    if f.flatID == Self.noFlat { return "不补" }
     if let p = flatProfile(of: f) { return p.name }
     return f.flatField != nil ? "光源标定" : "没有"
   }
@@ -139,9 +142,11 @@ extension AppModel {
     recordEdit("平场", key: UUID().uuidString)
     rollFlats.append(flat)
     let scope = blankScope(blank)
-    // The blank itself is not divided, nor exported.
+    // The blank itself is not divided, nor exported, nor de-masked: shown as it was read, the light
+    // and how it falls off towards the edges.
     if let i = frames.firstIndex(where: { $0.id == blank }) {
       frames[i].enabled = false
+      frames[i].adjustments.inputIsNegative = false
       if frames[i].flatID != nil { relight(i, crosstalk: frames[i].crosstalk, flatID: nil) }
     }
     let done = assignFlat(flat.id, to: scope)
@@ -189,19 +194,55 @@ extension AppModel {
   }
   /// `flat` (nil: none, or the copy light's where the crosstalk is out) given to frames `ids` as one
   /// edit; blank frames and frames it does not fit stay as they are. Returns what it did, in words.
-  @discardableResult func applyFlat(_ flat: FlatProfile?, to ids: [UUID]) -> String {
+  /// `off`: 应用平场 switched off, no flat at all, not even the copy light's.
+  @discardableResult func applyFlat(_ flat: FlatProfile?, to ids: [UUID], off: Bool = false) -> String {
     if let blocked = flatsBlocked { return blocked }
+    let flat = off ? nil : flat
     if let flat, !rollFlats.contains(where: { $0.id == flat.id }) { rollFlats.append(flat) }
     let blanks = blankFrameIDs
     let targets = ids.filter { !blanks.contains($0) }
     recordEdit(flat == nil ? "不补平场" : "平场", key: UUID().uuidString)
-    let done = assignFlat(flat?.id, to: targets)
-    let light = preferences.lightCalibration != nil && frames.contains { targets.contains($0.id) && $0.crosstalk != nil }
+    let done = assignFlat(off ? Self.noFlat : flat?.id, to: targets)
+    let light = !off && preferences.lightCalibration != nil && frames.contains { targets.contains($0.id) && $0.crosstalk != nil }
     let said = (flat.map { "「\($0.name)」用到 \(done.applied) 张" } ?? (light ? "\(done.applied) 张回到光源标定的平场" : "\(done.applied) 张不补平场"))
       + (done.skipped > 0 ? "；\(done.skipped) 张尺寸和空白帧不同，跳过" : "") + (targets.count < ids.count ? "；空白帧不补" : "")
     status = "平场：" + said
     finishFlatChange()
     return said
+  }
+  /// The flats frame `f` can be divided by: the roll's and then the library's that fit it.
+  func flatChoices(for f: FilmFrame) -> [FlatProfile] {
+    var seen = Set<String>()
+    return (rollFlats + preferences.flatProfiles).filter { p in seen.insert(p.id).inserted && flat(p, fits: f) }
+  }
+  /// Frame `f` is divided by a flat field: a blank frame's or the copy light's.
+  func flatApplied(_ f: FilmFrame) -> Bool { f.flatField != nil }
+  /// The copy light's flat can stand for frame `f`: its crosstalk is out and the light is calibrated.
+  func lightFlatAvailable(_ f: FilmFrame) -> Bool { f.crosstalk != nil && preferences.lightCalibration != nil }
+  /// The flat 应用平场 switched on gives frame `f`: that of the blank whose frames it is among,
+  /// else the newest that fits; nil where only the copy light's can stand, or none.
+  func defaultFlat(for f: FilmFrame) -> FlatProfile? {
+    rollFlats.last { blankScope($0.sourceFrame).contains(f.id) && flat($0, fits: f) } ?? flatChoices(for: f).last
+  }
+  /// 应用平场 for the selected frame: off, divided by no flat (not even the copy light's); on, by the
+  /// flat it would take (`defaultFlat`), else the copy light's. One edit, undone with ⌘Z.
+  func setFlatApplied(_ on: Bool) {
+    guard let f = selected, !blankFrameIDs.contains(f.id) else { return }
+    if on { applyFlat(defaultFlat(for: f), to: [f.id]) } else { applyFlat(nil, to: [f.id], off: true) }
+  }
+  /// The selected frame's flat chosen: one of `flatChoices` by id, or the copy light's ("light").
+  func chooseFlat(_ id: String) {
+    guard let f = selected else { return }
+    if id == "light" { applyFlat(nil, to: [f.id]); return }
+    guard let p = flatChoices(for: f).first(where: { $0.id == id }) else { return }
+    applyFlat(p, to: [f.id])
+  }
+  /// 应用到本卷: the selected frame's flat, its copy light's or none, given to the roll's frames;
+  /// blank frames and frames it does not fit stay as they are.
+  func applySelectedFlatToRoll() {
+    guard let f = selected else { return }
+    let all = frames.map(\.id)
+    if f.flatID == Self.noFlat { applyFlat(nil, to: all, off: true) } else { applyFlat(flatProfile(of: f), to: all) }
   }
   /// The flat a new picture of `width` × `height` takes: that of the roll's last picture its size,
   /// or, where that is a blank, the blank's own (a blank comes before the frames shot after it).

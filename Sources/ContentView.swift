@@ -880,7 +880,7 @@ struct ContentView: View {
   var flatRow: some View {
     let selected = m.selected, blanks = m.blankFrameIDs
     let isBlank = selected.map { blanks.contains($0.id) } ?? false
-    let kinds = Set(m.frames.compactMap(\.flatID)).count
+    let kinds = Set(m.frames.compactMap(\.flatID)).subtracting([AppModel.noFlat]).count
     // Pictures a blank's flat could divide that have none, once the roll has one.
     let unflattened = kinds == 0 ? [] : m.frames.filter { $0.flatID == nil && !blanks.contains($0.id) && m.isLinearPicture($0) }
     let blocked = m.flatsBlocked
@@ -895,6 +895,27 @@ struct ContentView: View {
         Text(summary).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
         Spacer(minLength: 4)
         InfoButton(text: Self.flatInfo, about: "平场")
+      }
+      // This picture's flat: switched on or off, which one, and the same for the whole roll.
+      if let selected, !isBlank, m.isLinearPicture(selected) {
+        let choices = m.flatChoices(for: selected), light = m.lightFlatAvailable(selected)
+        let applied = m.flatApplied(selected), usable = !choices.isEmpty || light
+        SwitchRow("应用平场", isOn: Binding(get: { applied }, set: { m.setFlatApplied($0) }),
+          info: "这张照片除不除以平场。关掉：不补，连光源标定的平场也不用；打开：用它那张空白帧的平场，没有时用最近量的、尺寸合适的那个，再没有时用光源标定的。可以 ⌘Z 撤销。"
+            + (usable ? "" : "\n\n现在还没有和这张尺寸一样的平场：先拍一张空白帧，选中它点「设成平场」。"))
+          .disabled(!usable || blocked != nil)
+        HStack(spacing: 6) {
+          Picker("用哪个", selection: Binding(
+            get: { selected.flatID.flatMap { $0 == AppModel.noFlat ? nil : $0 } ?? "light" }, set: { m.chooseFlat($0) })) {
+            if light { Text("光源标定").tag("light") }
+            ForEach(choices, id: \.id) { p in Text(p.name).tag(p.id) }
+          }
+          .labelsHidden().frame(maxWidth: .infinity, alignment: .leading).disabled(!applied || !usable || blocked != nil)
+          .help("这张除以哪个平场：这一卷和平场列表里尺寸和它一样的，按名字（空白帧的拍摄时间和光圈）")
+          Button("应用到本卷") { m.applySelectedFlatToRoll() }
+            .disabled(blocked != nil)
+            .help(applied ? "把这张的平场「\(m.flatName(selected))」用到整卷：尺寸不同的照片和空白帧不动" : "整卷都不补平场（空白帧不动），可以 ⌘Z 撤销")
+        }
       }
       HStack(spacing: 6) {
         if !unflattened.isEmpty {
