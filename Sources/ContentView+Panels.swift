@@ -289,8 +289,8 @@ extension ContentView {
     }
     if film.setsChannelContrast {
       return m.hasSinglePictures && !m.poolPictures
-        ? "按 Kodak 数据表斜率：一张一个文件的画面各自估计不了。它们是同一卷、同样设置的话，打开下面的「单张一起做整卷估计」。"
-        : "按 Kodak 数据表斜率（本卷画面太少，未能自动估计）。"
+        ? "按数据表斜率（\(film.publication)）：一张一个文件的画面各自估计不了。它们是同一卷、同样设置的话，打开下面的「单张一起做整卷估计」。"
+        : "按数据表斜率（\(film.publication)；本卷画面太少，未能自动估计）。"
     }
     return "通用：每张按自己的画面拉伸各通道。"
   }

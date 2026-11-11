@@ -10,7 +10,7 @@
 2. **整卷自动估计**：没有本机预设时，按整卷画面里的明暗过渡估计（局部密度梯度之比）。至少需要 2 张，画面越多越准。
    - **分组**：扫描的画面一起估计；一个导入文件里有几张画面时（例如一整条胶片），这个文件单独估计。
    - **一张一个文件**：翻拍或一张张导入的扫描，默认各自分开，所以估计不了。在检查器「胶片」一节打开「单张一起做整卷估计」后，读法相同（输入 Gamma、位深）的文件归成一卷一起估计。只在它们是同一卷、用同样的设备和设置拍或扫时打开。
-3. **Kodak 数据表斜率**：画面太少、无法估计时使用。
+3. **厂家数据表斜率**：画面太少、无法估计时使用。21 款胶片有：数据表印了 Status M 特性曲线的彩色负片（见下面的列表）。
 
 选「通用」且没有整卷估计时，每张按自己的画面拉伸各通道。各方法的实测对比见[版本记录](CHANGELOG.md)中的 0.4.5 和 0.4.6。
 
@@ -33,6 +33,31 @@
 - [Portra 160 / E-4051](https://business.kodakmoments.com/sites/default/files/files/products/e4051_portra_160.pdf)
 - [Portra 400 / E-4050](https://imaging.kodakalaris.com/sites/default/files/files/resources/e4050_portra_400.pdf)
 - [Ektar 100 / E-4046](https://www.kodakprofessional.com/sites/default/files/wysiwyg/pro/resources/e4046_ektar_100.pdf)
+
+2026-11-10 起又从厂家数据表录入了 18 款（R / G / B 斜率）。和上面三款不同，它们不是人工读图，而是按数据表的矢量图形描摹；没有矢量图的，从数据表印的图上描摹（和同一张图的矢量描摹对过，相差不到 0.006）。斜率取 Status M 特性曲线在正常曝光点前后各 1（log H）的直线段。正常曝光点按数据表的 Log H Ref；没写的按 log₁₀(14.4 / ISO)（柯达各数据表的 Log H Ref 都合这个式子，差不到 0.01），Vision3 按它自己标的 0 档。用同样的方法重描上面三款，和人工读的斜率相差不到 0.02。
+
+| 胶片 | 数据表 | R | G | B | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| Kodak Portra 800 | E-4040 | 0.684 | 0.721 | 0.780 | |
+| Kodak Gold 200 | E-7022 | 0.541 | 0.564 | 0.616 | |
+| Kodak UltraMax 400 | E-7023 | 0.500 | 0.529 | 0.581 | |
+| Kodak Vision3 50D 5203 | H-1-5203 | 0.470 | 0.557 | 0.535 | ECN-2 冲洗测得；图片描摹 |
+| Kodak Vision3 250D 5207 | H-1-5207 | 0.475 | 0.557 | 0.540 | 同上 |
+| Kodak Vision3 200T 5213 | H-1-5213 | 0.479 | 0.559 | 0.535 | 同上，3200K 灯光 |
+| Kodak Vision3 500T 5219 | H-1-5219 | 0.456 | 0.535 | 0.519 | 同上，3200K 灯光 |
+| Fujifilm 200 | AF3-0261E | 0.539 | 0.633 | 0.616 | |
+| Fujifilm 400 | AF3-0262E | 0.565 | 0.633 | 0.597 | |
+| Fujifilm Fujicolor 100 | 013AR0317A | 0.784 | 0.750 | 0.805 | |
+| Fujifilm Superia Premium 400 | 013AR0324A | 0.670 | 0.681 | 0.732 | |
+| Fujifilm Superia X-TRA 400 | AF3-0217E | 0.609 | 0.665 | 0.708 | |
+| Fujifilm Fujicolor C200 | AF3-0249E | 0.599 | 0.638 | 0.665 | 图片描摹 |
+| Fujifilm Pro 400H | AF3-176E | 0.582 | 0.557 | 0.530 | 图片描摹 |
+| Fujifilm Pro 160NS | 163AR109A | 0.595 | 0.540 | 0.549 | |
+| ORWO Wolfen NC500 | Datenblatt NC500 | 0.393 | 0.387 | 0.312 | 曲线全程弯曲，近似 |
+| ORWO Wolfen NC400 | Datenblatt NC400 | 0.627 | 0.632 | 0.640 | |
+| Harman Phoenix 200 | HARMAN PHOENIX 200 | 1.366 | 1.363 | 1.527 | 横轴是相对曝光量：取绿通道密度 25%–75% 的一段 |
+
+Ektacolor Pro 800 是 Portra 800 的新名字，用 Portra 800 的。没有录入的：Harman Phoenix II 和 Switch Azure 的数据表没有特性曲线，Lomography 只有使用指南；Harman Red 的三层按设计在不同的曝光范围起来（红、绿陡，蓝只有它们的三分之一），按它的曲线定死斜率会把蓝放大三倍、抹掉它要的红调，所以仍按画面转换；CineStill、ColorPlus、乐凯等厂家没有发布数据表。
 
 ## 作者的两张 IT8 色卡
 
