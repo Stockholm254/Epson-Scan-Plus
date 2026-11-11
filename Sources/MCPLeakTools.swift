@@ -97,7 +97,7 @@ extension MCPTools {
       "path": fileField,
     ], required: ["path"]),
     Tool(name: "leak_save_preset", description: "请用户保存去漏光预设：只在 App 里打开保存窗口，由用户选位置；本工具自己不写文件。", properties: [:]),
-    Tool(name: "leak_export", description: "请用户导出去漏光结果：只在 App 里打开导出窗口（全分辨率 16 位 Adobe RGB TIFF，附 sRGB JPEG 和参数记录），由用户选位置；本工具自己不写文件。要先应用去漏光。", properties: [:]),
+    Tool(name: "leak_export", description: "请用户导出去漏光结果：只在 App 里打开导出窗口（全分辨率 16 位 Adobe RGB TIFF，附 sRGB JPEG 和参数记录），由用户选位置；本工具自己不写文件。没有去漏光时导出的是带基础调整和片边处理的原片。", properties: [:]),
   ]
   static let leakInstructions = """
     去漏光页（FilmLightLab 修订 9）修复正片上的红色 / 品红漏光：参考图（同一张照片的干净版本，通常由图像模型生成）只指导平滑的色彩和明暗校正，输出像素都来自原片。
@@ -635,15 +635,16 @@ extension MCPTools {
       try requireBase(lab)
       try only(arguments, [])
       let export = name == "leak_export"
-      if export, !onMain({ lab.repaired && lab.after != nil }) { throw DeskError.message("还没有应用去漏光，没有可导出的结果。先 leak_start。") }
       try idle(lab)
+      let unrepaired = export && !onMain({ lab.repaired })
       // The panel waits for the user; the tool does not.
       DispatchQueue.main.async {
         model.page = .leak
         if export { lab.chooseExport() } else { lab.chooseSavePreset() }
       }
       return say(export
-        ? "已在 App 里打开导出窗口（全分辨率 16 位 Adobe RGB TIFF，附 sRGB JPEG 和参数记录），由用户选位置；本工具没有写文件。导出完成后 leak_get_state 的 notice 会说明。"
+        ? (unrepaired ? "这张没有去漏光，导出的是带基础调整和片边处理的原片。" : "")
+          + "已在 App 里打开导出窗口（全分辨率 16 位 Adobe RGB TIFF，附 sRGB JPEG 和参数记录），由用户选位置；本工具没有写文件。导出完成后 leak_get_state 的 notice 会说明。"
         : "已在 App 里打开保存预设的窗口，由用户选位置和名称；本工具没有写文件。")
     default:
       throw DeskError.message("没有名为 \(name) 的工具。")

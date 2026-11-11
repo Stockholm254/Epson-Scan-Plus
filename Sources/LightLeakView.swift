@@ -310,6 +310,7 @@ struct LeakPanel: View {
         Spacer()
       }
       if lab.repaired { note("可以用工具栏的「导出 16 位 TIFF」导出；先检查灯光红晕、红色物体和边缘。") }
+      else if lab.hasBase { note("不去漏光也能导出：导出的是带基础调整和片边处理的原片。") }
       Button {
         lab.start()
       } label: {
@@ -468,10 +469,11 @@ struct LeakExportKey: View {
       lab.chooseExport()
     } label: {
       Label("导出 16 位 TIFF", systemImage: "square.and.arrow.up")
-    }.leadingAction().disabled(!lab.repaired || lab.busy != nil)
+    }.leadingAction().disabled(!lab.exportable)
       .help(lab.repaired
         ? "导出原图裁切尺寸的 RGB 16 位 Adobe RGB TIFF，旁边附同一像素的 sRGB JPEG 预览和参数记录（.tif.json）。所有输出结构来自原片；只写入你选择的文件"
-        : "完成去漏光后可导出")
+        : lab.hasBase ? "这张没有去漏光：导出的是带基础调整和片边处理的原片，原图裁切尺寸的 RGB 16 位 Adobe RGB TIFF，旁边附 sRGB JPEG 和参数记录；只写入你选择的文件"
+        : "打开照片后可导出")
   }
 }
 

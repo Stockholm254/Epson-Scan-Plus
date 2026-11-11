@@ -133,6 +133,10 @@ final class LeakLab: ObservableObject {
   /// The repair is applied to this base: the reference's correction, or local regions, with or
   /// without one.
   var repaired: Bool { (model.map { $0.strength > 0 && ($0.sourceBase == nil || $0.sourceBase == job?.base) } ?? false) || regionsAct }
+  /// Whether the page can export: a picture open and nothing running. Without a repair (strength
+  /// 0, no reference, no region on) the export is the picture with its basic adjustments and the
+  /// film's edge cleaned.
+  var exportable: Bool { job != nil && hasBase && busy == nil }
 
   // MARK: Opening
 
@@ -968,20 +972,25 @@ final class LeakLab: ObservableObject {
     }
   }
   func chooseExport() {
-    guard let j = job, repaired, busy == nil else { return }
+    guard let j = job, exportable else { return }
     let panel = NSSavePanel()
     panel.allowedContentTypes = [.tiff]
     panel.canCreateDirectories = true
     panel.nameFieldStringValue = Self.stem(j.sourceName) + ".tif"
-    panel.message = "16 位 Adobe RGB TIFF，并附 sRGB JPEG 预览与参数记录"
+    panel.message = repaired ? "16 位 Adobe RGB TIFF，并附 sRGB JPEG 预览与参数记录"
+      : "这张没有去漏光：导出带基础调整和片边处理的原片，16 位 Adobe RGB TIFF，并附 sRGB JPEG 预览与参数记录"
     guard panel.runModal() == .OK, let url = panel.url else { return }
     export(to: url)
   }
   /// The repair at full resolution: a 16-bit Adobe RGB TIFF, an sRGB JPEG of the same pixels
   /// beside it and a record of the parameters. Nothing is written over but the chosen file.
+  /// Without a repair it is the picture with its basic adjustments and the film's edge cleaned.
   func export(to url: URL, completion: (() -> Void)? = nil) {
     guard let j = job, let base, busy == nil else { return }
-    let input = params
+    var input = params
+    let leakFixed = repaired
+    // A fit left from before the picture was turned or cropped is not this picture's.
+    if !leakFixed, let m = input.referenceModel, m.sourceBase != nil, m.sourceBase != j.base { input.referenceModel = nil }
     run("读取全分辨率像素") {
       let full = LeakEngine.cropped(try self.original(j), rotation: input.rotation, crop: input.crop)
       self.onMain { self.busy = "应用去漏光到全分辨率" }
@@ -998,16 +1007,20 @@ final class LeakLab: ObservableObject {
       struct Record: Encodable {
         var version = 1, sourceName: String, params: LeakParams, generatedAI: LeakJob.Generated?
         var width: Int, height: Int, colorSpace = "Adobe RGB (1998)", depth = 16
-        var note = "参考图只提供平滑校正参数；所有输出结构来自原片。"
+        var leakRepaired: Bool, note: String
         var film: String?, format: String?, dpi: Int?
       }
       let encoder = JSONEncoder()
       encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
       try encoder.encode(Record(sourceName: j.sourceName, params: input, generatedAI: j.generatedAI, width: out.width, height: out.height,
+        leakRepaired: leakFixed,
+        note: leakFixed ? "参考图只提供平滑校正参数；所有输出结构来自原片。" : "没有去漏光：只有基础调整和片边处理；所有输出结构来自原片。",
         film: j.origin?.film, format: j.origin?.format, dpi: j.origin?.dpi))
         .write(to: url.appendingPathExtension("json"), options: .atomic)
       return {
-        self.notice = "已导出 \(out.width) × \(out.height) · RGB 16 位 · Adobe RGB 到 \(url.lastPathComponent)，并附 sRGB JPEG 与参数记录。原片未改动。"
+        self.notice = "已导出 \(out.width) × \(out.height) · RGB 16 位 · Adobe RGB 到 \(url.lastPathComponent)"
+          + (leakFixed ? "" : "（这张没有去漏光，是带基础调整和片边处理的原片）")
+          + "，并附 sRGB JPEG 与参数记录。原片未改动。"
         completion?()
       }
     }

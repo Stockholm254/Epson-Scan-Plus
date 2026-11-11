@@ -540,8 +540,18 @@ enum LightLeakTests {
     let unchanged = try Data(contentsOf: sourceURL) == sourceBytes
     try check(!imported.isError && pageLab.job?.id != frameJob && pageLab.job?.sourceName == "leaked.tif" && pageLab.job?.source != nil
       && !pageLab.hasReference && unchanged, "leak_import copies a positive into a new job, the file itself unchanged")
-    try check(mcp("leak_export").isError && mcp("leak_save_preset", ["path": "/tmp/x.json"]).isError,
-      "leak_export refuses before there is a repair, and the save tools take no path: neither opens anything")
+    try check(mcp("leak_export", ["path": "/tmp/x.tif"]).isError && mcp("leak_save_preset", ["path": "/tmp/x.json"]).isError,
+      "the save tools take no path: neither opens anything")
+    // Not repaired, it exports all the same: the picture with its basic adjustments, saying so.
+    let plainExport = root.appendingPathComponent("out").appendingPathComponent("plain.tif")
+    let couldExport = !pageLab.repaired && pageLab.exportable
+    pageLab.export(to: plainExport)
+    pageLab.wait()
+    let plainImage = try ImagePipeline.shared.load(plainExport)
+    let plainRecord = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: plainExport.path + ".json"))) as? [String: Any]
+    try check(couldExport && plainImage.width == 1200 && plainImage.height == 800 && plainImage.bitsPerComponent == 16
+      && plainRecord?["leakRepaired"] as? Bool == false && pageLab.notice.contains("没有去漏光") && pageLab.errorText == nil,
+      "a picture with no repair exports too, as itself with its basic adjustments, and the notice and the record say it was not repaired: \(pageLab.notice)")
     let referenced = mcp("leak_import_reference", ["path": referenceURL.path])
     try check(!referenced.isError && pageLab.hasReference && pageLab.job?.guideName == "reference.png" && !mcp("leak_start").isError && pageLab.repaired,
       "leak_import_reference takes a clean version from a file, free, and leak_start fits it")
@@ -578,8 +588,9 @@ enum LightLeakTests {
     try check(!mcp("leak_set_landmarks", ["pairs": [Any]()]).isError && pageLab.pairs.isEmpty, "an empty list clears the landmarks")
     try check(!mcp("leak_clear_correction").isError && pageLab.model == nil && pageLab.repaired && mcp("leak_clear_correction").isError,
       "leak_clear_correction stops the reference's correction; the region drawn still repairs on its own")
-    try check(!mcp("leak_update_region", ["id": regionID, "enabled": false]).isError && !pageLab.repaired && mcp("leak_export").isError,
-      "with neither the reference's correction nor a region acting, there is nothing to export")
+    // leak_export itself is not called: it would open the save panel, which waits for the user.
+    try check(!mcp("leak_update_region", ["id": regionID, "enabled": false]).isError && !pageLab.repaired && pageLab.exportable,
+      "with neither the reference's correction nor a region acting, nothing is repaired, and the picture still exports as itself")
     _ = mcp("undo")
     _ = mcp("undo")
     try check(pageLab.repaired && pageLab.model != nil, "undo puts the region and the correction back")
