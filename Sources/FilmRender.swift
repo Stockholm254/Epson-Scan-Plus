@@ -398,30 +398,42 @@ enum FilmRender {
     sealNode.eulerAngles.y = paperNode.eulerAngles.y
     sealNode.position.y = printed.rise
     node.addChildNode(sealNode)
-    // The spool's flanges, a little wider than the paper, and its ends.
+    // The spool's ends as the real ones are: a thin flat flange of black plastic a little wider
+    // than the paper, its edge square; in its middle the key hole the camera's winder takes, a
+    // round hole with a notch either side reaching a third of the way across. Nothing stands out
+    // past the flange.
+    let spoolPlastic = material(NSColor(white: 0.05, alpha: 1), metal: 0, rough: 0.46, coat: 0.12)
+    let hole = material(NSColor(white: 0.004, alpha: 1), metal: 0, rough: 1)
     for (y, top) in [(h / 2, true), (-h / 2, false)] {
-      let flange = SCNCylinder(radius: r + 0.9, height: 1.1)
-      flange.radialSegmentCount = 96
-      flange.materials = [blackPlastic]
+      let side: CGFloat = top ? 1 : -1, t: CGFloat = 0.9
+      let flange = SCNCylinder(radius: r + 0.9, height: t)
+      flange.radialSegmentCount = 120
+      flange.materials = [spoolPlastic]
       let flangeNode = SCNNode(geometry: flange)
-      flangeNode.position.y = y + (top ? 0.55 : -0.55)
+      flangeNode.position.y = y + side * t / 2
       node.addChildNode(flangeNode)
-      let rim = SCNTorus(ringRadius: r + 0.7, pipeRadius: 0.55)
-      rim.ringSegmentCount = 96
-      rim.materials = [blackPlastic]
-      let rimNode = SCNNode(geometry: rim)
-      rimNode.position.y = y + (top ? 0.55 : -0.55)
-      node.addChildNode(rimNode)
-      let end = SCNCylinder(radius: 3.1, height: 1.6)
-      end.materials = [blackPlastic]
-      let endNode = SCNNode(geometry: end)
-      endNode.position.y = y + (top ? 1.9 : -1.9)
-      node.addChildNode(endNode)
-      let slot = SCNBox(width: 4.6, height: 0.8, length: 1.0, chamferRadius: 0.2)
-      slot.materials = [felt]
-      let slotNode = SCNNode(geometry: slot)
-      slotNode.position.y = y + (top ? 2.5 : -2.5)
-      node.addChildNode(slotNode)
+      // A hairline bevel round the flange's outer edge, where the light catches it.
+      let bevel = SCNTorus(ringRadius: r + 0.82, pipeRadius: 0.1)
+      bevel.ringSegmentCount = 120
+      bevel.materials = [spoolPlastic]
+      let bevelNode = SCNNode(geometry: bevel)
+      bevelNode.position.y = y + side * t
+      node.addChildNode(bevelNode)
+      let face = y + side * t
+      // The hole and its two notches, dark as a hole into the spool's core is.
+      let bore = SCNCylinder(radius: 2.0, height: 0.04)
+      bore.radialSegmentCount = 72
+      bore.materials = [hole]
+      let boreNode = SCNNode(geometry: bore)
+      boreNode.position.y = face + side * 0.03
+      node.addChildNode(boreNode)
+      for dx in [-2.9, 2.9] as [CGFloat] {
+        let notch = SCNBox(width: 2.4, height: 0.04, length: 1.4, chamferRadius: 0.1)
+        notch.materials = [hole]
+        let notchNode = SCNNode(geometry: notch)
+        notchNode.position = SCNVector3(dx, face + side * 0.03, 0)
+        node.addChildNode(notchNode)
+      }
     }
     return node
   }
