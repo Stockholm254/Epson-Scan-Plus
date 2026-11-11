@@ -489,7 +489,8 @@ enum FilmPrint {
   }
 
   /// Delta Professional, as its cassettes are printed (100 sky blue, 400 green, 3200 violet): white,
-  /// a band of the stock's colour round the back with the speeds to rate it at in a white table;
+  /// a band of the stock's colour round the back to well before the front, with the speeds to rate
+  /// it at in a white table and the length and rated speed in white on it;
   /// reading up and upright, not leaning as HP5's, the length and the speed in small type, ILFORD
   /// very large in black, DELTA as large in the stock's colour cut by fine white lines across, the
   /// speed in black as large again, and PROFESSIONAL in the colour by the lip.
@@ -500,24 +501,23 @@ enum FilmPrint {
       f.all(paper)
       let heavy = "HelveticaNeue-CondensedBlack", round = "AvenirNext-Heavy"
       let pale = colour.blended(withFraction: 0.3, of: .white) ?? colour
-      // The band round the back, and over the top end beside it.
-      f.fill(colour, -60, -11.0)
-      f.fill(colour, -11.0, -7.6, y0: 0, y1: 4.5)
-      // The speeds to rate it at, in a white table on the band.
-      f.fill(paper, -16.8, -11.4, y0: 3.0, y1: 35.0)
-      let grey = NSColor(white: 0.62, alpha: 1)
-      for (i, speed) in [iso / 2, iso, iso * 2].enumerated() {
-        let y1 = 34.0 - CGFloat(i) * 8.0
-        f.fill(grey, -16.8, -11.4, y0: y1 - 8.0, y1: y1 - 7.85)
-        f.along([("\(speed)", font("HelveticaNeue", 1.7), NSColor(white: 0.3, alpha: 1))], s: -13.6, top: y1 - 0.8, fit: 6.4, up: true)
+      // The band round the back, the whole height, to 8 mm before the front.
+      f.fill(colour, -60, -8.0)
+      // On it, by the back, the speeds to rate it at in a white table: a line down it and three
+      // across, 1600, 3200 and 6400 reading up (half, as and twice the speed).
+      f.fill(paper, -17.5, -12.3, y0: 4.0, y1: 31.2)
+      let grey = NSColor(white: 0.6, alpha: 1), table = NSColor(white: 0.3, alpha: 1)
+      f.fill(grey, -13.8, -13.65, y0: 4.0, y1: 31.2)
+      for y in [9.8, 16.0, 24.6] as [CGFloat] { f.fill(grey, -17.5, -12.3, y0: y, y1: y + 0.15) }
+      for (speed, foot) in [(iso * 2, 15.6), (iso, 24.2), (iso / 2, 30.8)] as [(Int, CGFloat)] {
+        f.along([("\(speed)", font("HelveticaNeue", 1.7), table)], s: -13.05, top: foot, fit: 5.6, up: true)
       }
-      f.fill(grey, -14.9, -14.75, y0: 3.0, y1: 35.0)
-      // The length, large in the colour, and under it the speed it is rated at in small type.
+      // Beside it in white on the band: the length, bold, and the speed it is rated at along the
+      // length (3200 is rated, not its box speed: EI, as its cassette says; the others ISO).
       let din = 1 + Int((10 * log10(Double(max(iso, 1)))).rounded())
-      f.along([("36", font("HelveticaNeue-Bold", 3.0), colour)], s: -9.8, top: 14.6, fit: 3.2, up: true)
-      // 3200 is rated, not its box speed: EI, as its cassette says; the others ISO.
-      f.along([("\(iso >= 3200 ? "EI" : "ISO") \(iso)/\(din)° ", font("HelveticaNeue", 1.6), ink), ("DELTA", font("HelveticaNeue-Bold", 1.6), ink),
-        (" 36 EXP", font("HelveticaNeue", 1.6), ink)], s: -8.7, top: 32.4, fit: 17, up: true)
+      f.along([("36", font("HelveticaNeue-Bold", 2.4), white)], s: -10.8, top: 16.2, fit: 2.4, up: true)
+      f.along([("\(iso >= 3200 ? "EI" : "ISO") \(iso)/\(din)° ", font("HelveticaNeue", 2.1), white), ("DELTA", font("HelveticaNeue-Bold", 2.1), white),
+        (" 36 EXP", font("HelveticaNeue", 2.1), white)], s: -9.1, top: 31.0, fit: 25.4, up: true)
       // DELTA, in fine stripes along its length (the way it reads), as the stock's name is printed:
       // thick stripes, narrow gaps, so it stands out from the Δ's thin lines.
       let pitch: CGFloat = 0.48
