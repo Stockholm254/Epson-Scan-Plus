@@ -500,13 +500,14 @@ enum FilmPrint {
         f.along([("\(speed)", font("HelveticaNeue", 1.6), NSColor(white: 0.3, alpha: 1))], s: -13.75, top: foot, fit: 5.4, up: true)
       }
       let din = 1 + Int((10 * log10(Double(max(rated, 1)))).rounded())
-      f.along([("36", font("HelveticaNeue-Bold", 2.4), colour)], s: -11.6, top: 15.0, fit: 2.4, up: true)
-      f.along([("ISO \(rated)/\(din)° ", font("HelveticaNeue", 1.7), colour), ("\(word) \(third)", font("HelveticaNeue-Bold", 1.7), colour),
-        (" 36 EXP", font("HelveticaNeue", 1.7), colour)], s: -10.2, top: 31.0, fit: 21, up: true)
-      // The heavy words lean, as Ilford sets them: the maker, then the stock's name very large in its
-      // colour, each about 20 mm long.
+      // The length and the ISO line in italics, as the photograph has them.
+      f.along([("36", font("HelveticaNeue-BoldItalic", 2.4), colour)], s: -11.6, top: 15.0, fit: 2.4, up: true)
+      f.along([("ISO \(rated)/\(din)° ", font("HelveticaNeue-Italic", 1.7), colour), ("\(word) \(third)", font("HelveticaNeue-BoldItalic", 1.7), colour),
+        (" 36 EXP", font("HelveticaNeue-Italic", 1.7), colour)], s: -10.2, top: 31.0, fit: 21, up: true)
+      // As the cassette prints them: the maker leaning, the stock's name upright and very large in
+      // its colour, each about 20 mm long (PLUS on its bar leans too; the box sets ILFORD upright).
       f.along([(maker, font(heavy, 5.6), maker == "ILFORD" ? ink : colour)], s: -5.1, top: 29.5, fit: 20.1, up: true, stretch: true, slant: 0.16)
-      f.along([(word, font(heavy, 8.0), colour)], s: 0.3, top: 29.5, fit: 21.3, up: true, stretch: true, slant: 0.16)
+      f.along([(word, font(heavy, 8.0), colour)], s: 0.3, top: 29.5, fit: 21.3, up: true, stretch: true)
       // The black bar, its ends breaking up into squares, PLUS (or SUPER) in white on it.
       let bar0: CGFloat = 5.3, bar1: CGFloat = 9.9, top: CGFloat = 9.0, foot: CGFloat = 29.8, sq: CGFloat = 0.766, frayed: CGFloat = 4
       f.fill(ink, bar0, bar1, y0: top + frayed * sq, y1: foot - frayed * sq)

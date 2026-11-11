@@ -141,7 +141,7 @@ enum Roll120Print {
     }
     return Seal(image: image, height: tall, rise: 1.0)
   }
-  /// Ilford's: white with the cassette's own words across it, ILFORD over the stock's name in its
+  /// Ilford's: white with the cassette's own words across it, upright, ILFORD over the stock's name in its
   /// colour, the black bar with PLUS (or the speed) under it.
   static func ilfordSeal(_ look: Look) -> Seal {
     let tall: CGFloat = 18
@@ -166,11 +166,11 @@ enum Roll120Print {
       let w = size.width
       band(ctx, rgb(0xF7F7F5), 0, tall, width: w)
       let heavy = "HelveticaNeue-CondensedBlack"
-      // The heavy words lean, as on the cassette.
-      func lean(_ text: String, _ f: NSFont, _ c: NSColor, s at: CGFloat, y: CGFloat, fit: CGFloat) {
-        var a = NSAttributedString(string: text, attributes: [.font: f, .foregroundColor: c, .obliqueness: 0.16])
+      // ILFORD and the stock's name upright as on the box, PLUS on its bar leaning.
+      func lean(_ text: String, _ f: NSFont, _ c: NSColor, s at: CGFloat, y: CGFloat, fit: CGFloat, slant: CGFloat = 0) {
+        var a = NSAttributedString(string: text, attributes: [.font: f, .foregroundColor: c, .obliqueness: slant])
         if a.size().width > fit * mm, let smaller = NSFont(descriptor: f.fontDescriptor, size: f.pointSize * fit * mm / a.size().width) {
-          a = NSAttributedString(string: text, attributes: [.font: smaller, .foregroundColor: c, .obliqueness: 0.16])
+          a = NSAttributedString(string: text, attributes: [.font: smaller, .foregroundColor: c, .obliqueness: slant])
         }
         a.draw(at: CGPoint(x: w * FilmRender.Label.front + at * mm - a.size().width / 2, y: y * mm))
       }
@@ -186,7 +186,7 @@ enum Roll120Print {
             ctx.fill(CGRect(x: x0 + CGFloat(col) * sq, y: 11.6 * mm + CGFloat(row) * sq, width: sq, height: sq))
           }
         }
-        lean(third, font(heavy, 3.0), .white, s: at + 1.2, y: 11.9, fit: 9)
+        lean(third, font(heavy, 3.0), .white, s: at + 1.2, y: 11.9, fit: 9, slant: 0.16)
         if third == "PLUS" || third == "SUPER" { line("\(iso)", font("HelveticaNeue-CondensedBlack", 2.0), FilmPrint.ink, s: at + 1.2, y: 15.6, width: w) }
         if word == "DELTA" { line("PROFESSIONAL", font("HelveticaNeue-Bold", 1.7), colour, s: at, y: 15.6, kern: 0.15, width: w) }
       }
