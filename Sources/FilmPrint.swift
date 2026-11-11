@@ -197,7 +197,7 @@ enum FilmPrint {
       if has("HP5") { return ilford("HP5", rgb(0x37A23C), "PLUS", iso) }
       if has("FP4") { return ilford("FP4", rgb(0x2D6DB5), "PLUS", iso) }
       if has("Pan F") { return ilford("PAN F", rgb(0xE2541E), "PLUS", iso) }
-      if has("Delta") { return ilford("DELTA", iso == 100 ? rgb(0x3B9BD6) : iso == 400 ? rgb(0x2FA58C) : rgb(0x8E3B97), "\(iso)", nil, sub: "PROFESSIONAL") }
+      if has("Delta") { return delta(iso, iso == 100 ? rgb(0x3FA2D8) : iso == 400 ? rgb(0x2E9A4C) : rgb(0x64399A)) }
       if has("XP2") { return ilford("XP2", rgb(0xD62B2B), "SUPER", iso, sub: "C41 PROCESS") }
       if has("SFX") { return ilford("SFX", rgb(0x8A1F33), "\(iso)", nil) }
       if has("Ortho") { return ilford("ORTHO", rgb(0x9C2A2A), "PLUS", iso) }
@@ -483,6 +483,48 @@ enum FilmPrint {
       if let iso { f.along([("\(iso)", font("HelveticaNeue-CondensedBold", 3.6), ink)], s: 6.0, top: 32.6, fit: 8, up: true) }
       f.along([(sub ?? "BLACK & WHITE FILM", font("HelveticaNeue-Medium", 1.9), ink)], s: 8.8, top: 32.6, fit: 25, up: true)
       if sub != nil { f.along([("BLACK & WHITE FILM", font("HelveticaNeue-Medium", 1.9), ink)], s: 10.8, top: 32.6, fit: 25, up: true) }
+      f.fill(ink, -60, 30, y0: 36.6)
+      f.dx(look)
+    }
+  }
+
+  /// Delta Professional, as its cassettes are printed (100 sky blue, 400 green, 3200 violet): white,
+  /// a band of the stock's colour round the back with the speeds to rate it at in a white table;
+  /// reading up and upright, not leaning as HP5's, the length and the speed in small type, ILFORD
+  /// very large in black, DELTA as large in the stock's colour cut by fine white lines across, the
+  /// speed in black as large again, and PROFESSIONAL in the colour by the lip.
+  static func delta(_ iso: Int, _ colour: NSColor) -> Design {
+    Design { f, look in
+      f.all(paper)
+      let heavy = "HelveticaNeue-CondensedBlack"
+      // The band round the back, and on it the table of speeds to rate the film at.
+      f.fill(colour, -60, -10.2)
+      f.fill(paper, -14.6, -11.0, y0: 3.2, y1: 34.6)
+      let speeds = [iso / 2, iso, iso * 2]
+      for (i, speed) in speeds.enumerated() {
+        let y1 = 34.6 - CGFloat(i) * 6.4
+        f.fill(NSColor(white: 0.62, alpha: 1), -14.6, -11.0, y0: y1 - 6.4, y1: y1 - 6.25)
+        f.along([("\(speed)", font("HelveticaNeue-Medium", 1.5), NSColor(white: 0.35, alpha: 1))], s: -13.9, top: y1 - 0.6, fit: 5.2, up: true)
+      }
+      f.fill(NSColor(white: 0.62, alpha: 1), -12.6, -12.45, y0: 3.2, y1: 34.6)
+      // The length, large in the colour, over the speed it is rated at in small type.
+      let din = 1 + Int((10 * log10(Double(max(iso, 1)))).rounded())
+      f.along([("36", font(heavy, 3.0), colour)], s: -8.5, top: 11.6, fit: 4.6, up: true)
+      // 3200 is rated, not its box speed: EI, as its cassette says; the others ISO.
+      f.along([("\(iso >= 3200 ? "EI" : "ISO") \(iso)/\(din)° ", font("HelveticaNeue-Medium", 1.55), ink), ("DELTA", font("HelveticaNeue-Bold", 1.55), ink),
+        (" 36 EXP", font("HelveticaNeue-Medium", 1.55), ink)], s: -7.7, top: 32.6, fit: 20, up: true)
+      // ILFORD and DELTA the same length, the speed below them as large as ILFORD.
+      f.along([("ILFORD", font(heavy, 6.6), ink)], s: -3.4, top: 32.6, fit: 25.5, up: true, stretch: true)
+      f.along([("DELTA", font(heavy, 6.2), colour)], s: 2.8, top: 32.6, fit: 25.5, up: true, stretch: true)
+      // DELTA cut across by fine white lines, as the stock's name is printed.
+      var y: CGFloat = 6.9
+      while y < 32.6 {
+        f.fill(paper, -0.4, 6.0, y0: y, y1: y + 0.2)
+        y += 0.62
+      }
+      let speed = [("\(iso)", font(heavy, 8.6), ink)]
+      f.along(speed, s: 9.2, top: 31.0, fit: iso >= 1000 ? 23 : 17, up: true)
+      f.along([("PROFESSIONAL", font("HelveticaNeue-Bold", 2.6), colour)], s: 14.6, top: 32.6, fit: 25.5, kern: 0.2, up: true, stretch: true)
       f.fill(ink, -60, 30, y0: 36.6)
       f.dx(look)
     }
