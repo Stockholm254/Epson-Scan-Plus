@@ -59,6 +59,13 @@ enum PresetTableTests {
     model.loadProject(projects[1])
     for _ in 0..<40 where model.rendering { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
     model.select(model.frames[0].id)
+    // Data sheets and calibrations apart: the table's filter, the menu's sections and the tag.
+    let portraSheet = FilmProfile.builtins.first { $0.id == "portra160" }!, genericSheet = FilmProfile.builtins.first { $0.id == "generic" }!
+    try check(PresetTable.origin(portraSheet) == .dataSheet && PresetTable.origin(copy) == .calibrated
+      && PresetTable.symbol(portraSheet) == "doc.text" && PresetTable.symbol(copy) == "camera" && PresetTable.symbol(genericSheet) == "circle.dashed"
+      && PresetTable.tag(portraSheet).hasPrefix("数据表 · Kodak E-4051") && PresetTable.tag(copy) == copy.publication
+      && PresetTable.tag(genericSheet).hasPrefix("通用"),
+      "a preset says at a glance whether its slopes come from a data sheet or were calibrated here: \(PresetTable.tag(portraSheet))")
     model.chooseProfile(copy)
     let rolls = RollLibrary.scan(model.libraryRoots)
     func row(_ id: String, _ rows: [PresetRow]) -> PresetRow? { rows.first { $0.id == id } }

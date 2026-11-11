@@ -16,6 +16,22 @@ struct PresetRow: Identifiable, Equatable {
 }
 
 enum PresetTable {
+  /// Where a preset's channel slopes come from: a film's data sheet (a built-in, or one imported
+  /// with its source), or neutral points calibrated on this Mac, on the V850 or the copy stand.
+  enum Origin: String, CaseIterable { case dataSheet = "数据表", calibrated = "本机标定" }
+  static func origin(_ p: FilmProfile) -> Origin { p.offsets == nil ? .dataSheet : .calibrated }
+  /// The symbol a preset's origin is shown with: a data sheet's page, the scanner, the camera.
+  static func symbol(_ p: FilmProfile) -> String {
+    guard p.offsets != nil else { return p.id == "generic" ? "circle.dashed" : "doc.text" }
+    return p.id.contains("-copy-") || p.publication.hasPrefix("翻拍标定") ? "camera" : "scanner"
+  }
+  /// The preset's kind as a tag says it: 数据表 · its source, or 翻拍标定 / 本机标定 · where, when and
+  /// from how many points; the generic preset is 通用.
+  static func tag(_ p: FilmProfile) -> String {
+    if p.id == "generic" { return "通用 · 没有数据表，每张按画面拉伸" }
+    guard p.offsets != nil else { return "数据表 · \(p.publication)" }
+    return p.publication
+  }
   /// How many neutral points a calibrated preset was made from: those it keeps, else what its
   /// source line says (presets from before it kept them); nil for any other preset.
   static func pointCount(_ p: FilmProfile) -> Int? {
@@ -89,8 +105,11 @@ struct PresetManagerSheet: View {
   @State private var loaded = false
   @State private var selection = Set<String>()
   @State private var deleting: [PresetRow]?
+  /// The rows shown: all, or those of one origin.
+  @State private var showing: PresetTable.Origin?
   var body: some View {
-    let rows = m.presetRows(rolls)
+    let all = m.presetRows(rolls)
+    let rows = showing.map { o in all.filter { PresetTable.origin($0.profile) == o } } ?? all
     let chosen = rows.filter { selection.contains($0.id) }
     let single = chosen.count == 1 ? chosen[0] : nil
     let unused = rows.filter { $0.deletable && $0.rolls.isEmpty && !$0.current }
@@ -102,6 +121,16 @@ struct PresetManagerSheet: View {
         Spacer()
         Text(loaded ? "图库 \(rolls.count) 卷" : "正在读图库…").font(.system(size: 11)).foregroundStyle(.secondary)
       }
+      // Which come from data sheets and which were calibrated here, apart at a glance.
+      HStack(spacing: 10) {
+        Picker("显示", selection: $showing) {
+          Text("全部 \(all.count)").tag(PresetTable.Origin?.none)
+          ForEach(PresetTable.Origin.allCases, id: \.self) { o in
+            Text("\(o.rawValue) \(all.filter { PresetTable.origin($0.profile) == o }.count)").tag(Optional(o))
+          }
+        }.pickerStyle(.segmented).labelsHidden().fixedSize()
+        Text("数据表：按厂家的特性曲线；本机标定：用这台扫描仪或这次翻拍的中性点算出来的").font(.system(size: 11)).foregroundStyle(.secondary)
+      }
       Table(rows, selection: $selection) {
         TableColumn("预设") { r in
           HStack(spacing: 6) {
@@ -112,7 +141,14 @@ struct PresetManagerSheet: View {
             }
           }
         }.width(min: 200, ideal: 260)
-        TableColumn("类型") { r in Text(r.kind.rawValue).foregroundStyle(r.kind == .rollOnly ? .orange : .primary) }.width(min: 76, ideal: 84)
+        TableColumn("胶片") { r in Text(AppModel.film(of: r.profile) ?? "—").lineLimit(1) }.width(min: 110, ideal: 140)
+        TableColumn("类型") { r in
+          let calibrated = r.profile.offsets != nil
+          Label(r.kind == .builtin ? (r.profile.id == "generic" ? "通用" : "数据表") : r.kind.rawValue, systemImage: PresetTable.symbol(r.profile))
+            .font(.system(size: 11, weight: .medium)).lineLimit(1)
+            .foregroundStyle(r.kind == .rollOnly ? Color.orange : calibrated ? Hardware.amberText : Color.secondary)
+            .help(PresetTable.tag(r.profile))
+        }.width(min: 92, ideal: 100)
         TableColumn("斜率 R · G · B") { r in
           Text(String(format: "%.3f · %.3f · %.3f", r.profile.slopes.r, r.profile.slopes.g, r.profile.slopes.b)).monospacedDigit()
         }.width(min: 150, ideal: 160)

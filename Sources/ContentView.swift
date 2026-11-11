@@ -738,6 +738,17 @@ struct ContentView: View {
   }
   /// A preset as the film menu names it: with the day it was calibrated where another preset has
   /// its name (two calibrations of one film on the V850 are both "Kodak Portra 160 · V850").
+  /// Presets in the menu by where they come from: data sheets, then those calibrated here, under
+  /// headings naming `film` when they are its.
+  @ViewBuilder func presetSections(_ list: [FilmProfile], film: String?) -> some View {
+    let sheets = list.filter { $0.offsets == nil }, calibrated = list.filter { $0.offsets != nil }
+    if !sheets.isEmpty {
+      Section(film.map { "\($0) · 数据表" } ?? "数据表") { ForEach(sheets) { p in presetButton(p) } }
+    }
+    if !calibrated.isEmpty {
+      Section(film.map { "\($0) · 本机标定" } ?? "本机标定") { ForEach(calibrated) { p in presetButton(p) } }
+    }
+  }
   /// A preset in the menu, checked when in use.
   func presetButton(_ p: FilmProfile) -> some View {
     Button {
@@ -780,13 +791,9 @@ struct ContentView: View {
           // The film's presets first, as the film was chosen: its data sheet's and those calibrated
           // for it; another film's preset takes the roll to that film.
           Menu {
-            Section(m.rollFilm.isEmpty ? "预设" : "\(m.rollFilm) 的预设") {
-              ForEach(m.rollPresets) { p in presetButton(p) }
-            }
+            presetSections(m.rollPresets, film: m.rollFilm.isEmpty ? nil : m.rollFilm)
             if !m.otherPresets.isEmpty {
-              Menu("其他胶片的预设") {
-                ForEach(m.otherPresets) { p in presetButton(p) }
-              }
+              Menu("其他胶片的预设") { presetSections(m.otherPresets, film: nil) }
             }
             Divider()
             Button("管理预设…") { m.showPresets = true }
@@ -796,8 +803,15 @@ struct ContentView: View {
             Text(presetTitle(m.profile)).lineLimit(1)
           }
           .menuStyle(.button).frame(maxWidth: .infinity, alignment: .leading)
-          .help("这一卷用的预设：通道斜率和标定的中性。先列这种胶片的：数据表的、在这台扫描仪或翻拍时标定的；选别的胶片的预设，这一卷也换成那种胶片")
+          .help("这一卷用的预设：通道斜率和标定的中性。先列这种胶片的，分「数据表」和「本机标定」（这台扫描仪或翻拍时标定的）；选别的胶片的预设，这一卷也换成那种胶片")
         }
+        // Where the preset in use comes from, at a glance: a data sheet, or calibrated here.
+        Label(PresetTable.tag(m.profile), systemImage: PresetTable.symbol(m.profile))
+          .font(.system(size: 10.5, weight: .medium)).lineLimit(1).truncationMode(.middle)
+          .foregroundStyle(m.profile.offsets != nil ? Hardware.amberText : Color.secondary)
+          .help(m.profile.offsets != nil
+            ? "本机标定的预设：用这台扫描仪或这次翻拍的中性点算出来的斜率和中性。\(m.profile.publication)"
+            : "数据表的预设：斜率按厂家数据表的特性曲线，没有为这台扫描仪或相机标定过")
         // Which film the roll is comes before its preset: a slide is not inverted at all.
         labeled("本卷片种") {
           Picker("本卷片种", selection: Binding(get: { m.reversalRoll }, set: { m.setReversal($0) })) {
