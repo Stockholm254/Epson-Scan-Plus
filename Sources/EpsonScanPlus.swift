@@ -139,6 +139,13 @@ struct EpsonScanPlusApp: App {
           .keyboardShortcut("l", modifiers: [.command, .option]).disabled(model.selected == nil || !model.onRollModule)
         Toggle("整卷一起转", isOn: $model.syncOrientation)
         Divider()
+        // Lightroom's: one frame's settings given to others, chosen now or later.
+        Button("拷贝调整") { model.copySettings() }.keyboardShortcut("c", modifiers: [.command, .shift])
+          .disabled(model.selected == nil || model.page != .convert)
+        Button(model.multiSelected ? "粘贴调整到所选的 \(model.selection.count) 张" : "粘贴调整") { model.pasteSettings() }
+          .keyboardShortcut("v", modifiers: [.command, .shift])
+          .disabled(model.copiedSettings == nil || model.selected == nil || model.isWorking || model.page != .convert)
+        Divider()
         // Which frames a batch scans and exports; on the light table's strip as well, by its menu.
         // ③ exports on its own, so its page ticks nothing.
         // With several chosen (⌘ or ⇧ on the strip or the light table), all of them.

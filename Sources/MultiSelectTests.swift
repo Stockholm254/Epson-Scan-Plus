@@ -61,6 +61,28 @@ enum MultiSelectTests {
       "删除 takes the three out at once, and the frame after them is shown")
     edits.undo()
     try check(model.frames.map(\.id) == ids, "one ⌘Z puts the three back")
+    // 拷贝调整 and 粘贴调整: one frame's settings given to the frames chosen later, each keeping how
+    // it faces, as one edit.
+    model.alsoSelected = []
+    model.selectedID = ids[4]
+    model.frames[4].adjustments.exposure = 0.6
+    model.frames[4].adjustments.warmth = -0.2
+    model.copySettings()
+    model.frames[4].adjustments.exposure = 0
+    model.selectedID = ids[1]
+    model.alsoSelected = [ids[2]]
+    let rotationsBefore = model.frames.map(\.adjustments.rotation)
+    model.pasteSettings()
+    try check(model.frames[1].adjustments.exposure == 0.6 && model.frames[2].adjustments.warmth == -0.2
+      && model.frames[3].adjustments.exposure == 0 && model.frames[4].adjustments.exposure == 0
+      && model.frames.map(\.adjustments.rotation) == rotationsBefore,
+      "粘贴调整 gives the copied settings, as they were copied, to the two chosen, each keeping how it faces")
+    edits.undo()
+    try check(model.frames[1].adjustments.exposure != 0.6 && model.frames[2].adjustments.warmth != -0.2, "one ⌘Z takes the paste back")
+    model.alsoSelected = []
+    model.pasteSettings()
+    try check(model.frames[1].adjustments.exposure == 0.6 && model.frames[2].adjustments.exposure != 0.6,
+      "with one frame chosen, it goes to the frame shown")
     // One frame chosen: as before.
     model.alsoSelected = []
     model.selectedID = ids[4]

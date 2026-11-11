@@ -2037,7 +2037,30 @@ final class AppModel: ObservableObject {
   /// faces, its crop's region and what was read off its own picture.
   func applyToRoll(only: Set<UUID>? = nil) {
     guard let s = selected else { return }
-    recordEdit(only == nil ? "同步到本卷" : "同步到所选")
+    give(s, to: only, edit: only == nil ? "同步到本卷" : "同步到所选")
+    status = only.map { "已同步调色参数到所选的 \($0.count) 张" } ?? "已同步调色参数到本卷"
+  }
+  /// 拷贝调整 and 粘贴调整, as Lightroom's: the frame shown's settings kept, to be given later to the
+  /// frames chosen then (or the frame shown), from this roll or another opened since.
+  @Published private(set) var copiedSettings: FilmFrame?
+  func copySettings() {
+    guard let s = selected else { return }
+    copiedSettings = s
+    status = "已拷贝第 \(s.name) 张的调整 · ⇧⌘V 粘贴到所选的画面"
+  }
+  /// Where 粘贴调整 goes: the frames chosen, or the frame shown.
+  var pasteTargets: Set<UUID> { multiSelected ? selectionIDs : Set(selectedID.map { [$0] } ?? []) }
+  func pasteSettings() {
+    guard let copied = copiedSettings, !isWorking else { return }
+    let ids = pasteTargets
+    guard !ids.isEmpty else { return }
+    give(copied, to: ids, edit: "粘贴调整")
+    status = "已把第 \(copied.name) 张的调整粘贴到 \(ids.count) 张 · ⌘Z 撤销"
+  }
+  /// `s`'s settings to every frame of the roll, or only to `only`, as one edit, each frame keeping
+  /// how it faces, its crop's region and what was read off its own picture.
+  private func give(_ s: FilmFrame, to only: Set<UUID>?, edit: String) {
+    recordEdit(edit)
     for i in frames.indices where only?.contains(frames[i].id) ?? true {
       let own = frames[i].adjustments
       frames[i].adjustments = s.adjustments
@@ -2058,7 +2081,6 @@ final class AppModel: ObservableObject {
     refresh()
     updateThumbnails()
     saveProject()
-    status = only.map { "已同步调色参数到所选的 \($0.count) 张" } ?? "已同步调色参数到本卷"
   }
   func matchFilm() {
     let typed = FilmCalibration.film(filmName.trimmingCharacters(in: .whitespaces))

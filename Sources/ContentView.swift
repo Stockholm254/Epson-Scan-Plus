@@ -1460,6 +1460,9 @@ struct ContentView: View {
                       }.disabled(m.isWorking)
                       Button(m.selectionEnabled ? "取消勾选所选的 \(chosen.count) 张" : "勾选所选的 \(chosen.count) 张",
                         systemImage: m.selectionEnabled ? "circle" : "checkmark.circle") { m.setSelectionEnabled(!m.selectionEnabled) }.disabled(m.isWorking)
+                      if m.copiedSettings != nil {
+                        Button("粘贴调整到所选的 \(chosen.count) 张", systemImage: "doc.on.clipboard") { m.pasteSettings() }.disabled(m.isWorking || m.page != .convert)
+                      }
                       Button("删除所选的 \(chosen.count) 张", systemImage: "trash", role: .destructive) { m.remove(m.selectionIDs) }.disabled(m.isWorking)
                     } else {
                       Button("导出这张…", systemImage: "square.and.arrow.up") {
@@ -1470,6 +1473,19 @@ struct ContentView: View {
                         m.setEnabled(f.id, enabled: !f.enabled)
                       }.disabled(m.isWorking)
                       Button("在去漏光里打开", systemImage: "wand.and.rays") { m.openInLeak(f.id) }.disabled(m.isWorking)
+                      if m.page == .convert {
+                        // The frame's own settings, as Lightroom copies and pastes them.
+                        Button("拷贝这张的调整", systemImage: "doc.on.doc") {
+                          if f.id != m.selectedID { m.select(f.id) }
+                          m.copySettings()
+                        }
+                        if m.copiedSettings != nil, m.copiedSettings?.id != f.id {
+                          Button("把拷贝的调整粘贴到这张", systemImage: "doc.on.clipboard") {
+                            if f.id != m.selectedID { m.select(f.id) }
+                            m.pasteSettings()
+                          }.disabled(m.isWorking)
+                        }
+                      }
                       if m.isLinearPicture(f) && !m.blankFrameIDs.contains(f.id) {
                         Button("设成平场（这张是空白帧）", systemImage: "square.dashed") { m.makeFlat(from: f) }.disabled(m.flatsBlocked != nil)
                       }
