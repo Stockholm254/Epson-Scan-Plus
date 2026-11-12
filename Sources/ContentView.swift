@@ -704,25 +704,21 @@ struct ContentView: View {
   /// Module ②'s sidebar's first tab: the film and where its slopes come from, the film base and
   /// the frame's extent, which are set once for a roll or a frame, before the picture is worked on.
   var filmTab: some View {
-    VStack(alignment: .leading, spacing: 16) {
-      // The roll's film stays at hand while exporting, which works from the preset it began with.
-      filmSection
-      // Calibrating the preset, under the film and its preset; a slide has no channel slopes.
-      if !m.settings.isSlide {
-        Divider()
-        calibrationSection
+    // In the order the user put them (dragged by their grips), else the film, calibrating its
+    // preset, its base, the frame's extent. A slide has no channel slopes and no mask to divide
+    // by; the frame's extent is the single frame's.
+    let slide = m.settings.isSlide
+    let shown = ["film"] + (slide ? [] : ["calibration", "base"]) + (m.singleView ? ["frame"] : [])
+    return VStack(alignment: .leading, spacing: 16) {
+      ArrangedColumn(.film, shown: shown) { key in
+        switch key {
+        case "film": filmSection
+        case "calibration": calibrationSection
+        case "base": baseSection.disabled(frameControlsOff)
+        case "frame": frameSection.disabled(frameControlsOff)
+        default: EmptyView()
+        }
       }
-      Group {
-        // A slide has no mask to divide by.
-        if !m.settings.isSlide {
-          Divider()
-          baseSection
-        }
-        if m.singleView {
-          Divider()
-          frameSection
-        }
-      }.disabled(frameControlsOff)
     }
   }
   /// Module ②'s inspector, in the order the picture is worked on: white balance, tone, levels and
@@ -745,26 +741,31 @@ struct ContentView: View {
         }
         Group {
           if grading {
-            // ③ 调色: on the picture ② leaves, repaired where 去漏光 was used.
+            // ③ 调色: on the picture ② leaves, repaired where 去漏光 was used; the sections in the
+            // order the user put them, else white balance, tone, levels, colour, curves and
+            // sharpening (a scan's by the scanner's measured MTF, a copy's by its camera's).
             leakRepairSection
-            balanceSection
-            Divider()
-            toneSection
-            Divider()
-            levelsSection
-            Divider()
-            colourSection
-            Divider()
-            curvesSection
-            Divider()
-            // A scan sharpens by the scanner's measured MTF, a camera copy by the copy stand's camera's.
-            sharpeningSection
+            ArrangedColumn(.grade, shown: SectionColumn.grade.defaults) { key in
+              switch key {
+              case "balance": balanceSection
+              case "tone": toneSection
+              case "levels": levelsSection
+              case "colour": colourSection
+              case "curves": curvesSection
+              case "sharpening": sharpeningSection
+              default: EmptyView()
+              }
+            }
           } else {
             // ② 去色罩: the film, its base and the frame's extent are in the left panel; here what
-            // is cleaned off the negative, how it is read, and the steps after.
-            DustSection(m: m)
-            Divider()
-            inputSection
+            // is cleaned off the negative and how it is read, in the user's order; the steps after.
+            ArrangedColumn(.demask, shown: SectionColumn.demask.defaults) { key in
+              switch key {
+              case "dust": DustSection(m: m)
+              case "input": inputSection
+              default: EmptyView()
+              }
+            }
             Divider()
             nextSteps
           }

@@ -13,7 +13,12 @@ struct PanelSection<Accessory: View, Content: View>: View {
   var reset: (() -> Void)?
   let accessory: Accessory
   let content: Content
+  /// What it is kept by: whether it is open, and where its column has it.
+  let key: String
   @AppStorage private var open: Bool
+  /// The column it can be moved in, when it is a section of one that can be arranged.
+  @Environment(\.sectionArranger) private var arranger
+  @State private var hovering = false
   enum Level { case section, sub }
 
   init(
@@ -28,9 +33,15 @@ struct PanelSection<Accessory: View, Content: View>: View {
     self.level = level
     self.accessory = accessory()
     self.content = content()
+    self.key = key
     _open = AppStorage(wrappedValue: open, "panelSection." + key)
   }
   var shown: Bool { open || forced }
+  /// The column's arranger, for a section of the column itself (not a part inside one).
+  private var movable: SectionArranger? {
+    guard level == .section, let arranger, arranger.column.defaults.contains(key) else { return nil }
+    return arranger
+  }
   var body: some View {
     VStack(alignment: .leading, spacing: level == .section ? 10 : 7) {
       HStack(spacing: 6) {
@@ -61,6 +72,37 @@ struct PanelSection<Accessory: View, Content: View>: View {
         }
         accessory
         if let info { InfoButton(text: info, about: title) }
+      }
+      // Its place in the column: a grip in the margin to drag it by, and a menu on the title row.
+      .overlay(alignment: .leading) {
+        if let arranger = movable {
+          Image(systemName: "line.3.horizontal")
+            .font(.system(size: 9, weight: .semibold)).foregroundStyle(.tertiary)
+            .frame(width: 14, height: 20).contentShape(Rectangle())
+            .offset(x: -16)
+            .opacity(hovering ? 1 : 0)
+            .onDrag {
+              SectionArranger.dragging = (arranger.column, key)
+              return NSItemProvider(object: key as NSString)
+            }
+            .help("拖动，把「\(title)」排到这一栏的别处；右键标题可以上移、下移或恢复默认顺序")
+            .accessibilityHidden(true)
+        }
+      }
+      .onHover { hovering = $0 }
+      .contextMenu {
+        if let arranger = movable {
+          Button("上移「\(title)」", systemImage: "arrow.up") { arranger.move(key, by: -1) }.disabled(!arranger.canMove(key, by: -1))
+          Button("下移「\(title)」", systemImage: "arrow.down") { arranger.move(key, by: 1) }.disabled(!arranger.canMove(key, by: 1))
+          Divider()
+          Button("恢复这一栏的默认顺序", systemImage: "arrow.counterclockwise") { arranger.reset() }.disabled(arranger.isDefault)
+        }
+      }
+      .accessibilityActions {
+        if let arranger = movable {
+          Button("上移") { arranger.move(key, by: -1) }
+          Button("下移") { arranger.move(key, by: 1) }
+        }
       }
       if shown { content.transition(.opacity) }
     }
