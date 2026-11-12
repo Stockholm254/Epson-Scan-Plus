@@ -88,16 +88,35 @@ enum ExportEstimate {
     let now = CACurrentMediaTime()
     // Asked each time the 输出 tab is drawn (switching to ③, a slider dragged there): the volume
     // asked a few milliseconds' worth at most every few seconds.
+    // Once it has been asked, the figure kept is given at once and asked again off the main
+    // thread: the volume took 20 ms or so, a hitch in a slider's drag every few seconds.
     spaceLock.lock()
-    defer { spaceLock.unlock() }
-    if let kept = space[folder.path], now - kept.at < 3 { return kept.bytes }
+    let kept = space[folder.path]
+    if let kept, now - kept.at >= 3, !asking.contains(folder.path) {
+      asking.insert(folder.path)
+      DispatchQueue.global(qos: .utility).async {
+        let bytes = read(folder)
+        spaceLock.lock()
+        space[folder.path] = (CACurrentMediaTime(), bytes)
+        asking.remove(folder.path)
+        spaceLock.unlock()
+      }
+    }
+    spaceLock.unlock()
+    if let kept { return kept.bytes }
+    let bytes = read(folder)
+    spaceLock.lock()
+    space[folder.path] = (now, bytes)
+    spaceLock.unlock()
+    return bytes
+  }
+  private static func read(_ folder: URL) -> Double? {
     var at = folder
     while !FileManager.default.fileExists(atPath: at.path), at.pathComponents.count > 1 { at = at.deletingLastPathComponent() }
     let values = try? at.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
-    let bytes = values?.volumeAvailableCapacityForImportantUsage.map(Double.init)
-    space[folder.path] = (now, bytes)
-    return bytes
+    return values?.volumeAvailableCapacityForImportantUsage.map(Double.init)
   }
+  private static var asking = Set<String>()
   private static var space = [String: (at: CFTimeInterval, bytes: Double?)]()
   private static let spaceLock = NSLock()
 }

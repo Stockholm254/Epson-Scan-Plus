@@ -3599,17 +3599,18 @@ final class AppModel: ObservableObject {
     rendering = true
     // In ② the frame de-masked only, unsharpened; its strip picture not taken from it.
     let demasked = showsDemasked || showsBefore
+    singleAskedAt = (singleAskedAt.last, Date())
     let request = SingleRender(
       token: token, frame: demasked ? Self.demasked(frame) : sharpened(frame), profile: conversionProfile, edit: edit,
       negative: showsNegative || tool == .base, original: showsOriginal,
       bypassed: curvesBypassed, sharpening: demasked ? nil : preferences.sharpening, previewDPI: Int(overviewDPI),
-      analysisKey: analysisKey(asShown(frame)), overview: overview, demasked: demasked)
+      analysisKey: analysisKey(asShown(frame)), overview: overview, demasked: demasked, sliding: sliding,
+      looseKey: analysisKey(asShown(frame), loose: true))
     wantedLock.lock()
     wantedSingle = request
     let queued = singleQueued
     singleQueued = true
     wantedLock.unlock()
-    singleAskedAt = (singleAskedAt.last, Date())
     // At most one waits: it takes whatever was asked for last when its turn comes.
     if !queued { renderQueue.asyncAfter(deadline: .now() + 0.015) { [weak self] in self?.renderSingle() } }
   }
@@ -3623,7 +3624,15 @@ final class AppModel: ObservableObject {
     let overview: CGImage?
     /// ②'s, de-masked only: not the frame's strip picture.
     var demasked = false
+    /// Asked for while a slider is dragged (`sliding`).
+    var sliding = false
+    /// The analysis key without the saturation and vibrance (`analysisKey(loose:)`).
+    var looseKey = ""
   }
+  /// When a single render last measured its picture (histograms, range; render queue only), and
+  /// how often it does while a slider is dragged.
+  private var measuredAt = Date.distantPast
+  static let measureWhileSliding = 0.4
   /// The single render asked for last, not yet begun; a newer request, or another view, replaces it.
   private var wantedSingle: SingleRender?
   /// When the single frame's last two renders were asked for: within a slider's step of each other,
@@ -3681,11 +3690,15 @@ final class AppModel: ObservableObject {
   /// The last single frame's analysis, by what it reads (render queue only). The print's own
   /// controls (exposure, contrast, colour, levels, curves, the turn) leave it as it was, so a
   /// slider dragged over them renders without analysing again.
-  private var keptAnalysis: (key: String, overview: CGImage?, analysis: ToneAnalysis)?
+  private var keptAnalysis: (key: String, overview: CGImage?, analysis: ToneAnalysis, source: CGImage, loose: String)?
   /// What a frame's analysis reads: its source (file, crop, corrections, the preview it is cut
   /// from), its settings without the print's own controls, the preset, and the scanner's flare.
   /// With `everything`, the print's controls too: what its whole conversion reads.
-  private func analysisKey(_ frame: FilmFrame, everything: Bool = false) -> String {
+  ///
+  /// `loose`, without the saturation and vibrance as well: they move only how far the highlights
+  /// reach, so while one is dragged the analysis before stands in (`renderSingle`) and the frame is
+  /// analysed again once it stops.
+  func analysisKey(_ frame: FilmFrame, everything: Bool = false, loose: Bool = false) -> String {
     var f = frame
     (f.name, f.enabled) = ("", true)
     // The copy light's fall-off by its size and sum, as the files read are kept by.
@@ -3696,6 +3709,10 @@ final class AppModel: ObservableObject {
       (s.exposure, s.contrast, s.warmth, s.tint, s.shadowWarmth, s.shadowTint) = (0, 1, 0, 0, nil, nil)
       (s.shadows, s.highlights, s.pressHighlights, s.colourNoise, s.sharpening, s.curves) = (nil, nil, nil, nil, nil, nil)
       (s.whites, s.blacks) = (nil, nil)
+      // Lightroom's looks, after the conversion (`ImagePipeline.looks`): read by no analysis.
+      // Vibrance is not one: it is in the conversion's saturation, whose reach the analysis measures.
+      (s.texture, s.clarity, s.dehaze, s.mixer, s.grading) = (nil, nil, nil, nil, nil)
+      if loose { (s.saturation, s.vibrance) = (1, nil) }
       (s.rotation, s.flipHorizontal, s.angle) = (0, nil, nil)
       f.adjustments = s
     }
@@ -3730,16 +3747,26 @@ final class AppModel: ObservableObject {
       return
     }
       do {
-        self.step(0.05, frame.sourcePath != nil || Self.readsScan(frame) ? "读取原图" : "读取预览", token, since: started)
-        let cropped = try self.source(for: frame)
-        self.step(0.4, "分析片基、白平衡和色阶", token, since: started)
+        // What the analysis reads unchanged (a print control dragged), the picture read for it
+        // too: some 20 ms a step on a copy, read and cropped again.
+        let cropped: CGImage
         let analysis: ToneAnalysis
+        // While the saturation or vibrance is dragged, the analysis before, its highlights' reach
+        // a step behind (some 90 ms a step on a copy); the frame is analysed again once it stops.
+        var approximate = false
         if let kept = keptAnalysis, kept.key == r.analysisKey, kept.overview === r.overview {
-          analysis = kept.analysis
+          (cropped, analysis) = (kept.source, kept.analysis)
+        } else if r.sliding, let kept = keptAnalysis, kept.loose == r.looseKey, kept.overview === r.overview {
+          (cropped, analysis) = (kept.source, kept.analysis)
+          approximate = true
         } else {
+          self.step(0.05, frame.sourcePath != nil || Self.readsScan(frame) ? "读取原图" : "读取预览", token, since: started)
+          cropped = try self.source(for: frame)
+          self.step(0.4, "分析片基、白平衡和色阶", token, since: started)
           analysis = ImagePipeline.shared.analyze(cropped, settings: frame.adjustments, profile: p)
-          keptAnalysis = (r.analysisKey, r.overview, analysis)
+          keptAnalysis = (r.analysisKey, r.overview, analysis, cropped, r.looseKey)
         }
+        let behind = approximate
         self.step(0.6, negative ? "显示负片" : "冲印正片", token, since: started)
         let context = edit ? try self.contextSource(for: frame) : nil
         let input = context?.image ?? cropped
@@ -3755,17 +3782,59 @@ final class AppModel: ObservableObject {
             input, settings: shownSettings, profile: p, analysis: analysis, negative: negative,
             sharpener: sharpener)
         else { throw DeskError.message("无法生成预览") }
+        ScreenCopy.keep(ImagePipeline.shared.screenReady(output, space: ScreenCopy.space), of: output)
         // A newer request already waiting: this picture now, histograms and range with that one.
-        let measured = !self.singleWaiting
+        // While a slider is dragged they show twice a second (`catchUp`), so they are measured no
+        // more often: some 50 ms a picture on a copy. Once it stops, the last picture is measured.
+        let measuredLately = Date().timeIntervalSince(self.measuredAt) < Self.measureWhileSliding
+        let measured = !self.singleWaiting && !(r.sliding && measuredLately)
+        if measured { self.measuredAt = Date() }
+        let unmeasured = !measured && r.sliding
+        // The picture first, what is measured beside it after: 50 ms sooner on a copy.
+        if measured {
+          let early = output
+          DispatchQueue.main.async {
+            guard token > self.shownSingle, self.singleView, self.selectedID == frame.id, edit == self.editingSingle,
+              negative == (self.showsNegative || self.tool == .base), !self.showsOriginal
+            else { return }
+            self.shownCurves = negative ? nil : shownSettings.curves
+            self.shownFrameID = frame.id
+            self.showOnCanvas(self.showClipping ? ImagePipeline.shared.markClipping(early) : early)
+          }
+        }
         self.step(0.9, "直方图", token, since: started)
-        let hist = measured ? Self.histograms(output, curves: negative ? nil : shownSettings.curves) : nil
-        // The film strip's copy, no larger than it is ever shown.
-        let thumbnail = measured && !edit && !negative && !bypassed && !r.demasked ? ImagePipeline.shared.scaled(output, maxDimension: Self.thumbnailDimension) : nil
-        var range = !measured || negative ? nil : ImagePipeline.shared.toneRange(cropped, settings: frame.adjustments, profile: p, analysis: analysis)
-        // What shows white or black, counted on the picture itself where it is only the frame.
-        if !edit, range != nil {
-          (range!.atWhite, range!.atBlack) = ImagePipeline.shared.screenShares(output)
-          range!.screen = ImagePipeline.shared.screenCounts(output)
+        // The histograms, the film strip's copy (no larger than it is ever shown) and the range,
+        // with what shows white or black counted on the picture itself where it is only the frame.
+        func measure() -> (hist: ([Double], [[Double]]), thumbnail: CGImage?, range: ToneRange?) {
+          let hist = Self.histograms(output, curves: negative ? nil : shownSettings.curves)
+          let thumbnail = !edit && !negative && !bypassed && !r.demasked ? ImagePipeline.shared.scaled(output, maxDimension: Self.thumbnailDimension) : nil
+          var range = negative ? nil : ImagePipeline.shared.toneRange(cropped, settings: frame.adjustments, profile: p, analysis: analysis)
+          if !edit, range != nil {
+            (range!.atWhite, range!.atBlack) = ImagePipeline.shared.screenShares(output)
+            range!.screen = ImagePipeline.shared.screenCounts(output)
+          }
+          return (hist, thumbnail, range)
+        }
+        let measures = measured ? measure() : nil
+        let hist = measures?.hist, thumbnail = measures?.thumbnail, range = measures?.range
+        // Left unmeasured while the slider moved, and nothing newer asked for once it has stopped:
+        // the last picture measured then, as it is, without making it again.
+        if unmeasured && !behind {
+          self.renderQueue.asyncAfter(deadline: .now() + Self.slideStep + 0.02) { [weak self] in
+            guard let self, self.isCurrent(token) else { return }
+            self.measuredAt = Date()
+            let late = measure()
+            DispatchQueue.main.async {
+              guard self.revision == token, self.singleView, self.selectedID == frame.id else { return }
+              var side = self.besidePicture ?? BesidePicture(frame: frame)
+              side.frame = frame
+              if let thumbnail = late.thumbnail { side.thumbnail = thumbnail }
+              side.histograms = late.hist
+              side.range = .some(late.range)
+              self.besidePicture = side
+              self.catchUp()
+            }
+          }
         }
         var pixels = CGSize(width: input.width, height: input.height)
         if frame.hasFullResolution, let path = frame.scanPath ?? frame.sourcePath {
@@ -3818,6 +3887,14 @@ final class AppModel: ObservableObject {
           if newest { side.finished = token }
           self.besidePicture = side
           self.catchUp()
+          // Analysed a step behind while the slider moved: made again once it has stopped, if
+          // nothing newer came.
+          if behind, newest {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.slideStep + 0.02) { [weak self] in
+              guard let self, self.revision == token, !self.sliding else { return }
+              self.refresh()
+            }
+          }
         }
       } catch {
         DispatchQueue.main.async {
@@ -4713,12 +4790,19 @@ final class AppModel: ObservableObject {
   /// Where the output tab exports, with no panel: the folder last exported to when it is one of
   /// its own, as `exportStart` takes it, else this roll's Exports (made when first written to).
   var exportFolder: URL? {
+    // Asked several times in each update of the window (the 输出 tab, the menus), and each time a
+    // dozen files looked for up the folder's path: kept for two seconds for the same folder and roll.
+    let now = CACurrentMediaTime(), asked = (preferences.lastExportFolder, sessionURL)
+    if let kept = keptExportFolder, kept.path == asked.0, kept.roll == asked.1, now - kept.at < 2 { return kept.folder }
+    var folder = sessionURL?.appendingPathComponent("Exports", isDirectory: true)
     if let path = preferences.lastExportFolder, FileManager.default.fileExists(atPath: path) {
       let last = URL(fileURLWithPath: path, isDirectory: true)
-      if !Self.withinRoll(last) { return last }
+      if !Self.withinRoll(last) { folder = last }
     }
-    return sessionURL?.appendingPathComponent("Exports", isDirectory: true)
+    keptExportFolder = (asked.0, asked.1, now, folder)
+    return folder
   }
+  private var keptExportFolder: (path: String?, roll: URL?, at: CFTimeInterval, folder: URL?)?
   /// The output tab exports into this roll's own Exports.
   var exportsIntoRoll: Bool {
     guard let folder = exportFolder, let roll = sessionURL else { return false }

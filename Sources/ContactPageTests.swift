@@ -300,14 +300,22 @@ enum ContactPageTests {
       canvas.layer?.removeAllAnimations()
       let flipFrom = model.displayed
       press(124)
-      for _ in 0..<50 where model.rendering || model.displayed === flipFrom { settle(0.1) }
+      // The first picture drawn for the frame brings the move: the film strip's picture of it, at
+      // once, when the window draws before its own is here, else its own. (Its own fading in over
+      // the strip's after that is checked above.)
       canvas.display()
-      let flipped = canvas.layer?.animation(forKey: kCATransition) as? CATransition
+      var flipped = canvas.layer?.animation(forKey: kCATransition) as? CATransition
+      if flipped == nil {
+        for _ in 0..<250 where model.displayed === flipFrom { settle(0.02) }
+        canvas.display()
+        flipped = canvas.layer?.animation(forKey: kCATransition) as? CATransition
+      }
+      for _ in 0..<50 where model.rendering { settle(0.1) }
       canvas.lastPictureMove = 0
       press(123)
       for _ in 0..<50 where model.rendering { settle(0.1) }
       try check(flipped?.type == .fade && abs((flipped?.duration ?? 0) - 0.12) < 0.01,
-        "frames flipped through quicker than one slides in come in with a short cross-fade")
+        "frames flipped through quicker than one slides in come in with a short cross-fade (\(flipped.map { "\($0.type.rawValue) \($0.duration)" } ?? "none"))")
       model.showSingle(false)
       for _ in 0..<50 where model.rendering { settle(0.1) }
       settle(0.8)

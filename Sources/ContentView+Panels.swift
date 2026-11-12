@@ -176,7 +176,9 @@ extension ContentView {
       if let p = m.preferences.sharpening {
         let ppi = p.effectivePPI
         Text("\(p.source) · \(Int(p.targetDPI)) dpi").font(.system(size: 11)).lineLimit(1).truncationMode(.middle)
-        Text("横向约 \(Int(ppi.horizontal.rounded())) ppi · 竖向约 \(Int(ppi.vertical.rounded())) ppi").readout()
+        // On one line: worded out, the vertical figure wrapped onto a line of its own.
+        Text("横向 \(Int(ppi.horizontal.rounded()).formatted()) · 竖向 \(Int(ppi.vertical.rounded()).formatted()) ppi").readout()
+          .lineLimit(1).minimumScaleFactor(0.8)
         MTFChart(profile: p).frame(height: 110)
       } else {
         note("尚未建立配置。")
@@ -212,15 +214,13 @@ extension ContentView {
   var conversionBasisShort: String {
     if m.settings.isSlide { return "反转片 · 扫描的读数就是画面，不用通道斜率" }
     // With the calibration switched off, what the film it was calibrated from comes to.
+    // Where the slopes come from on a line, the three slopes under it: in the panel's width the
+    // last slope wrapped onto a line of its own.
     let film = m.conversionProfile, p = film.slopes
-    if film.offsets != nil {
-      return String(format: "%@ · R %.3f · G %.3f · B %.3f", film.id.contains("-copy-") ? "翻拍标定" : "本机标定", p.r, p.g, p.b)
-    }
-    if let s = m.settings.rollSlopes { return String(format: "全卷斜率估计 · R %.3f · G %.3f · B %.3f", s.r, s.g, s.b) }
-    if film.setsChannelContrast {
-      return String(format: "数据表 · R %.3f · G %.3f · B %.3f", p.r, p.g, p.b)
-        + (m.estimatesSlopes ? "" : "（全卷斜率估计关着）")
-    }
+    func slopes(_ s: RGB) -> String { String(format: "R %.3f · G %.3f · B %.3f", s.r, s.g, s.b) }
+    if film.offsets != nil { return (film.id.contains("-copy-") ? "翻拍标定" : "本机标定") + "\n" + slopes(p) }
+    if let s = m.settings.rollSlopes { return "全卷斜率估计\n" + slopes(s) }
+    if film.setsChannelContrast { return "数据表" + (m.estimatesSlopes ? "" : "（全卷斜率估计关着）") + "\n" + slopes(p) }
     return "通用 · 每张按自己的画面拉伸各通道"
   }
   /// Letting an assistant over MCP read and adjust the conversion, and how to connect one.

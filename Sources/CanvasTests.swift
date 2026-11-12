@@ -546,11 +546,12 @@ enum CanvasTests {
       "the zoom's figure keeps its own size in the bars under the picture: \(barFigure == nil ? "not shown" : "\(given)") for \(own) (single \(zoomed.singleView), original \(zoomed.showsOriginal))")
     barWindow.contentView = nil
 
-    // The single frame is a layer of its own, which the window server scales and colour-matches on
-    // the GPU, where the canvas shows it; a picture taken of the canvas has it drawn in.
+    // The single frame is a layer of its own, which the window server scales on the GPU, where the
+    // canvas shows it (matched to the window's colour space off the main thread, `ScreenCopy`, when
+    // the render made a copy for it); a picture taken of the canvas has it drawn in.
     zoomCanvas.needsDisplay = true
     zoomCanvas.display()
-    let onLayer = (zoomCanvas.pictureLayer.contents as AnyObject?) === zoomCanvas.shown && !zoomCanvas.pictureLayer.isHidden
+    let onLayer = (zoomCanvas.pictureLayer.contents as AnyObject?) === zoomCanvas.shown.map(ScreenCopy.of) && !zoomCanvas.pictureLayer.isHidden
       && zoomCanvas.pictureLayer.frame == zoomCanvas.imageRect
     var litOnLayer = 0, looked = 0
     if let rep = zoomCanvas.bitmapImageRepForCachingDisplay(in: zoomCanvas.bounds) {

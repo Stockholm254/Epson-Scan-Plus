@@ -1143,6 +1143,17 @@ final class ImagePipeline {
     else { throw DeskError.message("无法生成预览。") }
     return cg
   }
+  /// `image` as the screen takes it, made off the main thread, on the GPU: in the window's colour
+  /// space (`space`) and the byte order the window server keeps. In sRGB the picture was matched to
+  /// the screen on the main thread as each one went up, by the CPU, some 8 ms a picture on a copy
+  /// and twenty pictures a second while a slider is dragged. Nil without a space to match to.
+  func screenReady(_ image: CGImage, space: CGColorSpace?) -> CGImage? {
+    guard let space, let from = image.colorSpace, from != space else { return nil }
+    let ci = CIImage(cgImage: image)
+    return screenContext.createCGImage(ci, from: ci.extent, format: .BGRA8, colorSpace: space)
+  }
+  /// Colour-managed, as the window server matches pictures, for `screenReady`.
+  private lazy var screenContext = CIContext(options: [.cacheIntermediates: false])
   func render(
     _ image: CGImage, settings: Adjustments, profile: FilmProfile, analysis: ToneAnalysis?,
     negative: Bool, sharpener: Sharpener? = nil

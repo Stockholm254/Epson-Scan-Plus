@@ -474,6 +474,95 @@ func sliderText(_ format: String, _ value: Double) -> String {
   return text.hasPrefix("-") && !text.contains(where: { ("1"..."9").contains($0) }) ? String(format: format, 0.0) : text
 }
 
+/// The figure of a slider being dragged, ahead of the window: while a slider moves the window is
+/// updated four times a second (`WindowGate`), the slider's own figure with every step. It is
+/// drawn by a view of its own (`LiveFigureView`), set straight from the slider: a SwiftUI text
+/// changing sixty times a second had the whole inspector laid out again each time. One for each
+/// slider's title; `active` changes as a drag begins and a moment after its last step.
+final class LiveFigure: ObservableObject {
+  @Published private(set) var active = false
+  weak var view: LiveFigureView?
+  var format = "%.2f"
+  private var at = CFTimeInterval(0)
+  private var ending = false
+  private static var kept = [String: LiveFigure]()
+  static func named(_ title: String) -> LiveFigure {
+    if let f = kept[title] { return f }
+    let f = LiveFigure()
+    kept[title] = f
+    return f
+  }
+  /// How long after the last step the window's figure is shown again: by then the window has
+  /// been updated with it (`WindowGate.interval`).
+  static let hold: CFTimeInterval = 0.4
+  /// The figure as last set.
+  private(set) var shown = ""
+  func set(_ v: Double) {
+    at = CACurrentMediaTime()
+    shown = sliderText(format, v)
+    view?.text = shown
+    if !active { active = true }
+    end()
+  }
+  private func end() {
+    guard !ending else { return }
+    ending = true
+    DispatchQueue.main.asyncAfter(deadline: .now() + Self.hold) { [weak self] in
+      guard let self else { return }
+      self.ending = false
+      if CACurrentMediaTime() - self.at >= Self.hold - 0.02 { self.active = false } else { self.end() }
+    }
+  }
+}
+
+/// The dragged slider's figure, drawn as the readout is (`Readout`), right-aligned; deaf to the
+/// mouse, so the field under it takes the clicks and drags.
+final class LiveFigureView: NSView {
+  var text = "" { didSet { if text != oldValue { needsDisplay = true } } }
+  override var isFlipped: Bool { true }
+  override func hitTest(_ point: NSPoint) -> NSView? { nil }
+  override func draw(_ dirtyRect: NSRect) {
+    let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .medium)
+    let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.secondaryLabelColor]
+    let size = (text as NSString).size(withAttributes: attributes)
+    (text as NSString).draw(at: CGPoint(x: bounds.maxX - 3 - size.width, y: (bounds.height - size.height) / 2), withAttributes: attributes)
+  }
+}
+struct LiveFigureLabel: NSViewRepresentable {
+  let live: LiveFigure
+  let text: String
+  func makeNSView(context: Context) -> LiveFigureView {
+    let v = LiveFigureView()
+    v.text = live.shown
+    live.view = v
+    return v
+  }
+  func updateNSView(_ v: LiveFigureView, context: Context) {
+    live.view = v
+    if !live.active { v.text = text }
+  }
+}
+
+/// A slider's `ValueField` whose figure follows the slider as it is dragged (`LiveFigure`): the
+/// field stays, unseen, under the figure drawn over it, and comes back once the drag has ended.
+struct LiveValueField: View {
+  @ObservedObject var live: LiveFigure
+  let title: String
+  let format: String
+  let value: Double
+  let range: ClosedRange<Double>
+  let set: (Double) -> Void
+  var body: some View {
+    let text = sliderText(format, value)
+    ValueField(title: title, text: text, value: value, range: range, set: set)
+      .opacity(live.active ? 0 : 1)
+      .overlay { if live.active { LiveFigureLabel(live: live, text: text) } }
+      .frame(width: Self.width, alignment: .trailing)
+      .onAppear { live.format = format }
+  }
+  static let width: CGFloat = 72
+}
+
 /// A slider's figure that can be typed into: shown as its readout, a click makes it a field.
 /// Return, or clicking elsewhere, sets what was typed, within the slider's `range`; Escape keeps
 /// the value as it was. `scale` is how much bigger the figure is than the value (100 for a

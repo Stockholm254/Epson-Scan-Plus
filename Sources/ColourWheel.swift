@@ -6,6 +6,9 @@ import SwiftUI
 struct ColourWheel: View {
   @Binding var hue: Double
   @Binding var amount: Double
+  /// Where it is being dragged, drawn at once: the values given come with the window's update, a
+  /// few a second while it is dragged (`WindowGate`).
+  @State private var dragged: (hue: Double, amount: Double)?
   var body: some View {
     GeometryReader { g in
       let size = min(g.size.width, g.size.height), r = size / 2
@@ -18,7 +21,8 @@ struct ColourWheel: View {
         Circle().strokeBorder(Color.white.opacity(0.25), lineWidth: 0.5)
         // The knob: at the hue's angle (clockwise from the right on screen, as the gradient runs),
         // the amount's way out.
-        let angle = hue * .pi / 180, out = amount * (r - 5)
+        let shown = dragged ?? (hue, amount)
+        let angle = shown.hue * .pi / 180, out = shown.amount * (r - 5)
         Circle().fill(Color.white).frame(width: 9, height: 9).shadow(radius: 1)
           .position(x: centre.x + CGFloat(cos(angle) * out), y: centre.y + CGFloat(sin(angle) * out))
       }
@@ -28,9 +32,12 @@ struct ColourWheel: View {
       .gesture(DragGesture(minimumDistance: 0).onChanged { v in
         let dx = Double(v.location.x - centre.x), dy = Double(v.location.y - centre.y)
         let reach = Double(r - 5)
-        amount = min(1, (dx * dx + dy * dy).squareRoot() / max(reach, 1))
-        hue = ((atan2(dy, dx) * 180 / .pi) + 360).truncatingRemainder(dividingBy: 360)
-      })
+        let a = min(1, (dx * dx + dy * dy).squareRoot() / max(reach, 1))
+        let h = ((atan2(dy, dx) * 180 / .pi) + 360).truncatingRemainder(dividingBy: 360)
+        dragged = (h, a)
+        amount = a
+        hue = h
+      }.onEnded { _ in dragged = nil })
       .onTapGesture(count: 2) { amount = 0 }
       .accessibilityElement()
       .accessibilityLabel("色轮")

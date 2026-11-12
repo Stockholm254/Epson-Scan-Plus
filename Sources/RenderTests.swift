@@ -173,6 +173,55 @@ enum RenderTests {
     try check(same(model.toneAnalysis, try fresh()) && !same(before, model.toneAnalysis!),
       "what the analysis reads (auto white balance, saturation) analyses again")
 
+    // The looks after the conversion (texture, clarity, dehaze, the mixer, grading) are read by no
+    // analysis, so dragging one keeps it; vibrance, as the saturation, moves the highlights' reach.
+    let plain = model.selected!
+    var looked = plain
+    looked.adjustments.textureAmount = 0.4
+    looked.adjustments.clarityAmount = -0.3
+    looked.adjustments.dehazeAmount = 0.2
+    looked.adjustments[mixer: 2, kind: 1] = 0.5
+    looked.adjustments[grading: \ColourGrading.shadowAmount] = 0.3
+    var vivid = plain
+    vivid.adjustments.vibranceAmount = 0.5
+    try check(model.analysisKey(looked) == model.analysisKey(plain) && model.analysisKey(vivid) != model.analysisKey(plain)
+      && model.analysisKey(vivid, loose: true) == model.analysisKey(plain, loose: true)
+      && model.analysisKey(looked, everything: true) != model.analysisKey(plain, everything: true),
+      "texture, clarity, dehaze, the mixer and grading leave the analysis as it was; vibrance and saturation analyse again, the loose key aside")
+    // The saturation dragged: the analysis before stands in while it moves, and once it stops the
+    // frame is analysed again, as its settings now are.
+    var steps = 0
+    model.pictureChanged = { steps += 1 }
+    for i in 1...14 {
+      model.change("饱和度") { $0.saturation = 1.6 - Double(i) * 0.04 }
+      settle(0.03)
+    }
+    for _ in 0..<100 where model.rendering { settle(0.02) }
+    settle(0.4)
+    for _ in 0..<100 where model.rendering { settle(0.02) }
+    model.pictureChanged = nil
+    try check(steps >= 2 && same(model.toneAnalysis, try fresh()) && !model.histogram.isEmpty,
+      "a saturation drag shows pictures as it moves (\(steps)), and the frame is analysed and measured again once it stops")
+    // The figure of a slider being dragged follows each step, ahead of the window, and gives way to
+    // the window's a moment after the last.
+    let live = LiveFigure.named("测试滑杆")
+    live.format = "%+.2f"
+    live.set(0.25)
+    let during = (live.active, live.shown)
+    settle(LiveFigure.hold + 0.15)
+    try check(during == (true, "+0.25") && !live.active && WindowGate.interval == 0.25,
+      "a dragged slider's figure is drawn with every step and then left to the window, which is updated four times a second meanwhile")
+    // The picture matched to the window's screen off the main thread, on the GPU, in the window
+    // server's byte order; in the window's own space there is nothing to do.
+    let p3 = CGColorSpace(name: CGColorSpace.displayP3)!
+    let shownPicture = model.displayed!
+    let matched = pipe.screenReady(shownPicture, space: p3)
+    ScreenCopy.keep(matched, of: shownPicture)
+    try check(matched?.colorSpace?.name == CGColorSpace.displayP3 && matched?.width == shownPicture.width
+      && matched.map { $0.bitmapInfo.contains(.byteOrder32Little) } == true && pipe.screenReady(shownPicture, space: shownPicture.colorSpace) == nil
+      && ScreenCopy.of(shownPicture) === matched && ScreenCopy.of(last) === last,
+      "the frame's picture is matched to the screen's colour space on the render queue, and the canvas shows that copy")
+
     // Three frames on a holder's preview: the film strip and the light table keep what is the same.
     let strip = folder.appendingPathComponent("render-strip")
     try? FileManager.default.removeItem(at: strip)

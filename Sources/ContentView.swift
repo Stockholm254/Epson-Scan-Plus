@@ -84,7 +84,11 @@ struct ContentView: View {
     // The system's window: a sidebar for the module's settings, the workspace with the film strip
     // under it, and an inspector for the frame, all under the system's toolbar.
     NavigationSplitView(columnVisibility: sidebarVisibility) {
-      leftPanel
+      // Worked out only while it shows: put away, the sidebar was worked out again with every
+      // update of the window all the same (③'s 输出 tab, some 5 ms each).
+      Group {
+        if sidebarVisibility.wrappedValue != .detailOnly { leftPanel } else { Color.clear }
+      }
         .navigationSplitViewColumnWidth(min: Preferences.leftWidths.lowerBound, ideal: m.preferences.leftWidth, max: Preferences.leftWidths.upperBound)
     } detail: {
       VStack(spacing: 0) {
@@ -1807,14 +1811,19 @@ struct ContentView: View {
       HStack {
         Text(title).font(.system(size: 12)).foregroundStyle(.secondary)
         Spacer()
-        ValueField(title: title, text: sliderText(format, m.settings[keyPath: key]), value: m.settings[keyPath: key], range: range) { v in
+        LiveValueField(live: LiveFigure.named(title), title: title, format: format, value: m.settings[keyPath: key], range: range) { v in
+          LiveFigure.named(title).set(v)
           m.change(title) { $0[keyPath: key] = v }
         }
       }
       Fader(
         title: title,
         value: Binding(
-          get: { m.settings[keyPath: key] }, set: { v in m.change(title) { $0[keyPath: key] = v } }),
+          get: { m.settings[keyPath: key] },
+          set: { v in
+            LiveFigure.named(title).set(v)
+            m.change(title) { $0[keyPath: key] = v }
+          }),
         range: range, detent: Adjustments()[keyPath: key], gradient: gradient)
     }
   }

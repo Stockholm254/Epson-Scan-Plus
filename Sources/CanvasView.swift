@@ -1,8 +1,34 @@
 import AppKit
 import SwiftUI
 
+/// The single frame's newest picture as the screen takes it (`ImagePipeline.screenReady`), made
+/// with it on the render queue; the canvas shows it in place of the picture.
+enum ScreenCopy {
+  private static let lock = NSLock()
+  private static var last: (picture: CGImage, copy: CGImage)?
+  private static var window: CGColorSpace?
+  /// The colour space of the window the canvas is in, as its pictures are matched to it.
+  static var space: CGColorSpace? {
+    get { lock.lock(); defer { lock.unlock() }; return window }
+    set { lock.lock(); window = newValue; lock.unlock() }
+  }
+  static func keep(_ copy: CGImage?, of picture: CGImage) {
+    guard let copy else { return }
+    lock.lock()
+    last = (picture, copy)
+    lock.unlock()
+  }
+  static func of(_ picture: CGImage) -> CGImage {
+    lock.lock()
+    defer { lock.unlock() }
+    return last.flatMap { $0.picture === picture ? $0.copy : nil } ?? picture
+  }
+}
+
 struct ScanCanvas: NSViewRepresentable {
-  @ObservedObject var model: AppModel
+  // Through the window's gate, as the window: while a slider is dragged the picture comes by
+  // `pictureChanged`, and the rest of the canvas is updated with the window.
+  @Gated var model: AppModel
   /// Room at the edges taken by panels and bars floating over the canvas.
   var reserved = NSEdgeInsets()
   func makeNSView(context: Context) -> FilmCanvasView {
@@ -140,7 +166,8 @@ final class FilmCanvasView: NSView {
       detailLayer.contents = nil
       return
     }
-    if (pictureLayer.contents as AnyObject?) !== p.image { pictureLayer.contents = p.image }
+    let shown = ScreenCopy.of(p.image)
+    if (pictureLayer.contents as AnyObject?) !== shown { pictureLayer.contents = shown }
     if pictureLayer.frame != p.rect { pictureLayer.frame = p.rect }
     pictureLayer.isHidden = p.covered
     if let (detail, area) = p.detail {
@@ -195,6 +222,12 @@ final class FilmCanvasView: NSView {
     super.viewDidMoveToWindow()
     applyFocusRequest()
     if !loupe.isHidden { loupe.layoutOnTable() }
+    ScreenCopy.space = window?.colorSpace?.cgColorSpace
+  }
+  /// On another screen, or its colour profile changed: pictures are matched to it from now on.
+  override func viewDidChangeBackingProperties() {
+    super.viewDidChangeBackingProperties()
+    ScreenCopy.space = window?.colorSpace?.cgColorSpace
   }
   weak var model: AppModel?
   override var isFlipped: Bool { true }
