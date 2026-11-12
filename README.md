@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <b>0.22.0</b> · macOS 26 · Apple 芯片 · 全部在本机处理
+  <b>0.22.1</b> · macOS 26 · Apple 芯片 · 全部在本机处理
 </p>
 
 <p align="center">
