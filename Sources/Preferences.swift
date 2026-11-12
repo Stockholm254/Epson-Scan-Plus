@@ -100,6 +100,10 @@ final class Preferences: ObservableObject {
   /// Where new previews and imports create their project folders; nil is the default library.
   @Published var libraryPath: String? { didSet { defaults?.set(libraryPath, forKey: "libraryPath") } }
   @Published var exportFormat: ExportFormat { didSet { defaults?.set(exportFormat.rawValue, forKey: "exportFormat") } }
+  /// The exported picture's long edge in pixels; 0, the frame's own size (as Lightroom's 调整大小以适合).
+  @Published var exportLongEdge: Int { didSet { defaults?.set(exportLongEdge, forKey: "exportLongEdge") } }
+  /// The long edges offered, besides the frame's own size.
+  static let longEdges = [4000, 3000, 2048, 1600, 1080]
   /// The contact sheet's, apart from the frames': JPEG unless chosen otherwise, for a sheet to send.
   @Published var sheetFormat: ExportFormat { didSet { defaults?.set(sheetFormat.rawValue, forKey: "sheetFormat") } }
   @Published var jpegQuality: Double { didSet { defaults?.set(jpegQuality, forKey: "jpegQuality") } }
@@ -208,6 +212,7 @@ final class Preferences: ObservableObject {
     libraryPath = defaults?.string(forKey: "libraryPath")
     exportFormat = defaults?.string(forKey: "exportFormat").flatMap(ExportFormat.init(rawValue:)) ?? .tiff
     sheetFormat = defaults?.string(forKey: "sheetFormat").flatMap(ExportFormat.init(rawValue:)) ?? .jpeg
+    exportLongEdge = max(0, defaults?.integer(forKey: "exportLongEdge") ?? 0)
     exportColorSpace = defaults?.string(forKey: "exportColorSpace").flatMap(ExportColorSpace.init(rawValue:)) ?? .sRGB
     exportNameTemplate = defaults?.string(forKey: "exportNameTemplate") ?? ExportNaming.standard
     lastExportFolder = defaults?.string(forKey: "lastExportFolder")

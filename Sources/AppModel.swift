@@ -792,6 +792,50 @@ final class AppModel: ObservableObject {
     focusCanvas()
     refresh()
   }
+  /// The crop's shape, as Lightroom's 长宽比 offers: free, the frame's own, or a ratio (the long
+  /// side over the short, the crop's own orientation kept). Kept while cropping, a corner, an
+  /// edge or a new box dragged keep to it.
+  enum CropRatio: String, CaseIterable, Identifiable {
+    case free = "自由", original = "原比例", square = "1:1", twoThree = "2:3", threeFour = "3:4", fourFive = "4:5", sixSeven = "6:7", wide = "16:9"
+    var id: String { rawValue }
+    var long: Double? {
+      switch self {
+      case .free, .original: return nil
+      case .square: return 1
+      case .twoThree: return 1.5
+      case .threeFour: return 4.0 / 3
+      case .fourFive: return 1.25
+      case .sixSeven: return 7.0 / 6
+      case .wide: return 16.0 / 9
+      }
+    }
+  }
+  @Published var cropRatio = CropRatio.free
+  /// The ratio the crop keeps to, long over short in the picture's pixels; nil, free.
+  var cropLong: Double? {
+    if cropRatio == .original, let s = selected.flatMap(exportPixels) {
+      return Double(max(s.width, s.height) / max(1, min(s.width, s.height)))
+    }
+    return cropRatio.long
+  }
+  /// The shown picture's width over its height, its pixels as the crop's 0–1 lie on it.
+  var cropAspect: Double? { displayed.map { Double($0.width) / Double(max(1, $0.height)) } }
+  /// `r` (0–1 of the picture shown) made the largest box of the ratio inside it, about its middle,
+  /// in its own orientation.
+  static func fitted(_ r: CGRect, long: Double, aspect: Double) -> CGRect {
+    let w = Double(r.width) * aspect, h = Double(r.height)   // in units of the picture's height
+    let target = w >= h ? long : 1 / long
+    var (nw, nh) = (w, h)
+    if w / h > target { nw = h * target } else { nh = w / target }
+    let width = CGFloat(nw / aspect), height = CGFloat(nh)
+    return CGRect(x: r.midX - width / 2, y: r.midY - height / 2, width: width, height: height)
+  }
+  /// A ratio chosen: the crop is that shape at once, the largest inside it as it is.
+  func setCropRatio(_ ratio: CropRatio) {
+    cropRatio = ratio
+    guard let long = cropLong, let crop = canvasCrop, let aspect = cropAspect else { return }
+    commitSingleCrop(NormalRect(Self.fitted(crop.cg, long: long, aspect: aspect)))
+  }
   func commitSingleCrop(_ rect: NormalRect) {
     guard let region = canvasRegion, let selected, !isWorking else { return }
     let raw = ImageGeometry.transform(rect, settings: selected.adjustments, inverse: true)
@@ -1002,12 +1046,14 @@ final class AppModel: ObservableObject {
     filmEdges = edges
     status = "新建工程：\(filmName) · \(reversal ? "反转片" : "负片") · 画幅 \(f.rawValue)" + (edges == .auto ? "" : " · \(edges.summary)") + "；下一次预览、导入或拍摄存进新的一卷"
   }
-  /// What an export's {film} is: the preset's own id where the roll is that film, else the roll's
+  /// What an export's {film} is: a data sheet's own id where the roll is that film, else the roll's
   /// film name made short, as the catalog has its stock (「Fujifilm Velvia 50」 → velvia50), so a
-  /// film converted as the generic preset is not named 「generic」.
+  /// film converted as the generic preset is not named 「generic」, nor one calibrated here by its
+  /// preset's id (「ektar100-copy-7e8733」 → ektar100).
   var exportFilmKey: String {
     let film = FilmCalibration.film(filmName)
-    if profile.id != "generic", FilmCatalog.fold(film) == FilmCatalog.fold(FilmCalibration.film(profile.name)) { return profile.id }
+    if profile.id != "generic", profile.offsets == nil, FilmProfile.builtins.contains(where: { $0.id == profile.id }),
+      FilmCatalog.fold(film) == FilmCatalog.fold(FilmCalibration.film(profile.name)) { return profile.id }
     let short = FilmCatalog.stock(named: film)?.stock ?? film
     let key = FilmCatalog.fold(short).filter { $0.isLetter || $0.isNumber }
     return key.isEmpty ? profile.id : key
@@ -4551,6 +4597,13 @@ final class AppModel: ObservableObject {
   }
   /// The pixels `f` is written with: its crop of the full picture, straightened and turned. File
   /// sizes read once (`filePixels`), as the output tab asks again with every change.
+  /// The frame's exported size as the export settings make it: its own, or smaller to the long edge.
+  func exportedPixels(_ f: FilmFrame) -> CGSize? {
+    exportPixels(f).map { s in
+      let k = ImagePipeline.exportScale(s, longEdge: preferences.exportLongEdge)
+      return k < 1 ? CGSize(width: (s.width * CGFloat(k)).rounded(), height: (s.height * CGFloat(k)).rounded()) : s
+    }
+  }
   func exportPixels(_ f: FilmFrame) -> CGSize? {
     let crop: CGSize
     if let path = f.sourcePath {
@@ -4658,7 +4711,7 @@ final class AppModel: ObservableObject {
     let filmKey = exportFilmKey, filmTitle = FilmCalibration.film(filmName)
     let format = ExportFormat(rawValue: exportType) ?? .tiff
     let quality = preferences.jpegQuality
-    let sharpening = preferences.sharpening
+    let sharpening = preferences.sharpening, longEdge = preferences.exportLongEdge
     let space = preferences.exportColorSpace, template = preferences.exportNameTemplate
     let roll = sessionURL?.lastPathComponent ?? "", overviewPath = overviewURL?.path ?? ""
     let previewDPI = Int(overviewDPI)
@@ -4702,7 +4755,7 @@ final class AppModel: ObservableObject {
             software: "Epson Scan plus" + (version.map { " " + $0 } ?? ""))
           try ImagePipeline.shared.export(
             image, settings: f.adjustments, profile: film, url: url, format: format, dpi: dpi,
-            quality: quality, sharpener: sharpener, colorSpace: space, metadata: metadata, analysis: analysis)
+            quality: quality, sharpener: sharpener, colorSpace: space, metadata: metadata, analysis: analysis, longEdge: longEdge)
           let sidecar = ExportRecord(
             profile: film, frame: f, source: source, isPreview: !f.hasFullResolution, colorSpace: space.title)
           let encoder = JSONEncoder()

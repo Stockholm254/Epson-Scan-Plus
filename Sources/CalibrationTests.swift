@@ -165,6 +165,8 @@ enum CalibrationTests {
     try check(copying.calibrationPoints.isEmpty && first.spots?.count == 3 && first.spots?.allSatisfy { $0.value != nil && $0.base != nil && $0.name == "07" } == true
       && copying.resumableCalibration == 3,
       "a preset keeps each neutral point's reading and spot, also for a frame of another roll, and can be taken up again")
+    try check(copying.profile.id.contains("-copy-") && copying.exportFilmKey == "portra160",
+      "a roll on its copy calibration exports as its film (\(copying.exportFilmKey)), not as the preset's id")
     // With none picked, 3D shows the points the preset in use was made from, on the line it was fitted to.
     let theirs = copying.presetNeutralPoints, theirFit = copying.presetNeutralFit
     try check(theirs.map(\.value) == picked.map(\.value) && theirs.map(\.at) == picked.map(\.at)

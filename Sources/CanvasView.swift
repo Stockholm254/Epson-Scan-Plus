@@ -779,6 +779,10 @@ final class FilmCanvasView: NSView {
         edge.lineWidth = 2
         edge.stroke()
       }
+      // Thirds over the box while cropping, as Lightroom shows them.
+      if model.tool == .crop, kept == nil, r.width > 20, r.height > 20 {
+        drawGrid(in: [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.minX, y: r.maxY)], fine: false)
+      }
       if model.tool == .crop {
         for p in [
           CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY),
@@ -2388,9 +2392,7 @@ final class FilmCanvasView: NSView {
         let opposite = CGPoint(
           x: corner % 2 == 0 ? original.maxX : original.minX,
           y: corner < 2 ? original.maxY : original.minY)
-        draft = CGRect(
-          x: min(end.x, opposite.x), y: min(end.y, opposite.y), width: abs(end.x - opposite.x),
-          height: abs(end.y - opposite.y))
+        draft = ratioKept(from: opposite, to: end)
         showLens(at: p)
       } else if let edge {
         // Only that edge follows the pointer, across it; the other three stay.
@@ -2402,6 +2404,19 @@ final class FilmCanvasView: NSView {
         default: x1 = end.x
         }
         draft = CGRect(x: min(x0, x1), y: min(y0, y1), width: abs(x1 - x0), height: abs(y1 - y0))
+        // With a ratio kept, the other two edges follow, about the middle across.
+        if let long = model?.cropLong, let aspect = model?.cropAspect, let d = draft, d.width > 0, d.height > 0 {
+          let across = edge < 2
+          var e = d
+          if across {
+            let w = CGFloat(Double(d.height) * (d.width * CGFloat(aspect) >= d.height ? long : 1 / long) / aspect)
+            e = CGRect(x: original.midX - w / 2, y: d.minY, width: w, height: d.height)
+          } else {
+            let h = CGFloat(Double(d.width) * aspect / (d.width * CGFloat(aspect) >= d.height ? long : 1 / long))
+            e = CGRect(x: d.minX, y: original.midY - h / 2, width: d.width, height: h)
+          }
+          if CGRect(x: 0, y: 0, width: 1, height: 1).contains(e.insetBy(dx: 0.0001, dy: 0.0001)) { draft = e }
+        }
         showLens(at: p)
       } else {
         draft = CGRect(
@@ -2410,12 +2425,20 @@ final class FilmCanvasView: NSView {
           height: original.height)
       }
     } else if model?.tool == .crop {
-      draft = CGRect(
-        x: min(start.x, end.x), y: min(start.y, end.y), width: abs(end.x - start.x),
-        height: abs(end.y - start.y))
+      draft = ratioKept(from: start, to: end)
       showLens(at: p)
     }
     needsDisplay = true
+  }
+  /// The box from `anchor` to `end` (0–1 of the picture shown), kept to the crop's ratio where one
+  /// is chosen: the largest of that shape within it, from the anchor towards the pointer, on the picture.
+  func ratioKept(from anchor: CGPoint, to end: CGPoint) -> CGRect {
+    let box = CGRect(x: min(anchor.x, end.x), y: min(anchor.y, end.y), width: abs(end.x - anchor.x), height: abs(end.y - anchor.y))
+    guard let long = model?.cropLong, let aspect = model?.cropAspect, box.width > 0, box.height > 0 else { return box }
+    let fit = AppModel.fitted(box, long: long, aspect: aspect)
+    let x = end.x >= anchor.x ? anchor.x : anchor.x - fit.width
+    let y = end.y >= anchor.y ? anchor.y : anchor.y - fit.height
+    return CGRect(x: x, y: y, width: fit.width, height: fit.height).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
   }
   override func mouseUp(with event: NSEvent) {
     defer {

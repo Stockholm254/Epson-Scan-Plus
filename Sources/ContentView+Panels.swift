@@ -439,6 +439,15 @@ extension ContentView {
           ForEach(ExportColorSpace.allCases) { Text($0.title).tag($0) }
         }.labelsHidden()
       }
+      // As Lightroom's 调整大小以适合 · 长边: the frame's own size, or smaller to a long edge.
+      labeled("尺寸") {
+        Picker("", selection: Binding(get: { m.preferences.exportLongEdge }, set: { m.preferences.exportLongEdge = $0 })) {
+          Text("原尺寸").tag(0)
+          Divider()
+          ForEach(Preferences.longEdges, id: \.self) { px in Text("长边 \(String(px)) 像素").tag(px) }
+        }.labelsHidden()
+          .help("导出的大小：原尺寸，或把长边缩到这么多像素（只缩小、不放大，按原图调好色、锐化以后再缩）；dpi 跟着换算。1080 合适发社交网络，2048–3000 合适网页和屏幕")
+      }
       if m.preferences.exportColorSpace == .proPhoto && !format.wrappedValue.sixteenBit {
         Text("ProPhoto 请配合 16-bit 格式，8-bit 容易出现色阶断层。").font(.system(size: 11)).foregroundStyle(.orange)
           .fixedSize(horizontal: false, vertical: true)
@@ -609,8 +618,8 @@ extension ContentView {
   }
   /// How big the files come out, and whether they fit where they go.
   func exportSummary(_ items: [FilmFrame], format: ExportFormat) -> some View {
-    let pixels = items.compactMap(m.exportPixels)
-    let shown = (m.selected.flatMap { s in items.first { $0.id == s.id } } ?? items.first).flatMap(m.exportPixels)
+    let pixels = items.compactMap(m.exportedPixels)
+    let shown = (m.selected.flatMap { s in items.first { $0.id == s.id } } ?? items.first).flatMap(m.exportedPixels)
     let quality = m.preferences.jpegQuality
     let total = pixels.reduce(0) { $0 + ExportEstimate.bytes($1, format: format, quality: quality) }
     let free = m.exportFolder.flatMap(ExportEstimate.freeSpace)

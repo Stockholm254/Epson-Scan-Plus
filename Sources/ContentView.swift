@@ -1112,6 +1112,17 @@ struct ContentView: View {
               .help("整卷每张都按片框自动裁切；哪张的边找错了，按其他张的画面大小改正。⌘Z 撤销，原文件不改")
           }
         }
+        // The crop's shape, as Lightroom's 长宽比: kept while its corners and edges are dragged.
+        HStack {
+          Text("比例").font(.system(size: 12)).foregroundStyle(.secondary)
+          Spacer()
+          Picker("", selection: Binding(get: { m.cropRatio }, set: { m.setCropRatio($0) })) {
+            ForEach(AppModel.CropRatio.allCases) { r in
+              Text(r == .twoThree ? "2:3（135）" : r == .square ? "1:1（6×6）" : r == .sixSeven ? "6:7（6×7）" : r == .threeFour ? "3:4（6×4.5）" : r.rawValue).tag(r)
+            }
+          }.labelsHidden().fixedSize()
+            .help("裁切的长宽比：选了以后画面范围马上变成这个比例（在现在的范围里取最大的一块，居中），拖角、拖边、拖新框都保持它；横竖跟着现在的裁切。自由不限")
+        }
         VStack(spacing: 3) {
           HStack {
             Text("拉直").font(.system(size: 12)).foregroundStyle(.secondary)

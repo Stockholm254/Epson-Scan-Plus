@@ -90,6 +90,13 @@ enum StepTests {
     try check(model.frames[2].adjustments.saturation == 1.3 && model.frames[2].adjustments.baseFine == RGB(r: 0.1, g: 0, b: -0.1),
       "and called from elsewhere (an assistant's tools, the tests) it pastes everything, as before")
 
+    // The crop kept to a ratio: the largest box of it inside, about the middle, in its own orientation.
+    let squareIn32 = AppModel.fitted(CGRect(x: 0, y: 0, width: 1, height: 1), long: 1, aspect: 1.5)
+    let portrait45 = AppModel.fitted(CGRect(x: 0, y: 0, width: 1, height: 1), long: 1.25, aspect: 1)
+    try check(abs(squareIn32.width - 2.0 / 3) < 1e-9 && squareIn32.height == 1 && abs(squareIn32.midX - 0.5) < 1e-9
+      && abs(portrait45.width - 1) < 1e-9 && abs(portrait45.height - 0.8) < 1e-9 && abs(portrait45.midY - 0.5) < 1e-9
+      && AppModel.CropRatio.free.long == nil && AppModel.CropRatio.twoThree.long == 1.5,
+      "a crop kept to a ratio is the largest box of it inside, about the middle: 1:1 in a 3:2 picture, 5:4 on a square one")
     // A tool of the other step takes the window there.
     model.convertStep = .demask
     model.useTool(.neutral)

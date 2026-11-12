@@ -1170,10 +1170,18 @@ final class ImagePipeline {
   func export(
     _ image: CGImage, settings: Adjustments, profile: FilmProfile, url: URL, format: ExportFormat,
     dpi: Int, quality: Double = 0.97, sharpener: Sharpener? = nil, colorSpace: ExportColorSpace = .sRGB,
-    metadata: ExportMetadata? = nil, analysis: ToneAnalysis? = nil
+    metadata: ExportMetadata? = nil, analysis: ToneAnalysis? = nil, longEdge: Int = 0
   ) throws {
     let wide = colorSpace != .sRGB
-    let ci = try output(image, settings: settings, profile: profile, analysis: analysis, sharpener: sharpener, extendedRange: wide)
+    var ci = try output(image, settings: settings, profile: profile, analysis: analysis, sharpener: sharpener, extendedRange: wide)
+    // Made smaller to `longEdge` (never larger), after it is printed and sharpened at its own size.
+    let k = Self.exportScale(ci.extent.size, longEdge: longEdge)
+    var dpi = dpi
+    if k < 1 {
+      ci = ci.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: k, kCIInputAspectRatioKey: 1])
+      ci = ci.cropped(to: ci.extent.integral)
+      dpi = max(1, Int((Double(dpi) * k).rounded()))
+    }
     let cg: CGImage?
     if wide {
       // Rendered unclipped as extended sRGB, then converted by ColorSync into the wider space.
@@ -1183,6 +1191,11 @@ final class ImagePipeline {
     }
     guard let cg else { throw DeskError.message("无法创建导出文件。") }
     try write(cg, to: url, format: format, dpi: dpi, quality: quality, metadata: metadata)
+  }
+  /// How much a picture of `size` is made smaller for its long edge to be `longEdge` (0: as it is).
+  static func exportScale(_ size: CGSize, longEdge: Int) -> Double {
+    let long = Double(max(size.width, size.height))
+    return longEdge > 0 && long > Double(longEdge) ? Double(longEdge) / long : 1
   }
   /// `image` in `space`, with colours outside it clipped there rather than before; without alpha.
   func converted(_ image: CGImage, to space: CGColorSpace, bitsPerComponent: Int) -> CGImage? {
