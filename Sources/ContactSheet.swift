@@ -19,7 +19,16 @@ enum ContactSheet {
     /// From the preview (nil, as before this setting) or scanned at 1200 dpi first.
     var resolution: Resolution?
     var scansFirst: Bool { resolution == .scan }
+    /// The roll's film drawn in the heading, its cassette or 120 roll as the film shelf shows it;
+    /// nil in settings from before it could be.
+    var film: Bool?
+    var showsFilm: Bool {
+      get { film == true }
+      set { film = newValue }
+    }
   }
+  /// The film's picture's width over its height, as the shelf draws it.
+  static let filmAspect: CGFloat = 0.76
   /// Rectangles in pixels with a top-left origin.
   struct Geometry {
     var size: CGSize
@@ -29,6 +38,8 @@ enum ContactSheet {
     var labels: [CGRect]
     var edgePrints: [CGRect]
     var title: CGRect?
+    /// In the heading, left of the title: the roll's film.
+    var film: CGRect?
   }
   /// One frame to print: `source` is the cropped scan, `dpi` its resolution.
   struct Tile {
@@ -63,7 +74,10 @@ enum ContactSheet {
     func px(_ f: CGFloat) -> CGFloat { (f * u).rounded() }
     let margin = px(0.35)
     let titleHeight = layout.title ? px(0.3) : 0
-    let top = margin + (layout.title ? titleHeight + px(0.15) : 0)
+    // The film's picture, as tall as about three quarters of a frame, the title beside it.
+    let filmHeight = layout.showsFilm ? px(0.75) : 0, filmWidth = (filmHeight * filmAspect).rounded()
+    let heading = max(titleHeight, filmHeight)
+    let top = margin + (heading > 0 ? heading + px(0.15) : 0)
     var g = Geometry(size: .zero, cells: [], strips: [], labels: [], edgePrints: [], title: nil)
     switch layout.style {
     case .strips:
@@ -103,7 +117,11 @@ enum ContactSheet {
         width: CGFloat(cols) * cell.width + CGFloat(cols - 1) * gap + 2 * margin,
         height: top + CGFloat(rows) * (cell.height + label) + CGFloat(rows - 1) * gap + margin)
     }
-    if layout.title { g.title = CGRect(x: margin, y: margin, width: g.size.width - 2 * margin, height: titleHeight) }
+    if layout.showsFilm { g.film = CGRect(x: margin, y: margin, width: filmWidth, height: filmHeight) }
+    if layout.title {
+      let x = margin + (layout.showsFilm ? filmWidth + px(0.15) : 0)
+      g.title = CGRect(x: x, y: margin + ((heading - titleHeight) / 2).rounded(), width: g.size.width - margin - x, height: titleHeight)
+    }
     return g
   }
 
@@ -112,7 +130,8 @@ enum ContactSheet {
   @discardableResult
   static func export(
     _ tiles: [Tile], profile: FilmProfile, layout: Layout, title: String, filmCode: String, to url: URL,
-    format: ExportFormat, quality: Double, dpi: Int = scanDPI, progress: ((Int) throws -> Void)? = nil
+    format: ExportFormat, quality: Double, dpi: Int = scanDPI, film: ((CGSize) -> CGImage?)? = nil,
+    progress: ((Int) throws -> Void)? = nil
   ) throws -> CGSize {
     guard !tiles.isEmpty else { throw DeskError.message("没有可放进接触表的画面。") }
     let pipe = ImagePipeline.shared
@@ -177,6 +196,13 @@ enum ContactSheet {
       NSGraphicsContext.restoreGraphicsState()
     }
     if let r = g.title { text(title, in: r, size: 0.14 * u, color: ink, mono: false) }
+    // The roll's film, rendered at the size it prints (within reason) and fitted to its place.
+    if let r = g.film, let picture = film?(CGSize(width: min(r.width, 1800 * filmAspect), height: min(r.height, 1800))) {
+      let k = min(r.width / CGFloat(picture.width), r.height / CGFloat(picture.height))
+      let w = (CGFloat(picture.width) * k).rounded(), h = (CGFloat(picture.height) * k).rounded()
+      ctx.interpolationQuality = .high
+      ctx.draw(picture, in: flip(CGRect(x: r.midX - w / 2, y: r.midY - h / 2, width: w, height: h)))
+    }
     for (i, t) in tiles.enumerated() {
       // Before each frame: the frame about to be drawn, and the chance to stop.
       try progress?(i)

@@ -1021,7 +1021,8 @@ final class ImagePipeline {
     return ToneRange(
       counts: counts, domain: from...to, black: black, white: white, stop: stop,
       pastWhite: above(top, 1 + width / 2), atWhite: white.map { above(top, $0) } ?? 0,
-      atBlack: black.map { below(bottom, $0) } ?? 0, brightest: quantile(top, 0.999))
+      atBlack: black.map { below(bottom, $0) } ?? 0, brightest: quantile(top, 0.999),
+      fine: channels, fineDomain: lo...(lo + span))
   }
   /// The shares of `image`, a picture as shown, with a channel at white and with one at black: what
   /// comes after the ends included, as the colour smoothing, which can take a channel of a bright

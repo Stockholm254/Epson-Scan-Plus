@@ -94,6 +94,11 @@ struct ToneRange: Equatable {
   var pastWhite: Double, atWhite: Double, atBlack: Double
   /// Where the brightest 0.1% lie, in their brightest channel.
   var brightest: Double
+  /// The counts as finely as they were made (`fine` steps over `fineDomain`, the first and last
+  /// holding what lies beyond), for a view of a narrower stretch than `domain`: the levels' black
+  /// to white, which `counts` covers in only a third or so of its steps.
+  var fine: [[Double]] = []
+  var fineDomain: ClosedRange<Double> = 0...1
 }
 
 /// A frame's histogram over more than a screen shows (`ToneRange`): the part an ordinary (SDR)
@@ -180,18 +185,23 @@ struct LevelsHistogram: View {
   /// The marks as dragged, drawn at once: the values given come with the window's update, at
   /// most ten a second during a drag (`WindowGate`). Let go when those arrive.
   @State private var draft: [Mark: Double] = [:]
-  static let bins = 96
+  /// The channels drawn: all three as light added together (0), or red, green or blue alone, as
+  /// the curves' keys name them.
+  @AppStorage("levelsHistogramChannel") private var channel = 0
+  static let bins = 128
   /// The counts on the scale before the black and white points, `bins` steps from 0 to 1, the
-  /// first and last holding what lies beyond.
+  /// first and last holding what lies beyond. From the finest counts there are: the coarse ones
+  /// cover black to white in fewer steps than these, which left every other step empty.
   static func counts(_ range: ToneRange, black: Double, white: Double) -> [[Double]] {
-    let n = range.counts.first?.count ?? 0, d = range.domain
+    let (source, d) = range.fine.count >= 3 ? (range.fine, range.fineDomain) : (range.counts, range.domain)
+    let n = source.first?.count ?? 0
     let step = (d.upperBound - d.lowerBound) / Double(max(n, 1))
     var out = [[Double]](repeating: [Double](repeating: 0, count: bins), count: 3)
-    for c in 0..<min(3, range.counts.count) {
-      for i in 0..<n {
+    for c in 0..<min(3, source.count) {
+      for i in 0..<n where source[c][i] > 0 {
         let q = d.lowerBound + (Double(i) + 0.5) * step
         let before = black + q * (white - black)
-        out[c][min(bins - 1, max(0, Int(before * Double(bins))))] += range.counts[c][i]
+        out[c][min(bins - 1, max(0, Int(before * Double(bins))))] += source[c][i]
       }
     }
     return out
@@ -209,13 +219,30 @@ struct LevelsHistogram: View {
     let black = draft[.black] ?? self.black, white = draft[.white] ?? self.white, midtone = draft[.midtone] ?? self.midtone
     let counts = Self.counts(range, black: black, white: white)
     let mid = Self.midPoint(black: black, white: white, midtone: midtone)
-    GeometryReader { geo in
+    VStack(alignment: .leading, spacing: 5) {
+      HStack(spacing: 5) {
+        ForEach(0..<4, id: \.self) { i in
+          let key = Button(CurveEditor.names[i]) { channel = i }
+            .buttonStyle(KeyStyle(latched: channel == i))
+            .help(i == 0 ? "三个通道叠在一起看" : "只看\(["", "红", "绿", "蓝"][i])通道")
+          // A colour on the key takes the place of its latched fill: the one shown keeps none.
+          if channel == i || i == 0 { key } else { key.foregroundStyle(CurveEditor.colors[i]) }
+        }
+        Spacer(minLength: 0)
+      }.controlSize(.small).font(.system(size: 11))
+      plot(counts: counts, black: black, white: white, mid: mid)
+    }
+  }
+  private func plot(counts: [[Double]], black: Double, white: Double, mid: Double) -> some View {
+    let shown = channel == 0 ? [0, 1, 2] : [channel - 1]
+    return GeometryReader { geo in
       Canvas { ctx, size in
         func x(_ v: Double) -> CGFloat { size.width * CGFloat(min(1, max(0, v))) }
-        let peak = max(1e-9, counts.flatMap { $0.dropFirst().dropLast() }.max() ?? 1)
+        // Scaled to the channels shown, so one alone fills the height.
+        let peak = max(1e-9, shown.flatMap { counts[$0].dropFirst().dropLast() }.max() ?? 1)
         var lit = ctx
         lit.blendMode = .plusLighter
-        for c in 0..<3 {
+        for c in shown {
           var p = Path()
           p.move(to: CGPoint(x: 0, y: size.height))
           for b in 0..<Self.bins {
@@ -225,7 +252,7 @@ struct LevelsHistogram: View {
           }
           p.addLine(to: CGPoint(x: size.width, y: size.height))
           p.closeSubpath()
-          lit.fill(p, with: .color(HistogramView.colours[c].opacity(0.45)))
+          lit.fill(p, with: .color(HistogramView.colours[c].opacity(shown.count == 1 ? 0.8 : 0.45)))
         }
         // What the black and white points send to pure black and pure white, dimmed.
         ctx.fill(Path(CGRect(x: 0, y: 0, width: x(black), height: size.height)), with: .color(.black.opacity(0.5)))
@@ -272,7 +299,7 @@ struct LevelsHistogram: View {
     .onChange(of: [self.black, self.white, self.midtone]) { if dragging == nil { draft = [:] } }
     .frame(height: 56)
     .padding(4).background(PlotScreen())
-    .accessibilityElement().accessibilityLabel("色阶直方图")
+    .accessibilityElement().accessibilityLabel("色阶直方图 · " + CurveEditor.names[channel])
     .accessibilityValue(String(format: "黑点 %.2f，中间调 %.2f，白点 %.2f", black, midtone, white))
     .help("色阶之前的直方图：拖「黑」「中」「白」三条线设黑点、中间调和白点；两边暗下去的部分是变成纯黑、纯白的")
   }

@@ -199,7 +199,7 @@ enum FilmCalibration {
     from fit: Fit, basedOn base: FilmProfile, points: Int, scanner: String, copyStand: Bool = false, unmixed: Bool? = nil,
     spots: [CalibrationSpot]? = nil, batch: String? = nil, named: String? = nil
   ) -> FilmProfile {
-    let date = Date().formatted(.iso8601.year().month().day())
+    let date = AppModel.today()
     let root = calibratedFrom(base)
     let reading = unmixed.map { $0 ? "标定时去串色是开着的，用时也要开着" : "标定时没有去串色，用时也要关着" }
       ?? "标定的点里有的去了串色、有的没有，斜率可能不准"

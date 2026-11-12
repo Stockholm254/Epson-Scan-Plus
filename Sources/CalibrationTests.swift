@@ -165,6 +165,34 @@ enum CalibrationTests {
     try check(copying.calibrationPoints.isEmpty && first.spots?.count == 3 && first.spots?.allSatisfy { $0.value != nil && $0.base != nil && $0.name == "07" } == true
       && copying.resumableCalibration == 3,
       "a preset keeps each neutral point's reading and spot, also for a frame of another roll, and can be taken up again")
+    // With none picked, 3D shows the points the preset in use was made from, on the line it was fitted to.
+    let theirs = copying.presetNeutralPoints, theirFit = copying.presetNeutralFit
+    try check(theirs.map(\.value) == picked.map(\.value) && theirs.map(\.at) == picked.map(\.at)
+      && theirFit.map { abs($0.slopes.r - first.slopes.r) < 1e-6 && abs($0.slopes.b - first.slopes.b) < 1e-6 } == true,
+      "the preset's own points come back for 3D without picking, on the slopes it was made with")
+    // In 2D each point's three readings sit at the exposure its green gives, red and blue on their
+    // curves for neutrals the preset makes grey; green on its own by construction.
+    let placedNeutrals = NeutralCurvesView.placed(theirs, fit: theirFit)
+    let curve = theirFit.map { f in placedNeutrals.map { p in Plots3D.line(f, from: p.x, to: p.x, steps: 1)[0] } } ?? []
+    try check(placedNeutrals.count == 3 && curve.count == 3
+      && zip(placedNeutrals, curve).allSatisfy { p, c in (0..<3).allSatisfy { abs(p.d[$0] - c[$0]) < 0.005 } && p.off.allSatisfy { $0 < 0.005 } }
+      && placedNeutrals.map(\.x) == placedNeutrals.map(\.x).sorted(),
+      "the 2D view puts each neutral's red, green and blue on the preset's curves at the exposure its green gives")
+    // The panel lists them, a row each with its green density and how far off the line it lies;
+    // taking one out takes the calibration up without it, and 「清除」 then starts from none.
+    let rows = copying.calibrationRows
+    try check(rows.count == 3 && rows.allSatisfy { $0.green != nil && ($0.off ?? 1) < 0.005 && $0.name == "07" }
+      && rows.map(\.green!) == picked.map { $0.density[1] },
+      "the calibration's points are listed, each with its density and how far it lies off the line")
+    copying.removeCalibrationPoint(at: 0)
+    try check(copying.calibrationPoints == Array(picked.dropFirst()) && copying.calibrationRows.count == 2,
+      "taking one of the preset's points out takes the calibration up without it")
+    copying.clearCalibration()
+    try check(copying.calibrationPoints.isEmpty && copying.resumableCalibration == nil && copying.calibrationRows.isEmpty
+      && copying.presetNeutralPoints.isEmpty,
+      "「清除」 lets the preset's points go: calibrating starts from none")
+    copying.chooseProfile(first)
+    try check(copying.resumableCalibration == 3, "until the preset is chosen again")
     copying.resumeCalibration()
     try check(copying.calibrationPoints == picked && copying.resumableCalibration == nil && copying.status.contains("接着"),
       "taking the calibration up again brings its points back as they were picked")

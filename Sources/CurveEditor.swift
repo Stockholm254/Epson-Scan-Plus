@@ -92,16 +92,18 @@ struct CurveEditor: View {
   }
   private var keys: some View {
     HStack(spacing: 5) {
-      Button("参数") { state.parametric = true }
-        .buttonStyle(KeyStyle(latched: state.parametric))
-        .foregroundStyle(parametric.isIdentity ? Color.primary : Hardware.amberText)
+      let parametricKey = Button("参数") { state.parametric = true }.buttonStyle(KeyStyle(latched: state.parametric))
+      if state.parametric || parametric.isIdentity { parametricKey } else { parametricKey.foregroundStyle(Hardware.amberText) }
       ForEach(0..<4, id: \.self) { i in
-        Button(Self.names[i]) {
+        let latched = !state.parametric && channel == i
+        let key = Button(Self.names[i]) {
           state.parametric = false
           state.channel = i
         }
-        .buttonStyle(KeyStyle(latched: !state.parametric && channel == i))
-        .foregroundStyle(curves[i].isIdentity ? Color.primary : Self.colors[i])
+        .buttonStyle(KeyStyle(latched: latched))
+        // A channel with a curve in its colour; a colour on the key takes the place of its
+        // latched fill, so the page shown keeps none.
+        if latched || curves[i].isIdentity { key } else { key.foregroundStyle(Self.colors[i]) }
       }
       Spacer(minLength: 0)
     }.controlSize(.small).font(.system(size: 11))

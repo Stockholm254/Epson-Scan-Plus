@@ -304,14 +304,17 @@ extension ContentView {
   /// picked in single view.
   var calibrationPanel: some View {
     let picking = m.tool == .calibrate, copy = m.copyStandRoll
-    let greens = m.calibrationPoints.map { $0.density[1] }
+    let pickedGreens = m.calibrationPoints.map { $0.density[1] }
+    let ready = m.calibrationPoints.count >= 2 && (pickedGreens.max() ?? 0) - (pickedGreens.min() ?? 0) >= FilmCalibration.minimumSpan
+    // The points as listed: those being picked, else those the preset in use was made from.
+    let rows = m.calibrationRows
+    let greens = rows.compactMap(\.green)
     let span = (greens.max() ?? 0) - (greens.min() ?? 0)
-    let ready = m.calibrationPoints.count >= 2 && span >= FilmCalibration.minimumSpan
-    // The preset in use made here, its points ready to be taken up again.
+    // The preset in use made here: its points are where adding begins.
     let resumable = picking ? nil : m.resumableCalibration
     let step =
       ready ? "③ 可以生成预设；再取几个点能检查一致性。"
-      : resumable.map { "① 点「接着取点」：在这个预设的 \($0) 个点上再加点，重新生成就替换它；要从头标定，接着以后点「清除」。" }
+      : resumable.map { "已有这个预设的 \($0) 个点：点「添加点」在它们上面接着点选，生成时连同它们替换这个预设；要从头标定，点「清除」。" }
       ?? (m.calibrationPoints.isEmpty ? (picking ? (copy ? "② 在单张画面上点选本来是中性的东西，比如白牌子、灰水泥。" : "② 在单张画面上点选中性灰。") : "① 点「取中性点」开始。")
       : "② 继续点选更亮或更暗的中性灰，跨度需 0.3 D 以上。")
     return VStack(alignment: .leading, spacing: 8) {
@@ -320,54 +323,70 @@ extension ContentView {
           if resumable != nil { m.resumeCalibration() }
           m.useTool(picking ? .select : .calibrate)
         } label: {
-          Label(picking ? "完成取点" : resumable != nil ? "接着取点" : "取中性点", systemImage: CanvasTool.calibrate.symbol)
+          Label(picking ? "完成取点" : resumable != nil ? "添加点" : "取中性点", systemImage: CanvasTool.calibrate.symbol)
             .lineLimit(1).fixedSize()
         }.buttonStyle(KeyStyle(latched: picking)).disabled(m.selected == nil)
-        .help(resumable != nil ? "把「\(m.profile.name)」的中性点取回来，在上面接着加点" : picking ? "结束取点" : "在单张画面上点选中性灰")
-        Text(String(format: "%d 点 · %.2f D", m.calibrationPoints.count, span)).readout()
+        .help(resumable != nil ? "在「\(m.profile.name)」的中性点上接着点选，生成时替换这个预设" : picking ? "结束取点" : "在单张画面上点选中性灰")
+        Text(String(format: "%d 点 · %.2f D", rows.count, span)).readout()
         Spacer(minLength: 0)
-        // The points in density space, to turn and see which lie off the line.
-        Button {
-          m.showNeutralSpace.toggle()
-        } label: {
-          Label("3D", systemImage: "cube.transparent")
-        }.disabled(m.calibrationPoints.count < 2)
-          .help("在红、绿、蓝密度组成的空间里转着看这些中性点和它们该落的直线")
-          .popover(isPresented: $m.showNeutralSpace, arrowEdge: .leading) {
-            NeutralSpaceView(points: m.calibrationPoints, fit: m.calibrationFit)
-          }
       }
       Text(step).font(.system(size: 11)).foregroundStyle(ready ? Hardware.amberText : Color.secondary)
-      // Where the points are: those being picked, else those the preset in use was made from, a
-      // button each to the frame it is on.
-      let picked = m.calibrationPoints.map { p in (frame: p.frame, name: m.frames.first { $0.id == p.frame }?.name ?? "?") }
-      let spots = picked.isEmpty ? (m.profile.spots ?? []).map { (frame: $0.frame, name: $0.name) } : picked
-      if !spots.isEmpty {
+      // The points in density space, to turn and see which lie off the line, or as the channels'
+      // curves: those being picked, else those the preset in use was calibrated from. Always here,
+      // following each point added or taken out.
+      let theirs = m.calibrationPoints.isEmpty
+      let shown = theirs ? m.presetNeutralPoints : m.calibrationPoints
+      if shown.count >= 2 {
+        // Whose they are is said over the list below.
+        NeutralSpaceView(points: shown, fit: theirs ? m.presetNeutralFit : m.calibrationFit)
+      }
+      // The points, a row each: the frame it is on (opened with the points marked), its green
+      // density above the base, how far it lies off the line through them all, and a key to take
+      // it out.
+      if !rows.isEmpty {
         HStack {
-          Text(picked.isEmpty ? "「\(m.profile.name)」的中性点" : "中性点在").font(.system(size: 11)).foregroundStyle(.secondary)
+          Text(m.calibrationPoints.isEmpty ? "「\(m.profile.name)」的中性点" : "中性点").font(.system(size: 11)).foregroundStyle(.secondary)
           Spacer()
-          if picked.isEmpty {
+          if m.calibrationPoints.isEmpty {
             Toggle("标出", isOn: $m.showCalibrationPoints).toggleStyle(.switch).controlSize(.mini).font(.system(size: 11))
               .help("在单张画面上标出这个预设的中性点")
           }
         }
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 64), spacing: 4)], alignment: .leading, spacing: 4) {
-          ForEach(Array(spots.enumerated()), id: \.offset) { i, s in
+        VStack(spacing: 0) {
+          ForEach(Array(rows.enumerated()), id: \.offset) { i, r in
             // The frame's number now (frames are numbered again after one is deleted or moved),
-            // else the one it had when the preset was made.
-            let here = m.frames.first { $0.id == s.frame }
-            Button("\(i + 1) · \(here?.name ?? s.name)") {
-              m.showCalibrationPoints = true
-              m.open(s.frame)
+            // else the one it had when the point was picked.
+            let here = m.frames.first { $0.id == r.frame }
+            HStack(spacing: 6) {
+              Text("\(i + 1)").font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).frame(width: 18, alignment: .trailing)
+              Button("第 \(here?.name ?? r.name) 张") {
+                m.showCalibrationPoints = true
+                m.open(r.frame)
+              }
+              .buttonStyle(.link).font(.system(size: 11)).disabled(here == nil)
+              .help(here.map { "打开第 \($0.name) 张，看中性 \(i + 1) 在哪里" } ?? "标定时的第 \(r.name) 张不在这一卷")
+              Spacer(minLength: 4)
+              Text(r.green.map { String(format: "G %.2f D", $0) } ?? "—").font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
+              Text(r.off.map { String(format: "偏 %.3f", $0) } ?? "").font(.system(size: 11)).monospacedDigit()
+                .foregroundStyle((r.off ?? 0) > 0.03 ? Hardware.amberText : Color.secondary).frame(width: 62, alignment: .trailing)
+                .help("离过所有点的那条线多远（红、蓝里大的那个，密度）；超过 0.03 D 的多半不是中性，或者光不一样")
+              Button { m.removeCalibrationPoint(at: i) } label: { Image(systemName: "minus.circle") }
+                .buttonStyle(.borderless).foregroundStyle(.secondary)
+                .disabled(m.calibrationPoints.isEmpty && m.resumableCalibration == nil)
+                .help(m.calibrationPoints.isEmpty ? "去掉这个点：接着这个预设标定，生成时用剩下的点替换它" : "去掉这个点")
+                .accessibilityLabel("去掉中性点 \(i + 1)")
             }
-            .font(.system(size: 11)).disabled(here == nil)
-            .help(here.map { "打开第 \($0.name) 张，看中性 \(i + 1) 在哪里" } ?? "标定时的第 \(s.name) 张不在这一卷")
+            .padding(.vertical, 3).padding(.horizontal, 6)
+            .background(i % 2 == 0 ? Color.primary.opacity(0.045) : Color.clear)
           }
         }
+        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
       }
       HStack(spacing: 8) {
         Button(copy ? "生成翻拍预设" : "生成 V850 预设") { m.makeScannerPreset() }.disabled(!ready)
-        Button("清除") { m.clearCalibration() }.disabled(m.calibrationPoints.isEmpty)
+        Button("清除") { m.clearCalibration() }.disabled(m.calibrationPoints.isEmpty && resumable == nil)
+          .help(m.calibrationPoints.isEmpty && resumable != nil ? "不用这个预设的点，从头标定（预设本身留着）" : "去掉取的所有点")
         Button("管理…") {
           m.presetsFocus = m.profile.offsets != nil ? m.profile.id : nil
           m.showPresets = true
@@ -489,7 +508,8 @@ extension ContentView {
         "把勾选的画面排成一张图片，格式同上；上面的小图就是它排出来的样子，改排列、每行张数、背景和方向时跟着变。\n\n「预览 · 立即导出」按整幅预览的分辨率（600 dpi 预览时每张 35 mm 约 850 像素）直接生成，不扫描；已正式扫描的画面按同样的分辨率读取。\n\n「1200 dpi · 先扫描」时，尚未扫描或低于 1200 dpi 的画面先以 1200 dpi 扫描，结果保存为这些画面的原始文件，再生成 1200 dpi 的接触表。")
       // As wide as the panel, as tall as the sheet's shape asks, within reason.
       let sheetAspect = SheetPreview.aspect(ticked, thumbnails: m.thumbnails, layout: m.preferences.sheet)
-      SheetPreview(frames: ticked, thumbnails: m.thumbnails, layout: m.preferences.sheet)
+      let sheetFilm = m.preferences.sheet.showsFilm ? m.sheetFilm : nil
+      SheetPreview(frames: ticked, thumbnails: m.thumbnails, layout: m.preferences.sheet, film: sheetFilm)
         .aspectRatio(max(0.9, sheetAspect), contentMode: .fit)
         .frame(maxWidth: .infinity, maxHeight: 240)
         .animation(.spring(response: 0.42, dampingFraction: 0.82), value: m.preferences.sheet)
@@ -498,7 +518,7 @@ extension ContentView {
         .help("点一下放大看接触表排出来的样子")
         // Large, beside the panel, and still following the settings under it.
         .popover(isPresented: $sheetPreviewOpen, arrowEdge: .trailing) {
-          SheetPreview(frames: ticked, thumbnails: m.thumbnails, layout: m.preferences.sheet)
+          SheetPreview(frames: ticked, thumbnails: m.thumbnails, layout: m.preferences.sheet, film: sheetFilm)
             .aspectRatio(max(0.5, sheetAspect), contentMode: .fit)
             .frame(width: 640).frame(maxHeight: 720).padding(16)
         }
@@ -543,6 +563,8 @@ extension ContentView {
       }
       SwitchRow("片号", isOn: sheet.numbers)
       SwitchRow("标题", isOn: sheet.title)
+      SwitchRow("胶片图", isOn: sheet.showsFilm)
+        .help("在接触表的页头画上这卷胶片：暗盒或 120 卷，和胶片架上的一样")
       Button {
         m.exportContactSheet()
       } label: {

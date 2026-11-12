@@ -250,8 +250,6 @@ final class AppModel: ObservableObject {
   @Published var calibrationPoints = [NeutralPoint]()
   /// The current preset's neutral points marked on their frames; on once a preset is made.
   @Published var showCalibrationPoints = false
-  /// The calibration's neutral points shown in 3D, in a popover.
-  @Published var showNeutralSpace = false
   /// The roll being opened from the library in the background, until it is open.
   @Published private(set) var openingRoll: URL?
   /// The neutral points to mark on `frame`, numbered as listed, in its source: those being picked,
@@ -2275,6 +2273,8 @@ final class AppModel: ObservableObject {
   func chooseProfile(_ p: FilmProfile) {
     recordEdit("胶片预设")
     fadeInNextPicture()
+    // A preset chosen again: its points are where calibrating it begins, even after 「清除」.
+    declinedCalibration = nil
     // The roll stays its film: a preset for it, calibrated or not, leaves its name as it is; one for
     // another film takes the roll to that film. The generic preset is no film's.
     if let film = Self.film(of: p) {
@@ -2532,6 +2532,21 @@ final class AppModel: ObservableObject {
   var calibrationFit: FilmCalibration.Fit? {
     try? FilmCalibration.fit(calibrationPoints, greenSlope: profile.slopes.g, curve: calibrationMeasured ? profile.dataSheetToe : nil)
   }
+  /// The neutral points the preset in use was calibrated from, from what it kept of each (presets
+  /// made before it kept that only say where): what the 3D view shows while none are picked.
+  var presetNeutralPoints: [NeutralPoint] {
+    // Let go of with 「清除」: calibrating starts from none.
+    guard declinedCalibration != profile.id else { return [] }
+    return (profile.spots ?? []).compactMap { s in
+      guard let value = s.value, let base = s.base else { return nil }
+      return NeutralPoint(frame: s.frame, value: value, base: base, gamma: s.gamma ?? 1, at: CGPoint(x: s.x, y: s.y),
+        name: frames.first { $0.id == s.frame }?.name ?? s.name)
+    }
+  }
+  /// Their line, fitted as the preset was.
+  var presetNeutralFit: FilmCalibration.Fit? {
+    try? FilmCalibration.fit(presetNeutralPoints, greenSlope: profile.slopes.g, curve: calibrationMeasured ? profile.dataSheetToe : nil)
+  }
   /// Solves this scanner's preset for the current film from the picked neutral points, keeps it
   /// and applies it to the project. The current preset supplies the film and the green slope.
   func makeScannerPreset() {
@@ -2581,10 +2596,40 @@ final class AppModel: ObservableObject {
         fit.slopes.r, fit.slopes.g, fit.slopes.b, fit.residual)
     } catch { errorText = error.localizedDescription }
   }
+  /// The points picked cleared, or, with none, the preset's own let go: calibrating starts from
+  /// no points, not from the preset's again, until another preset is chosen.
   func clearCalibration() {
+    if calibrationPoints.isEmpty ? resumableCalibration != nil : resumedCalibration == profile.id { declinedCalibration = profile.id }
     calibrationPoints = []
     resumedCalibration = nil
     if tool == .calibrate { useTool(.select) }
+  }
+  /// The preset whose points 「清除」 let go of, this session.
+  private var declinedCalibration: String?
+  /// Point `i` of the list (`calibrationRows`) taken out; one of the preset's takes its points up
+  /// first, so making the preset again replaces it without that one.
+  func removeCalibrationPoint(at i: Int) {
+    if calibrationPoints.isEmpty, resumableCalibration != nil { resumeCalibration() }
+    guard calibrationPoints.indices.contains(i) else { return }
+    calibrationPoints.remove(at: i)
+    status = "去掉了中性点 \(i + 1)，还有 \(calibrationPoints.count) 个" + (calibrationPoints.count >= 2 ? "；点「生成」用剩下的点重新标定" : "")
+  }
+  /// The neutral points as the calibration panel lists them: those being picked, else those the
+  /// preset in use was made from; with each one's frame, its green density above the base, and
+  /// how far it lies off the line through them all (red or blue, the larger), where known.
+  var calibrationRows: [(frame: UUID, name: String, green: Double?, off: Double?)] {
+    let picking = !calibrationPoints.isEmpty
+    let points = picking ? calibrationPoints : presetNeutralPoints
+    let fit = picking ? calibrationFit : presetNeutralFit
+    func name(_ frame: UUID, _ kept: String?) -> String { frames.first { $0.id == frame }?.name ?? kept ?? "?" }
+    // A preset from before it kept each point's reading: where they were, without figures.
+    if !picking, declinedCalibration != profile.id, let spots = profile.spots, points.count < spots.count {
+      return spots.map { (frame: $0.frame, name: name($0.frame, $0.name), green: nil, off: nil) }
+    }
+    return points.map { p in
+      (frame: p.frame, name: name(p.frame, p.name), green: p.density[1],
+       off: fit.map { f in p.misfit(slopes: f.slopes, offsets: f.offsets, toe: f.toe).map(abs).max() ?? 0 })
+    }
   }
   /// The calibrated preset whose points were taken up again (`resumeCalibration`): making the
   /// preset then replaces it.
@@ -2594,7 +2639,7 @@ final class AppModel: ObservableObject {
   /// preset — on the copy stand this copy session's (another session's, chosen from the menu, stays
   /// as it is), else this scanner's.
   var resumableCalibration: Int? {
-    guard calibrationPoints.isEmpty, whyNotTakenUp(profile) == nil else { return nil }
+    guard calibrationPoints.isEmpty, declinedCalibration != profile.id, whyNotTakenUp(profile) == nil else { return nil }
     return profile.spots?.count
   }
   /// Why the calibration preset `p` was made from cannot be taken up on the roll open; nil when it
@@ -4581,6 +4626,16 @@ final class AppModel: ObservableObject {
     guard preferences.sheet.scansFirst else { return [] }
     return items.filter { $0.sourcePath == nil && !($0.hasFullResolution && ($0.scanDPI ?? 0) >= ContactSheet.scanDPI) }
   }
+  /// The day as 2026-11-11, where the user is: ISO 8601's own style is UTC, a day ahead in the
+  /// evening west of Greenwich.
+  static func today(_ date: Date = Date(), in zone: TimeZone = .current) -> String {
+    date.formatted(Date.ISO8601FormatStyle(timeZone: zone).year().month().day())
+  }
+  /// The open roll's film as the film shelf draws it: what the contact sheet's heading shows.
+  var sheetFilm: (look: NewProjectSheet.Look, gauge: FilmStock.Gauge) {
+    let now = NewProjectSheet.current(self)
+    return (NewProjectSheet.look(now, m: self), NewProjectSheet.gauge(now, format: format))
+  }
   func exportContactSheet() {
     guard !isWorking else { return }
     let items = frames.filter(\.enabled)
@@ -4612,7 +4667,7 @@ final class AppModel: ObservableObject {
     panel.canCreateDirectories = true
     panel.message = usePreviews ? "按预览的分辨率（\(Int(overviewDPI)) dpi）直接导出，不扫描" : "1200 dpi 接触表"
     panel.directoryURL = exportStart() ?? libraryURL
-    let date = Date().formatted(.iso8601.year().month().day())
+    let date = Self.today()
     let safeFilm = String(filmName.map { $0.isLetter || $0.isNumber ? $0 : "_" }.prefix(40))
     panel.nameFieldStringValue = "接触表_\(safeFilm)_\(date)"
     let chooser = FormatChooser(selected: preferences.exportFormat)
@@ -4637,7 +4692,7 @@ final class AppModel: ObservableObject {
     let items = ids.compactMap { id in frames.first { $0.id == id } }.map(sharpened)
     let p = conversionProfile, layout = preferences.sheet, quality = preferences.jpegQuality
     let previewDPI = overviewDPI
-    let title = "\(filmName) · \(Date().formatted(.iso8601.year().month().day())) · \(items.count) 张"
+    let title = "\(filmName) · \(Self.today()) · \(items.count) 张"
     let filmCode = filmName.uppercased()
     let sharpening = preferences.sharpening
     let tiles = items.map { f -> ContactSheet.Tile in
@@ -4657,6 +4712,8 @@ final class AppModel: ObservableObject {
         size: { self.fullSourceSize(for: f) })
     }
     let sheetDPI = fromPreview ? Int(previewDPI) : ContactSheet.scanDPI
+    // The roll's film for the heading, as the film shelf draws it.
+    let film = layout.showsFilm ? sheetFilm : nil
     let ids = items.map(\.id)
     let stop = beginExport(ids, sheet: true)
     status = "正在生成接触表 · \(items.count) 张…"
@@ -4666,7 +4723,8 @@ final class AppModel: ObservableObject {
       do {
         let size = try ContactSheet.export(
           tiles, profile: p, layout: layout, title: title, filmCode: filmCode, to: url,
-          format: format, quality: quality, dpi: sheetDPI
+          format: format, quality: quality, dpi: sheetDPI,
+          film: film.map { look in { size in FilmRender.renderNow(look.look, gauge: look.gauge, pixels: size)?.cgImage(forProposedRect: nil, context: nil, hints: nil) } }
         ) { i in
           // The frame before this one drawn, this one being drawn.
           if stop.stopped { throw ExportStopped() }

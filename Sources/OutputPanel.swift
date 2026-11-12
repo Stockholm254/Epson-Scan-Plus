@@ -55,6 +55,8 @@ struct SheetPreview: View {
   let frames: [FilmFrame]
   let thumbnails: [UUID: CGImage]
   let layout: ContactSheet.Layout
+  /// The roll's film in the heading, when the sheet shows it.
+  var film: (look: NewProjectSheet.Look, gauge: FilmStock.Gauge)? = nil
 
   /// A frame's shape as it prints: its picture's, which is turned as the frame is; turned back
   /// to the film's way when the sheet keeps it.
@@ -94,6 +96,10 @@ struct SheetPreview: View {
           .overlay(Rectangle().strokeBorder(Color.white.opacity(layout.whitePaper ? 0 : 0.16), lineWidth: 0.5))
           .frame(width: sheet.width, height: sheet.height).position(x: sheet.midX, y: sheet.midY)
           .shadow(color: .black.opacity(0.35), radius: 3, y: 1)
+        if let f = g.film, let film {
+          let r = place(f)
+          FilmObject(look: film.look, gauge: film.gauge).frame(width: r.width, height: r.height).position(x: r.midX, y: r.midY)
+        }
         if let t = g.title {
           let r = place(t)
           Capsule().fill(ink.opacity(0.55))

@@ -268,8 +268,18 @@ enum Plots3D {
 struct Plot3DView: NSViewRepresentable {
   let scene: SCNScene
   let camera: SCNNode
+  /// The wheel zooms (in a popover or sheet of its own), or goes on to what scrolls around it.
+  var scrollZooms = true
+  /// A scene view whose wheel can be the panel's.
+  final class View: SCNView {
+    var scrollZooms = true
+    override func scrollWheel(with event: NSEvent) {
+      if scrollZooms { super.scrollWheel(with: event) } else { nextResponder?.scrollWheel(with: event) }
+    }
+  }
   func makeNSView(context: Context) -> SCNView {
-    let v = SCNView(frame: .zero, options: nil)
+    let v = View(frame: .zero, options: nil)
+    v.scrollZooms = scrollZooms
     v.scene = scene
     v.pointOfView = camera
     v.backgroundColor = .clear
@@ -282,6 +292,7 @@ struct Plot3DView: NSViewRepresentable {
     return v
   }
   func updateNSView(_ v: SCNView, context: Context) {
+    (v as? View)?.scrollZooms = scrollZooms
     if v.scene !== scene {
       v.scene = scene
       v.pointOfView = camera
@@ -289,27 +300,120 @@ struct Plot3DView: NSViewRepresentable {
   }
 }
 
-/// The calibration's neutral points in 3D, under its key in the calibration section.
+/// The calibration's neutral points, in the calibration section: in 3D, or as the three
+/// channels' curves in 2D.
 struct NeutralSpaceView: View {
   let points: [NeutralPoint]
   let fit: FilmCalibration.Fit?
+  /// Whose points they are, when they are a preset's rather than those being picked.
+  var of: String? = nil
+  @AppStorage("neutralPlot") private var mode = "3d"
   @State private var set: (SCNScene, SCNNode)?
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
-      HStack {
-        Text("中性点在密度空间里").font(.system(size: 12, weight: .semibold))
+      HStack(spacing: 8) {
+        Picker("", selection: $mode) {
+          Text("3D").tag("3d")
+          Text("2D").tag("2d")
+        }.pickerStyle(.segmented).labelsHidden().fixedSize().controlSize(.small)
+          .help("3D：红、绿、蓝密度组成的空间；2D：三个通道的密度对曝光，像数据表的特性曲线")
         Spacer()
         Text(fit.map { String(format: "残差 %.3f D", $0.residual) } ?? "还拟合不出直线").font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
       }
+      if let of {
+        Text("「\(of)」标定时的 \(points.count) 个中性点").font(.system(size: 11)).foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
       ZStack {
         RoundedRectangle(cornerRadius: 6).fill(Color(white: 0.1))
-        if let set { Plot3DView(scene: set.0, camera: set.1) }
-      }.frame(width: 300, height: 260)
-      Text("三条轴是红、绿、蓝高于片基的密度。同一种光下的中性点应当落在白线上；偏离 0.03 D 以上的点是红的，多半不是中性，或者光不一样。拖动转，滚轮缩放。")
-        .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).frame(width: 300, alignment: .leading)
+        if mode == "2d" {
+          NeutralCurvesView(points: points, fit: fit).padding(8)
+        } else if let set {
+          // In the panel the wheel scrolls the panel; a pinch zooms.
+          Plot3DView(scene: set.0, camera: set.1, scrollZooms: false)
+        }
+      }.frame(maxWidth: .infinity).frame(height: 230)
+      Text(mode == "2d"
+        ? "横轴是按绿色算出的曝光（对数），纵轴是高于片基的密度；三条线是标定出的红、绿、蓝特性曲线。同一种光下的中性点三个通道都落在各自的线上；红、蓝离开线 0.03 D 以上的点圈成琥珀色。"
+        : "三条轴是红、绿、蓝高于片基的密度。同一种光下的中性点应当落在白线上；偏离 0.03 D 以上的点是红的，多半不是中性，或者光不一样。拖动转，捏合缩放。")
+        .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
-    .padding(12)
     .onAppear { set = Plots3D.neutralScene(points, fit: fit) }
+    // Points added or taken out: the scene made again, the view where it was turned.
+    .onChange(of: points) { set = Plots3D.neutralScene(points, fit: fit) }
+  }
+}
+
+/// The neutrals as a data sheet draws a film: each channel's density above the base against the
+/// log exposure green gives each point, the fitted curves through them, toes and all.
+struct NeutralCurvesView: View {
+  let points: [NeutralPoint]
+  let fit: FilmCalibration.Fit?
+  static let colours = [Color(red: 0.92, green: 0.3, blue: 0.25), Color(red: 0.3, green: 0.78, blue: 0.4), Color(red: 0.35, green: 0.55, blue: 0.98)]
+  /// Each point's log exposure (from its green), its three densities and how far red or blue lies
+  /// off its curve; without a fit, green density stands for the exposure.
+  static func placed(_ points: [NeutralPoint], fit: FilmCalibration.Fit?) -> [(x: Double, d: [Double], off: [Double])] {
+    points.map { p in
+      let d = p.density
+      guard let f = fit else { return (d[1], d, [0, 0]) }
+      let w = f.toe ?? .zero
+      return (FilmToe.exposure(d[1] / f.slopes.g, width: w.g), d, p.misfit(slopes: f.slopes, offsets: f.offsets, toe: f.toe).map(abs))
+    }
+  }
+  var body: some View {
+    let found = Self.placed(points, fit: fit)
+    Canvas { ctx, size in
+      guard !found.isEmpty else { return }
+      let xs = found.map(\.x), lo0 = xs.min()!, hi0 = xs.max()!, pad = max(0.05, (hi0 - lo0) * 0.12)
+      let lo = lo0 - pad, hi = hi0 + pad
+      let top = max(0.5, ((found.flatMap(\.d).max() ?? 0.5) / 0.5).rounded(.up) * 0.5)
+      let left: CGFloat = 26, bottom: CGFloat = 16
+      let plot = CGRect(x: left, y: 4, width: size.width - left - 4, height: size.height - bottom - 4)
+      func at(_ x: Double, _ d: Double) -> CGPoint {
+        CGPoint(x: plot.minX + plot.width * CGFloat((x - lo) / (hi - lo)), y: plot.maxY - plot.height * CGFloat(d / top))
+      }
+      // Density every 0.5 D (0.25 when it is low), and the frame.
+      let step = top > 1 ? 0.5 : 0.25
+      var g = 0.0
+      while g <= top + 1e-9 {
+        let y = at(lo, g).y
+        ctx.stroke(Path { $0.move(to: CGPoint(x: plot.minX, y: y)); $0.addLine(to: CGPoint(x: plot.maxX, y: y)) },
+          with: .color(.white.opacity(g == 0 ? 0.3 : 0.1)), lineWidth: 0.5)
+        ctx.draw(Text(String(format: "%.1f", g)).font(.system(size: 8)).foregroundStyle(.white.opacity(0.5)),
+          at: CGPoint(x: plot.minX - 4, y: y), anchor: .trailing)
+        g += step
+      }
+      ctx.draw(Text("曝光 →").font(.system(size: 8)).foregroundStyle(.white.opacity(0.5)), at: CGPoint(x: plot.maxX, y: plot.maxY + 9), anchor: .trailing)
+      ctx.draw(Text("D").font(.system(size: 8)).foregroundStyle(.white.opacity(0.5)), at: CGPoint(x: 2, y: plot.minY + 2), anchor: .topLeading)
+      // The curves.
+      if let fit {
+        let line = Plots3D.line(fit, from: lo, to: hi)
+        for c in 0..<3 {
+          var path = Path()
+          for (i, d) in line.enumerated() {
+            let p = at(lo + (hi - lo) * Double(i) / Double(max(1, line.count - 1)), d[c])
+            if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
+          }
+          ctx.stroke(path, with: .color(Self.colours[c].opacity(0.85)), lineWidth: 1.4)
+        }
+      }
+      // The points: each one's three readings at its exposure, numbered over the densest; red or
+      // blue off its curve ringed.
+      for (i, p) in found.enumerated() {
+        for c in 0..<3 {
+          let q = at(p.x, p.d[c])
+          ctx.fill(Path(ellipseIn: CGRect(x: q.x - 2.6, y: q.y - 2.6, width: 5.2, height: 5.2)), with: .color(Self.colours[c]))
+          let off = c == 0 ? p.off[0] : c == 2 ? p.off[1] : 0
+          if fit != nil && off > Plots3D.onLine {
+            ctx.stroke(Path(ellipseIn: CGRect(x: q.x - 4.6, y: q.y - 4.6, width: 9.2, height: 9.2)), with: .color(Hardware.amber), lineWidth: 1.2)
+          }
+        }
+        let topmost = at(p.x, p.d.max() ?? 0)
+        ctx.draw(Text("\(i + 1)").font(.system(size: 8, weight: .medium)).foregroundStyle(.white.opacity(0.75)),
+          at: CGPoint(x: topmost.x, y: topmost.y - 8))
+      }
+    }
+    .accessibilityElement().accessibilityLabel("中性点的三通道特性曲线 · \(points.count) 个点")
   }
 }
 

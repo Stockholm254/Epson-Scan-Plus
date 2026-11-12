@@ -49,6 +49,45 @@ enum ContactSheetTests {
       try check(type == format.type.identifier && info.bits == (format.sixteenBit ? 16 : 8) && Int(info.dpi) == 300,
         "\(format.title) export writes \(format.type.identifier) at \(format.sixteenBit ? 16 : 8) bits")
     }
+    // The roll's film in the heading, left of the title, the strips below both.
+    var withFilm = ContactSheet.Layout()
+    withFilm.showsFilm = true
+    let headed = ContactSheet.geometry(count: 6, cell: cell, layout: withFilm), plain = ContactSheet.geometry(count: 6, cell: cell, layout: ContactSheet.Layout())
+    try check(headed.film.map { f in headed.title.map { $0.minX > f.maxX } == true && headed.strips.allSatisfy { $0.minY > f.maxY }
+      && abs(f.width / f.height - ContactSheet.filmAspect) < 0.02 } == true && plain.film == nil
+      && headed.size.height > plain.size.height && headed.size.width == plain.size.width,
+      "胶片图 puts the roll's film in the heading, the title beside it and the strips below")
+    // The sheet's day is the user's, not Greenwich's: 23:30 on the 10th in California is the 10th.
+    var pacific = Calendar(identifier: .gregorian)
+    pacific.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+    let late = pacific.date(from: DateComponents(year: 2026, month: 11, day: 10, hour: 23, minute: 30))!
+    let day = AppModel.today(late, in: pacific.timeZone)
+    try check(day == "2026-11-10", "a contact sheet or preset made in the evening is dated that day where the user is (\(day))")
+    let sheetURL = folder.appendingPathComponent("sheet-film-test.png")
+    let red: CGImage = {
+      let c = CGContext(data: nil, width: 76, height: 100, bitsPerComponent: 8, bytesPerRow: 0,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+      c.setFillColor(red: 0.9, green: 0.1, blue: 0.1, alpha: 1)
+      c.fill(CGRect(x: 0, y: 0, width: 76, height: 100))
+      return c.makeImage()!
+    }()
+    var asked: CGSize?
+    let tile = ContactSheet.Tile(name: "01", settings: Adjustments(), dpi: 300, source: { sample })
+    try ContactSheet.export([tile], profile: FilmProfile.builtins[0], layout: withFilm, title: "test", filmCode: "TEST", to: sheetURL,
+      format: .png, quality: 0.9, dpi: 300, film: { size in asked = size; return red })
+    let drawn = try pipe.load(sheetURL)
+    let drawnGeometry = ContactSheet.geometry(count: 1, cell: ContactSheet.cell(for: [CGSize(width: sample.width, height: sample.height)]), layout: withFilm,
+      sizes: [CGSize(width: sample.width, height: sample.height)])
+    let filmAt = drawnGeometry.film.map { CGPoint(x: $0.midX, y: $0.midY) } ?? .zero
+    let px: [UInt8] = {
+      var out = [UInt8](repeating: 0, count: 4)
+      let c = CGContext(data: &out, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+      c.draw(drawn, in: CGRect(x: -filmAt.x, y: filmAt.y - CGFloat(drawn.height) + 1, width: CGFloat(drawn.width), height: CGFloat(drawn.height)))
+      return out
+    }()
+    try check(asked != nil && px[0] > 180 && px[1] < 80 && px[2] < 80,
+      "the exported sheet has the film's picture where the heading puts it (\(px[0]), \(px[1]), \(px[2]))")
 
     // Settings persist in their suite, and an in-memory set never writes.
     let suite = "EpsonScanPlus.tests.\(UUID().uuidString)"
