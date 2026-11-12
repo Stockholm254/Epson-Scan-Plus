@@ -2405,6 +2405,49 @@ final class AppModel: ObservableObject {
     give(from, to: ids, edit: "粘贴上一张的" + what, scope: scope)
     status = "已把上一张（第 \(from.name) 张）的\(what)粘贴到" + (ids.count == 1 ? "这张" : "所选的 \(ids.count) 张") + " · ⌘Z 撤销"
   }
+  /// 存为调色预设's sheet is up: the paste sheet, from the frame shown, with a name.
+  @Published var savingGradingPreset = false
+  /// The groups a 调色预设 may hold: ③'s but the roll's shared balance and levels, the roll's own.
+  static var presetGroups: [SettingsGroup] { SettingsGroup.of(.grading).filter { $0 != .rollShared } }
+  /// A frame's grading as a preset keeps it: without the grey picked on its own picture, which is
+  /// no grey on another, so a balance picked there goes as automatic with its warmth and tint.
+  static func presetGrading(_ a: Adjustments) -> Adjustments {
+    var p = a
+    (p.neutralSample, p.neutralPicked) = (nil, nil)
+    return p
+  }
+  /// The frame shown's grading, of `groups`, kept as the preset `name` (one of that name replaced).
+  func saveGradingPreset(named name: String, groups: Set<SettingsGroup>) {
+    guard let s = selected else { return }
+    let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    let kept = Self.presetGroups.filter(groups.contains)
+    guard !name.isEmpty, !kept.isEmpty else { return }
+    let replaced = preferences.gradingPresets.contains { $0.name == name }
+    var list = preferences.gradingPresets.filter { $0.name != name }
+    list.append(GradingPreset(name: name, groups: kept.map(\.rawValue), adjustments: Self.presetGrading(s.adjustments)))
+    preferences.gradingPresets = list
+    let what = kept.count <= 3 ? kept.map(\.name).joined(separator: "、") : "\(kept.count) 项调色"
+    status = (replaced ? "已替换调色预设「\(name)」：" : "已存为调色预设「\(name)」：") + what
+  }
+  /// A 调色预设 given to the frame shown, or to all those chosen, as one edit: its groups only.
+  func applyGradingPreset(_ p: GradingPreset) {
+    guard selected != nil, !isWorking else { return }
+    let groups = p.settingsGroups
+    let apply = { (a: inout Adjustments) in for g in groups { g.take(&a, from: p.adjustments) } }
+    let name = "调色预设「\(p.name)」"
+    if multiSelected {
+      let n = selection.count
+      changeSelection(name, apply)
+      status = "已套用\(name)到所选的 \(n) 张 · ⌘Z 撤销"
+    } else {
+      change(name, separate: true, syncing: false, apply)
+      status = "已套用\(name) · ⌘Z 撤销"
+    }
+  }
+  func deleteGradingPreset(_ p: GradingPreset) {
+    preferences.gradingPresets.removeAll { $0.id == p.id }
+    status = "已删除调色预设「\(p.name)」"
+  }
   /// 选择性粘贴's sheet is up.
   @Published var choosingPaste = false
   /// What 选择性粘贴 lists for `scope`: its groups, 其他调色 only when `from` (the copied frame) has some.

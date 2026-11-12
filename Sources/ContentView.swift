@@ -158,7 +158,8 @@ struct ContentView: View {
     .sheet(isPresented: $m.showUpdates) { UpdateSheet(m: m, updater: m.updater) }
     .sheet(isPresented: $m.showShortcuts) { ShortcutsSheet() }
     .sheet(isPresented: $m.choosingPaste) { PasteSheet(m: m) }
-    .sheet(isPresented: $m.choosingSync) { PasteSheet(m: m, syncing: true) }
+    .sheet(isPresented: $m.choosingSync) { PasteSheet(m: m, purpose: .sync) }
+    .sheet(isPresented: $m.savingGradingPreset) { PasteSheet(m: m, purpose: .preset) }
     .sheet(isPresented: $m.askingNewProject) { NewProjectSheet(m: m) }
     .sheet(isPresented: $m.changingFilm) { NewProjectSheet(m: m, purpose: .changeFilm) }
     .onChange(of: m.tool) { m.refresh() }
@@ -735,6 +736,7 @@ struct ContentView: View {
         HStack {
           sectionTitle(grading ? "调色" : "去色罩", symbol: grading ? "slider.horizontal.3" : "circle.lefthalf.filled")
           Spacer()
+          if grading { gradingPresetMenu }
           // This step's settings only: ③'s 重置 leaves the base and the repair, ②'s the grading.
           let what = AppModel.scopeName(m.stepScope)
           Button(m.multiSelected ? "重置所选的\(what)" : "重置\(what)") { m.resetAdjustments(m.stepScope) }.font(.system(size: 11))
@@ -811,6 +813,35 @@ struct ContentView: View {
         }
       }.background(.bar)
     }
+  }
+  /// 调色预设, as Lightroom's develop presets: one click gives the frame shown, or those chosen,
+  /// a look kept earlier; saving lists the frame's grading to tick what the preset holds.
+  var gradingPresetMenu: some View {
+    let presets = m.preferences.gradingPresets
+    return Menu {
+      if presets.isEmpty {
+        Text("还没有调色预设")
+      } else {
+        Section(m.multiSelected ? "套用到所选的 \(m.selection.count) 张" : "套用到这张") {
+          ForEach(presets) { p in
+            Button(p.name) { m.applyGradingPreset(p) }
+              .help(p.settingsGroups.map(\.name).joined(separator: "、"))
+          }
+        }
+      }
+      Divider()
+      Button("把这张的调色存为预设…", systemImage: "plus") { m.savingGradingPreset = true }
+      if !presets.isEmpty {
+        Menu("删除预设", systemImage: "trash") {
+          ForEach(presets) { p in Button(p.name, role: .destructive) { m.deleteGradingPreset(p) } }
+        }
+      }
+    } label: {
+      Text("预设").font(.system(size: 11))
+    }
+    .menuStyle(.button).buttonStyle(.bordered).controlSize(.small).fixedSize()
+    .help("调色预设：把调好的一张存成预设，一键套用到别的画面（多选时套用到所选的每一张）")
+    .disabled(frameControlsOff || m.isWorking)
   }
   /// The frame's own controls wait for a frame, and for an export to finish.
   private var frameControlsOff: Bool { m.selected == nil || m.exporting }

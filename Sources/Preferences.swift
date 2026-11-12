@@ -32,6 +32,17 @@ enum ExportFormat: String, CaseIterable, Identifiable {
 }
 
 /// Colour spaces for exports. Raw values are stored in settings and taken by `--color-space`.
+/// 调色预设, as Lightroom's develop presets: a frame's ③ grading of the groups chosen
+/// (`SettingsGroup`'s raw values), kept under a name and given to other frames in one step.
+struct GradingPreset: Codable, Equatable, Identifiable {
+  var id = UUID()
+  var name: String
+  var groups: [String]
+  var adjustments: Adjustments
+  var made = Date()
+  var settingsGroups: [SettingsGroup] { groups.compactMap(SettingsGroup.init(rawValue:)) }
+}
+
 /// Export settings kept under a name, as Lightroom's export presets: the format, its quality,
 /// the colour space, the size and the file name; where the files go stays as it is.
 struct ExportPreset: Codable, Equatable, Identifiable {
@@ -124,6 +135,10 @@ final class Preferences: ObservableObject {
   /// Export settings kept under names of the user's own (`ExportPreset`), after the app's.
   @Published var exportPresets: [ExportPreset] {
     didSet { defaults?.set(try? JSONEncoder().encode(exportPresets), forKey: "exportPresets") }
+  }
+  /// The user's 调色预设, in the order made.
+  @Published var gradingPresets: [GradingPreset] {
+    didSet { defaults?.set(try? JSONEncoder().encode(gradingPresets), forKey: "gradingPresets") }
   }
   /// The groups 选择性粘贴 last left unticked (`SettingsGroup`'s raw values): kept as those left out,
   /// so a group a newer version adds is ticked.
@@ -242,6 +257,7 @@ final class Preferences: ObservableObject {
     sheetFormat = defaults?.string(forKey: "sheetFormat").flatMap(ExportFormat.init(rawValue:)) ?? .jpeg
     exportLongEdge = max(0, defaults?.integer(forKey: "exportLongEdge") ?? 0)
     pasteLeftOut = Set(defaults?.stringArray(forKey: "pasteLeftOut") ?? [])
+    gradingPresets = defaults?.data(forKey: "gradingPresets").flatMap { try? JSONDecoder().decode([GradingPreset].self, from: $0) } ?? []
     exportPresets = defaults?.data(forKey: "exportPresets").flatMap { try? JSONDecoder().decode([ExportPreset].self, from: $0) } ?? []
     exportColorSpace = defaults?.string(forKey: "exportColorSpace").flatMap(ExportColorSpace.init(rawValue:)) ?? .sRGB
     exportNameTemplate = defaults?.string(forKey: "exportNameTemplate") ?? ExportNaming.standard

@@ -150,6 +150,33 @@ enum StepTests {
       "选择性同步 gives the roll the frame shown's ticked settings alone")
     edits.undo()
 
+    // 调色预设: the frame shown's grading of the groups ticked, kept under a name without the grey
+    // picked on its picture, the roll's own shared print left out; given to another in one step.
+    model.selectedID = ids[0]
+    model.convertStep = .grade
+    model.frames[0].adjustments.neutralSample = RGB(r: 0.3, g: 0.4, b: 0.5)
+    model.frames[0].adjustments.warmth = 0.15
+    model.saveGradingPreset(named: "暖一点", groups: [.whiteBalance, .saturation, .rollShared])
+    model.frames[0].adjustments.neutralSample = nil
+    model.frames[0].adjustments.warmth = 0
+    let preset = model.preferences.gradingPresets.last
+    let kept = Preferences(defaults: defaults).gradingPresets
+    model.selectedID = ids[1]
+    model.frames[1].adjustments = Adjustments()
+    model.frames[1].adjustments.exposure = 0.7
+    if let preset { model.applyGradingPreset(preset) }
+    let given = model.frames[1].adjustments
+    try check(preset?.groups == ["whiteBalance", "saturation"] && preset?.adjustments.neutralSample == nil && kept == model.preferences.gradingPresets
+      && given.warmth == 0.15 && given.saturation == 1.3 && given.exposure == 0.7 && given.neutralSample == nil && model.status.contains("暖一点"),
+      "a 调色预设 keeps the ticked grading without the grey picked on its picture, and gives just that to another frame")
+    edits.undo()
+    model.saveGradingPreset(named: "暖一点", groups: [.exposure])
+    let replaced = model.preferences.gradingPresets
+    model.deleteGradingPreset(replaced[0])
+    try check(model.frames[1].adjustments.warmth == 0 && replaced.count == 1 && replaced[0].groups == ["exposure"]
+      && model.status.contains("删除") && model.preferences.gradingPresets.isEmpty,
+      "undone in one step; a preset saved under the same name replaces it, and one deleted is gone")
+
     // 粘贴上一张: the frame shown before gives its settings, nothing copied first.
     model.convertStep = .grade
     model.selectedID = ids[0]
