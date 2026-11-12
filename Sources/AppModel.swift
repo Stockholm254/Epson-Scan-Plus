@@ -217,6 +217,8 @@ final class AppModel: ObservableObject {
   @Published private(set) var exportProgress = ExportProgress()
   /// What each frame was last exported with, saved with the roll.
   @Published private(set) var exportStamps = [UUID: ExportStamp]()
+  /// Each frame's 快照 (`GradeSnapshot`), kept with the roll.
+  @Published var gradeSnapshots = [UUID: [GradeSnapshot]]()
   /// One for each export running: 停止 sets them all.
   private var exportStops = [StopFlag]()
   @Published var errorText: String?
@@ -1168,6 +1170,7 @@ final class AppModel: ObservableObject {
     frames = []
     thumbnails = [:]
     exportStamps = [:]
+    gradeSnapshots = [:]
     tablePrint = nil
     selectedID = nil
     clearEdits()
@@ -1217,6 +1220,7 @@ final class AppModel: ObservableObject {
       useCalibration = true
       rollFlats = []
       exportStamps = [:]
+      gradeSnapshots = [:]
       rollSource = nil
       clearEdits()
       let root = try makeSession()
@@ -4530,6 +4534,7 @@ final class AppModel: ObservableObject {
       useCalibration = true
       rollFlats = []
       exportStamps = [:]
+      gradeSnapshots = [:]
       rollSource = nil
       let root = try makeSession()
       let src = root.appendingPathComponent("Originals")
@@ -5163,6 +5168,8 @@ final class AppModel: ObservableObject {
     let kept = Set(frames.map(\.id))
     let stamps = exportStamps.filter { kept.contains($0.key) }
     project.exports = stamps.isEmpty ? nil : Dictionary(uniqueKeysWithValues: stamps.map { ($0.key.uuidString, $0.value) })
+    let snapshots = gradeSnapshots.filter { kept.contains($0.key) && !$0.value.isEmpty }
+    project.snapshots = snapshots.isEmpty ? nil : Dictionary(uniqueKeysWithValues: snapshots.map { ($0.key.uuidString, $0.value) })
     // Older versions would open a roll whose frames lack their grids as if not flattened: they
     // refuse it instead.
     if stripped { project.version = 2 }
@@ -5316,6 +5323,8 @@ final class AppModel: ObservableObject {
     exportStamps = Dictionary((p.exports ?? [:]).compactMap { key, stamp in
       FileManager.default.fileExists(atPath: stamp.file) ? UUID(uuidString: key).map { ($0, stamp) } : nil
     }, uniquingKeysWith: { a, _ in a })
+    gradeSnapshots = Dictionary((p.snapshots ?? [:]).compactMap { key, list in UUID(uuidString: key).map { ($0, list) } },
+      uniquingKeysWith: { a, _ in a })
     // A blank frame shown as it was read, not de-masked: the light and how it falls off (rolls
     // before 0.19.6 converted it as a negative).
     let blanks = blankFrameIDs

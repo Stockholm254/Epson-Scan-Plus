@@ -736,7 +736,7 @@ struct ContentView: View {
         HStack {
           sectionTitle(grading ? "调色" : "去色罩", symbol: grading ? "slider.horizontal.3" : "circle.lefthalf.filled")
           Spacer()
-          if grading { gradingPresetMenu }
+          if grading { snapshotMenu; gradingPresetMenu }
           // This step's settings only: ③'s 重置 leaves the base and the repair, ②'s the grading.
           let what = AppModel.scopeName(m.stepScope)
           Button(m.multiSelected ? "重置所选的\(what)" : "重置\(what)") { m.resetAdjustments(m.stepScope) }.font(.system(size: 11))
@@ -813,6 +813,46 @@ struct ContentView: View {
         }
       }.background(.bar)
     }
+  }
+  /// 快照, as Lightroom's: the frame shown's grading kept under a name, to try it another way and
+  /// come back to it; the latest first.
+  var snapshotMenu: some View {
+    let shots = m.shownSnapshots
+    return Menu {
+      if shots.isEmpty {
+        Text("这张还没有快照")
+      } else {
+        Section("回到快照") {
+          ForEach(shots.reversed()) { s in
+            Button(s.name) { m.restoreSnapshot(s) }
+              .help("存于 " + s.made.formatted(date: .abbreviated, time: .shortened))
+          }
+        }
+      }
+      Divider()
+      Button("存快照…", systemImage: "camera") {
+        let alert = NSAlert()
+        alert.messageText = "存快照"
+        alert.informativeText = "把这张现在的调色存在一个名字下，换个调法以后能一键回来；跟着这一卷存，不影响别的画面。"
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = m.nextSnapshotName
+        alert.accessoryView = field
+        alert.addButton(withTitle: "存")
+        alert.addButton(withTitle: "取消")
+        alert.window.initialFirstResponder = field
+        if alert.runModal() == .alertFirstButtonReturn { m.takeSnapshot(named: field.stringValue) }
+      }
+      if !shots.isEmpty {
+        Menu("删除快照", systemImage: "trash") {
+          ForEach(shots.reversed()) { s in Button(s.name, role: .destructive) { m.deleteSnapshot(s) } }
+        }
+      }
+    } label: {
+      Text(shots.isEmpty ? "快照" : "快照 \(shots.count)").font(.system(size: 11)).monospacedDigit()
+    }
+    .menuStyle(.button).buttonStyle(.bordered).controlSize(.small).fixedSize()
+    .help("快照：把这张现在的调色存一份，换个调法以后能一键回来，像 Lightroom 的快照")
+    .disabled(frameControlsOff || m.isWorking)
   }
   /// 调色预设, as Lightroom's develop presets: one click gives the frame shown, or those chosen,
   /// a look kept earlier; saving lists the frame's grading to tick what the preset holds.

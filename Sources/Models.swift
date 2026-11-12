@@ -813,6 +813,8 @@ struct DeskProject: Codable {
   var edges: String? = nil
   /// What each frame (by `FilmFrame.id`) was last exported with; nil, none exported.
   var exports: [String: ExportStamp]? = nil
+  /// Each frame's 快照 (by `FilmFrame.id`); nil, none.
+  var snapshots: [String: [GradeSnapshot]]? = nil
 }
 
 /// A project names its files by absolute path, which older versions read, and relative to its

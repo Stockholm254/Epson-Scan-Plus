@@ -127,6 +127,24 @@ enum ExportFlowTests {
     let reopened = model()
     try check(reopened.exportStamps.count == 2 && reopened.exportMark(reopened.frames[0]) == .exported && reopened.exportMark(reopened.frames[2]) == .notExported,
       "the marks are saved with the roll and read back")
+    // 快照: the frame shown's grading kept with the roll under a name, taken back as one edit.
+    m.selectedID = ids[0]
+    let graded = m.frames[0].adjustments.exposure
+    m.takeSnapshot(named: "  原样 ")
+    m.change("曝光", separate: true) { $0.exposure = graded + 0.8 }
+    let snap = m.shownSnapshots.first
+    if let snap { m.restoreSnapshot(snap) }
+    let back = m.frames[0].adjustments.exposure == graded
+    edits.undo()
+    let undone = m.frames[0].adjustments.exposure == graded + 0.8
+    edits.undo()
+    m.saveProject()
+    let withShots = model()
+    try check(back && undone && snap?.name == "原样" && m.frames[0].adjustments.exposure == graded
+      && withShots.gradeSnapshots[ids[0]]?.map(\.name) == ["原样"] && withShots.gradeSnapshots[ids[1]] == nil,
+      "a 快照 keeps the frame's grading under its name, with the roll; going back to it is one edit ⌘Z undoes")
+    if let snap { m.deleteSnapshot(snap) }
+    try check(m.shownSnapshots.isEmpty && model().gradeSnapshots.isEmpty, "and a snapshot deleted is gone from the roll")
     // A file deleted in Finder: its frame is no longer marked once the roll is opened again.
     if let gone = m.exportStamps[ids[1]]?.file { try? fm.removeItem(atPath: gone) }
     let again = model()
