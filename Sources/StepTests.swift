@@ -106,14 +106,16 @@ enum StepTests {
     (full.exposure, full.contrast, full.highlights, full.pressHighlights, full.shadows) = (0.5, 1.2, -0.3, 0.2, 0.3)
     (full.whites, full.blacks, full.autoLevels, full.black, full.white, full.midtone) = (-0.1, 0.1, false, 0.02, 0.95, 1.1)
     (full.saturation, full.colourNoise, full.softEnds, full.curves, full.sharpening) = (1.3, 0.5, true, ToneCurves(), 0.4)
+    full.curves?.rgb = ToneCurve(points: [CurvePoint(x: 0, y: 0), CurvePoint(x: 0.5, y: 0.6), CurvePoint(x: 1, y: 1)])
     (full.baseFine, full.base, full.inputGamma, full.filmEdges) = (RGB(r: 0.1, g: 0, b: 0), RGB(r: 0.5, g: 0.3, b: 0.2), 1.0, .rebate)
     var grouped = Adjustments(), whole = Adjustments(), rest = Adjustments()
     for g in SettingsGroup.of(.grading) { g.take(&grouped, from: full) }
     whole.takeGrading(from: full)
     SettingsGroup.otherGrading.take(&rest, from: full)
     try check(grouped == whole && rest == Adjustments() && SettingsGroup.of(.grading).allSatisfy { $0 == .otherGrading || $0.isSet(in: full) }
-      && SettingsGroup.exposure.summary(of: full) == "+0.50 EV" && SettingsGroup.whitesBlacks.summary(of: full).hasPrefix("白色 −0.10"),
-      "选择性粘贴's groups together are ③'s settings, each grading setting in a named one (其他调色 empty), each told in a few words")
+      && SettingsGroup.exposure.summary(of: full) == "+0.50 EV" && SettingsGroup.whitesBlacks.summary(of: full).hasPrefix("白色 −0.10")
+      && { var straight = Adjustments(); straight.curves = ToneCurves(); return !SettingsGroup.curves.isSet(in: straight) }(),
+      "选择性粘贴's groups together are ③'s settings, each grading setting in a named one (其他调色 empty), each told in a few words; straight curves are none")
     model.frames[1].adjustments = Adjustments()
     model.frames[1].adjustments.saturation = 0.8
     model.selectedID = ids[0]

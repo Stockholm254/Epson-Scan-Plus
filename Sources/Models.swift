@@ -738,8 +738,10 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
     case .edges: a.filmEdges = o.filmEdges
     }
   }
-  /// Whether `a` has this group otherwise than `plain` (a new frame's).
+  /// Whether `a` has this group otherwise than `plain` (a new frame's); curves that change nothing,
+  /// as the frame keeps them, are none.
   func isSet(in a: Adjustments, plain: Adjustments = Adjustments()) -> Bool {
+    if self == .curves { return a.curves?.normalized != plain.curves?.normalized }
     var b = plain
     take(&b, from: a)
     return b != plain

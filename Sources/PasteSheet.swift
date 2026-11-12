@@ -41,7 +41,7 @@ struct PasteSheet: View {
           }
         }.padding(.vertical, 2)
       }
-      .frame(minHeight: 200, idealHeight: CGFloat(groups.count) * 27 + 60, maxHeight: 480)
+      .frame(minHeight: 120, idealHeight: CGFloat(groups.count) * 25 + 34, maxHeight: 480)
       Text(scope == .demasking
         ? "每张自己的方向、去色罩区域和去漏光修复不粘贴；翻拍画面按自己的平场和去串色读出的片基、中性灰取样留着自己的。"
         : "灰色的是拷贝的那张没有改过的，粘贴就是把这一项设回默认。")
