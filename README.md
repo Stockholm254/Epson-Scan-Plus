@@ -79,6 +79,9 @@
 
 <table>
 <tr>
+<td colspan="2" valign="top"><img src="doc/images/demo-leak.gif" width="100%" alt="② 去色罩里打开去漏光，画一个区域修好天空，用到 ③ 调色"><br><b>② 去色罩 → 去漏光 → ③ 调色</b>：在 ② 的画面工具栏点「去漏光」，顶栏写成「② 去色罩 › 去漏光」；画一个区域、点一处干净的天空修好，「用到 ③ 调色」以后就到 ③，在修好的照片上接着调色和导出（动画快放 2 倍）。</td>
+</tr>
+<tr>
 <td width="50%" valign="top"><img src="doc/images/demo-open.gif" width="100%" alt="从灯箱打开一张，再回到灯箱"><br><b>打开一张</b>：点灯箱上的一张，它从原位放大到单张视图；回灯箱时缩回它的格子里。</td>
 <td width="50%" valign="top"><img src="doc/images/demo-switch.gif" width="100%" alt="单张视图里一张张往后换"><br><b>换张</b>：← → 或点胶片条，下一张从它所在的那一边滑进来。</td>
 </tr>

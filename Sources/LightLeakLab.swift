@@ -120,6 +120,8 @@ final class LeakLab: ObservableObject {
     previewLock.unlock()
   }
   private var persisted = false
+  /// Told of each job written, so the roll it is of can mark its frame.
+  var kept: ((LeakJob) -> Void)?
 
   static var defaultRoot: URL {
     FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -158,14 +160,31 @@ final class LeakLab: ObservableObject {
         hasReference: j.guide != nil, modified: j.modified ?? .distantPast, frame: j.origin != nil)
     }.sorted { $0.modified > $1.modified }
   }
-  /// The job for a frame of a roll, if one was kept.
+  /// The job for a frame of a roll, if one was kept: its latest.
   func existing(project: String, frame: UUID) -> String? {
-    let names = (try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []
-    return names.first { name in
-      let url = root.appendingPathComponent(name).appendingPathComponent("job.json")
-      guard let data = try? Data(contentsOf: url), let j = try? JSONDecoder().decode(LeakJob.self, from: data) else { return false }
-      return j.origin?.project == project && j.origin?.frame == frame && j.base != nil
+    Self.frameJobs(in: root, project: project)[frame]?.id
+  }
+  /// A roll's frame with a kept job: which, and whether it was made of the frame as ② leaves it
+  /// (its repair can go into ③) or, as before, of the graded picture.
+  struct FrameJob: Equatable { var id: String, neutral: Bool, modified: Date }
+  /// The kept jobs of a roll's frames, the latest of each; read from the job records only, and
+  /// only the part that says whose they are.
+  static func frameJobs(in root: URL, project: String) -> [UUID: FrameJob] {
+    struct Peek: Decodable {
+      struct Origin: Decodable { var project: String, frame: UUID, neutral: Bool? }
+      var id: String, origin: Origin?, base: String?, modified: Date?
     }
+    let names = (try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []
+    var found = [UUID: FrameJob]()
+    for name in names {
+      let url = root.appendingPathComponent(name).appendingPathComponent("job.json")
+      guard let data = try? Data(contentsOf: url), let j = try? JSONDecoder().decode(Peek.self, from: data),
+        let o = j.origin, o.project == project, j.base != nil else { continue }
+      let job = FrameJob(id: j.id, neutral: o.neutral == true, modified: j.modified ?? .distantPast)
+      if let had = found[o.frame], had.modified >= job.modified { continue }
+      found[o.frame] = job
+    }
+    return found
   }
   func open(_ id: String) {
     guard busy == nil else { return }
@@ -313,6 +332,7 @@ final class LeakLab: ObservableObject {
     j.modified = Date()
     try Self.write(j, to: folder)
     job = j
+    kept?(j)
   }
   func save() {
     guard persisted else { return }
@@ -1233,6 +1253,26 @@ extension AppModel {
     }
     return part(a) == part(b)
   }
+  /// The open roll's frames with a kept 去漏光 job, read off the main thread (`leakJobs`).
+  func findLeakJobs() {
+    guard let project = projectPath else { leakJobs = [:]; return }
+    let root = leakRoot
+    DispatchQueue.global(qos: .utility).async { [weak self] in
+      var found = LeakLab.frameJobs(in: root, project: project)
+      DispatchQueue.main.async {
+        guard let self, self.projectPath == project else { return }
+        // A job written while they were read is newer than what was read.
+        for (frame, job) in self.leakJobs where (found[frame]?.modified ?? .distantPast) < job.modified { found[frame] = job }
+        if self.leakJobs != found { self.leakJobs = found }
+      }
+    }
+  }
+  /// A job just written: its frame marked, when it is of the open roll.
+  func leakJobKept(_ j: LeakJob) {
+    guard let o = j.origin, o.project == projectPath else { return }
+    let job = LeakLab.FrameJob(id: j.id, neutral: o.neutral == true, modified: j.modified ?? Date())
+    if leakJobs[o.frame] != job { leakJobs[o.frame] = job }
+  }
   /// The frame's repair taken out again, as one edit; its file stays, for ⌘Z.
   func removeLeakRepair(_ id: UUID) {
     guard let i = frames.firstIndex(where: { $0.id == id }), frames[i].adjustments.leakFix != nil else { return }
@@ -1278,6 +1318,7 @@ extension AppModel {
       guard let self else { throw DeskError.message("App 正在关闭。") }
       return try self.leakNeutral(origin, longest: longest)
     }
+    lab.kept = { [weak self] j in self?.leakJobKept(j) }
     lab.credentials.restore()
     return lab
   }

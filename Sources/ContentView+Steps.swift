@@ -22,6 +22,23 @@ extension ContentView {
         }.font(.system(size: 11))
       }
       Divider()
+    } else if let f = m.selected, let kept = m.leakJobs[f.id] {
+      // Worked on in 去漏光, its repair not in ③: a job of the graded picture (made before ② and
+      // ③ were apart), or one not taken into ③ yet.
+      VStack(alignment: .leading, spacing: 8) {
+        HStack {
+          sectionTitle("去漏光", symbol: "wand.and.rays")
+          Spacer()
+          Text("没用到 ③").font(.system(size: 11)).foregroundStyle(.secondary)
+        }
+        note(kept.neutral
+          ? "这张在去漏光里有任务（\(WhenSaid.ago(kept.modified))），修复还没用到 ③：这里调色、导出的是没修的照片。在去漏光里看好，再点「用到 ③ 调色」。"
+          : "这张以前在去漏光里修过（\(WhenSaid.ago(kept.modified))），那时从调好色的正片开始，③ 用不到：这里调色、导出的是没修的照片。打开后点「从 ② 的结果重新载入」（区域和参考图都留着），再点「用到 ③ 调色」。")
+        Button("在去漏光里打开") { m.openInLeak(f.id) }.disabled(m.isWorking)
+          .font(.system(size: 11))
+          .help("在去漏光页打开这一张的任务（⌥⌘L）")
+      }
+      Divider()
     }
   }
   /// ②'s way on: to ③, or through 去漏光 for a frame that needs it.
@@ -38,7 +55,8 @@ extension ContentView {
       Button {
         if let id = m.selectedID { m.openInLeak(id) }
       } label: {
-        Label(m.selected?.adjustments.leakFix == nil ? "先去漏光（可选）" : "在去漏光里改修复", systemImage: "wand.and.rays")
+        Label(m.selected?.adjustments.leakFix != nil ? "在去漏光里改修复"
+          : m.selected.flatMap { m.leakJobs[$0.id] } != nil ? "在去漏光里接着修" : "先去漏光（可选）", systemImage: "wand.and.rays")
           .frame(maxWidth: .infinity)
       }.disabled(m.selected == nil || m.isWorking)
         .help("在去漏光页打开这一张（⌥⌘L）")
@@ -47,11 +65,16 @@ extension ContentView {
 }
 
 /// A frame with a light-leak repair, marked on the strip as its export is: in the corner opposite.
+/// Hollow for one with a 去漏光 job whose repair ③ does not use.
 struct LeakRepairMark: View {
+  var applied = true
   var body: some View {
-    Image(systemName: "wand.and.rays").font(.system(size: 9, weight: .semibold)).foregroundStyle(.white)
-      .padding(3).background(Circle().fill(Hardware.amber.opacity(0.85)))
-      .help("这张去过漏光：③ 调色在修好的照片上")
-      .accessibilityLabel("去过漏光")
+    Image(systemName: "wand.and.rays").font(.system(size: 9, weight: .semibold))
+      .foregroundStyle(applied ? Color.white : Hardware.amber)
+      .padding(3)
+      .background(Circle().fill(applied ? Hardware.amber.opacity(0.85) : Color.black.opacity(0.55)))
+      .overlay { if !applied { Circle().strokeBorder(Hardware.amber.opacity(0.85), lineWidth: 1) } }
+      .help(applied ? "这张去过漏光：③ 调色在修好的照片上" : "这张在去漏光里有任务，修复还没用到 ③ 调色")
+      .accessibilityLabel(applied ? "去过漏光" : "有去漏光任务，没用到调色")
   }
 }

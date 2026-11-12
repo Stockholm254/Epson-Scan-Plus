@@ -29,8 +29,8 @@ enum MCPTools {
   ]
   static let tools: [Tool] = conversionTools + leakTools
   private static let conversionTools: [Tool] = [
-    Tool(name: "get_state", description: "读取当前工程和选中画面的转换状态：胶片预设与各通道斜率、片基 RGB 及来源、整卷估计、白平衡、色阶、影调、扫描与对齐信息，以及负片密度和正片各通道的百分位与溢出比例；sdr_range 给出进入两端之前（色阶黑点为 0、白点为 1）白点以上的比例、最亮 0.1% 的位置和高出白点几档、屏幕上从哪里起是纯白或纯黑，以及屏幕上纯白、纯黑的比例。还有：画面的裁切、拉直、来源文件、是否从传感器读出和去串色、手动取过哪些点；预设的类型和说明（适用条件写在里面），这一卷关了「用标定」时 preset 是转换实际用的胶片，roll_preset 是这一卷选的标定预设；frame.flat_field 是这张除的平场（来自哪张空白帧或光源标定、名字、最暗处的比例）；slopes_in_use 是转换实际用的斜率和它来自哪里（标定预设、整卷估计或预设）；analysis 是自动分析实际定出的片基、白平衡、色阶两端（对数曝光）和高光伸到多远；tone 里的高光、阴影、去色噪；curves 是现有的色调曲线（有改动的通道和它们的控制点，空表示没有曲线）；roll 是整卷同一白平衡 / 色阶、去串色和标定点数。调整前先调用。", properties: [:]),
-    Tool(name: "list_frames", description: "列出本卷所有画面：编号、是否勾选、是否已正式扫描及 dpi、方向、镜像、拉直、裁切、来源文件，和手动取过的片基、中性灰、高光。", properties: [:]),
+    Tool(name: "get_state", description: "读取当前工程和选中画面的转换状态：胶片预设与各通道斜率、片基 RGB 及来源、整卷估计、白平衡、色阶、影调、扫描与对齐信息，以及负片密度和正片各通道的百分位与溢出比例；sdr_range 给出进入两端之前（色阶黑点为 0、白点为 1）白点以上的比例、最亮 0.1% 的位置和高出白点几档、屏幕上从哪里起是纯白或纯黑，以及屏幕上纯白、纯黑的比例。还有：frame.light_leak 是这张的去漏光（applied：修复在转换里，③ 在修好的照片上调色；job_not_applied：去漏光页有任务、修复还没用到 ③；old_job_of_graded_picture：以前从调好色的正片做的任务，要在去漏光页从 ② 的结果重新载入才能用到 ③）；画面的裁切、拉直、来源文件、是否从传感器读出和去串色、手动取过哪些点；预设的类型和说明（适用条件写在里面），这一卷关了「用标定」时 preset 是转换实际用的胶片，roll_preset 是这一卷选的标定预设；frame.flat_field 是这张除的平场（来自哪张空白帧或光源标定、名字、最暗处的比例）；slopes_in_use 是转换实际用的斜率和它来自哪里（标定预设、整卷估计或预设）；analysis 是自动分析实际定出的片基、白平衡、色阶两端（对数曝光）和高光伸到多远；tone 里的高光、阴影、去色噪；curves 是现有的色调曲线（有改动的通道和它们的控制点，空表示没有曲线）；roll 是整卷同一白平衡 / 色阶、去串色和标定点数。调整前先调用。", properties: [:]),
+    Tool(name: "list_frames", description: "列出本卷所有画面：编号、是否勾选、是否已正式扫描及 dpi、方向、镜像、拉直、裁切、来源文件，和手动取过的片基、中性灰、高光；light_leak 是去漏光的状态（applied / job_not_applied / old_job_of_graded_picture，没有就不列）。", properties: [:]),
     Tool(name: "list_presets", description: "列出所有胶片预设：名称、类型（内置 / V850 标定 / 翻拍标定 / 导入 / 只在卷里）、通道斜率、来源和说明，这一卷是否在用，图库里有几卷在用及是哪几卷，能否删除。「只在卷里」是已从列表删除、只有卷里还留着的预设。只读，删除和恢复在 App 的「预设…」表格里做。", properties: [:]),
     Tool(name: "list_rolls", description: "列出图库里的卷（只读）：标题、文件夹、开始时间、来源（扫描 / 翻拍 / 导入）、胶片、用的预设、画面数、全分辨率张数、已导出的文件数、备注，以及哪一卷是打开的。", properties: [:]),
     Tool(name: "select_frame", description: "选中某张画面（按编号，如 \"09\"）。", properties: ["name": ["type": "string", "description": "画面编号"]], required: ["name"]),
@@ -137,6 +137,18 @@ enum MCPTools {
   }
   private static func round(_ v: Double, _ digits: Double = 1000) -> Double { (v * digits).rounded() / digits }
   /// How a frame is cut from its picture and turned, its file, and what was picked on it by hand.
+  /// A frame's light-leak repair: used in its conversion (③ grades the repaired picture), or a
+  /// 去漏光 job whose repair is not used yet, made of ②'s picture or, as before, of the graded one.
+  static func leakState(_ f: FilmFrame, job: LeakLab.FrameJob?) -> [String: Any]? {
+    let iso = ISO8601DateFormatter()
+    if let fix = f.adjustments.leakFix {
+      var part: [String: Any] = ["state": "applied", "made": iso.string(from: fix.made)]
+      if let e = fix.meanError { part["mean_difference_from_leak_page_of_255"] = (e * 10).rounded() / 10 }
+      return part
+    }
+    guard let job else { return nil }
+    return ["state": job.neutral ? "job_not_applied" : "old_job_of_graded_picture", "job_modified": iso.string(from: job.modified)]
+  }
   private static func geometry(_ f: FilmFrame) -> [String: Any] {
     let s = f.adjustments
     var g: [String: Any] = ["mirrored": s.flipHorizontal == true,
@@ -341,6 +353,7 @@ enum MCPTools {
         return part
       }
       if let flatPart { framePart["flat_field"] = flatPart }
+      if let leak = onMain({ Self.leakState(frame, job: model.leakJobs[frame.id]) }) { framePart["light_leak"] = leak }
       var preset: [String: Any] = ["name": profile.name, "id": profile.id, "source": profile.publication, "channel_slopes": rgb(profile.slopes),
         "kind": PresetTable.kind(profile, builtin: FilmProfile.builtins.contains { $0.id == profile.id }).rawValue, "notes": profile.notes]
       if let toe = profile.toe { preset["toe"] = rgb(toe) }
@@ -411,6 +424,7 @@ enum MCPTools {
             "scanned": AppModel.readsScan(f), "rotation_quarter_turns": f.adjustments.rotation]
           if let dpi = f.scanDPI, AppModel.readsScan(f) { item["scan_dpi"] = dpi }
           item.merge(geometry(f)) { a, _ in a }
+          if let leak = Self.leakState(f, job: model.leakJobs[f.id]) { item["light_leak"] = leak["state"] }
           return item
         }
       })

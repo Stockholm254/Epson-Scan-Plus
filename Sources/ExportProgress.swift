@@ -1,3 +1,4 @@
+import QuartzCore
 import CoreGraphics
 import Foundation
 
@@ -84,11 +85,21 @@ enum ExportEstimate {
   }
   /// The space free on the volume `folder` is on, or on the nearest folder above it that is there.
   static func freeSpace(at folder: URL) -> Double? {
+    let now = CACurrentMediaTime()
+    // Asked each time the 输出 tab is drawn (switching to ③, a slider dragged there): the volume
+    // asked a few milliseconds' worth at most every few seconds.
+    spaceLock.lock()
+    defer { spaceLock.unlock() }
+    if let kept = space[folder.path], now - kept.at < 3 { return kept.bytes }
     var at = folder
     while !FileManager.default.fileExists(atPath: at.path), at.pathComponents.count > 1 { at = at.deletingLastPathComponent() }
     let values = try? at.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
-    return values?.volumeAvailableCapacityForImportantUsage.map(Double.init)
+    let bytes = values?.volumeAvailableCapacityForImportantUsage.map(Double.init)
+    space[folder.path] = (now, bytes)
+    return bytes
   }
+  private static var space = [String: (at: CFTimeInterval, bytes: Double?)]()
+  private static let spaceLock = NSLock()
 }
 
 /// When something was done, as a Chinese sentence says it, whatever language the system's is:

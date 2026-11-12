@@ -23,7 +23,8 @@ struct LeakPage: View {
   }
   var body: some View {
     // The panel is the window's inspector.
-    LeakViewer(lab: lab, choose: lab.chooseFile).frame(maxWidth: .infinity, maxHeight: .infinity)
+    LeakViewer(lab: lab, choose: lab.chooseFile, arriving: m.selectedID.flatMap { m.thumbnails[$0] })
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
     // In the glass look the picture runs on, blurred, behind the viewer's surround and the panel.
     .background { PictureExtension(image: lab.after ?? lab.before) }
     // Arriving from ② or another frame picked: that frame, as it is converted now. A job opened,
@@ -48,6 +49,8 @@ struct LeakPage: View {
 struct LeakViewer: View {
   @ObservedObject var lab: LeakLab
   var choose: () -> Void
+  /// The frame on its way in, from the strip: shown dimmed while it is read.
+  var arriving: CGImage? = nil
   @State private var draft = LeakDraft()
   var body: some View {
     VStack(spacing: 0) {
@@ -78,11 +81,16 @@ struct LeakViewer: View {
       ZStack {
         if let before = lab.before {
           picture(before)
+        } else if lab.busy != nil, let small = arriving {
+          // A frame of the roll on its way in from ②: its picture from the strip, dimmed, under the
+          // progress, rather than the empty page flashing up.
+          Image(decorative: small, scale: 1).resizable().aspectRatio(contentMode: .fit)
+            .opacity(0.45).padding(40).transition(.opacity)
         } else {
           VStack(spacing: 12) {
             Image(systemName: "wand.and.rays").font(.system(size: 34)).foregroundStyle(Hardware.amber.opacity(0.8))
             Text("选择需要去漏光的照片").font(.system(size: 15, weight: .medium))
-            Text("在下方胶片条点一张本卷的照片，按它当前的调色处理；\n或导入其他软件已去色罩、反相的正片（推荐带 ICC 的 16 位 TIFF）。")
+            Text("在下方胶片条点一张本卷的照片，按 ② 去色罩的结果处理；\n或导入其他软件已去色罩、反相的正片（推荐带 ICC 的 16 位 TIFF）。")
               .font(.system(size: 12)).foregroundStyle(.secondary).multilineTextAlignment(.center)
             Button("导入正片…", action: choose).buttonStyle(KeyStyle(prominent: true)).disabled(lab.busy != nil)
           }

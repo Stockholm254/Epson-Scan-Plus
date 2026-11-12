@@ -515,7 +515,25 @@ final class AppModel: ObservableObject {
     return now - changedAt.last < Self.slideStep && changedAt.last - changedAt.previous < Self.slideStep
   }
   /// The 去漏光 page, made when it is first shown.
-  lazy var leak: LeakLab = makeLeakLab()
+  var leak: LeakLab {
+    get {
+      if let madeLeak { return madeLeak }
+      let lab = makeLeakLab()
+      madeLeak = lab
+      return lab
+    }
+    set {
+      newValue.kept = { [weak self] j in self?.leakJobKept(j) }
+      madeLeak = newValue
+      findLeakJobs()
+    }
+  }
+  private var madeLeak: LeakLab?
+  /// Where 去漏光 keeps its jobs, without making the page for it.
+  var leakRoot: URL { madeLeak?.root ?? LeakLab.defaultRoot }
+  /// The open roll's frames with a kept 去漏光 job, found when the roll opens and as jobs are
+  /// written: ③ points to those whose repair it does not use yet.
+  @Published var leakJobs = [UUID: LeakLab.FrameJob]()
   /// New previews and imports create their project folders here.
   @Published private(set) var libraryURL: URL
   let preferences: Preferences
@@ -2179,8 +2197,10 @@ final class AppModel: ObservableObject {
     for i in frames.indices where only?.contains(frames[i].id) ?? true {
       let own = frames[i].adjustments
       frames[i].adjustments.take(scope, from: s.adjustments)
+      // How each faces is its own: turned, straightened and mirrored as it was.
       frames[i].adjustments.rotation = own.rotation
       frames[i].adjustments.angle = own.angle
+      frames[i].adjustments.flipHorizontal = own.flipHorizontal
       frames[i].adjustments.rollBase = own.rollBase
       frames[i].adjustments.rollSlopes = own.rollSlopes
       frames[i].adjustments.rollBasePicked = own.rollBasePicked
@@ -4895,6 +4915,8 @@ final class AppModel: ObservableObject {
     selectedID = frames.first?.id
     singleView = false
     showKeptPositives(folder)
+    leakJobs = [:]
+    findLeakJobs()
     updateRollBase()
     updateRollSlopes()
     refresh()

@@ -839,9 +839,18 @@ final class FilmCanvasView: NSView {
             .foregroundColor: NSColor.black.withAlphaComponent(appear),
           ])
         // Exported as it is now, changed since, or on its way out, beside its number, as the strip marks it.
+        var beside = label.maxX + 3
         if model.page == .convert, model.convertStep == .grade, let mark = Self.markImage(model.exportMark(f)) {
           mark.draw(
-            in: NSRect(x: label.maxX + 3, y: label.minY + 1, width: 17, height: 17), from: .zero, operation: .sourceOver,
+            in: NSRect(x: beside, y: label.minY + 1, width: 17, height: 17), from: .zero, operation: .sourceOver,
+            fraction: appear, respectFlipped: true, hints: nil)
+          beside += 20
+        }
+        // Repaired in 去漏光, or with a job ③ does not use yet (hollow), as the strip marks it.
+        if model.page == .convert, let wand = f.adjustments.leakFix != nil ? Self.leakMarks.applied
+          : model.leakJobs[f.id] != nil ? Self.leakMarks.job : nil {
+          wand.draw(
+            in: NSRect(x: beside, y: label.minY + 1, width: 17, height: 17), from: .zero, operation: .sourceOver,
             fraction: appear, respectFlipped: true, hints: nil)
         }
       }
@@ -1897,6 +1906,8 @@ final class FilmCanvasView: NSView {
       h.combine(f.name)
       h.combine(f.enabled)
       h.combine(model.page == .convert && model.convertStep == .grade ? model.exportMark(f) : .notExported)
+      h.combine(f.adjustments.leakFix != nil)
+      h.combine(model.leakJobs[f.id] != nil)
       let r = model.contactRect(f)
       for v in [r.x, r.y, r.width, r.height] { h.combine(v) }
     }
@@ -1921,6 +1932,30 @@ final class FilmCanvasView: NSView {
     return images
   }()
   static func markImage(_ mark: ExportMark) -> NSImage? { markImages[mark] }
+  /// The strip's 去漏光 marks (`LeakRepairMark`) as the light table draws them: filled for a
+  /// repair ③ uses, hollow for a job it does not.
+  static let leakMarks: (applied: NSImage, job: NSImage) = {
+    func mark(filled: Bool) -> NSImage {
+      NSImage(size: NSSize(width: 17, height: 17), flipped: false) { r in
+        let amber = NSColor(Hardware.amber)
+        let ring = NSBezierPath(ovalIn: r.insetBy(dx: 0.5, dy: 0.5))
+        (filled ? amber.withAlphaComponent(0.85) : NSColor.black.withAlphaComponent(0.55)).setFill()
+        ring.fill()
+        if !filled {
+          amber.withAlphaComponent(0.85).setStroke()
+          ring.lineWidth = 1
+          ring.stroke()
+        }
+        let config = NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold).applying(.init(paletteColors: [filled ? .white : amber]))
+        if let wand = NSImage(systemSymbolName: "wand.and.rays", accessibilityDescription: nil)?.withSymbolConfiguration(config) {
+          let s = wand.size
+          wand.draw(in: NSRect(x: r.midX - s.width / 2, y: r.midY - s.height / 2, width: s.width, height: s.height))
+        }
+        return true
+      }
+    }
+    return (mark(filled: true), mark(filled: false))
+  }()
   private func tableDrawn() {
     guard !snapshotting else { return }
     let key = tableKey

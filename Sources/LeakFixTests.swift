@@ -210,6 +210,8 @@ enum LeakFixTests {
     lab.wait()
     settle()
     try check(lab.repaired && lab.whyNotIntoGrading == nil, "with a region it is repaired, and can go into ③")
+    try check(m.leakJobs[id] == lab.job.map { LeakLab.FrameJob(id: $0.id, neutral: true, modified: $0.modified!) },
+      "the job written marks its frame at once: ③ can point to a repair it does not use yet")
     let unrepaired = try rendered(try m.source(for: m.frames[0], full: true), m.frames[0].adjustments)
     m.applyLeakRepair()
     lab.wait()
@@ -244,5 +246,38 @@ enum LeakFixTests {
     m.selectedID = id
     m.applyToRoll()
     try check(m.frames[0].adjustments.leakFix == fix && m.frames[1].adjustments.leakFix == nil, "同步 leaves each frame's own repair, and gives none to another")
+
+    // Jobs kept before: found when the roll opens, the latest of a frame's, and only this roll's.
+    let jobs = lab.root, path = file.path, other = UUID()
+    func keep(_ frame: UUID, project: String, neutral: Bool?, ago: TimeInterval, base: Bool = true) throws -> String {
+      var o = LeakJob.Origin(project: project, frame: frame, frameName: "02", adjustments: Adjustments(), profile: profile)
+      o.neutral = neutral
+      var j = LeakJob(id: UUID().uuidString.lowercased(), sourceName: "第 02 张", origin: o)
+      j.base = base ? "base.tif" : nil
+      j.modified = Date().addingTimeInterval(-ago)
+      let folder = jobs.appendingPathComponent(j.id)
+      try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+      try JSONEncoder().encode(j).write(to: folder.appendingPathComponent("job.json"))
+      return j.id
+    }
+    let graded = try keep(other, project: path, neutral: nil, ago: 86_400)
+    _ = try keep(other, project: path, neutral: true, ago: 90_000)
+    _ = try keep(id, project: path, neutral: true, ago: 3_600)
+    _ = try keep(UUID(), project: path, neutral: true, ago: 0, base: false)
+    _ = try keep(UUID(), project: path + "-other", neutral: true, ago: 0)
+    let kept = LeakLab.frameJobs(in: jobs, project: path)
+    try check(kept.count == 2 && kept[other]?.id == graded && kept[other]?.neutral == false && kept[id]?.id == lab.job?.id,
+      "a roll's kept jobs: the latest of each frame, an old one of the graded picture told apart; none of another roll, none without a picture")
+    try check(lab.existing(project: path, frame: other) == graded, "去漏光 opens a frame's latest job")
+    m.loadProject(file)
+    for _ in 0..<50 where m.leakJobs.count < 2 { settle(0.1) }
+    try check(m.leakJobs == kept, "opening the roll finds its frames' jobs again, off the main thread")
+    let bare = FilmFrame(name: "02", rect: .full, format: "135")
+    var withFix = bare
+    withFix.adjustments.leakFix = fix
+    try check(MCPTools.leakState(withFix, job: kept[id])?["state"] as? String == "applied"
+      && MCPTools.leakState(bare, job: kept[other])?["state"] as? String == "old_job_of_graded_picture"
+      && MCPTools.leakState(bare, job: kept[id])?["state"] as? String == "job_not_applied" && MCPTools.leakState(bare, job: nil) == nil,
+      "the assistant's state tells a repair used, a job not used yet and an old job of the graded picture apart")
   }
 }

@@ -1489,6 +1489,7 @@ struct ContentView: View {
                 // Repaired in 去漏光: ③ grades the repaired picture.
                 .overlay(alignment: .topLeading) {
                   if m.page != .capture, f.adjustments.leakFix != nil { LeakRepairMark().padding(3) }
+                  else if m.page != .capture, m.leakJobs[f.id] != nil { LeakRepairMark(applied: false).padding(3) }
                 }
                 .accessibilityValue(f.enabled ? "已勾选" : "未勾选")
                 .overlay(
@@ -1549,7 +1550,14 @@ struct ContentView: View {
                       Button(f.enabled ? "取消勾选" : "勾选", systemImage: f.enabled ? "circle" : "checkmark.circle") {
                         m.setEnabled(f.id, enabled: !f.enabled)
                       }.disabled(m.isWorking)
-                      Button("在去漏光里打开", systemImage: "wand.and.rays") { m.openInLeak(f.id) }.disabled(m.isWorking)
+                      // 去漏光 as far as this frame has gone: its repair in ③, a job not taken there yet, or none.
+                      if f.adjustments.leakFix != nil {
+                        Button("在去漏光里改修复", systemImage: "wand.and.rays") { m.openInLeak(f.id) }.disabled(m.isWorking)
+                        Button("去掉去漏光修复", systemImage: "xmark.circle") { m.removeLeakRepair(f.id) }.disabled(m.isWorking)
+                      } else {
+                        Button(m.leakJobs[f.id] != nil ? "在去漏光里接着修" : "在去漏光里打开", systemImage: "wand.and.rays") { m.openInLeak(f.id) }
+                          .disabled(m.isWorking)
+                      }
                       if m.page == .convert {
                         // The frame's own settings, as Lightroom copies and pastes them.
                         Button("拷贝这张的调整", systemImage: "doc.on.doc") {

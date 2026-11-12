@@ -59,9 +59,12 @@ enum StepTests {
       "③'s 同步 gives the roll the grading, not the base")
     edits.undo()
     model.convertStep = .demask
+    model.frames[0].adjustments.flipHorizontal = true
     model.syncSettings()
-    try check(model.frames[1].adjustments.baseFine == RGB(r: 0.1, g: 0, b: -0.1) && model.frames[1].adjustments.exposure == 0,
-      "②'s 同步 gives the roll the base, not the grading")
+    try check(model.frames[1].adjustments.baseFine == RGB(r: 0.1, g: 0, b: -0.1) && model.frames[1].adjustments.exposure == 0
+      && model.frames[1].adjustments.flipHorizontal != true,
+      "②'s 同步 gives the roll the base, not the grading, nor how the frame shown faces")
+    model.frames[0].adjustments.flipHorizontal = nil
     edits.undo()
     model.copySettings()
     model.selectedID = ids[2]
