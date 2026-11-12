@@ -6,10 +6,10 @@ import SwiftUI
 /// Mac. Nothing is sent anywhere and nothing is learnt; it is the app's own automatic white balance
 /// and levels, with an exposure and a shadow warmth read off the picture they give.
 ///
-/// What it sets is the white balance and the levels, back to automatic: warmth and tint, a balance
-/// set by hand, the shadow tint, the ends and the midtone; and the exposure and shadow warmth it reads. What it
+/// What it sets is the white balance and the levels, back to automatic: warmth and tint and the
+/// shadow tint; and the exposure and shadow warmth it reads. What it
 /// keeps is the rest of the print as the user made it (contrast, saturation, shadows, highlights,
-/// the press, the curves), and what was measured or chosen about the film and the picture: the
+/// whites, blacks, the curves), and what was measured or chosen about the film and the picture: the
 /// base, a grey picked on the frame (a measurement of the scene's light, which nothing here reads
 /// better), the preset, the crop and turn, the colour noise, the roll's shared balance and levels.
 enum AutoAdjust {
@@ -30,8 +30,6 @@ enum AutoAdjust {
   static func cleared(_ s: Adjustments) -> Adjustments {
     var a = s
     (a.exposure, a.warmth, a.tint, a.shadowWarmth, a.shadowTint) = (0, 0, 0, nil, nil)
-    (a.black, a.white, a.midtone) = (0, 1, 1)
-    a.manualBalance = nil
     a.autoLevels = true
     // A slide's colour, or a positive file's, is its picture: its balance stays as it was
     // (`Adjustments.setReversal`).

@@ -35,7 +35,7 @@ final class LibraryShelf: ObservableObject {
   /// Reads the rolls in `roots` again, apart from the main thread; then hashes, a roll each, those
   /// not hashed as they are now. A hash is kept only while its roll reads the same, and what a
   /// pass hashed is kept even when a newer pass has begun.
-  func reload(_ roots: [(url: URL, legacy: Bool)]) {
+  func reload(_ roots: [URL]) {
     reading += 1
     let token = reading, known = prints
     let before = Dictionary(entries.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
@@ -351,7 +351,7 @@ struct RollSleeve: View {
     .onTapGesture(count: 2, perform: open)
     .contextMenu {
       Button("打开") { open() }
-      if !entry.legacy { Button("重命名…") { rename() } }
+      Button("重命名…") { rename() }
       if stacked > 1 { Button("摊开同一批底片的 \(stacked) 卷") { spread() } }
       Button("在 Finder 中显示") { NSWorkspace.shared.activateFileViewerSelecting([entry.folder]) }
       Divider()
@@ -515,7 +515,7 @@ struct RollSleeve: View {
       case .files: return Color(red: 0.52, green: 0.7, blue: 0.92)
       }
     }()
-    return Text(entry.source.rawValue + (entry.legacy ? " · 旧版" : "") + (stacked > 1 ? " · \(stacked) 卷" : ""))
+    return Text(entry.source.rawValue + (stacked > 1 ? " · \(stacked) 卷" : ""))
       .font(.system(size: 10, weight: .bold)).foregroundStyle(Color(white: 0.1))
       .padding(.horizontal, 9).padding(.vertical, 3)
       .background(UnevenRoundedRectangle(topLeadingRadius: 4, topTrailingRadius: 4).fill(color))

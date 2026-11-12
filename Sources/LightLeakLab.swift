@@ -408,6 +408,11 @@ final class LeakLab: ObservableObject {
   /// A quarter turn: a new base, and the reference matched to it again.
   func rotate(by delta: Int) {
     guard let j = job, busy == nil else { return }
+    // A frame of the roll is turned in ②; turned here, it could no longer go into ③.
+    guard !geometryIsTheRolls else {
+      notice = "本卷照片的方向在 ② 去色罩里转（单张视图下面的旋转键）。"
+      return
+    }
     var next = params
     next.rotation = ((next.rotation + delta) % 360 + 360) % 360
     next.crop = LeakCrop()
@@ -428,7 +433,7 @@ final class LeakLab: ObservableObject {
     next.referenceModel = nil
     // The framing is the same, so the landmarks still match. With a reference, the new base is
     // fitted to it as it is placed.
-    rebuild(j, next, pairs: j.pairs, name: "按当前调色重新载入", regrade: regrade)
+    rebuild(j, next, pairs: j.pairs, name: "按 ② 重新载入", regrade: regrade)
   }
   /// Whether the job open is `origin`'s frame, converted otherwise than it is now.
   func stale(for origin: LeakJob.Origin) -> Bool {
@@ -687,6 +692,10 @@ final class LeakLab: ObservableObject {
   /// on the old one cleared, and the reference matched again.
   func setCrop(_ crop: LeakCrop) {
     guard let j = job else { return }
+    guard !geometryIsTheRolls else {
+      notice = "本卷照片的裁切和拉直在 ② 去色罩里改（画面裁切工具）。"
+      return
+    }
     guard busy == nil else {
       notice = "正在处理，裁切没有应用，请稍候再试。"
       return
@@ -735,6 +744,8 @@ final class LeakLab: ObservableObject {
     var next = preset.params
     next.referenceModel = nil
     next.sceneInfo = nil
+    // A frame of the roll keeps ②'s turn and crop: the preset brings its regions and settings only.
+    if geometryIsTheRolls { (next.rotation, next.crop) = (params.rotation, params.crop) }
     let landmarks = (preset.pairs ?? []).count >= 4 ? Array((preset.pairs ?? []).prefix(20)) : nil
     selectedRegion = nil
     if next.rotation != params.rotation || next.crop != params.crop {
@@ -1097,6 +1108,8 @@ final class LeakLab: ObservableObject {
   }
   /// A frame of the roll as ② leaves it: its orientation and crop are ②'s, not turned or cut here.
   var geometryIsTheRolls: Bool { job?.origin?.neutral == true }
+  /// Whether the page's own exposure, colour or contrast are moved off zero.
+  var adjusted: Bool { params.exposure != 0 || params.temperature != 0 || params.tint != 0 || params.contrast != 0 }
   /// Whether the repair can go into ③ 调色: a frame of the open roll, its job made of the frame as
   /// ② leaves it, not turned or cut here (that is ②'s to do), and something repaired. Else why not.
   var whyNotIntoGrading: String? {

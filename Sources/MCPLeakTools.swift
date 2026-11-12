@@ -39,7 +39,7 @@ extension MCPTools {
       "scene": ["type": "string", "enum": ["auto", "day", "night"], "description": "场景：自动判断、白天 / 自然光、夜晚 / 点光源"],
       "strength": number("去偏色强度，0 为原片，1 为完全按参考校正", 0...1),
       "protect_highlights": ["type": "boolean", "description": "保留灯光红晕和真实红色物体"],
-      "exposure": number("曝光 EV（去漏光之前作用于原片）", -2...2), "temperature": number("冷 ↔ 暖", -100...100),
+      "exposure": number("曝光 EV（去漏光之前作用于原片；只用于导入的文件，本卷照片只能归零）", -2...2), "temperature": number("冷 ↔ 暖", -100...100),
       "tint": number("绿 / 洋红", -100...100), "contrast": number("对比度", -50...80),
     ]),
     Tool(name: "leak_preview", description: "取得去漏光页的 JPEG：result 为当前结果，original 为修复前，reference 为参考图。", properties: [
@@ -85,10 +85,10 @@ extension MCPTools {
         ],
       ]],
     ], required: ["pairs"]),
-    Tool(name: "leak_rotate", description: "把原片转 90° 或 180°：重建正片预览，清空裁切、区域、保护区和对应点（位置随画面改变）；已有参考图时在本地重新匹配，不调用 API。可用 ⌘Z 或 undo 撤销。", properties: [
+    Tool(name: "leak_rotate", description: "导入的文件：把原片转 90° 或 180°（本卷照片的方向在 ② 转，这里会拒绝）：重建正片预览，清空裁切、区域、保护区和对应点（位置随画面改变）；已有参考图时在本地重新匹配，不调用 API。可用 ⌘Z 或 undo 撤销。", properties: [
       "quarter_turns": ["type": "integer", "enum": [-1, 1, 2], "description": "1 右转 90°，-1 左转 90°，2 转 180°"],
     ], required: ["quarter_turns"]),
-    Tool(name: "leak_crop", description: "裁切转好方向的原片（0–1）：重建正片预览，清空区域、保护区和对应点；已有参考图时在本地重新匹配。x 0、y 0、w 1、h 1 为不裁切。angle 让裁切范围绕中心转动拉直（度，正数顺时针），裁去转出的空角；不给为 0。可用 ⌘Z 或 undo 撤销。", properties: [
+    Tool(name: "leak_crop", description: "导入的文件：裁切转好方向的原片（0–1；本卷照片的裁切在 ② 改，这里会拒绝）：重建正片预览，清空区域、保护区和对应点；已有参考图时在本地重新匹配。x 0、y 0、w 1、h 1 为不裁切。angle 让裁切范围绕中心转动拉直（度，正数顺时针），裁去转出的空角；不给为 0。可用 ⌘Z 或 undo 撤销。", properties: [
       "x": number("左边", 0...0.9), "y": number("上边", 0...0.9), "w": number("宽", 0.05...1), "h": number("高", 0.05...1),
       "angle": number("拉直角度（度），正数顺时针", -45...45),
     ], required: ["x", "y", "w", "h"]),
@@ -109,7 +109,7 @@ extension MCPTools {
     - 没有参考图也能修：看 leak_preview，用 leak_detect 找候选、leak_sample 量颜色，判断哪里是漏光、哪里是真实的红色物体；leak_update_region 启用对的候选，或 leak_add_region 画椭圆，clean_point 点在同材质、没有漏光的地方；然后 leak_start 只按这些区域校正，不调用 API。chroma 把区域的色度拉向干净点（适合同一种材质上的漏光，比如天空上的一片红），fog 减去亮雾；跨过不同物体、往边上逐渐加重的偏色（比如翻拍灯的颜色暗角，左右对称、越靠边越红）用 gain：cast_point 点在偏色最重、和 clean_point 同一种东西的地方（比如边上的天空对中间的天空），椭圆中心放在那条边上（x 为 0 或 1），ry 设到 4 让整条边上下都校正，羽化 1。偏色往里衰减得像指数时，同一边叠一窄一宽两层，强度加起来为 1（比如 rx 0.12 强度 0.42 和 rx 0.3 强度 0.6）；修完用 leak_sample 沿边到中间量一行，看各处的 R/G 是否和中间接近。chroma 和 fog 在亮处受高光保护（protect_highlights），gain 不受。
     - 结果不理想时先检查场景（夜景的边缘白雾只在夜晚模式校正），再调 strength；灯光红晕被抹掉时确认 protect_highlights 开着，或用 leak_add_protection 画保护区。
     - 局部漏光：leak_detect 找候选（默认不启用），leak_list_regions 查看，leak_update_region 启用或修改；也可以 leak_add_region 画椭圆，clean_point 点在同材质、没有漏光的地方。
-    - 自动对齐不可靠时用 leak_set_landmarks 给 4 对以上对应点，再 leak_start。旋转和裁切会清空区域、保护区和对应点，先定方向和裁切。
+    - 自动对齐不可靠时用 leak_set_landmarks 给 4 对以上对应点，再 leak_start。旋转和裁切会清空区域、保护区和对应点，先定方向和裁切；本卷照片的方向和裁切在 ② 去色罩里定（leak_rotate、leak_crop 只用于导入的文件，载入预设时也不带方向和裁切）。
     - 工具只读取给出路径的文件（leak_import、leak_import_reference、leak_load_preset），复制进任务，原文件不改；写文件（leak_export、leak_save_preset）只在 App 里打开保存窗口，由用户选位置。工具不删除文件，也读不到、改不了 API Key。
     """
 
@@ -315,6 +315,10 @@ extension MCPTools {
         (\.exposure, "exposure", -2...2), (\.temperature, "temperature", -100...100), (\.tint, "tint", -100...100), (\.contrast, "contrast", -50...80),
       ]
       let values = try numbers.compactMap { n in try value(n.1, n.2).map { (n.0, $0) } }
+      // A frame of the roll is graded in ③; its adjustments here may only go back to zero.
+      if onMain({ lab.geometryIsTheRolls }), values.contains(where: { $0.1 != 0 }) {
+        throw DeskError.message("这是本卷的照片：颜色和明暗在 ③ 调色里调（adjust），去漏光页的曝光、冷暖、绿 / 洋红和对比度只能归零。")
+      }
       let strength = try value("strength", 0...1)
       if arguments["scene"] != nil, !(arguments["scene"] is String) { throw DeskError.message("scene 应为 auto、day 或 night。") }
       if arguments["protect_highlights"] != nil, !(arguments["protect_highlights"] is Bool) { throw DeskError.message("protect_highlights 应为 true 或 false。") }
@@ -575,6 +579,9 @@ extension MCPTools {
       guard let turns = (arguments["quarter_turns"] as? NSNumber)?.intValue, [-1, 1, 2].contains(turns) else {
         throw DeskError.message("quarter_turns 只能是 1、-1 或 2。")
       }
+      guard !onMain({ lab.geometryIsTheRolls }) else {
+        throw DeskError.message("这是本卷的照片：方向在 ② 去色罩里转，请用户在 App 里转；这里转了就用不到 ③ 调色。")
+      }
       try idle(lab)
       let before = onMain { lab.params.rotation }
       onMain { lab.rotate(by: 90 * turns) }
@@ -589,6 +596,9 @@ extension MCPTools {
         let w = try double(arguments, "w", 0.05...1), let h = try double(arguments, "h", 0.05...1)
       else { throw DeskError.message("需要 x、y、w、h（0–1，按转好方向的原片）。") }
       let angle = try double(arguments, "angle", -45...45)
+      guard !onMain({ lab.geometryIsTheRolls }) else {
+        throw DeskError.message("这是本卷的照片：裁切和拉直在 ② 去色罩里改（auto_crop 或用户在 App 里裁）；这里裁了就用不到 ③ 调色。")
+      }
       try idle(lab)
       let before = onMain { lab.params.crop }
       onMain { lab.setCrop(LeakCrop(x: x, y: y, w: w, h: h, angle: angle)) }

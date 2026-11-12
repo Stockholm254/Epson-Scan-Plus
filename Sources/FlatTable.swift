@@ -1,10 +1,10 @@
 import AppKit
 import SwiftUI
 
-/// A flat field as the flats table lists it: the copy light's, one in the library, or one only rolls
-/// keep; how many of this roll's frames, and which other rolls, are divided by it.
+/// A flat field as the flats table lists it: one in the library, or one only rolls keep; how many of
+/// this roll's frames, and which other rolls, are divided by it.
 struct FlatRow: Identifiable, Equatable {
-  enum Kind: String { case light = "光源标定", library = "列表", rollOnly = "只在卷里" }
+  enum Kind: String { case library = "列表", rollOnly = "只在卷里" }
   let id: String
   let profile: FlatProfile?
   let kind: Kind
@@ -31,17 +31,14 @@ struct FlatFrameRow: Identifiable, Equatable {
 }
 
 enum FlatTable {
-  /// The flats table: the copy light's flat when there is one, the library's newest first, then the
-  /// open roll's and other rolls' own copies of flats no longer in the library.
-  static func rows(library: [FlatProfile], open: (folder: URL?, flats: [FlatProfile], frames: [FilmFrame]), light: LightCalibration?, rolls: [RollEntry]) -> [FlatRow] {
+  /// The flats table: the library's newest first, then the open roll's and other rolls' own copies of
+  /// flats no longer in the library.
+  static func rows(library: [FlatProfile], open: (folder: URL?, flats: [FlatProfile], frames: [FilmFrame]), rolls: [RollEntry]) -> [FlatRow] {
     func path(_ url: URL) -> String { url.resolvingSymlinksInPath().standardizedFileURL.path }
     let openPath = open.folder.map(path)
     let others = rolls.filter { openPath != path($0.folder) }
     func here(_ id: String) -> Int { open.frames.filter { $0.flatID == id }.count }
     var rows = [FlatRow]()
-    if light != nil {
-      rows.append(FlatRow(id: "light", profile: nil, kind: .light, here: open.frames.filter { $0.flatID == nil && $0.flatField != nil }.count, rolls: []))
-    }
     for p in library.reversed() {
       rows.append(FlatRow(id: p.id, profile: p, kind: .library, here: here(p.id), rolls: others.filter { $0.flatIDs.contains(p.id) }))
     }
@@ -78,7 +75,7 @@ enum FlatTable {
 extension AppModel {
   /// The flats table over `rolls`, the library as last read.
   func flatRows(_ rolls: [RollEntry]) -> [FlatRow] {
-    FlatTable.rows(library: preferences.flatProfiles, open: (sessionURL, rollFlats, frames), light: preferences.lightCalibration, rolls: rolls)
+    FlatTable.rows(library: preferences.flatProfiles, open: (sessionURL, rollFlats, frames), rolls: rolls)
   }
   /// The open roll's frames as the flats table lists them, in roll order.
   var flatFrameRows: [FlatFrameRow] {
@@ -115,7 +112,6 @@ struct FlatManagerSheet: View {
     let targets = frameSelection.isEmpty ? frameRows.filter { !$0.blank }.map(\.id) : frameRows.filter { frameSelection.contains($0.id) }.map(\.id)
     let blocked = m.flatsBlocked
     let unused = rows.filter { $0.deletable && $0.here == 0 && $0.rolls.isEmpty }
-    let lightBack = m.preferences.lightCalibration != nil && m.frames.contains { targets.contains($0.id) && $0.crosstalk != nil }
     VStack(alignment: .leading, spacing: 10) {
       HStack(alignment: .firstTextBaseline) {
         Text("平场").font(.system(size: 15, weight: .semibold))
@@ -128,7 +124,7 @@ struct FlatManagerSheet: View {
         Table(rows, selection: $flatSelection) {
           TableColumn("平场") { r in
             HStack(spacing: 6) {
-              Text(r.profile?.name ?? "光源标定").lineLimit(1)
+              Text(r.profile?.name ?? "").lineLimit(1)
               if r.here > 0 {
                 Text("这一卷 \(r.here) 张").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white)
                   .padding(.horizontal, 5).padding(.vertical, 1).background(Capsule().fill(Hardware.accent))
@@ -137,16 +133,16 @@ struct FlatManagerSheet: View {
           }.width(min: 180, ideal: 230)
           TableColumn("类型") { r in Text(r.kind.rawValue).foregroundStyle(r.kind == .rollOnly ? .orange : .primary) }.width(min: 64, ideal: 72)
           TableColumn("最暗处 R · G · B") { r in
-            Text(r.profile.map { FlatTable.shares($0.variant(nil)) } ?? m.preferences.lightCalibration.map { FlatTable.shares($0.flat) } ?? "—").monospacedDigit()
+            Text(r.profile.map { FlatTable.shares($0.variant(nil)) } ?? "—").monospacedDigit()
               .help("每个通道最暗的一格是最亮处的多少：越低暗角越重；三个差得多，边上就偏色")
           }.width(min: 130, ideal: 140)
           TableColumn("光圈") { r in Text(r.profile?.aperture.map { String(format: "f/%g", $0) } ?? "—").monospacedDigit() }.width(min: 44, ideal: 52)
           TableColumn("来源") { r in
-            let text = r.profile?.source ?? m.preferences.lightCalibration.map { "红、绿、蓝灯各一张空白帧 · " + $0.date.formatted(date: .abbreviated, time: .shortened) + " · 只在去串色时" } ?? ""
+            let text = r.profile?.source ?? ""
             Text(text).lineLimit(1).truncationMode(.middle).help(text)
           }.width(min: 160, ideal: 260)
           TableColumn("在用的卷") { r in
-            Text(r.kind == .light ? "—" : r.rolls.isEmpty ? (r.here > 0 ? "这一卷" : "—") : "\(r.rolls.count + (r.here > 0 ? 1 : 0)) 卷").monospacedDigit()
+            Text(r.rolls.isEmpty ? (r.here > 0 ? "这一卷" : "—") : "\(r.rolls.count + (r.here > 0 ? 1 : 0)) 卷").monospacedDigit()
               .help(r.rolls.map { "\($0.title) · \($0.source.rawValue)" }.joined(separator: "\n"))
           }.width(min: 64, ideal: 72)
         }
@@ -180,10 +176,10 @@ struct FlatManagerSheet: View {
           if let flat { said = m.applyFlat(flat, to: targets) }
         }
         .disabled(flat == nil || targets.isEmpty || blocked != nil)
-        .help(blocked ?? (single?.kind == .light ? "光源标定的平场跟着去串色走：用「回到光源标定」" : "上面选一个平场，下面选要补的照片"))
-        Button(lightBack ? "回到光源标定" : "不补平场") { said = m.applyFlat(nil, to: targets) }
+        .help(blocked ?? "上面选一个平场，下面选要补的照片")
+        Button("不补平场") { said = m.applyFlat(nil, to: targets) }
           .disabled(targets.isEmpty || blocked != nil)
-          .help(blocked ?? "选中的照片不再按空白帧补平：去串色开着、做过光源标定的，回到光源标定的平场；其余的不补")
+          .help(blocked ?? "选中的照片不再按空白帧补平")
         let one = frameSelection.count == 1 ? m.frames.first { frameSelection.contains($0.id) } : nil
         Button("设成平场") {
           if let one { m.makeFlat(from: one) }
@@ -240,7 +236,7 @@ struct FlatManagerSheet: View {
   }
   /// The selected flat drawn as its blank looks evened out, and how far each channel falls off.
   @ViewBuilder func preview(_ row: FlatRow?) -> some View {
-    let field = row.flatMap { r in r.profile.map { $0.variant(nil) } ?? (r.kind == .light ? m.preferences.lightCalibration?.flat : nil) }
+    let field = row.flatMap { $0.profile?.variant(nil) }
     VStack(alignment: .leading, spacing: 6) {
       ZStack {
         RoundedRectangle(cornerRadius: 4).fill(Color.primary.opacity(0.06))

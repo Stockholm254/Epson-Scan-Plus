@@ -1,9 +1,9 @@
 import CoreGraphics
 import Foundation
 
-/// The copy light measured from three blank frames, each light alone: its crosstalk and its fall-off
-/// across the frame found again from synthetic frames made with known ones, in any order; a negative
-/// lit unevenly read evenly once both are taken out; and the next copies coming in with them.
+/// The copy light measured from three blank frames, each light alone: its crosstalk found again from
+/// synthetic frames made with a known one, in any order; and the next copies coming in with it.
+/// Fall-off is the blank-frame flats', below.
 enum CopyLightTests {
   static func run(folder: URL) throws {
     func check(_ value: Bool, _ label: String) throws {
@@ -36,21 +36,16 @@ enum CopyLightTests {
     let frames = [blank(2, 0.6), blank(0, 0.7), blank(1, 0.5)]
     guard let (light, exposure) = pipe.lightCalibration(frames) else { throw DeskError.message("FAIL: light calibrated") }
     let matrixFound = zip(light.crosstalk.m, mix.m).allSatisfy { abs($0 - $1) < 0.01 }
-    let corner = light.flat.value(at: CGPoint(x: 0.02, y: 0.03)), middle = light.flat.value(at: CGPoint(x: 0.45, y: 0.4))
-    let expected = (0..<3).map { lit($0, w * 2 / 100, h * 3 / 100) }
-    try check(matrixFound && (0..<3).allSatisfy { abs(corner.values[$0] - expected[$0]) < 0.04 && abs(middle.values[$0] - 1) < 0.03 }
-      && abs(exposure.r - 0.7) < 0.1 && abs(exposure.b - 0.6) < 0.1,
-      String(format: "three blank frames, one light each in any order, give the light's crosstalk and how each light falls off: corner %.2f · %.2f · %.2f, made %.2f · %.2f · %.2f",
-        corner.r, corner.g, corner.b, expected[0], expected[1], expected[2]))
+    try check(matrixFound && abs(exposure.r - 0.7) < 0.1 && abs(exposure.b - 0.6) < 0.1,
+      "three blank frames, one light each in any order, give the light's crosstalk, each lit unevenly")
     try check(pipe.lightCalibration([blank(0, 0.7), blank(0, 0.6), blank(1, 0.5)]) == nil,
       "two frames of the same light do not make a calibration")
 
-    // A blank film base under all three lights, lit unevenly, reads evenly once corrected.
+    // A blank film base under all three lights, lit unevenly.
     let film = [0.6, 0.35, 0.25]
     let negative = picture { (x: Int, y: Int) -> [Double] in
       (0..<3).map { (c: Int) -> Double in (0..<3).map { (j: Int) -> Double in mix.m[3 * c + j] * 0.8 * lit(j, x, y) * film[j] }.reduce(0, +) }
     }
-    let even = pipe.samples(pipe.corrected(negative, crosstalk: light.crosstalk, flat: light.flat), maxDimension: w)
     let plain = pipe.samples(pipe.corrected(negative, crosstalk: light.crosstalk, flat: nil), maxDimension: w)
     func spread(_ s: Samples) -> Double {
       (0..<3).map { c in
@@ -64,9 +59,6 @@ enum CopyLightTests {
     let shownBase = pipe.samples(pipe.neutralNegative(pipe.corrected(negative, crosstalk: light.crosstalk, flat: nil), settings: settings), maxDimension: w).pixel(w / 2, h / 2)
     try check(max(shownBase.r, shownBase.g, shownBase.b) - min(shownBase.r, shownBase.g, shownBase.b) < 0.02,
       String(format: "a negative is shown with its film base a neutral grey, not the copy light's colour: %.2f · %.2f · %.2f", shownBase.r, shownBase.g, shownBase.b))
-    try check(spread(even) < 0.04 && spread(plain) > 0.2,
-      String(format: "a film base lit unevenly reads the same in the corners as in the middle once the light is taken out: %.0f%% apart, %.0f%% before",
-        spread(even) * 100, spread(plain) * 100))
 
     // The next copies come in read through it; turned off for the roll, as the sensor read them.
     let root = folder.appendingPathComponent("copy-light", isDirectory: true)
@@ -90,7 +82,7 @@ enum CopyLightTests {
     RunLoop.current.run(until: Date().addingTimeInterval(0.3))
     let kept = Preferences(defaults: defaults).lightCalibration
     try check(kept.map { zip($0.crosstalk.m, mix.m).allSatisfy { abs($0 - $1) < 0.01 } } == true
-      && model.frames.allSatisfy { $0.crosstalk == kept?.crosstalk && $0.flatField == kept?.flat }
+      && model.frames.allSatisfy { $0.crosstalk == kept?.crosstalk && $0.flatField == nil }
       && model.lightDescription.contains("漏进"),
       "the roll's last three frames calibrate the light, kept for the copies to come, and the roll is read through it")
     let url = decoded.appendingPathComponent("EPS00004.tif")
@@ -98,11 +90,11 @@ enum CopyLightTests {
     model.addCapturedFrame(url, original: url, linear: true, sensor: true)
     let next = model.frames[3]
     model.removeCrosstalk(false)
-    try check(next.crosstalk == kept?.crosstalk && next.flatField == kept?.flat
+    try check(next.crosstalk == kept?.crosstalk && next.flatField == nil
       && model.frames.allSatisfy { $0.crosstalk == nil && $0.flatField == nil },
       "a copy that comes in next is read through the calibrated light; turned off for the roll, every frame is read as the sensor read it")
     edits.undo()
-    try check(model.frames.allSatisfy { $0.flatField == kept?.flat }, "and undo reads them through it again")
+    try check(model.frames.allSatisfy { $0.crosstalk == kept?.crosstalk }, "and undo reads them through it again")
 
     // One blank frame under all the lights (no film; the lens's vignetting and the light's
     // unevenness together) gives each light's fall-off once its cells are unmixed; a frame clipped, or
@@ -116,6 +108,7 @@ enum CopyLightTests {
       gridWidth: ImagePipeline.flatGrid.width, gridHeight: ImagePipeline.flatGrid.height, cells: cells)
     let byLight = made.variant(mix)
     let near = byLight.value(at: CGPoint(x: 0.02, y: 0.03)), mid = byLight.value(at: CGPoint(x: 0.45, y: 0.4))
+    let expected = (0..<3).map { lit($0, w * 2 / 100, h * 3 / 100) }
     var tooBright = false, notBlank = false
     do { _ = try pipe.blankCells(white(1.4)) } catch { tooBright = "\(error)".contains("过曝") }
     let textured = picture { x, y in (0..<3).map { c in 0.3 + 0.25 * sin(Double(x) / 7 + Double(c)) * cos(Double(y) / 5) } }
@@ -207,7 +200,7 @@ enum CopyLightTests {
     try capture(negative, 8)
     try check(toB && noneOK && flatModel.frames.last?.flatID == flatB?.id && flatModel.frames.last?.flatField == flatB?.variant(nil),
       "a frame given another flat and then none is read so; a new picture takes the flat of the roll's last one")
-    // 应用平场 off: no flat at all, not even the copy light's; on again: its blank's. A flat chosen for
+    // 应用平场 off: no flat at all; on again: its blank's. A flat chosen for
     // the frame, then 应用到本卷: the roll's frames take it, blanks and pictures of another size not.
     // Blank frames are shown as they were read, not de-masked.
     flatModel.select(ids[2])

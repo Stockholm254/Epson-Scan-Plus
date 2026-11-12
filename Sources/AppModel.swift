@@ -349,12 +349,6 @@ final class AppModel: ObservableObject {
   private var rollSlopesRevision = 0
   private var rollPrintRevision = 0
   private var exportsRunning = 0
-  /// Module ②'s sidebar tab: calibrating the preset, or the export settings. Module ①'s sidebar
-  /// is the capture source's.
-  /// Module ②'s sidebar: the film, its base and the frame's extent; calibrating the preset; exporting.
-  /// Module ②'s sidebar: the film, its preset, calibrating it and the base; exporting.
-  enum PanelTab: String, CaseIterable { case film = "胶片", output = "输出" }
-  @Published var panelTab = PanelTab.film
   /// The main window's three modules, in the order a roll goes through them: capturing it (the
   /// scanner, the camera or files), taking the orange mask off, and repairing light leaks.
   /// The library first, where rolls are kept and started; then the modules, numbered in the order
@@ -503,11 +497,6 @@ final class AppModel: ObservableObject {
       // The base can be picked while capturing too (to set the lights by); the grey pickers, the
       // curves' picker and the de-masking region are ②'s and ③'s.
       if page == .capture, [CanvasTool.neutral, .shadowNeutral, .region, .curvePick].contains(tool) { tool = .select }
-      // Once, after the steps were split: where things went.
-      if page == .convert, !preferences.stepsIntroduced {
-        preferences.stepsIntroduced = true
-        status = "② 和 ③ 分开了：② 去色罩把负片变成干净的正片（有漏光的照片在这里去漏光），③ 调色调色和导出（⌥⌘3）"
-      }
       // The library shows no picture: the canvas's look changes with the module it shows next,
       // against the one it showed last, so ① → 库 → ① renders nothing again.
       guard page != .library else { return }
@@ -884,22 +873,10 @@ final class AppModel: ObservableObject {
     change("清除取样") {
       // A slide goes back to its own colour; a negative to the scene's.
       $0.autoWhiteBalance = !$0.isSlide
-      $0.manualBalance = nil
       $0.neutralSample = nil
       $0.neutralPicked = nil
     }
     status = settings.isSlide ? "已清除取样 · 回到反转片本来的颜色" : "已清除取样 · 回到自动白平衡"
-  }
-  func adjustBase(_ channel: Int, value: Double) {
-    change("片基微调") {
-      var fine = $0.baseFine ?? .zero
-      switch channel {
-      case 0: fine.r = value
-      case 1: fine.g = value
-      default: fine.b = value
-      }
-      $0.baseFine = fine
-    }
   }
   /// The frames on the light table's page shown: laid out from their own files, or on the holder.
   var contactFrames: [FilmFrame] {
@@ -1022,8 +999,8 @@ final class AppModel: ObservableObject {
     sharpeningMessage = nil
     refresh()
   }
-  /// New projects save as `Session.epscan`; one opened from a file saves back to that file, so an
-  /// older `Session.filmdesk` is kept up to date rather than joined by a second copy.
+  /// New projects save as `Session.epscan`; one opened from a file of another name saves back to
+  /// that file rather than being joined by a second copy.
   static let projectFile = "Session.epscan"
   private(set) var projectFileName = AppModel.projectFile
   /// 新建工程: the open roll saved, staying in the library, and the window emptied; the next preview,
@@ -1317,53 +1294,6 @@ final class AppModel: ObservableObject {
     // holder's picture stays the holder's.
     selectedID = id
     refresh()
-  }
-  func tightenExistingBorders() {
-    guard let overview, !isWorking, !rendering, selected?.sourcePath == nil, !frames.isEmpty else {
-      return
-    }
-    rendering = true
-    detectingFrames = true
-    let size = physicalMM
-    let format = format
-    let snapshot = frames
-    status = "正在收紧片边…"
-    renderQueue.async {
-      let detected = FrameDetector.detect(overview, physicalMM: size, format: format)
-      DispatchQueue.main.async {
-        self.recordEdit("收紧片边")
-        var changed = 0
-        for old in snapshot where old.sourcePath == nil {
-          guard let index = self.frames.firstIndex(where: { $0.id == old.id }),
-            self.frames[index].rect == old.rect
-          else { continue }
-          let match = detected.max { a, b in
-            a.rect.cg.intersection(old.rect.cg).area < b.rect.cg.intersection(old.rect.cg).area
-          }
-          guard let match else { continue }
-          let intersection = old.rect.cg.intersection(match.rect.cg)
-          // Only contract a well-matched existing frame. Keep manual crops and all settings.
-          guard !intersection.isNull, intersection.area > old.rect.cg.area * 0.70,
-            old.rect.cg.area - intersection.area > 0.000001
-          else { continue }
-          if old.scanPath != nil && old.scanRect == nil { self.frames[index].scanRect = old.rect }
-          if old.initialRect == nil { self.frames[index].initialRect = old.rect }
-          self.frames[index].rect = NormalRect(intersection)
-          changed += 1
-        }
-        self.rendering = false
-        self.detectingFrames = false
-        self.editRegionLock = nil
-        self.fitView()
-        self.focusCanvas()
-        self.updateRollBase()
-        self.updateRollSlopes()
-        self.refresh()
-        self.updateThumbnails()
-        self.saveProject()
-        self.status = "已收紧 \(changed) 张的片边 · 调色和原始扫描保留"
-      }
-    }
   }
   func setRect(_ id: UUID, rect: NormalRect) {
     guard let i = frames.firstIndex(where: { $0.id == id }), rect.width > 0.005, rect.height > 0.005
@@ -1770,12 +1700,12 @@ final class AppModel: ObservableObject {
     case .balance:
       r.autoWhiteBalance = fresh.autoWhiteBalance
       (r.warmth, r.tint, r.shadowWarmth, r.shadowTint) = (fresh.warmth, fresh.tint, nil, nil)
-      (r.neutralSample, r.neutralPicked, r.manualBalance) = (nil, nil, nil)
+      (r.neutralSample, r.neutralPicked) = (nil, nil)
     case .tone:
       (r.exposure, r.contrast, r.highlights, r.pressHighlights, r.shadows) = (fresh.exposure, fresh.contrast, nil, nil, nil)
       (r.whites, r.blacks) = (nil, nil)
     case .levels:
-      (r.autoLevels, r.black, r.white, r.midtone) = (fresh.autoLevels, fresh.black, fresh.white, fresh.midtone)
+      r.autoLevels = fresh.autoLevels
     case .colour:
       (r.saturation, r.softEnds, r.colourNoise) = (fresh.saturation, nil, copyShot ? 1 : nil)
       (r.texture, r.clarity, r.dehaze, r.vibrance) = (nil, nil, nil, nil)
@@ -2033,7 +1963,6 @@ final class AppModel: ObservableObject {
     } else {
       text = "本张最透处估计"
     }
-    if let fine = s.baseFine, fine.values.contains(where: { abs($0) > 0.005 }) { text += " · 微调" }
     return text
   }
   /// How the frame's white balance is set, in a few words, as the conversion takes them (a picked
@@ -2044,8 +1973,6 @@ final class AppModel: ObservableObject {
     var parts = [String]()
     if s.neutralSample != nil {
       parts.append("取样中性灰")
-    } else if s.manualBalance != nil {
-      parts.append("手动配平")
     } else if profile.offsets != nil {
       parts.append("标定预设的中性")
     } else if s.autoWhiteBalance {
@@ -2246,16 +2173,15 @@ final class AppModel: ObservableObject {
   /// as the pictures now are: the same light mixed it, so it comes out of a reading as out of a
   /// pixel.
   ///
-  /// The light as last calibrated on the stand gives the crosstalk and the flat field; before it has
-  /// been, the crosstalk measured from the IT8 target, with no flat field. A reading is put back as
+  /// The light as last calibrated on the stand gives the crosstalk; before it has been, the crosstalk
+  /// measured from the IT8 target. Flats come from blank frames. A reading is put back as
   /// it was lit (the old flat field), mixed again, and taken through the new: a base picked where it
   /// was picked, the others (a grey, a white, the roll's base) taken at the frame's middle. The bases
   /// at the edges are looked for again.
   func removeCrosstalk(_ on: Bool) {
     let light = preferences.lightCalibration
     let to: Crosstalk? = on ? light?.crosstalk ?? .measured : nil
-    // A picture divided by a blank frame keeps it, read the new way; the rest take the light's flat
-    // field with its crosstalk, or none.
+    // A picture divided by a blank frame keeps it, read the new way.
     func flatTo(_ f: FilmFrame) -> FlatField? { resolvedFlat(f.flatID, crosstalk: to) }
     let affected = frames.indices.filter { frames[$0].sensorRead == true && (frames[$0].crosstalk != to || frames[$0].flatField != flatTo(frames[$0])) }
     preferences.removeCrosstalk = on
@@ -2313,12 +2239,10 @@ final class AppModel: ObservableObject {
     return CGPoint(x: crop.x + c.x * crop.width, y: crop.y + c.y * crop.height)
   }
   /// The flat field a frame read through `crosstalk` is divided by: the roll's flat `flatID` names,
-  /// read alike; without one, the copy light's when the crosstalk is out, else none.
+  /// read alike; none without one, or with 应用平场 switched off.
   func resolvedFlat(_ flatID: String?, crosstalk: Crosstalk?) -> FlatField? {
-    // 应用平场 switched off: no flat at all, not even the copy light's.
-    if flatID == Self.noFlat { return nil }
-    if let flatID { return rollFlats.first { $0.id == flatID }?.variant(crosstalk) }
-    return crosstalk != nil ? preferences.lightCalibration?.flat : nil
+    guard let flatID, flatID != Self.noFlat else { return nil }
+    return rollFlats.first { $0.id == flatID }?.variant(crosstalk)
   }
   /// The copy light measured from the roll's last three pictures read from the sensor: blank frames,
   /// the red, green and blue light each alone. Kept for the copies to come, and this roll's pictures
@@ -2339,9 +2263,7 @@ final class AppModel: ObservableObject {
         self.preferences.lightCalibration = light
         let leak = light.crosstalk.largestLeak, names = ["红", "绿", "蓝"]
         let weak = (0..<3).filter { exposure.values[$0] < 0.15 }.map { names[$0] }
-        self.status = String(format: "已标定光源：%@灯漏进%@通道 %.0f%%，四角最暗处是最亮处的 %.0f%% · %.0f%% · %.0f%%",
-          names[leak.light], names[leak.channel], leak.share * 100,
-          light.flat.falloff.r * 100, light.flat.falloff.g * 100, light.flat.falloff.b * 100)
+        self.status = String(format: "已标定光源：%@灯漏进%@通道 %.0f%%", names[leak.light], names[leak.channel], leak.share * 100)
           + (weak.isEmpty ? "" : "；\(weak.joined(separator: "、"))灯曝光偏暗，最好重拍到最亮处约 70%")
         if self.crosstalkRemoved || self.preferences.removeCrosstalk { self.removeCrosstalk(true) }
       }
@@ -2349,11 +2271,10 @@ final class AppModel: ObservableObject {
   }
   /// What the copy light's correction is now, for the panels.
   var lightDescription: String {
-    guard let light = preferences.lightCalibration else { return "现在用的是 2026-10-29 用 IT8 色卡测的串色矩阵，没有平场。" }
+    guard let light = preferences.lightCalibration else { return "现在用的是 2026-10-29 用 IT8 色卡测的串色矩阵。" }
     let leak = light.crosstalk.largestLeak, names = ["红", "绿", "蓝"]
-    return String(format: "现在用的是 %@ 标定的光源：%@灯漏进%@通道 %.0f%%；平场：四角最暗处是最亮处的 %.0f%% · %.0f%% · %.0f%%（红 · 绿 · 蓝）。",
-      light.date.formatted(date: .abbreviated, time: .shortened), names[leak.light], names[leak.channel], leak.share * 100,
-      light.flat.falloff.r * 100, light.flat.falloff.g * 100, light.flat.falloff.b * 100)
+    return String(format: "现在用的是 %@ 标定的串色矩阵：%@灯漏进%@通道 %.0f%%。",
+      light.date.formatted(date: .abbreviated, time: .shortened), names[leak.light], names[leak.channel], leak.share * 100)
   }
   /// Switches 全卷斜率估计 for the roll: its slopes estimated across its frames, or the
   /// calibration's, else the data sheet's.
@@ -2610,36 +2531,6 @@ final class AppModel: ObservableObject {
     updateThumbnails()
     saveProject()
   }
-  func matchFilm() {
-    let typed = FilmCalibration.film(filmName.trimmingCharacters(in: .whitespaces))
-    let was = Self.film(of: profile)
-    // The film the preset in use is for, applied again (or left in the field as it was): the preset
-    // stays as chosen, calibrated or not.
-    if let was, FilmCatalog.fold(was) == FilmCatalog.fold(typed) {
-      if filmName != typed {
-        filmName = typed
-        saveProject()
-      }
-      return
-    }
-    let q = typed.lowercased().replacingOccurrences(of: " ", with: "")
-    let found =
-      profiles.first { p in
-        p.offsets == nil && ([p.name] + p.aliases).contains { $0.lowercased().replacingOccurrences(of: " ", with: "") == q }
-      }
-      ?? FilmCatalog.stock(named: typed)?.preset.flatMap { id in FilmProfile.builtins.first { $0.id == id } }
-      ?? FilmProfile.builtins.last!
-    // The name typed over is the film shown before it.
-    recordEdit("胶片预设", filmName: was ?? profile.name)
-    filmName = typed
-    // The film calibrated here (on this scanner, or in this copy session) is used without having to pick it.
-    profile = linkedPreset(film: typed, fallback: found)
-    useCalibration = true
-    updateRollSlopes()
-    refresh()
-    updateThumbnails()
-    saveProject()
-  }
   /// The newest preset calibrated on this scanner from `film`, used without having to pick it. A copy
   /// roll takes none: a copy-stand preset holds for one copy session, the camera and lights set up
   /// once, so the session's other rolls pick it from the menu.
@@ -2712,7 +2603,6 @@ final class AppModel: ObservableObject {
   /// The preset `film` converts with on this roll, chosen as a film (from the shelf or by name):
   /// the newest calibrated for it here (in this copy session, or on this scanner), else `fallback`,
   /// its data sheet's or the generic one.
-  func linkedPreset(film: String, fallback: FilmProfile) -> FilmProfile { calibration(for: film) ?? fallback }
   /// The newest preset calibrated here (in this copy session, or on this scanner) for `film`.
   func calibration(for film: String) -> FilmProfile? {
     profiles.last { p in calibratedHere(p) && Self.film(of: p).map { FilmCatalog.fold($0) == FilmCatalog.fold(film) } == true }
@@ -2826,12 +2716,11 @@ final class AppModel: ObservableObject {
   func setSharedBalance(_ on: Bool) {
     setShared(on ? "整卷同一白平衡" : "每张单独白平衡", on) { $0.sharedBalance = on ? true : nil }
   }
-  /// One pair of black and white ends for the selected frame's roll, likewise.
   /// 自动白色 / 黑色 for the selected frame (`ImagePipeline.autoEnds`): its brightest 0.1% just at
   /// white and its darkest just at black, from the tones the single view last counted; one edit.
   func autoWhitesBlacks() {
     guard let range = toneRange, selected != nil, !settings.isSlide else {
-      status = "在单张视图里打开这张负片，再点「自动」"
+      status = "在单张视图里打开这张负片，再点「自动白色、黑色」"
       return
     }
     let ends = ImagePipeline.autoEnds(range, settings)
@@ -3109,9 +2998,8 @@ final class AppModel: ObservableObject {
         guard let source = try? self.source(for: frame, maxDimension: 2000),
           let small = try? self.source(for: frame, maxDimension: 600)
         else { missing += 1; continue }
-        let fine = frame.adjustments.baseFine ?? .zero
         let analysed = pipe.analyze(small, settings: frame.adjustments, profile: profile).base
-        read[frame.id] = (pipe.samples(source, maxDimension: 2000), RGB((0..<3).map { analysed.values[$0] * pow(2, fine.values[$0]) }))
+        read[frame.id] = (pipe.samples(source, maxDimension: 2000), analysed)
       }
       guard let (r, base) = read[frame.id] else { missing += 1; continue }
       let px = Int(x * Double(r.width)), py = Int(y * Double(r.height))
@@ -3805,7 +3693,7 @@ final class AppModel: ObservableObject {
     f.flatField = nil
     if !everything {
       var s = f.adjustments
-      (s.exposure, s.contrast, s.warmth, s.tint, s.shadowWarmth, s.shadowTint, s.black, s.white, s.midtone) = (0, 1, 0, 0, nil, nil, 0, 1, 1)
+      (s.exposure, s.contrast, s.warmth, s.tint, s.shadowWarmth, s.shadowTint) = (0, 1, 0, 0, nil, nil)
       (s.shadows, s.highlights, s.pressHighlights, s.colourNoise, s.sharpening, s.curves) = (nil, nil, nil, nil, nil, nil)
       (s.whites, s.blacks) = (nil, nil)
       (s.rotation, s.flipHorizontal, s.angle) = (0, nil, nil)
@@ -4243,11 +4131,10 @@ final class AppModel: ObservableObject {
     if tool == .calibrate {
       // Keep the tool for the next point. The base is the one this frame converts with.
       guard singleView, let analysis = toneAnalysis else { return }
-      let fine = frames[i].adjustments.baseFine ?? .zero
       let crop = frames[i].rect
       let point = NeutralPoint(
         frame: frames[i].id, value: color,
-        base: RGB((0..<3).map { analysis.base.values[$0] * pow(2, fine.values[$0]) }),
+        base: analysis.base,
         gamma: frames[i].adjustments.inputGamma,
         at: CGPoint(x: crop.x + pt.x * crop.width, y: crop.y + pt.y * crop.height), name: frames[i].name)
       // Added to the calibration in use, made here: its points first.
@@ -4290,10 +4177,9 @@ final class AppModel: ObservableObject {
     let s = f.adjustments
     guard s.inputIsNegative, let fix = s.leakFix, let field = LeakFixStore.shared.field(fix), let analysis = toneAnalysis else { return color }
     let slopes = ImagePipeline.slopes(s, conversionProfile).slopes.values, toe = ImagePipeline.toe(s, conversionProfile).values
-    let fine = s.baseFine ?? .zero
     let at = field.sample(Double(pt.x), Double(pt.y))
     return RGB((0..<3).map { c in
-      let base = max(0.0001, analysis.base.values[c] * pow(2, fine.values[c]))
+      let base = max(0.0001, analysis.base.values[c])
       let d = log10(base / max(0.000001, color.values[c])) * s.inputGamma
       let e = FilmToe.exposure(d / slopes[c], width: toe[c])
       return base / pow(10, FilmToe.density(at.a[c] * e + at.d[c], width: toe[c]) * slopes[c] / s.inputGamma)
@@ -4305,8 +4191,6 @@ final class AppModel: ObservableObject {
     change("取片基") {
       $0.base = color
       $0.basePicked = place
-      $0.baseFine = nil
-      $0.manualBalance = nil
       $0.neutralSample = nil
       $0.neutralPicked = nil
       $0.autoWhiteBalance = false
@@ -4318,7 +4202,6 @@ final class AppModel: ObservableObject {
   /// balance, and auto stays on to fit each channel's contrast where the preset leaves that to it.
   func setNeutral(_ color: RGB, at place: NormalRect? = nil) {
     change("中性点") {
-      $0.manualBalance = nil
       $0.neutralSample = color
       $0.neutralPicked = place
       $0.autoWhiteBalance = true
@@ -4946,7 +4829,7 @@ final class AppModel: ObservableObject {
   static func withinRoll(_ folder: URL) -> Bool {
     var at = folder.standardizedFileURL
     while at.path != "/" && !at.path.isEmpty {
-      if [projectFile, "Session.filmdesk"].contains(where: { FileManager.default.fileExists(atPath: at.appendingPathComponent($0).path) }) { return true }
+      if FileManager.default.fileExists(atPath: at.appendingPathComponent(projectFile).path) { return true }
       at = at.deletingLastPathComponent()
     }
     return false
@@ -5316,27 +5199,14 @@ final class AppModel: ObservableObject {
     guard !isWorking else { return }
     let panel = NSOpenPanel()
     panel.allowedContentTypes = [.data]
-    // Until this library has a project, the older one is where they are.
-    let fm = FileManager.default
-    panel.directoryURL = !fm.fileExists(atPath: libraryURL.path) && libraryURL == Preferences.defaultLibraryURL
-      && fm.fileExists(atPath: Preferences.legacyLibraryURL.path) ? Preferences.legacyLibraryURL : libraryURL
+    panel.directoryURL = libraryURL
     guard panel.runModal() == .OK, let url = panel.url else { return }
     loadProject(url)
     // Opened from ① or the library, it goes on to taking the mask off.
     if sessionURL == url.deletingLastPathComponent(), page == .capture || page == .library { page = .convert }
   }
-  /// The folders the library shows: the library, and while it is the default one, the folder
-  /// versions before 0.4.9 kept their projects in.
-  var libraryRoots: [(url: URL, legacy: Bool)] {
-    var roots = [(url: libraryURL, legacy: false)]
-    let legacy = Preferences.legacyLibraryURL
-    if libraryURL.standardizedFileURL == Preferences.defaultLibraryURL.standardizedFileURL,
-      FileManager.default.fileExists(atPath: legacy.path)
-    {
-      roots.append((legacy, true))
-    }
-    return roots
-  }
+  /// The folders the library shows: the library itself.
+  var libraryRoots: [URL] { [libraryURL] }
   /// The open roll's project file.
   var projectURL: URL? { sessionURL?.appendingPathComponent(projectFileName) }
   /// Opens a roll from the library and goes on to take the mask off it; the open roll is saved

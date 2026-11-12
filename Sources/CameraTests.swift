@@ -324,7 +324,7 @@ enum CameraTests {
       && !FileManager.default.fileExists(atPath: incoming.appendingPathComponent("EPS00001.JPG").path),
       "the first picture starts a camera roll, measured as one roll, and moves into its Captures folder")
     try capture("EPS00002.JPG")
-    let entry = RollLibrary.scan([(lib, false)]).first
+    let entry = RollLibrary.scan([lib]).first
     try check(model.sessionURL == root && model.frames.count == 2 && model.frames.map(\.name) == ["01", "02"]
       && entry?.source == .camera && entry?.frames.count == 2,
       "the next goes into the same roll, which the library files under 翻拍")

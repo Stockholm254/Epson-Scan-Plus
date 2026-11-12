@@ -326,10 +326,6 @@ enum CalibrationTests {
       && linked.rollPresets.contains { $0.id == session.id } && linked.rollPresets.contains { $0.id == portra.id }
       && !linked.otherPresets.contains { $0.id == session.id } && linked.status.hasPrefix("已生成预设"),
       "calibrating keeps the roll's film name, not the preset's; the film's presets come first in the menu, its calibration with them")
-    linked.chooseProfile(portra)
-    linked.matchFilm()
-    try check(linked.profile.id == portra.id && linked.filmName == "Kodak Portra 160",
-      "the film's data sheet chosen by hand stays when the film's name is applied again, as when the field loses focus")
     // On the shelf the film's data sheet and its calibration are each a choice: what is picked is taken.
     linked.chooseProfile(session)
     linked.applyFilm(profile: portra, filmName: "Kodak Portra 160", reversal: false, format: linked.format)

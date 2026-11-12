@@ -76,10 +76,8 @@ enum LibraryTests {
     // MARK: A library
 
     let lib = folder.appendingPathComponent("library", isDirectory: true)
-    let legacy = folder.appendingPathComponent("library-legacy", isDirectory: true)
     let files = FileManager.default
     try? files.removeItem(at: lib)
-    try? files.removeItem(at: legacy)
     func roll(_ root: URL, _ name: String) throws -> URL {
       let url = root.appendingPathComponent(name, isDirectory: true)
       try files.createDirectory(at: url, withIntermediateDirectories: true)
@@ -131,25 +129,16 @@ enum LibraryTests {
     _ = try roll(lib, "notes")
     let broken = try roll(lib, "2026-10-23_120000_0000")
     try Data("{".utf8).write(to: broken.appendingPathComponent(AppModel.projectFile))
-    // An older roll in the old library, as Film Desk saved it.
-    let old = try roll(legacy, "2026-10-10_080000_9999")
-    try JSONEncoder().encode(DeskProject(
-      overviewPath: overviewURL.path, overviewDPI: 150, physicalWidthMM: 100, physicalHeightMM: 50,
-      filmName: "Fujifilm C200", profile: FilmProfile.builtins[0], scanDPI: 2400, frames: [scannedFrames[0]])
-    ).write(to: old.appendingPathComponent("Session.filmdesk"))
-
-    let entries = RollLibrary.scan([(lib, false), (legacy, true), (lib, false)])
-    try check(entries.map(\.folder.lastPathComponent) == [imported, scanned, old].map(\.lastPathComponent),
+    let entries = RollLibrary.scan([lib, lib])
+    try check(entries.map(\.folder.lastPathComponent) == [imported, scanned].map(\.lastPathComponent),
       "the library lists every roll it can read, newest first, each once; folders without a readable project are left out")
-    let sea = entries[1], gold = entries[0], c200 = entries[2]
+    let sea = entries[1], gold = entries[0]
     try check(sea.title == "海边" && sea.named && sea.notes == "Leica M6" && sea.film == "Kodak Portra 400"
       && sea.source == .scanner && sea.frames.count == 3 && sea.exported == 1 && sea.fullResolution == 0,
       "a roll shows its name, notes, film, frames and exports")
     try check(!gold.named && gold.title == RollLibrary.title(RollLibrary.started(imported.lastPathComponent)!)
       && gold.source == .files && gold.fullResolution == 2 && gold.frames.map { $0.file == nil } == [true, false],
       "an unnamed roll goes by when it was started; imported pictures are told by their frames")
-    try check(c200.legacy && c200.project.lastPathComponent == "Session.filmdesk",
-      "rolls from the folder older versions used are listed too, as they were saved")
 
     let negatives = RollLibrary.thumbnails(for: sea)
     let firstFrame = negatives[scannedFrames[0].id].map { pixel($0.image, $0.image.width / 2, $0.image.height / 2) } ?? []
@@ -202,7 +191,7 @@ enum LibraryTests {
     try check(model.hasProject && model.page == .capture && model.sessionURL == nil && model.frames.isEmpty,
       "新建工程 opens the modules on ① 采集, the roll's folder left to its first preview, picture or import")
     model.page = .convert
-    try check(model.panelTab == .film, "② 去色罩's sidebar opens on the film, its base and the frame's extent")
+    try check(model.convertStep == .demask, "② 去色罩's sidebar opens on the film, its base and the frame's extent")
     model.tool = .neutral
     model.page = .capture
     try check(model.tool == .select, "the pickers are put down on going back to capture")
@@ -222,7 +211,7 @@ enum LibraryTests {
     model.page = .library
     model.importChosen([png])
     settle()
-    let after = RollLibrary.scan([(lib, false)])
+    let after = RollLibrary.scan([lib])
     try check(model.rollName.isEmpty && after.count == 3 && after.contains { $0.source == .files && $0.frames.count == 1 && $0.folder != imported }
       && model.page == .convert,
       "imported pictures make a new roll of their own, unnamed, which the library lists; imported from the library, it opens in ② 去色罩")
@@ -230,7 +219,7 @@ enum LibraryTests {
     // Opened as the library opens it, in the background: the call comes straight back, the roll's
     // sleeve says it is opening, and soon after the roll is open on ②.
     model.page = .library
-    let seaAgain = RollLibrary.scan([(lib, false)]).first { $0.folder.lastPathComponent == scanned.lastPathComponent }!
+    let seaAgain = RollLibrary.scan([lib]).first { $0.folder.lastPathComponent == scanned.lastPathComponent }!
     let asked = Date()
     model.openRoll(seaAgain, inBackground: true)
     let returned = Date().timeIntervalSince(asked)
@@ -242,7 +231,7 @@ enum LibraryTests {
 
     // MARK: The bubble on the canvas
 
-    model.openRoll(RollLibrary.scan([(lib, false)]).first { $0.folder.lastPathComponent == scanned.lastPathComponent }!)
+    model.openRoll(RollLibrary.scan([lib]).first { $0.folder.lastPathComponent == scanned.lastPathComponent }!)
     model.singleView = false
     model.preferences.showLoupe = false
     for _ in 0..<40 where model.rendering { settle(0.1) }
@@ -306,7 +295,7 @@ enum LibraryTests {
       RollEntry(folder: folder.appendingPathComponent(name), project: folder.appendingPathComponent(name + "/Session.epscan"), title: name,
         named: false, film: "", date: Date(timeIntervalSince1970: days * 86400), source: .scanner,
         frames: (0..<frames).map { RollEntry.Frame(id: UUID(), name: String(format: "%02d", $0 + 1), rect: NormalRect(x: 0, y: 0, width: 1, height: 1), file: nil) },
-        fullResolution: 0, exported: 0, overview: nil, notes: "", profile: FilmProfile.builtins[0], legacy: false)
+        fullResolution: 0, exported: 0, overview: nil, notes: "", profile: FilmProfile.builtins[0])
     }
     let stackRolls = [stackRoll("c", 3), stackRoll("b", 2), stackRoll("a", 1), stackRoll("d", 0), stackRoll("e", 0, frames: 12)]
     let nearBits: UInt64 = 0b111111, nearerBits: UInt64 = 0b111111 << 7

@@ -220,7 +220,7 @@ enum NewProjectTests {
     func entry(_ film: String, format: String? = nil, hoursAgo: Double = 0, profile: FilmProfile = FilmProfile.builtins[0]) -> RollEntry {
       RollEntry(folder: root, project: root.appendingPathComponent(AppModel.projectFile), title: "卷", named: false, film: film,
         date: Date(timeIntervalSinceNow: -hoursAgo * 3600), source: .camera, frames: [], fullResolution: 0, exported: 0, overview: nil,
-        notes: "", profile: profile, legacy: false, format: format)
+        notes: "", profile: profile, format: format)
     }
     let velviaRoll = entry("Fujifilm Velvia 50", format: FilmFormat.six7.rawValue), hp5Roll = entry("Ilford HP5 Plus 400"), ownRoll = entry("Aerocolor 100")
     try check(RollLibrary.matches(velviaRoll, "富士") && RollLibrary.matches(velviaRoll, "正片") && RollLibrary.matches(velviaRoll, "6×7")

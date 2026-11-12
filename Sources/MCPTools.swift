@@ -29,8 +29,8 @@ enum MCPTools {
   ]
   static let tools: [Tool] = conversionTools + leakTools
   private static let conversionTools: [Tool] = [
-    Tool(name: "get_state", description: "读取当前工程和选中画面的转换状态：胶片预设与各通道斜率、片基 RGB 及来源、全卷斜率估计（roll_estimate_slopes，开关在 roll.slope_estimate）、白平衡、色阶、影调、扫描与对齐信息，以及负片密度和正片各通道的百分位与溢出比例；sdr_range 给出进入两端之前（色阶黑点为 0、白点为 1）白点以上的比例、最亮 0.1% 的位置和高出白点几档、屏幕上从哪里起是纯白或纯黑，以及屏幕上纯白、纯黑的比例。还有：frame.light_leak 是这张的去漏光（applied：修复在转换里，③ 在修好的照片上调色；job_not_applied：去漏光页有任务、修复还没用到 ③；old_job_of_graded_picture：以前从调好色的正片做的任务，要在去漏光页从 ② 的结果重新载入才能用到 ③）；画面的裁切、拉直、来源文件、是否从传感器读出和去串色、手动取过哪些点；预设的类型和说明（适用条件写在里面），这一卷关了「用标定」时 preset 是转换实际用的胶片，roll_preset 是这一卷选的标定预设；frame.flat_field 是这张除的平场（来自哪张空白帧或光源标定、名字、最暗处的比例）；slopes_in_use 是转换实际用的斜率和它来自哪里（标定预设、全卷斜率估计或预设）；analysis 是自动分析实际定出的片基、白平衡、色阶两端（对数曝光）和高光伸到多远；tone 里的高光、阴影、去色噪；curves 是现有的色调曲线（有改动的通道和它们的控制点，空表示没有曲线）；roll 是整卷同一白平衡 / 色阶、去串色和标定点数。调整前先调用。", properties: [:]),
-    Tool(name: "list_frames", description: "列出本卷所有画面：编号、是否勾选、是否显示（selected）、是否和它一起选中（chosen）、是否已正式扫描及 dpi、方向、镜像、拉直、裁切、来源文件，和手动取过的片基、中性灰、高光；stars、flag（picked / rejected）、label（red…purple）是 Lightroom 式的标记，没有就不列；light_leak 是去漏光的状态（applied / job_not_applied / old_job_of_graded_picture，没有就不列）。", properties: [:]),
+    Tool(name: "get_state", description: "读取当前工程和选中画面的转换状态：胶片预设与各通道斜率、片基 RGB 及来源、全卷斜率估计（roll_estimate_slopes，开关在 roll.slope_estimate）、白平衡、色阶、影调、扫描与对齐信息，以及负片密度和正片各通道的百分位与溢出比例；sdr_range 给出进入两端之前（自动色阶定出的黑为 0、白为 1）白点以上的比例、最亮 0.1% 的位置和高出白点几档、屏幕上从哪里起是纯白或纯黑，以及屏幕上纯白、纯黑的比例。还有：frame.light_leak 是这张的去漏光（applied：修复在转换里，③ 在修好的照片上调色；job_not_applied：去漏光页有任务、修复还没用到 ③；old_job_of_graded_picture：以前从调好色的正片做的任务，要在去漏光页从 ② 的结果重新载入才能用到 ③）；画面的裁切、拉直、来源文件、是否从传感器读出和去串色、手动取过哪些点；预设的类型和说明（适用条件写在里面），这一卷关了「用标定」时 preset 是转换实际用的胶片，roll_preset 是这一卷选的标定预设；frame.flat_field 是这张除的平场（来自哪张空白帧、名字、最暗处的比例）；slopes_in_use 是转换实际用的斜率和它来自哪里（标定预设、全卷斜率估计或预设）；analysis 是自动分析实际定出的片基、白平衡、色阶两端（对数曝光）和高光伸到多远；tone 里的高光、阴影、去色噪；curves 是现有的色调曲线（有改动的通道和它们的控制点，空表示没有曲线）；roll 是整卷同一白平衡 / 色阶、去串色和标定点数。调整前先调用。", properties: [:]),
+    Tool(name: "list_frames", description: "列出本卷所有画面：编号、是否勾选、是否显示（selected）、是否和它一起选中（chosen）、是否已正式扫描及 dpi、方向、镜像、拉直、裁切、来源文件，和手动取过的片基、中性灰；stars、flag（picked / rejected）、label（red…purple）是 Lightroom 式的标记，没有就不列；light_leak 是去漏光的状态（applied / job_not_applied / old_job_of_graded_picture，没有就不列）。", properties: [:]),
     Tool(name: "list_presets", description: "列出所有胶片预设：名称、类型（内置 / V850 标定 / 翻拍标定 / 导入 / 只在卷里）、通道斜率、来源和说明，这一卷是否在用，图库里有几卷在用及是哪几卷，能否删除。「只在卷里」是已从列表删除、只有卷里还留着的预设。只读，删除和恢复在 App 的「预设…」表格里做。", properties: [:]),
     Tool(name: "list_rolls", description: "列出图库里的卷（只读）：标题、文件夹、开始时间、来源（扫描 / 翻拍 / 导入）、胶片、用的预设、画面数、全分辨率张数、已导出的文件数、备注，以及哪一卷是打开的。", properties: [:]),
     Tool(name: "select_frame", description: "选中某张画面（按编号，如 \"09\"）。", properties: ["name": ["type": "string", "description": "画面编号"]], required: ["name"]),
@@ -58,8 +58,6 @@ enum MCPTools {
       "shadow_warmth": number("阴影冷暖：只动暗部，越亮作用越小，阳光下的灰不变；正数暖，-1 到 1", -1...1),
       "shadow_tint": number("阴影色调：和阴影冷暖动同样的暗部，负数绿、正数洋红；阴影蓝里带紫时往负拨，-1 到 1", -1...1),
       "exposure": number("曝光 EV", -2...2), "contrast": number("对比度", 0.5...1.6), "saturation": number("饱和度", 0...1.8),
-      "black": number("黑点（关闭自动色阶时生效）", 0...0.4), "white": number("白点（关闭自动色阶时生效）", 0.6...1),
-      "midtone": number("中间调", 0.4...2),
       "highlights": number("高光（像 Lightroom）：亮的区域按周围的亮度整块压暗（负）或提亮（正），纹理保留，在剪切之前，往负能拉回白点以上的东西；0.45 以下不动，-1 到 1", -1...1),
       "shadows": number("阴影（像 Lightroom）：暗的区域按周围的亮度整块提亮（正）或压暗（负），纹理保留，黑不动，-1 到 1", -1...1),
       "whites": number("白色（像 Lightroom）：最亮的一端整体往下（负，拉回白点以上的）或往上（正，更多推到白），按像素自己最亮的通道，0.5 以下不动，颜色不变，-1 到 1", -1...1),
@@ -73,8 +71,6 @@ enum MCPTools {
       "dehaze": number("去朦胧（像 Lightroom）：去掉（正）或加上（负）一层白雾，-1 到 1", -1...1),
       "vibrance": number("自然饱和度（像 Lightroom）：只加不太鲜艳的颜色，肤色加得少，-1 到 1", -1...1),
       "auto_whites_blacks": ["type": "boolean", "description": "自动白色、黑色（像 Lightroom 按住 Shift 双击）：设白色、黑色，让这张最亮的 0.1% 正好到白、最暗的 0.1% 正好到黑；在其他参数之后算，要单张视图里算过的影调"],
-      "base_fine_ev": ["type": "array", "items": ["type": "number", "minimum": -0.5, "maximum": 0.5], "minItems": 3, "maxItems": 3,
-        "description": "片基逐通道微调 [R, G, B]，单位 EV，-0.5 到 0.5"],
     ]),
     Tool(name: "pick_film_base", description: "在指定位置取片基（只应点在未曝光的橙色片基上，例如画面边缘的片间）；会关闭自动白平衡以保留取样。", properties: point, required: ["x", "y"]),
     Tool(name: "auto_crop", description: "翻拍的照片自动裁切：按片框的四条边裁到画面以内，并按边拉直。默认只裁选中的这张；whole_roll 为 true 时整卷一起裁。和本卷其他张的画面大小对照，改正找错的边。可用 undo 撤销，原文件不改。", properties: [
@@ -123,7 +119,7 @@ enum MCPTools {
   static let instructions = """
     Epson Scan plus 是彩色负片扫描与转换程序。转换的顺序：负片的线性读数除以片基（橙色色罩），换算成各通道高于片基的密度；按胶片预设或全卷斜率估计的各通道斜率把三层的反差拉齐；再做白平衡、色阶和影调。
     - 先用 get_state 和 preview 看当前结果，用 sample 在可能是中性灰的地方取点：中性灰在正片里 R、G、B 应接近，在负片里三个通道高于片基的密度之比应接近通道斜率之比。
-    - 偏色先查片基（get_state 里的 film_base 和来源）；片基可疑时用 pick_film_base 点未曝光的片间，或 base_fine_ev 微调。再用 pick_neutral 或 warmth / tint。晴天的阴影由蓝天照亮，本来就比阳光下蓝；阳光下的灰已经是灰、只有暗部偏蓝时，用 shadow_warmth，不要动整体的 warmth；暗部蓝里带紫（常见于远处雾气、只有蓝层曝了光的阴影）时配合 shadow_tint 往负（绿），阴影里有中性的东西时用 pick_shadow_neutral 一次定两个。色调曲线（set_curve）在转换之后按通道查表，从黑到白都受影响，只在上面这些做不到时用；用之前看 get_state 的 curves，有人调过的曲线（比如把一条通道整体抬高）常常就是整张偏色的原因，用 set_curve 不给 points 把它恢复成直线。白平衡和阴影都对了、只剩某一段亮度偏色（比如高光发黄）时，在那段亮度本来是灰的地方用 pick_curve_point（mode neutral），只动那个亮度附近。
+    - 偏色先查片基（get_state 里的 film_base 和来源）；片基可疑时用 pick_film_base 点未曝光的片间，或 auto_film_base 回到自动。再用 pick_neutral 或 warmth / tint。晴天的阴影由蓝天照亮，本来就比阳光下蓝；阳光下的灰已经是灰、只有暗部偏蓝时，用 shadow_warmth，不要动整体的 warmth；暗部蓝里带紫（常见于远处雾气、只有蓝层曝了光的阴影）时配合 shadow_tint 往负（绿），阴影里有中性的东西时用 pick_shadow_neutral 一次定两个。色调曲线（set_curve）在转换之后按通道查表，从黑到白都受影响，只在上面这些做不到时用；用之前看 get_state 的 curves，有人调过的曲线（比如把一条通道整体抬高）常常就是整张偏色的原因，用 set_curve 不给 points 把它恢复成直线。白平衡和阴影都对了、只剩某一段亮度偏色（比如高光发黄）时，在那段亮度本来是灰的地方用 pick_curve_point（mode neutral），只动那个亮度附近。
     - 坐标是单张视图里画面的相对位置，0–1，左上为原点。
     - 翻拍的照片四周带着片基、漏光或片夹时，先用 auto_crop 裁到画面（whole_roll 整卷一起），再看和取样：自动白平衡和色阶只看裁切以内。
     - 每次调整都能在 App 里用 ⌘Z 撤销，也可以调用 undo。转换的工具不会扫描、删除或导出文件。
@@ -406,7 +402,6 @@ enum MCPTools {
       var base: [String: Any] = ["rgb": rgb(analysis.base),
         "source": s.base != nil ? "manual pick" : s.rollBasePicked == true ? "picked once and shared with the roll"
           : fromEdges ?? (s.rollBase != nil ? "measured between frames of the roll" : "estimated from the thinnest part of this frame")]
-      if let fine = s.baseFine { base["fine_ev"] = rgb(fine) }
       var state = summary
       state["frame"] = framePart
       state["preset"] = preset
@@ -432,7 +427,7 @@ enum MCPTools {
       var balance: [String: Any] = ["auto": s.autoWhiteBalance, "warmth": s.warmth, "tint": s.tint, "shadow_warmth": s.shadowWarmthAmount, "shadow_tint": s.shadowTintAmount]
       if let neutral = s.neutralSample { balance["neutral_sample"] = rgb(neutral) }
       state["white_balance"] = balance
-      state["levels"] = ["auto": s.autoLevels, "black": s.black, "white": s.white, "midtone": s.midtone]
+      state["levels"] = ["auto": s.autoLevels]
       state["curves"] = curvesState(s.curves)
       state["tone"] = ["exposure": s.exposure, "contrast": s.contrast, "saturation": s.saturation, "curves": s.curves != nil,
         "highlights": s.highlightsAmount, "shadows": s.shadowsAmount, "whites": s.whitesAmount, "blacks": s.blacksAmount,
@@ -581,7 +576,7 @@ enum MCPTools {
         return ["x": p.x, "y": p.y, "negative_linear": rgb(v), "density_above_base": rgb(d), "positive_srgb": rgb(out)]
       })
     case "adjust":
-      let known: Set = ["warmth", "tint", "shadow_warmth", "shadow_tint", "exposure", "contrast", "saturation", "black", "white", "midtone", "highlights", "shadows", "whites", "blacks", "texture", "clarity", "dehaze", "vibrance", "auto_white_balance", "auto_levels", "base_fine_ev", "angle", "shared_balance", "shared_levels", "auto_whites_blacks"]
+      let known: Set = ["warmth", "tint", "shadow_warmth", "shadow_tint", "exposure", "contrast", "saturation", "highlights", "shadows", "whites", "blacks", "texture", "clarity", "dehaze", "vibrance", "auto_white_balance", "auto_levels", "angle", "shared_balance", "shared_levels", "auto_whites_blacks"]
       let unknown = Set(arguments.keys).subtracting(known)
       guard unknown.isEmpty else { throw DeskError.message("不认识的参数：\(unknown.sorted().joined(separator: ", "))") }
       guard !arguments.isEmpty else { throw DeskError.message("没有要改的参数。") }
@@ -592,17 +587,12 @@ enum MCPTools {
       }
       let numbers: [(WritableKeyPath<Adjustments, Double>, String, ClosedRange<Double>)] = [
         (\.warmth, "warmth", -1...1), (\.tint, "tint", -1...1), (\.shadowWarmthAmount, "shadow_warmth", -1...1), (\.shadowTintAmount, "shadow_tint", -1...1), (\.exposure, "exposure", -2...2), (\.contrast, "contrast", 0.5...1.6),
-        (\.saturation, "saturation", 0...1.8), (\.black, "black", 0...0.4), (\.white, "white", 0.6...1), (\.midtone, "midtone", 0.4...2),
+        (\.saturation, "saturation", 0...1.8),
         (\.highlightsAmount, "highlights", -1...1), (\.shadowsAmount, "shadows", -1...1), (\.whitesAmount, "whites", -1...1), (\.blacksAmount, "blacks", -1...1),
         (\.textureAmount, "texture", -1...1), (\.clarityAmount, "clarity", -1...1), (\.dehazeAmount, "dehaze", -1...1), (\.vibranceAmount, "vibrance", -1...1),
       ]
       let values = try numbers.compactMap { n in try value(n.1, n.2).map { (n.0, $0) } }
       let angle = try value("angle", -45...45)
-      var fine: RGB?
-      if let raw = arguments["base_fine_ev"] {
-        guard let list = raw as? [NSNumber], list.count == 3 else { throw DeskError.message("base_fine_ev 是 [R, G, B] 三个数。") }
-        fine = RGB(list.map { min(0.5, max(-0.5, $0.doubleValue)) })
-      }
       _ = try selected(model)
       onMain {
         model.change("AI 调整", separate: true) { a in
@@ -611,12 +601,10 @@ enum MCPTools {
             // Turned on from off it starts over from the picture; already on, a neutral pick stays.
             if b && !a.autoWhiteBalance {
               a.neutralSample = nil
-              a.manualBalance = nil
             }
             a.autoWhiteBalance = b
           }
           if let b = arguments["auto_levels"] as? Bool { a.autoLevels = b }
-          if let fine { a.baseFine = fine }
           if let angle { a.angle = abs(angle) < 0.005 ? nil : angle }
         }
         if let b = arguments["shared_balance"] as? Bool { model.setSharedBalance(b) }
@@ -711,9 +699,7 @@ enum MCPTools {
       // Float readings: an 8-bit one is too coarse where a linear negative is dense.
       let source = try model.source(for: frame, maxDimension: 2000)
       let s = pipe.samples(source, maxDimension: 2000)
-      let fine = frame.adjustments.baseFine ?? .zero
-      let analysed = pipe.analyze(try model.source(for: frame, maxDimension: 600), settings: frame.adjustments, profile: profile).base
-      let base = RGB((0..<3).map { analysed.values[$0] * pow(2, fine.values[$0]) })
+      let base = pipe.analyze(try model.source(for: frame, maxDimension: 600), settings: frame.adjustments, profile: profile).base
       let added = pts.map { p -> NeutralPoint in
         let raw = ImageGeometry.raw(p, settings: frame.adjustments, aspect: Double(s.width) / Double(max(1, s.height)))
         let x = Int(raw.x * Double(s.width - 1)), y = Int(raw.y * Double(s.height - 1))
@@ -772,7 +758,7 @@ enum MCPTools {
       return [["type": "text", "text": said]]
     case "auto_film_base":
       _ = try selected(model)
-      onMain { model.change("自动片基") { $0.base = nil; $0.basePicked = nil; $0.baseFine = nil } }
+      onMain { model.change("自动片基") { $0.base = nil; $0.basePicked = nil } }
       return [["type": "text", "text": "已改用自动片基。"]]
     case "choose_preset":
       guard let wanted = (arguments["name"] as? String)?.lowercased(), !wanted.isEmpty else { throw DeskError.message("需要预设名称 name。") }

@@ -159,11 +159,11 @@ struct FlatProfile: Codable, Identifiable, Equatable {
 }
 
 /// A copy stand's light, measured from its red, green and blue lights each alone on a blank frame:
-/// how the camera's channels mix them, and how each falls off across the frame.
+/// how the camera's channels mix them. How the light falls off across the frame is the blank-frame
+/// flats' (`FlatProfile`), measured the same way under all three lights at once.
 struct LightCalibration: Codable, Equatable {
   var date: Date
   var crosstalk: Crosstalk
-  var flat: FlatField
 }
 
 /// How a camera's channels mix the red, green and blue lights of a copy stand: `m` row by row, a
@@ -366,6 +366,9 @@ struct Adjustments: Codable, Equatable {
     get { shadowTint ?? 0 }
     set { shadowTint = newValue == 0 ? nil : newValue }
   }
+  // 色阶's manual black point, white point and midtone, gone (2026-11-12): 白色/黑色, exposure,
+  // contrast and the curves do their work. Still written, at 0, 1 and 1, so projects saved now open
+  // in versions up to 0.22.2, which need them; nothing reads them.
   var black = 0.0
   var white = 1.0
   var midtone = 1.0
@@ -495,11 +498,8 @@ struct Adjustments: Codable, Equatable {
   var printsWithRoll: Bool { sharedBalance == true || sharedLevels == true }
   /// The roll's print, measured by the app across its frames; used while either is on.
   var rollPrint: RollPrint? = nil
-  var manualBalance: RGB? = nil
   var rotation = 0
   var flipHorizontal: Bool? = nil
-  // EV per channel; applied AFTER automatic estimation, never cancelled by it.
-  var baseFine: RGB? = nil
   /// The de-masking region: the part of the picture the base estimate, white balance, levels and
   /// highlight reach are read from (`ImagePipeline.analysisPart`), in the picture's own crop
   /// normalised from its top left, unturned. Nil follows the picture, less its outer 5%. Where the
@@ -700,13 +700,13 @@ extension Adjustments {
   /// `other`'s ③ 调色 settings in place of these, ② 去色罩's kept: the one list of what grading is.
   /// Every setting not named here is ②'s.
   mutating func takeGrading(from o: Adjustments) {
-    (autoWhiteBalance, manualBalance, neutralSample, neutralPicked) = (o.autoWhiteBalance, o.manualBalance, o.neutralSample, o.neutralPicked)
+    (autoWhiteBalance, neutralSample, neutralPicked) = (o.autoWhiteBalance, o.neutralSample, o.neutralPicked)
     (warmth, tint, shadowWarmth, shadowTint) = (o.warmth, o.tint, o.shadowWarmth, o.shadowTint)
     (sharedBalance, sharedLevels, rollPrint) = (o.sharedBalance, o.sharedLevels, o.rollPrint)
     (exposure, contrast, highlights, pressHighlights, shadows) = (o.exposure, o.contrast, o.highlights, o.pressHighlights, o.shadows)
     (whites, blacks) = (o.whites, o.blacks)
     (texture, clarity, dehaze, vibrance, mixer, grading) = (o.texture, o.clarity, o.dehaze, o.vibrance, o.mixer, o.grading)
-    (autoLevels, black, white, midtone) = (o.autoLevels, o.black, o.white, o.midtone)
+    autoLevels = o.autoLevels
     (saturation, colourNoise, softEnds) = (o.saturation, o.colourNoise, o.softEnds)
     (curves, sharpening) = (o.curves, o.sharpening)
   }
@@ -734,7 +734,7 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
   case saturation, softEnds, colourNoise, curves, sharpening, rollShared, presence, mixer, grading
   /// ③'s settings none of the others names: those a newer version adds before it is listed here.
   case otherGrading
-  case base, baseFine, reading, edges
+  case base, reading
   var id: String { rawValue }
   var name: String {
     switch self {
@@ -756,14 +756,12 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
     case .grading: return "色彩分级"
     case .otherGrading: return "其他调色"
     case .base: return "片基"
-    case .baseFine: return "片基微调"
     case .reading: return "负片 / 反转片、输入 Gamma"
-    case .edges: return "片边"
     }
   }
   var scope: SettingsScope {
     switch self {
-    case .base, .baseFine, .reading, .edges: return .demasking
+    case .base, .reading: return .demasking
     default: return .grading
     }
   }
@@ -775,14 +773,14 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
   func take(_ a: inout Adjustments, from o: Adjustments) {
     switch self {
     case .whiteBalance:
-      (a.autoWhiteBalance, a.manualBalance, a.neutralSample, a.neutralPicked) = (o.autoWhiteBalance, o.manualBalance, o.neutralSample, o.neutralPicked)
+      (a.autoWhiteBalance, a.neutralSample, a.neutralPicked) = (o.autoWhiteBalance, o.neutralSample, o.neutralPicked)
       (a.warmth, a.tint) = (o.warmth, o.tint)
     case .shadowColour: (a.shadowWarmth, a.shadowTint) = (o.shadowWarmth, o.shadowTint)
     case .exposure: a.exposure = o.exposure
     case .contrast: a.contrast = o.contrast
     case .highlightsShadows: (a.highlights, a.shadows) = (o.highlights, o.shadows)
     case .whitesBlacks: (a.whites, a.blacks, a.pressHighlights) = (o.whites, o.blacks, o.pressHighlights)
-    case .levels: (a.autoLevels, a.black, a.white, a.midtone) = (o.autoLevels, o.black, o.white, o.midtone)
+    case .levels: a.autoLevels = o.autoLevels
     case .saturation: a.saturation = o.saturation
     case .softEnds: a.softEnds = o.softEnds
     case .colourNoise: a.colourNoise = o.colourNoise
@@ -798,9 +796,7 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
       a.takeGrading(from: o)
       for g in Self.allCases where g.scope == .grading && g != .otherGrading { g.take(&a, from: kept) }
     case .base: (a.base, a.basePicked) = (o.base, o.basePicked)
-    case .baseFine: a.baseFine = o.baseFine
     case .reading: (a.inputGamma, a.inputIsNegative, a.reversal) = (o.inputGamma, o.inputIsNegative, o.reversal)
-    case .edges: a.filmEdges = o.filmEdges
     }
   }
   /// Whether `a` has this group otherwise than `plain` (a new frame's); curves that change nothing,
@@ -820,7 +816,7 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
     }
     switch self {
     case .whiteBalance:
-      let how = a.neutralSample != nil ? "中性灰取样" : a.manualBalance != nil ? "手动" : a.autoWhiteBalance ? "自动" : "不自动"
+      let how = a.neutralSample != nil ? "中性灰取样" : a.autoWhiteBalance ? "自动" : "不自动"
       return joined([how, a.warmth != 0 ? "冷暖 " + signed(a.warmth) : nil, a.tint != 0 ? "绿 / 洋红 " + signed(a.tint) : nil], or: how)
     case .shadowColour: return joined([a.shadowWarmth.map { "冷暖 " + signed($0) }, a.shadowTint.map { "色调 " + signed($0) }], or: "0")
     case .exposure: return signed(a.exposure) + " EV"
@@ -829,7 +825,7 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
     case .whitesBlacks:
       return joined([a.whites.map { "白色 " + signed($0) }, a.blacks.map { "黑色 " + signed($0) },
         a.pressHighlights.map { "压高光 " + String(format: "%.2f", $0) }], or: "0")
-    case .levels: return a.autoLevels ? "自动" : String(format: "黑 %.3f · 中 %.2f · 白 %.3f", a.black, a.midtone, a.white)
+    case .levels: return a.autoLevels ? "自动" : "不自动"
     case .saturation: return String(format: "%.2f", a.saturation)
     case .softEnds: return a.softEndsOn ? "开" : "关"
     case .colourNoise: return String(format: "%.2f", a.colourNoiseAmount)
@@ -843,9 +839,7 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
     case .grading: return a.grading.map { $0.isIdentity ? "未改" : "改过" } ?? "未改"
     case .otherGrading: return isSet(in: a) ? "改过" : "默认"
     case .base: return a.basePicked != nil ? "取样" : a.base != nil ? "定过" : "自动"
-    case .baseFine: return a.baseFine.map { "R \(signed($0.r)) · G \(signed($0.g)) · B \(signed($0.b)) EV" } ?? "0"
     case .reading: return (a.isSlide ? "反转片" : a.inputIsNegative ? "负片" : "正片") + String(format: " · Gamma %.2g", a.inputGamma)
-    case .edges: return (a.filmEdges ?? .auto).rawValue
     }
   }
 }

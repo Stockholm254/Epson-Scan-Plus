@@ -108,26 +108,10 @@ enum ExportNaming {
 }
 
 /// App-wide settings. The app keeps them in UserDefaults; without `defaults` (tests, the
-/// command-line exporter) they live only in memory and never touch the user's settings.
+/// harnesses) they live only in memory and never touch the user's settings.
 final class Preferences: ObservableObject {
   static let defaultLibraryURL = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask)[0]
     .appendingPathComponent("epscan")
-  /// Where versions before 0.4.9 kept their projects; left as it is, and still opened from.
-  static let legacyLibraryURL = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask)[0]
-    .appendingPathComponent("Film Desk")
-  /// The settings of versions before 0.4.9, kept under their old identifier.
-  static let legacyDomain = "local.filmdesk.mac"
-  /// Brings settings over from `legacy` once: presets, calibrations, the chosen library and the
-  /// rest. Anything already set here wins; window and panel state is left behind.
-  static func migrate(from legacy: String = legacyDomain, into defaults: UserDefaults) {
-    let done = "migratedFrom." + legacy
-    guard !defaults.bool(forKey: done) else { return }
-    for (key, value) in UserDefaults.standard.persistentDomain(forName: legacy) ?? [:]
-    where !key.hasPrefix("NS") && defaults.object(forKey: key) == nil {
-      defaults.set(value, forKey: key)
-    }
-    defaults.set(true, forKey: done)
-  }
   private let defaults: UserDefaults?
   /// Where new previews and imports create their project folders; nil is the default library.
   @Published var libraryPath: String? { didSet { defaults?.set(libraryPath, forKey: "libraryPath") } }
@@ -163,12 +147,11 @@ final class Preferences: ObservableObject {
   /// ② 去色罩 or ③ 调色, the step last worked in (`AppModel.ConvertStep`'s raw value): a roll opens there.
   var lastStep: String? { didSet { defaults?.set(lastStep, forKey: "lastStep") } }
   /// Whether the window has said once that grading moved to ③ and 去漏光 into ②.
-  var stepsIntroduced: Bool { didSet { defaults?.set(stepsIntroduced, forKey: "stepsIntroduced") } }
   @Published var sheet: ContactSheet.Layout {
     didSet { defaults?.set(try? JSONEncoder().encode(sheet), forKey: "contactSheet") }
   }
   /// Also export finished scans as positives into the project's Exports folder. On unless turned
-  /// off; an in-memory set (tests, the command-line exporter) never exports on its own.
+  /// off; an in-memory set (tests) never exports on its own.
   @Published var autoExport: Bool { didSet { defaults?.set(autoExport, forKey: "autoExport") } }
   /// The whole-holder preview. 600 dpi takes about 80 s on the V850, 150 dpi about 50 s;
   /// 300 dpi is barely quicker than 600, so it is not offered.
@@ -269,7 +252,6 @@ final class Preferences: ObservableObject {
     exportCopyright = defaults?.string(forKey: "exportCopyright") ?? ""
     lastExportFolder = defaults?.string(forKey: "lastExportFolder")
     lastStep = defaults?.string(forKey: "lastStep")
-    stepsIntroduced = defaults?.bool(forKey: "stepsIntroduced") ?? false
     let quality = defaults?.double(forKey: "jpegQuality") ?? 0
     jpegQuality = quality > 0 ? min(1, max(0.5, quality)) : 0.97
     sheet = defaults?.data(forKey: "contactSheet").flatMap { try? JSONDecoder().decode(ContactSheet.Layout.self, from: $0) }

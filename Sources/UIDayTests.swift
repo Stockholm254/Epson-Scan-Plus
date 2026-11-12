@@ -30,13 +30,13 @@ enum UIDayTests {
 
     // A section's ⟲: that section back as a new frame has it, the rest as it was.
     var a = Adjustments()
-    (a.warmth, a.shadowWarmth, a.exposure, a.black, a.autoLevels, a.saturation) = (0.3, 0.2, 0.5, 0.05, false, 1.3)
+    (a.warmth, a.shadowWarmth, a.exposure, a.autoLevels, a.saturation) = (0.3, 0.2, 0.5, false, 1.3)
     let balance = AppModel.reset(.balance, of: a, copyShot: false)
-    try check(balance.warmth == 0 && balance.shadowWarmth == nil && balance.exposure == 0.5 && balance.black == 0.05 && balance.saturation == 1.3,
+    try check(balance.warmth == 0 && balance.shadowWarmth == nil && balance.exposure == 0.5 && !balance.autoLevels && balance.saturation == 1.3,
       "白平衡's ⟲ sets back only white balance: exposure, levels and colour stay")
     let levels = AppModel.reset(.levels, of: a, copyShot: false), colour = AppModel.reset(.colour, of: a, copyShot: false)
-    try check(levels.autoLevels && levels.black == 0 && levels.warmth == 0.3 && colour.saturation == 1 && colour.exposure == 0.5,
-      "色阶's sets back the ends and auto levels, 色彩's the saturation, each leaving the others")
+    try check(levels.autoLevels && levels.warmth == 0.3 && colour.saturation == 1 && colour.exposure == 0.5,
+      "色阶's sets back auto levels, 色彩's the saturation, each leaving the others")
     var slide = Adjustments()
     slide.setReversal(true)
     slide.autoWhiteBalance = true
@@ -55,7 +55,7 @@ enum UIDayTests {
       RollEntry(folder: folder, project: folder.appendingPathComponent("Session.epscan"), title: "t", named: false, film: "Kodak Portra 160",
         date: Date(), source: .camera,
         frames: (0..<frames).map { RollEntry.Frame(id: UUID(), name: String(format: "%02d", $0 + 1), rect: NormalRect(x: 0, y: 0, width: 1, height: 1), file: nil) },
-        fullResolution: full, exported: 0, overview: nil, notes: "", profile: FilmProfile.builtins[0], legacy: false)
+        fullResolution: full, exported: 0, overview: nil, notes: "", profile: FilmProfile.builtins[0])
     }
     let copy = RollSleeve.details(roll(frames: 22, full: 22)), scanned = RollSleeve.details(roll(frames: 18, full: 3))
     try check(!copy.contains("全分辨率") && copy.contains("22 张"), "a roll whose every frame is full resolution does not say so: \(copy)")
@@ -67,7 +67,7 @@ enum UIDayTests {
     let film35 = RollSleeve.film(roll(frames: 3, full: 3), model: model), film120 = RollSleeve.film(square, model: model)
     var own = roll(frames: 1, full: 1)
     own = RollEntry(folder: own.folder, project: own.project, title: "t", named: false, film: "Grandpa's Mystery 64", date: own.date, source: .files,
-      frames: own.frames, fullResolution: 1, exported: 0, overview: nil, notes: "", profile: FilmProfile.builtins[0], legacy: false)
+      frames: own.frames, fullResolution: 1, exported: 0, overview: nil, notes: "", profile: FilmProfile.builtins[0])
     try check(film35?.look.maker == "Kodak" && film35?.look.name.contains("Portra") == true && film35?.gauge == .mm135 && film120?.gauge == .mm120,
       "a roll's label shows its film from the catalog: Portra 160 as its cassette, in a 6×6 roll as its 120 roll")
     try check(RollSleeve.film(own, model: model)?.look.named == true, "a film the catalog does not know shows its own name on a plain can")

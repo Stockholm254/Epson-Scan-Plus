@@ -101,7 +101,6 @@ final class ImagePipeline {
     let top = min(max(a.reach ?? a.high, a.high), a.high + reachStops * stop)
     // Where the kernel's levels, colour and contrast put it, in its warmest or coolest channel.
     var q = (top + s.exposure * stop - a.low) / max(a.high - a.low, 0.001)
-    q = (q - s.black) / max(s.white - s.black, 0.01)
     q += max(s.warmth * 0.12 + s.tint * 0.05, -s.tint * 0.10, -s.warmth * 0.12 + s.tint * 0.05)
     q = (q - 0.5) * s.contrast + 0.5
     // The highlights and whites move the top before the ends (`Kernels.graded`), all of each there.
@@ -511,7 +510,7 @@ final class ImagePipeline {
     // The roll's print: its balance, or its ends, in place of this frame's own, where they are left
     // to the app (no grey or balance of the frame's own, no calibrated neutral).
     if let print = settings.rollPrint {
-      if settings.sharedBalance == true, settings.autoWhiteBalance, settings.neutralSample == nil, settings.manualBalance == nil, profile.offsets == nil {
+      if settings.sharedBalance == true, settings.autoWhiteBalance, settings.neutralSample == nil, profile.offsets == nil {
         // The frame's ends move with the balance, so it is lit as before, only its colour the roll's.
         let shift = (0..<3).map { print.balance.values[$0] - a.balance.values[$0] }.reduce(0, +) / 3
         a.balance = print.balance
@@ -546,7 +545,7 @@ final class ImagePipeline {
     for f in each { for c in 0..<3 { pooled[c] += f.density[c] } }
     guard !pooled[0].isEmpty else { return nil }
     var s = first.settings
-    (s.neutralSample, s.manualBalance) = (nil, nil)
+    s.neutralSample = nil
     (s.autoWhiteBalance, s.autoLevels) = (true, true)
     let a = analyze(base: .one, density: pooled, settings: s, profile: profile)
     let reach = each.map { f -> Double in
@@ -597,7 +596,7 @@ final class ImagePipeline {
     let scale = min(1, Double(Self.reachDimension) / Double(max(image.width, image.height)))
     let ci = CIImage(cgImage: image, options: [.colorSpace: NSNull()]).transformed(by: CGAffineTransform(scaleX: scale, y: scale))
     var plain = s
-    (plain.exposure, plain.contrast, plain.warmth, plain.tint, plain.shadowWarmth, plain.shadowTint, plain.black, plain.white) = (0, 1, 0, 0, nil, nil, 0, 1)
+    (plain.exposure, plain.contrast, plain.warmth, plain.tint, plain.shadowWarmth, plain.shadowTint) = (0, 1, 0, 0, nil, nil)
     guard let tones = converted(.range, ci, plain, profile, a) else { return nil }
     // Each pixel's brightest channel, counted in `n` steps from `lo` to `lo + span`, past them in the end steps.
     let n = 2048, lo = -1.0, span = 4.0
@@ -706,8 +705,6 @@ final class ImagePipeline {
       let d = (0..<3).map { grey[$0] * gain.values[$0] }
       let mean = d.reduce(0, +) / 3
       balance = RGB(d.map { mean - $0 })
-    } else if let manual = settings.manualBalance {
-      balance = manual
     } else if let offsets = profile.offsets {
       // A calibrated preset knows where this film, on this scanner or copy stand, puts a neutral in
       // the light it was calibrated in, so that sets the balance, auto or not. The scene's darkest
@@ -725,7 +722,7 @@ final class ImagePipeline {
     }
     // Unexposed film comes out a neutral black (`unexposedFade`), unless the balance already starts
     // from the scene's black or a fitted toe takes the curve down to the base.
-    let fromBlack = settings.neutralSample == nil && settings.manualBalance == nil && profile.offsets == nil
+    let fromBlack = settings.neutralSample == nil && profile.offsets == nil
       && settings.autoWhiteBalance
     let fade = fromBlack || toe.values.contains { $0 > 0 } ? 0 : Self.unexposedFade
     func fadedIn(_ e: [Double]) -> Double { 1 - exp(-max(0, e.reduce(0, +) / 3) / fade) }
@@ -875,13 +872,11 @@ final class ImagePipeline {
   /// The `negative` kernels' arguments for `ci`.
   static func arguments(_ ci: CIImage, _ s: Adjustments, _ profile: FilmProfile, _ a: ToneAnalysis) -> [Any] {
     func v(_ c: RGB) -> CIVector { CIVector(x: c.r, y: c.g, z: c.b) }
-    let fine = s.baseFine ?? .zero
-    let effectiveBase = RGB(
-      (0..<3).map { max(0.0001, a.base.values[$0]) * pow(2, fine.values[$0]) })
+    let effectiveBase = RGB(a.base.values.map { max(0.0001, $0) })
     return [
       ci, v(effectiveBase), v(Self.slopes(s, profile).slopes), v(Self.toe(s, profile)), v(a.gain), v(a.balance),
-      CIVector(x: a.low, y: a.high, z: s.black, w: s.white),
-      CIVector(x: s.exposure, y: s.midtone, z: s.contrast, w: s.saturation),
+      CIVector(x: a.low, y: a.high, z: 0, w: 1),
+      CIVector(x: s.exposure, y: 1, z: s.contrast, w: s.saturation),
       CIVector(x: s.warmth, y: s.tint, z: s.shadowWarmthAmount, w: s.inputGamma),
       s.softEndsOn && s.inputIsNegative
         ? CIVector(x: Self.softToe, y: Self.softShoulder, z: Self.shadowColour, w: Self.highlightColour) : CIVector(x: 0, y: 2, z: 0, w: 0),
@@ -911,10 +906,9 @@ final class ImagePipeline {
     var q = [Double](repeating: 0, count: 3)
     var faded = 1.0
     if s.inputIsNegative {
-      let fine = s.baseFine ?? .zero
       let (slopes, toe) = (Self.slopes(s, profile).slopes, Self.toe(s, profile))
       let e = (0..<3).map { c -> Double in
-        let base = max(0.0001, a.base.values[c]) * pow(2, fine.values[c])
+        let base = max(0.0001, a.base.values[c])
         let u = log(max(base, 0.000001) / max(reading.values[c], 0.000001)) * (s.inputGamma / 2.302585093) / slopes.values[c]
         return FilmToe.exposure(u, width: toe.values[c])
       }
@@ -927,7 +921,6 @@ final class ImagePipeline {
         return (t < 0 ? -1 : 1) * pow(abs(t), encode)
       }
     }
-    q = q.map { ($0 - s.black) / max(s.white - s.black, 0.01) }
     func smooth(_ from: Double, _ to: Double, _ x: Double) -> Double { let t = clamp((x - from) / (to - from)); return t * t * (3 - 2 * t) }
     let l = 0.2126 * q[0] + 0.7152 * q[1] + 0.0722 * q[2]
     let dark = smooth(0.03, 0.2, l) * (1 - smooth(0.2, 0.55, l))
@@ -970,8 +963,6 @@ final class ImagePipeline {
     if let grey {
       let mean = grey.reduce(0, +) / 3
       gain = grey.map { mean / $0 }
-    } else if let manual = s.manualBalance {
-      gain = manual.values.map { pow(10, $0) }
     } else if s.autoWhiteBalance, !light[0].isEmpty {
       for c in 0..<3 {
         let q = quantiles(light[c], [0.005, 0.995]), span = max(1e-4, q[1] - q[0])
@@ -1038,7 +1029,7 @@ final class ImagePipeline {
     flat[4] = CIVector(x: 1, y: 1, z: 1)
     flat[5] = CIVector(x: 0, y: 0, z: 0)
     flat[6] = CIVector(x: 0, y: 1, z: 2, w: 3)
-    flat[7] = CIVector(x: 0, y: s.midtone, z: 1, w: 1)
+    flat[7] = CIVector(x: 0, y: 1, z: 1, w: 1)
     flat[8] = CIVector(x: 0, y: 0, z: 0, w: 1)
     flat[10] = 0.0
     flat[11] = CIVector(x: a.fade, y: a.fadeAtGrey, z: s.shadowTintAmount, w: 0)
@@ -1058,7 +1049,7 @@ final class ImagePipeline {
     let black = blackSteps.compactMap { $0 }.max().map { lo + Double($0) * rampStep }
     let white = whiteSteps.compactMap { $0 }.min().map { lo + Double($0) * rampStep }
     let stop = s.inputIsNegative
-      ? log10(2.0) * s.contrast / (max(a.high - a.low, 0.001) * max(s.white - s.black, 0.01)) : nil
+      ? log10(2.0) * s.contrast / max(a.high - a.low, 0.001) : nil
     // Shown from a little below the darkest 0.1% (the holder's black left to the first step) to a
     // little past the brightest 0.05%, the screen's ends and two stops past white.
     let from = max(-0.35, min(-0.1, (black ?? 0) - 0.05, quantile(bottom, 0.001) - 0.05))
@@ -1073,8 +1064,7 @@ final class ImagePipeline {
     return ToneRange(
       counts: counts, domain: from...to, black: black, white: white, stop: stop,
       pastWhite: above(top, 1 + width / 2), atWhite: white.map { above(top, $0) } ?? 0,
-      atBlack: black.map { below(bottom, $0) } ?? 0, brightest: quantile(top, 0.999), darkest: quantile(bottom, 0.001),
-      fine: channels, fineDomain: lo...(lo + span))
+      atBlack: black.map { below(bottom, $0) } ?? 0, brightest: quantile(top, 0.999), darkest: quantile(bottom, 0.001))
   }
   /// The shares of `image`, a picture as shown, with a channel at white and with one at black: what
   /// comes after the ends included, as the colour smoothing, which can take a channel of a bright

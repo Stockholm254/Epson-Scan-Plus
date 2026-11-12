@@ -16,10 +16,10 @@ enum StepTests {
     model.undoManager = edits
     model.frames = (1...3).map { FilmFrame(name: "0\($0)", rect: .full, format: "135") }
     let ids = model.frames.map(\.id)
-    // A frame with settings of both steps: its base fine-tuned and its region drawn (②), its
+    // A frame with settings of both steps: its base picked and its region drawn (②), its
     // exposure and curves (③).
     func both(_ i: Int) {
-      model.frames[i].adjustments.baseFine = RGB(r: 0.1, g: 0, b: -0.1)
+      model.frames[i].adjustments.base = RGB(r: 0.5, g: 0.3, b: 0.2)
       model.frames[i].adjustments.inputGamma = 1.8
       model.frames[i].adjustments.exposure = 0.5
       model.frames[i].adjustments.saturation = 1.3
@@ -32,10 +32,10 @@ enum StepTests {
     // The split itself.
     var a = model.frames[0].adjustments, b = Adjustments()
     b.takeGrading(from: a)
-    try check(b.exposure == 0.5 && b.saturation == 1.3 && b.baseFine == nil && b.inputGamma == Adjustments().inputGamma,
+    try check(b.exposure == 0.5 && b.saturation == 1.3 && b.base == nil && b.inputGamma == Adjustments().inputGamma,
       "③'s settings are the grading: exposure, colour, curves; not the base or how the film is read")
     a.takeDemasking(from: Adjustments())
-    try check(a.exposure == 0.5 && a.baseFine == nil && a.inputGamma == Adjustments().inputGamma, "②'s are the rest")
+    try check(a.exposure == 0.5 && a.base == nil && a.inputGamma == Adjustments().inputGamma, "②'s are the rest")
 
     // ② shows the frame de-masked only: its base and how the film is read, none of ③'s grading
     // or a light-leak repair; ③ as it is set.
@@ -46,7 +46,7 @@ enum StepTests {
     let inGrading = model.asShown(model.frames[0]).adjustments
     model.frames[0].adjustments.leakFix = nil
     try check(model.showsDemasked == false && inDemasking.exposure == 0 && inDemasking.saturation == Adjustments().saturation
-      && inDemasking.curves == nil && inDemasking.leakFix == nil && inDemasking.baseFine == RGB(r: 0.1, g: 0, b: -0.1)
+      && inDemasking.curves == nil && inDemasking.leakFix == nil && inDemasking.base == RGB(r: 0.5, g: 0.3, b: 0.2)
       && inDemasking.inputGamma == 1.8 && inDemasking.autoWhiteBalance == Adjustments().autoWhiteBalance
       && inGrading.exposure == 0.5 && inGrading.saturation == 1.3 && inGrading.leakFix != nil,
       "② shows the frame de-masked only (its base and reading, no grading, no repair), ③ as it is graded")
@@ -56,26 +56,26 @@ enum StepTests {
     try check(model.stepScope == .grading, "in ③ the keys act on the grading")
     model.resetAdjustments(model.stepScope)
     try check(model.frames[0].adjustments.exposure == 0 && model.frames[0].adjustments.curves == nil
-      && model.frames[0].adjustments.baseFine == RGB(r: 0.1, g: 0, b: -0.1) && model.frames[0].adjustments.inputGamma == 1.8,
+      && model.frames[0].adjustments.base == RGB(r: 0.5, g: 0.3, b: 0.2) && model.frames[0].adjustments.inputGamma == 1.8,
       "③'s 重置 sets the grading back and leaves the base and how the film is read")
     edits.undo()
     model.convertStep = .demask
     try check(model.stepScope == .demasking, "in ② on the de-masking")
     model.resetAdjustments(model.stepScope)
-    try check(model.frames[0].adjustments.baseFine == nil && model.frames[0].adjustments.exposure == 0.5 && model.frames[0].adjustments.saturation == 1.3,
+    try check(model.frames[0].adjustments.base == nil && model.frames[0].adjustments.exposure == 0.5 && model.frames[0].adjustments.saturation == 1.3,
       "②'s 重置 sets the base back and leaves the grading")
     edits.undo()
 
     // 同步 and 粘贴 the same way.
     model.convertStep = .grade
     model.syncSettings()
-    try check(model.frames[1].adjustments.exposure == 0.5 && model.frames[1].adjustments.baseFine == nil && model.frames[2].adjustments.inputGamma == Adjustments().inputGamma,
+    try check(model.frames[1].adjustments.exposure == 0.5 && model.frames[1].adjustments.base == nil && model.frames[2].adjustments.inputGamma == Adjustments().inputGamma,
       "③'s 同步 gives the roll the grading, not the base")
     edits.undo()
     model.convertStep = .demask
     model.frames[0].adjustments.flipHorizontal = true
     model.syncSettings()
-    try check(model.frames[1].adjustments.baseFine == RGB(r: 0.1, g: 0, b: -0.1) && model.frames[1].adjustments.exposure == 0
+    try check(model.frames[1].adjustments.base == RGB(r: 0.5, g: 0.3, b: 0.2) && model.frames[1].adjustments.exposure == 0
       && model.frames[1].adjustments.flipHorizontal != true,
       "②'s 同步 gives the roll the base, not the grading, nor how the frame shown faces")
     model.frames[0].adjustments.flipHorizontal = nil
@@ -84,10 +84,10 @@ enum StepTests {
     model.selectedID = ids[2]
     model.convertStep = .grade
     model.pasteSettings(model.stepScope)
-    try check(model.frames[2].adjustments.saturation == 1.3 && model.frames[2].adjustments.baseFine == nil, "③'s 粘贴 pastes the grading")
+    try check(model.frames[2].adjustments.saturation == 1.3 && model.frames[2].adjustments.base == nil, "③'s 粘贴 pastes the grading")
     edits.undo()
     model.pasteSettings()
-    try check(model.frames[2].adjustments.saturation == 1.3 && model.frames[2].adjustments.baseFine == RGB(r: 0.1, g: 0, b: -0.1),
+    try check(model.frames[2].adjustments.saturation == 1.3 && model.frames[2].adjustments.base == RGB(r: 0.5, g: 0.3, b: 0.2),
       "and called from elsewhere (an assistant's tools, the tests) it pastes everything, as before")
 
     // The crop kept to a ratio: the largest box of it inside, about the middle, in its own orientation.
@@ -99,18 +99,18 @@ enum StepTests {
       "a crop kept to a ratio is the largest box of it inside, about the middle: 1:1 in a 3:2 picture, 5:4 on a square one")
     // 选择性粘贴: the groups together are the step's settings, and only those ticked are pasted.
     var full = Adjustments()
-    (full.autoWhiteBalance, full.manualBalance, full.neutralSample) = (false, RGB(r: 1.1, g: 1, b: 0.9), RGB(r: 0.3, g: 0.4, b: 0.5))
+    (full.autoWhiteBalance, full.neutralSample) = (false, RGB(r: 0.3, g: 0.4, b: 0.5))
     (full.neutralPicked, full.warmth, full.tint) = (NormalRect(x: 0.4, y: 0.4, width: 0.01, height: 0.01), 0.1, -0.1)
     (full.shadowWarmth, full.shadowTint, full.sharedBalance, full.sharedLevels) = (0.2, -0.2, true, true)
     full.rollPrint = RollPrint(balance: RGB(r: 1, g: 1, b: 1), gain: RGB(r: 1, g: 1, b: 1), low: 0.1, high: 2)
     (full.exposure, full.contrast, full.highlights, full.pressHighlights, full.shadows) = (0.5, 1.2, -0.3, 0.2, 0.3)
-    (full.whites, full.blacks, full.autoLevels, full.black, full.white, full.midtone) = (-0.1, 0.1, false, 0.02, 0.95, 1.1)
+    (full.whites, full.blacks, full.autoLevels) = (-0.1, 0.1, false)
     (full.saturation, full.colourNoise, full.softEnds, full.curves, full.sharpening) = (1.3, 0.5, true, ToneCurves(), 0.4)
     full.curves?.rgb = ToneCurve(points: [CurvePoint(x: 0, y: 0), CurvePoint(x: 0.5, y: 0.6), CurvePoint(x: 1, y: 1)])
     (full.texture, full.clarity, full.dehaze, full.vibrance) = (0.2, 0.3, 0.1, 0.4)
     full[mixer: 5, kind: 1] = -0.5
     full.grading = ColourGrading(shadowHue: 220, shadowAmount: 0.3)
-    (full.baseFine, full.base, full.inputGamma, full.filmEdges) = (RGB(r: 0.1, g: 0, b: 0), RGB(r: 0.5, g: 0.3, b: 0.2), 1.0, .rebate)
+    (full.base, full.inputGamma, full.filmEdges) = (RGB(r: 0.5, g: 0.3, b: 0.2), 1.0, .rebate)
     var grouped = Adjustments(), whole = Adjustments(), rest = Adjustments()
     for g in SettingsGroup.of(.grading) { g.take(&grouped, from: full) }
     whole.takeGrading(from: full)
@@ -125,19 +125,19 @@ enum StepTests {
     model.convertStep = .grade
     model.copySettings()
     model.selectedID = ids[1]
-    model.pasteSettings(model.stepScope, only: [.exposure, .curves, .baseFine])
+    model.pasteSettings(model.stepScope, only: [.exposure, .curves, .base])
     let picked = model.frames[1].adjustments
-    try check(picked.exposure == 0.5 && picked.curves != nil && picked.saturation == 0.8 && picked.baseFine == nil
+    try check(picked.exposure == 0.5 && picked.curves != nil && picked.saturation == 0.8 && picked.base == nil
       && model.status.contains("曝光、曲线"),
       "选择性粘贴 in ③ pastes the groups ticked of the grading alone, the frame's other settings kept")
     edits.undo()
     model.convertStep = .demask
-    model.pasteSettings(model.stepScope, only: [.baseFine, .exposure])
-    try check(model.frames[1].adjustments.baseFine == RGB(r: 0.1, g: 0, b: -0.1) && model.frames[1].adjustments.exposure == 0
+    model.pasteSettings(model.stepScope, only: [.base, .exposure])
+    try check(model.frames[1].adjustments.base == RGB(r: 0.5, g: 0.3, b: 0.2) && model.frames[1].adjustments.exposure == 0
       && model.frames[1].adjustments.inputGamma == Adjustments().inputGamma && model.frames[1].adjustments.saturation == 0.8,
       "and in ② the ticked of the de-masking: the base fine-tuning, not how the film is read, nor ③'s exposure")
     edits.undo()
-    try check(model.frames[1].adjustments.baseFine == nil && model.frames[1].adjustments.saturation == 0.8, "one edit, undone with ⌘Z")
+    try check(model.frames[1].adjustments.base == nil && model.frames[1].adjustments.saturation == 0.8, "one edit, undone with ⌘Z")
     model.pasteChosen = [.exposure, .curves]
     try check(model.preferences.pasteLeftOut.contains("whiteBalance") && !model.preferences.pasteLeftOut.contains("exposure")
       && model.pasteChosen.contains(.exposure) && !model.pasteChosen.contains(.saturation) && !model.pasteGroups(.grading).contains(.otherGrading),
@@ -210,7 +210,7 @@ enum StepTests {
     model.frames[2].adjustments = Adjustments()
     model.pastePrevious(model.stepScope)
     try check(model.previousFrame?.id == ids[0] && model.frames[2].adjustments.exposure == 0.5 && model.frames[2].adjustments.saturation == 1.3
-      && model.frames[2].adjustments.baseFine == nil && model.status.contains("上一张（第 01 张）"),
+      && model.frames[2].adjustments.base == nil && model.status.contains("上一张（第 01 张）"),
       "粘贴上一张 gives the frame shown the grading of the frame shown before it, not its base")
     edits.undo()
 

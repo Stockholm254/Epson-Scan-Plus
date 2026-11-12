@@ -14,7 +14,7 @@ enum Kernels {
   /// it up, clipped to 0–1. The saturation comes before the ends, as a print's colour is in its
   /// dyes before the paper's curve: a bright colour it takes past white rolls off into the shoulder
   /// with every channel graded, a bright blue sky keeping its gradation, instead of a channel
-  /// being cut. In between the ends, with the midtone at 1 and shadows and highlights at 0, it is
+  /// being cut. In between the ends, with shadows and highlights at 0, it is
   /// the same either way. `lit` is the frame's local lightness (`ImagePipeline.lightBase`): with
   /// fade.w the shoulder takes the pixel's lightness less its fine detail, the detail added back
   /// after it (`ended`); without, it is not read.
@@ -259,6 +259,8 @@ enum Kernels {
     static float3 toned(float4 p, bool first, float3 fa, float3 fd, NEGATIVE_ARGS) {
       float faded;
       float3 q = printed(straight(p, fa, fd, faded, NEGATIVE_PASS), NEGATIVE_PASS);
+      // levels.z to levels.w taken to 0–1: 0 and 1 (the manual black and white points are gone), but
+      // for `ImagePipeline.toneRange`'s ramp, passed in 2 higher, as a positive is, and levelled from 2.
       q = (q - float3(levels.z)) / max(levels.w - levels.z, 0.01);
       // Shadow warmth (color.z): red up and blue down by up to 0.2 in the dark tones, all of it at a
       // lightness of 0.2 and none over 0.55, so the sunlit greys keep their balance; none at black
@@ -324,7 +326,7 @@ enum Kernels {
       float far = shoulder.w > 0.0 ? shoulder.x + shoulder.y : 1.1;
       return mix(each, kept, ends.w * (1.0 - smoothstep(far, far + 0.3, m)));
     }
-    // The ends, the clip and the midtone. `detail` is how far the pixel's
+    // The ends and the clip. `detail` is how far the pixel's
     // brightest channel lies above or below its surroundings' (`graded`): the shoulder takes the
     // pixel without it and it goes back on after, so a white sign or a lit metal keeps its texture
     // and shading at full contrast while the light around them still rolls off towards white.
@@ -347,8 +349,7 @@ enum Kernels {
         if (detail > 0.0) { kept = mix(rolledOff(q, ends, shoulder, local), kept, added / detail); }
         q = kept;
       }
-      q = clamp(q, float3(0.0), float3(1.0));
-      return pow(q, float3(1.0 / max(tone.y, 0.1)));
+      return clamp(q, float3(0.0), float3(1.0));
     }
     // The tones, and with `first` the saturation ahead of the ends. With fade.w, the pixel's fine
     // detail for the shoulder (`ended`): its brightest channel, saturated as `lit` was measured,

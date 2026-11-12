@@ -20,7 +20,7 @@ enum Shortcuts {
       Key(keys: "⇧⌘L", does: "库"),
       Key(keys: "⌥⌘1 – 3", does: "① 采集、② 去色罩、③ 调色"),
       Key(keys: "⌘N", does: "新建工程"),
-      Key(keys: "⌘O", does: "导入图像（③ 里导入正片）"),
+      Key(keys: "⌘O", does: "导入图像（去漏光页里导入正片）"),
       Key(keys: "⇧⌘O", does: "打开工程"),
       Key(keys: "⌘,", does: "扫描仪和相机的设置"),
     ]),

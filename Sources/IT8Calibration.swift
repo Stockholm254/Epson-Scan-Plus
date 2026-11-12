@@ -113,10 +113,6 @@ struct ScannerCalibration: Codable, Equatable {
   /// Largest grey-scale error in density, without and with the stray light taken out.
   var grayErrorBefore: Double
   var grayError: Double
-  /// Corrected readings (0–1 of clear film) to XYZ, row by row.
-  var matrix: [Double]
-  var meanDeltaE: Double
-  var maxDeltaE: Double
   /// What to subtract from raw readings.
   var offset: RGB { RGB((0..<3).map { white.values[$0] * flare.values[$0] }) }
 
@@ -144,52 +140,9 @@ struct ScannerCalibration: Codable, Equatable {
       before = max(before, fit(0).error)
       after = max(after, best.error)
     }
-    // A matrix from corrected readings to XYZ over every patch, by least squares row by row.
-    let ids = IT8Layout.grid + IT8Layout.grays
-    let rgb = ids.compactMap { id in readings[id].map { v in (id, (0..<3).map { v.values[$0] / white[$0] - flare[$0] }) } }
-    guard rgb.count == ids.count else { throw DeskError.message("有色块没有读到，请重新点选 6 个点。") }
-    var ata = [[Double]](repeating: [0, 0, 0], count: 3)
-    for (_, v) in rgb { for i in 0..<3 { for j in 0..<3 { ata[i][j] += v[i] * v[j] } } }
-    guard let inverse = invert(ata) else { throw DeskError.message("色块读数无法拟合：请确认扫描的是 IT8 色卡本身。") }
-    var matrix = [Double]()
-    for row in 0..<3 {
-      var aty = [0.0, 0.0, 0.0]
-      for (id, v) in rgb {
-        let p = reference.patches[id]!, target = [p.x, p.y, p.z][row] / 100
-        for i in 0..<3 { aty[i] += v[i] * target }
-      }
-      for j in 0..<3 { matrix.append(inverse[j][0] * aty[0] + inverse[j][1] * aty[1] + inverse[j][2] * aty[2]) }
-    }
-    var errors = [Double]()
-    for (id, v) in rgb {
-      let p = reference.patches[id]!
-      var xyz = [0.0, 0.0, 0.0]
-      for r in 0..<3 { xyz[r] = (matrix[r * 3] * v[0] + matrix[r * 3 + 1] * v[1] + matrix[r * 3 + 2] * v[2]) * 100 }
-      errors.append(deltaE(lab(xyz[0], xyz[1], xyz[2]), lab(p.x, p.y, p.z)))
-    }
     return ScannerCalibration(
       reference: reference.name + (reference.batch.isEmpty ? "" : " · " + reference.batch), created: created,
-      white: RGB(white), flare: RGB(flare), grayErrorBefore: before, grayError: after, matrix: matrix,
-      meanDeltaE: errors.reduce(0, +) / Double(errors.count), maxDeltaE: errors.max()!)
-  }
-  private static func invert(_ m: [[Double]]) -> [[Double]]? {
-    let a = m[0][0], b = m[0][1], c = m[0][2], d = m[1][0], e = m[1][1], f = m[1][2], g = m[2][0], h = m[2][1], i = m[2][2]
-    let det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
-    guard abs(det) > 1e-12 else { return nil }
-    return [
-      [(e * i - f * h) / det, (c * h - b * i) / det, (b * f - c * e) / det],
-      [(f * g - d * i) / det, (a * i - c * g) / det, (c * d - a * f) / det],
-      [(d * h - e * g) / det, (b * g - a * h) / det, (a * e - b * d) / det],
-    ]
-  }
-  /// CIE L*a*b* under D50.
-  static func lab(_ x: Double, _ y: Double, _ z: Double) -> (Double, Double, Double) {
-    func f(_ t: Double) -> Double { t > 216.0 / 24389 ? cbrt(t) : (24389.0 / 27 * t + 16) / 116 }
-    let fx = f(x / 96.42), fy = f(y / 100), fz = f(z / 82.49)
-    return (116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz))
-  }
-  static func deltaE(_ p: (Double, Double, Double), _ q: (Double, Double, Double)) -> Double {
-    ((p.0 - q.0) * (p.0 - q.0) + (p.1 - q.1) * (p.1 - q.1) + (p.2 - q.2) * (p.2 - q.2)).squareRoot()
+      white: RGB(white), flare: RGB(flare), grayErrorBefore: before, grayError: after)
   }
 }
 

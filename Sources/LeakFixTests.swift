@@ -149,7 +149,6 @@ enum LeakFixTests {
     // ③'s white balance after it: the repair lifts the same, it lies before the balance.
     var warmer = lifted, warmerPlain = unlifted
     (warmer.warmth, warmerPlain.warmth) = (0.4, 0.4)
-    (warmer.manualBalance, warmerPlain.manualBalance) = (RGB(r: 0.05, g: 0, b: -0.04), RGB(r: 0.05, g: 0, b: -0.04))
     let warmOut = try rendered(flat, warmer), warmRef = pixels(try rendered(flat, warmerPlain)), warmGot = pixels(warmOut)
     var warmLift = 0.0
     for y in (qh / 8)..<(qh * 7 / 8) { for x in (qw / 8)..<(qw * 7 / 8) {
@@ -203,6 +202,14 @@ enum LeakFixTests {
     settle()
     try check(m.page == .leak && lab.hasBase && lab.job?.origin?.neutral == true && lab.whyNotIntoGrading == "还没有去漏光",
       "a frame opened in 去漏光 is the picture as ② leaves it, and waits for a repair before it can go into ③")
+    // Its turn and crop are ②'s: turning or cutting it here, by the assistant too, is refused.
+    let (turnedBefore, cropBefore) = (lab.params.rotation, lab.params.crop)
+    lab.rotate(by: 90)
+    lab.setCrop(LeakCrop(x: 0.1, y: 0.1, w: 0.8, h: 0.6))
+    let refusedTurn = MCPTools.call("leak_rotate", ["quarter_turns": 1], model: m)
+    try check(lab.params.rotation == turnedBefore && lab.params.crop == cropBefore && refusedTurn.isError
+      && lab.whyNotIntoGrading == "还没有去漏光",
+      "a frame of the roll is not turned or cropped on the 去漏光 page, nor by the assistant: that is ②'s, and it can still go into ③")
     lab.addRegion(x: 0.32, y: 0.4, rx: 0.14, ry: 0.17)
     lab.setReference(LeakPoint(x: 0.8, y: 0.75))
     lab.wait()

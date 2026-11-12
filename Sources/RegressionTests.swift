@@ -165,15 +165,6 @@ enum RegressionTests {
       try check(
         p.max()! - p.min()! < 0.035, "WB neutral ramp has no shadow/highlight cyan cast at \(x)")
     }
-    let before = corrected.pixel(256, 32)
-    settings.baseFine = RGB(r: 0.2, g: 0, b: 0)
-    let fine = pipe.raster(
-      try pipe.preview(neutral, settings: settings, profile: stretch), maxDimension: 512
-    ).pixel(256, 32)
-    try check(
-      fine.r > before.r + 0.06 && abs(fine.g - before.g) < 0.01,
-      "manual film-base red trim survives automatic WB/levels")
-    settings.baseFine = nil
     settings.autoWhiteBalance = false
     settings.neutralSample = pipe.raster(neutral, maxDimension: 512).pixel(256, 32)
     let picked = pipe.raster(
@@ -369,7 +360,7 @@ enum RegressionTests {
       DeskProject.self, from: JSONEncoder().encode(project))
     try check(
       compatibility.frames[0].scanRect == nil
-        && compatibility.frames[0].adjustments.baseFine == nil,
+        && compatibility.frames[0].adjustments.base == nil,
       "new optional fields accept existing projects")
 
     // Feed a saved/synthetic overview into the same completion path as a scanner.
@@ -426,35 +417,11 @@ enum RegressionTests {
       previewModel.selectedID == cropID && previewModel.selected!.rect != cropBefore,
       "crop mode arrows adjust the crop without switching frames")
 
-    // Tightening an old project's bounds must not reset its edits or scan mapping.
     previewModel.useTool(.select)
     let settleDeadline = Date().addingTimeInterval(5)
     while previewModel.rendering && Date() < settleDeadline {
       RunLoop.current.run(until: Date().addingTimeInterval(0.01))
     }
-    previewModel.frames[0].rect = previewModel.frames[0].rect.expanded(by: 0.04)
-    previewModel.frames[0].adjustments.warmth = 0.31
-    previewModel.frames[0].scanPath = overviewURL.path
-    let oldFrame = previewModel.frames[0]
-    previewModel.tightenExistingBorders()
-    let tightenDeadline = Date().addingTimeInterval(10)
-    while previewModel.rendering && Date() < tightenDeadline {
-      RunLoop.current.run(until: Date().addingTimeInterval(0.01))
-    }
-    let tightened = previewModel.frames[0]
-    // The roll base and slopes are measured by the app from the frames, not edits; new bounds may
-    // re-measure them.
-    func edits(_ a: Adjustments) -> Adjustments {
-      var a = a
-      a.rollBase = nil
-      a.rollSlopes = nil
-      return a
-    }
-    try check(
-      tightened.rect != oldFrame.rect && oldFrame.rect.contains(tightened.rect)
-        && edits(tightened.adjustments) == edits(oldFrame.adjustments) && tightened.scanPath == oldFrame.scanPath
-        && tightened.captureRect == oldFrame.rect && tightened.initialRect == oldFrame.rect,
-      "tighten existing borders preserves settings, original scan footprint and restore range")
     let selectionBefore = previewModel.selectedID
     let framesBefore = previewModel.frames
     previewModel.zoom = 2.5

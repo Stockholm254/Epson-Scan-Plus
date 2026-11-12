@@ -40,9 +40,8 @@ enum AutoAdjustTests {
     // What it takes back and what it keeps.
     var edited = plain
     (edited.exposure, edited.warmth, edited.tint, edited.saturation, edited.contrast) = (0.4, 0.3, -0.1, 1.3, 1.1)
-    (edited.shadowWarmth, edited.whites, edited.midtone, edited.black) = (0.2, -0.5, 1.1, 0.02)
+    (edited.shadowWarmth, edited.whites) = (0.2, -0.5)
     edited.shadowTint = -0.3
-    edited.manualBalance = RGB(r: 0.01, g: 0, b: -0.01)
     edited.autoLevels = false
     edited.neutralSample = RGB(r: 0.4, g: 0.3, b: 0.2)
     edited.curves = ToneCurves()
@@ -52,9 +51,9 @@ enum AutoAdjustTests {
     edited.sharedBalance = true
     let cleared = AutoAdjust.cleared(edited)
     try check(
-      cleared.exposure == 0 && cleared.warmth == 0 && cleared.tint == 0 && cleared.shadowWarmth == nil && cleared.shadowTint == nil && cleared.midtone == 1
-        && cleared.black == 0 && cleared.manualBalance == nil && cleared.autoLevels && cleared.autoWhiteBalance,
-      "自动调整 sets the white balance and levels automatic again: warmth, tint, a balance set by hand, the shadow tint, the ends and the midtone, with exposure and shadow warmth read anew")
+      cleared.exposure == 0 && cleared.warmth == 0 && cleared.tint == 0 && cleared.shadowWarmth == nil && cleared.shadowTint == nil
+        && cleared.autoLevels && cleared.autoWhiteBalance,
+      "自动调整 sets the white balance and levels automatic again: warmth, tint and the shadow tint, with exposure and shadow warmth read anew")
     try check(
       cleared.saturation == 1.3 && cleared.contrast == 1.1 && cleared.whites == -0.5
         && cleared.neutralSample == edited.neutralSample && cleared.base == base && cleared.curves == edited.curves

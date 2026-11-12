@@ -535,8 +535,9 @@ enum LightLeakTests {
     pageLab.wait()
     try check(!mcp("leak_start").isError && pageLab.repaired && FileManager.default.fileExists(atPath: pageLab.folder!.appendingPathComponent("job.json").path),
       "leak_start repairs with the reference, and the job is kept from then on")
-    try check(!mcp("leak_set", ["strength": 0.6, "exposure": 0.25]).isError && pageLab.model?.strength == 0.6 && pageLab.params.exposure == 0.25
-      && mcp("leak_set", ["rotation": 90]).isError, "leak_set changes only what it is given, and refuses what it does not know")
+    try check(!mcp("leak_set", ["strength": 0.6]).isError && pageLab.model?.strength == 0.6 && pageLab.params.exposure == 0
+      && mcp("leak_set", ["rotation": 90]).isError && mcp("leak_set", ["exposure": 0.25]).isError && pageLab.params.exposure == 0,
+      "leak_set changes only what it is given, and refuses what it does not know; a frame of the roll gets no exposure of its own here (③'s)")
     let shot = mcp("leak_preview", ["kind": "result", "max_size": 400])
     let shotImage = (shot.content.first?["data"] as? String).flatMap { Data(base64Encoded: $0) }.flatMap { CGImageSourceCreateWithData($0 as CFData, nil) }
       .flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) }

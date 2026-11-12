@@ -33,6 +33,9 @@ struct LeakPage: View {
     .onChange(of: m.selectedID) { follow() }
     .onChange(of: lab.job?.id) { refresh() }
     .onChange(of: lab.busy) { if lab.busy == nil { refresh() } }
+    // ② changed while the page is open (⌘Z, an assistant's adjust, another preset): brought up to it.
+    .onChange(of: m.selected?.adjustments) { refresh() }
+    .onChange(of: m.profile.id) { refresh() }
     .sheet(isPresented: $lab.showAPI) { LeakAPISheet(credentials: lab.credentials, shown: $lab.showAPI) }
     .sheet(isPresented: $lab.showGenerate) { LeakGenerateSheet(lab: lab, credentials: lab.credentials) }
     .sheet(isPresented: $lab.showAlign) { LeakAlignSheet(lab: lab) }
@@ -250,8 +253,12 @@ struct LeakPanel: View {
         reference
         Divider()
         LeakRegionsSection(lab: lab)
-        Divider()
-        adjustments
+        // A frame of the roll comes in as ② leaves it and is graded in ③: its own adjustments here
+        // would show a picture ③ never gets. Shown on one only while some are left to set back.
+        if !lab.geometryIsTheRolls || lab.adjusted {
+          Divider()
+          adjustments
+        }
       }.padding(18).buttonStyle(.bordered).controlSize(.small)
     }
     // Back into the roll's flow, pinned under the sections: the repair into ③ 调色, or on without it.
@@ -309,11 +316,8 @@ struct LeakPanel: View {
             note("这个任务是以前从调好色的正片开始的，只能导出。从 ② 的结果重新载入以后就能用到 ③ 调色；区域、保护和参考图都留着，参考图在本机重新拟合，不调用 API。", color: Hardware.amberText)
             Button("从 ② 的结果重新载入") { if let o = m.leakOrigin(f) { lab.reload(origin: o) } }.disabled(lab.busy != nil)
           } else if let f = frame {
-            if !f.hasFullResolution { note("这张尚未正式扫描，用的是预览像素；正式扫描后点「按当前调色重新载入」。", color: Hardware.amberText) }
-            if origin.neutral == true ? !AppModel.sameDemasking(f.adjustments, origin.adjustments) : f.adjustments != origin.adjustments {
-              note("这张的调色在建立任务后改过；导出仍按建立任务时的调色。", color: Hardware.amberText)
-              Button("按当前调色重新载入") { if let o = m.leakOrigin(f) { lab.reload(origin: o) } }.disabled(lab.busy != nil)
-            }
+            // ② changed since is brought up to it on its own (`refresh`).
+            if !f.hasFullResolution { note("这张尚未正式扫描，用的是预览像素。", color: Hardware.amberText) }
           } else {
             note("来自工程「\(URL(fileURLWithPath: origin.project).deletingLastPathComponent().lastPathComponent)」；导出前需打开该工程。")
           }
@@ -443,10 +447,10 @@ struct LeakPanel: View {
   }
 
   var adjustments: some View {
-    PanelSection("基础调整", key: "leakAdjust", info: "在去漏光之前作用于原片，只在这一页，不改 ② 和 ③ 的设置。本卷的照片按 ② 去色罩的结果进来（不带 ③ 的调色）；「用到 ③ 调色」时这里的调整不带过去，颜色和明暗在 ③ 里调。导入的文件没有 ② 和 ③，就在这里调，再用「导出」。\n\n曝光按线性光的 EV 调整，冷暖与绿 / 品红按通道调整，对比度为 S 形曲线。手动调整不受去漏光的限制。", symbol: "slider.horizontal.3") {
+    PanelSection("基础调整", key: "leakAdjust", info: "导入的文件没有 ② 和 ③，在这里调颜色和明暗，再用「导出」：在去漏光之前作用于原片，只在这一页。本卷的照片按 ② 去色罩的结果进来，颜色和明暗在 ③ 里调，没有这一节。\n\n曝光按线性光的 EV 调整，冷暖与绿 / 品红按通道调整，对比度为 S 形曲线。手动调整不受去漏光的限制。", symbol: "slider.horizontal.3") {
       VStack(alignment: .leading, spacing: 10) {
-        if lab.job?.origin?.neutral == true {
-          note("只为看清漏光：用到 ③ 调色时不带过去。")
+        if lab.geometryIsTheRolls {
+          note("本卷照片的颜色和明暗在 ③ 调：这里的调整用到 ③ 时不带过去，归零后这一节就收起。")
         }
         fader("曝光", "%+.2f EV", \.exposure, -2...2)
         fader("冷 ↔ 暖", "%+.0f", \.temperature, -100...100)

@@ -23,8 +23,6 @@ struct EpsonScanPlusApp: App {
     if args.contains("--sony-ptp-camera") { SonyPTPCamera.runProcess() }
     if args.contains("--self-test") { SmokeTests.run() }
     if args.contains("--sane-hardware-test") { HardwareTest.run() }
-    if args.contains("--export-project") { ExportCommand.run() }
-    Preferences.migrate(into: .standard)
     let preferences = Preferences(defaults: .standard)
     let library: URL
     if let i = args.firstIndex(of: "--library"), args.count > i + 1 {
@@ -74,7 +72,7 @@ struct EpsonScanPlusApp: App {
       }
       CommandGroup(replacing: .newItem) {
         Button("新建工程…") { model.askNewProject() }.keyboardShortcut("n").disabled(model.isWorking)
-        // On ③, the positive to repair, as its own key has it.
+        // On the 去漏光 page, the positive to repair, as its own key has it.
         Button(model.page == .leak ? "导入正片…" : "导入图像…") {
           if model.page == .leak { model.leak.chooseFile() } else { model.importImages() }
         }.keyboardShortcut("o")
@@ -137,9 +135,10 @@ struct EpsonScanPlusApp: App {
           .keyboardShortcut("r", modifiers: [.command, .shift]).disabled(model.frames.isEmpty || !model.onRollModule)
         Button("水平镜像") { model.singleView ? model.toggleMirror() : model.mirrorRoll() }
           .disabled(model.frames.isEmpty || !model.onRollModule)
-        // The wand by the title: ②'s, as the capture page shows the raw reading.
+        // The wand by the title: ③'s, the grading it sets is shown only there (② shows each frame
+        // with its grading new).
         Button("自动调整") { model.autoAdjust() }.keyboardShortcut("a", modifiers: [.command, .shift])
-          .disabled(model.selected == nil || model.isWorking || model.page != .convert)
+          .disabled(model.selected == nil || model.isWorking || model.page != .convert || model.convertStep != .grade)
         Button("在去漏光里打开") { if let id = model.selectedID { model.openInLeak(id) } }
           .keyboardShortcut("l", modifiers: [.command, .option]).disabled(model.selected == nil || !model.onRollModule)
         Toggle("整卷一起转", isOn: $model.syncOrientation)
@@ -200,7 +199,7 @@ struct EpsonScanPlusApp: App {
         Button("全部勾选") { model.setAllEnabled(true) }.disabled(model.frames.isEmpty || model.isWorking || !model.onRollModule)
         Button("全部不勾选") { model.setAllEnabled(false) }.disabled(model.enabledCount == 0 || model.isWorking || !model.onRollModule)
         Divider()
-        // ②'s conversion; ③ exports its repair from its own bar.
+        // ③'s picture; the 去漏光 page exports its repair from its own bar.
         Button(model.exportSelectionTitle) { model.exportImages(all: false) }.keyboardShortcut("e")
           .disabled(model.selected == nil || model.isWorking || !model.onRollModule)
         Button("导出勾选的 \(model.enabledCount) 张…") { model.exportImages(all: true) }.keyboardShortcut(

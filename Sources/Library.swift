@@ -37,8 +37,6 @@ struct RollEntry: Identifiable, Equatable {
   let notes: String
   /// The preset it converts with, as its project keeps it.
   let profile: FilmProfile
-  /// In the folder versions before 0.4.9 used.
-  let legacy: Bool
   /// The flat fields from blank frames its frames are divided by, and the roll's copies of its flats.
   var flatIDs: Set<String> = []
   var flats: [FlatProfile] = []
@@ -50,24 +48,24 @@ struct RollEntry: Identifiable, Equatable {
 /// saved them, read where it lies. Nothing is written into the library for it; the thumbnails the
 /// app has rendered of a roll's positives are kept in the user's caches.
 enum RollLibrary {
-  static let projectExtensions = ["epscan", "filmdesk"]
+  static let projectExtensions = ["epscan"]
   /// Where rendered positives are kept, a folder per roll; tests point it elsewhere.
   static var cacheRoot = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
     .appendingPathComponent("local.epscan.mac").appendingPathComponent("Rolls")
 
   /// Every roll in `roots`, a folder each one level down, newest first. Folders without a project
   /// the app can read are left out; a folder in two roots is listed once.
-  static func scan(_ roots: [(url: URL, legacy: Bool)]) -> [RollEntry] {
+  static func scan(_ roots: [URL]) -> [RollEntry] {
     let files = FileManager.default
     var seen = Set<String>()
     var entries = [RollEntry]()
     for root in roots {
       guard let folders = try? files.contentsOfDirectory(
-        at: root.url, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])
+        at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])
       else { continue }
       for folder in folders where (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
         let key = folder.resolvingSymlinksInPath().standardizedFileURL.path
-        guard !seen.contains(key), let project = project(in: folder), let entry = entry(project, legacy: root.legacy)
+        guard !seen.contains(key), let project = project(in: folder), let entry = entry(project)
         else { continue }
         seen.insert(key)
         entries.append(entry)
@@ -75,10 +73,10 @@ enum RollLibrary {
     }
     return entries.sorted { $0.date > $1.date }
   }
-  /// The folder's project: `Session.epscan` first, then any other this app or Film Desk saved.
+  /// The folder's project: `Session.epscan` first, then any other this app saved.
   static func project(in folder: URL) -> URL? {
     let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
-    for preferred in [AppModel.projectFile, "Session.filmdesk"] where names.contains(preferred) {
+    for preferred in [AppModel.projectFile] where names.contains(preferred) {
       return folder.appendingPathComponent(preferred)
     }
     for ext in projectExtensions {
@@ -88,7 +86,7 @@ enum RollLibrary {
     }
     return nil
   }
-  static func entry(_ projectURL: URL, legacy: Bool = false) -> RollEntry? {
+  static func entry(_ projectURL: URL) -> RollEntry? {
     guard let data = try? Data(contentsOf: projectURL),
       let p = try? JSONDecoder().decode(DeskProject.self, from: data), (1...2).contains(p.version)
     else { return nil }
@@ -114,7 +112,7 @@ enum RollLibrary {
       film: FilmCalibration.film(p.filmName), date: date, source: source, frames: frames,
       fullResolution: p.frames.filter(\.hasFullResolution).count, exported: exported,
       overview: files.fileExists(atPath: overview) ? URL(fileURLWithPath: overview) : nil,
-      notes: p.notes ?? "", profile: p.profile, legacy: legacy,
+      notes: p.notes ?? "", profile: p.profile,
       flatIDs: Set(p.frames.compactMap(\.flatID)), flats: p.flats ?? [], format: p.format)
   }
   /// The library's search: a roll's name, film, notes or folder has the words; or, every word

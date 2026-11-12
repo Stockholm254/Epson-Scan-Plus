@@ -18,13 +18,7 @@ bash build.sh
 "../Epson Scan plus.app/Contents/MacOS/EpsonScanPlus" --sane-hardware-test --library /absolute/output/directory
 ```
 
-离线批量导出工程中已正式扫描/导入的画面，不调用扫描仪：
-
-```sh
-"../Epson Scan plus.app/Contents/MacOS/EpsonScanPlus" --export-project /absolute/Session.epscan --output /absolute/export/directory --format tiff --color-space srgb
-```
-
-`--rotation 0|1|2|3` 可在离线导出时覆盖方向，`--mirror` 启用水平镜像（均不改工程）。正常启动支持 `--library PATH`、`--project FILE` 或 `--image FILE`。
+正常启动支持 `--library PATH`、`--project FILE` 或 `--image FILE`。
 
 ## 构建要什么
 
@@ -124,7 +118,7 @@ git config core.hooksPath "$(pwd)/.githooks"
 - 同级 `epscan Test Roll/2026-10-25_174913_6848/Final/` 是方向整理后的成片；`Exports/` 是旋转测试输出。工程保留 18 个裁切框，仅第 09 格已做正式扫描。
 - 自动测试：坐标方向、裁切、正片直通、密度反相、旋转、TIFF 位深/DPI、JPEG、配置验证、工程读写、真实 18 格识别、120 的 6×4.5/6×6/6×7/6×9 合成样本。
 - 16-bit 输入的 1024 个不同灰阶经导出后仍有 1024 个，不是 8-bit 图扩展成 16-bit。
-- 0.2 回归：合成灰阶的通道偏色校正、片基微调不被自动算法抵消、中性点取样、四种旋转/镜像下坐标与实际像素对应、单张上下文稳定、16-bit 扫描后裁切/还原、越界重扫标记，以及旧工程读取。
+- 0.2 回归：合成灰阶的通道偏色校正、中性点取样、四种旋转/镜像下坐标与实际像素对应、单张上下文稳定、16-bit 扫描后裁切/还原、越界重扫标记，以及旧工程读取。
 - 0.2 在独立离屏位图中绘制自己的测试画布：8 倍放大时，画布外检测到 0 个被覆盖的抽样像素。此测试不是对用户桌面的截图，也不等同于窗口按钮全部点验。
 - 0.3 回归：预览完成进入单张、左右按键导航与首尾边界、裁切按键优先级、收边保留旧参数和扫描原件、片基/漏光/片夹统计污染、混合透光边界、像素取整不带回边缘，以及横向/纵向 120 四种尺寸的合成条带。18 张真实预览的首尾和片间边界亦已检查。
 

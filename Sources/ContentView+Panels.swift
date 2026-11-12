@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 
 /// The left panel. In module ① the source and its settings, the scanner's (with storage) or the
-/// camera's; in module ② the film with its preset, calibrating it, its base and the frame's extent,
-/// and the export settings, in two tabs. ⌘, comes back to ①'s.
+/// camera's; in ② the film with its preset, calibrating it, its base and the frame's extent; in ③
+/// the export settings. ⌘, comes back to ①'s.
 extension ContentView {
   var leftPanel: some View {
     VStack(spacing: 0) {
@@ -49,7 +49,7 @@ extension ContentView {
   var scanTab: some View {
     VStack(alignment: .leading, spacing: 18) {
       titled("扫描仪", symbol: "scanner", info:
-        "原始文件是未反相的负片，保留橙色色罩，作存档和重新转换用；去色罩的正片默认在扫完后导出到 Exports（格式和位置在 ② 去色罩工具栏的「导出」→「导出设置…」）。无损压缩对扫描数据几乎无效（LZW 反而变大），因此不压缩。\n\n整幅预览用于识别画面、接触表和看片镜。600 dpi 时每张 35 mm 约 850 像素，未正式扫描的画面也能看清细节；300 dpi 并不比 600 dpi 快多少，所以不提供。\n\n扫描仪每次扫描都自己设定读数的高低：正式扫描的蓝色比预览高约 11%，比一张宽的窗口还每次不同。每张正式扫描到达时都和预览里同一块逐像素配准，换算到预览的标尺上，片基和全卷斜率估计都在这个标尺上测，所以整卷一致。原始文件不改动。\n\n反转片（幻灯片、正片）：扫描仪的读法和负片一样，都是线性、不反相的透射读数；区别在转换。反转片的读数本身就是画面，不去色罩、不用通道斜率，按线性读数配平和定色阶，再编码到屏幕。默认保留片子本来的颜色（不自动白平衡）。识别画面时找透光的画面，片框、片夹和片间未曝光的黑边都不算。反转片的暗部很密（最大密度 3 以上），最暗处的噪点比负片多，这台扫描仪的接口没有多次曝光。"
+        "原始文件是未反相的负片，保留橙色色罩，作存档和重新转换用；去色罩的正片默认在扫完后导出到 Exports（格式和位置在 ③ 调色左栏的「输出」里）。无损压缩对扫描数据几乎无效（LZW 反而变大），因此不压缩。\n\n整幅预览用于识别画面、接触表和看片镜。600 dpi 时每张 35 mm 约 850 像素，未正式扫描的画面也能看清细节；300 dpi 并不比 600 dpi 快多少，所以不提供。\n\n扫描仪每次扫描都自己设定读数的高低：正式扫描的蓝色比预览高约 11%，比一张宽的窗口还每次不同。每张正式扫描到达时都和预览里同一块逐像素配准，换算到预览的标尺上，片基和全卷斜率估计都在这个标尺上测，所以整卷一致。原始文件不改动。\n\n反转片（幻灯片、正片）：扫描仪的读法和负片一样，都是线性、不反相的透射读数；区别在转换。反转片的读数本身就是画面，不去色罩、不用通道斜率，按线性读数配平和定色阶，再编码到屏幕。默认保留片子本来的颜色（不自动白平衡）。识别画面时找透光的画面，片框、片夹和片间未曝光的黑边都不算。反转片的暗部很密（最大密度 3 以上），最暗处的噪点比负片多，这台扫描仪的接口没有多次曝光。"
           + (m.scanner.ready ? "\n\n" + m.scanner.captureNote : ""))
       HStack(alignment: .top, spacing: 8) {
         StatusLED(lamp: lampState.lamp, size: 7).padding(.top, 4)
@@ -105,7 +105,7 @@ extension ContentView {
       }
       Divider()
       titled("画面", symbol: "rectangle.dashed", info:
-        "预览后自动识别画面。点接触表上的一张进入单张，在单张里用「画框」细调裁切：拖四角缩放，拖框内移动。漏掉的画面用「手动画框」在接触表上拖出新的画框。「收紧现有边界」只收紧已有画面框，保留逐张调色和原始扫描。")
+        "预览后自动识别画面。点接触表上的一张进入单张，在单张里用「画框」细调裁切：拖四角缩放，拖框内移动。漏掉的画面用「手动画框」在接触表上拖出新的画框。")
       labeled("规格") {
         Picker("", selection: Binding(get: { m.format }, set: { m.setFormat($0) })) {
           ForEach(FilmFormat.offered(keeping: m.format), id: \.self) { Text($0.rawValue).tag($0) }
@@ -118,10 +118,6 @@ extension ContentView {
       } label: {
         Label("自动识别画面", systemImage: "rectangle.3.group")
       }.disabled(m.overview == nil || m.isWorking)
-      Button("收紧现有边界") { m.tightenExistingBorders() }
-        .font(.system(size: 11))
-        .help("仅收紧已有画面框；保留逐张调色和原始扫描，可在单张中还原范围")
-        .disabled(m.frames.isEmpty || m.selected?.sourcePath != nil || m.isWorking || m.rendering)
       HStack {
         Button {
           m.singleView = false

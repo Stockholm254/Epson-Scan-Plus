@@ -16,7 +16,6 @@ struct ContentView: View {
   /// updated ten times a second, not with every step.
   @Gated var m: AppModel
   init(m: AppModel) { _m = Gated(wrappedValue: m) }
-  @State var showInfo = false
   /// The contact sheet's picture in the output tab, opened large.
   @State var sheetPreviewOpen = false
   /// The strip's frame a dragged frame is over, to take its place.
@@ -62,7 +61,6 @@ struct ContentView: View {
   func openCalibration() {
     // Calibrating a preset is ②'s: the film's slopes.
     m.convertStep = .demask
-    m.panelTab = .film
     UserDefaults.standard.set(true, forKey: "panelSection.calibration")
     withAnimation(Liquid.flow) { convertSidebarShown = true }
   }
@@ -70,7 +68,6 @@ struct ContentView: View {
   func openExportSettings() {
     // Exporting is ③'s.
     m.convertStep = .grade
-    m.panelTab = .output
     withAnimation(Liquid.flow) { convertSidebarShown = true }
   }
   /// The roll open, as the library names it, else the app's name.
@@ -129,7 +126,6 @@ struct ContentView: View {
     .onChange(of: m.exportsDone) { showStatus() }
     // ② works with the film in the left panel, ③ exports from it.
     .onChange(of: m.convertStep) { _, step in
-      m.panelTab = step == .demask ? .film : .output
       if step == .demask, m.page == .convert { withAnimation(Liquid.flow) { convertSidebarShown = true } }
     }
     // A batch of scans takes minutes a frame, an export of a roll a while: the Dock icon counts
@@ -140,9 +136,7 @@ struct ContentView: View {
     }
     .onChange(of: m.tool) { _, tool in
       // Picking neutral points calibrates the preset, whose section is in module ②'s film tab.
-      if tool == .calibrate, m.page == .convert, !convertSidebarShown || m.panelTab != .film { openCalibration() }
-      // Cropping, the de-masking region and the base pick have their controls in the sidebar's first tab.
-      if [.crop, .region, .base].contains(tool), m.page == .convert, convertSidebarShown { m.panelTab = .film }
+      if tool == .calibrate, m.page == .convert, !convertSidebarShown || m.convertStep != .demask { openCalibration() }
     }
     .copyStandGlass(cameraStage, camera: m.camera)
     .windowMinimum(width: 1120, height: 760)
@@ -154,7 +148,6 @@ struct ContentView: View {
     } message: {
       Text(m.errorText ?? "")
     }
-    .sheet(isPresented: $showInfo) { profileInfo }
     .sheet(isPresented: $m.showPresets) { PresetManagerSheet(m: m) }
     .sheet(isPresented: $m.showFlats) { FlatManagerSheet(m: m) }
     .sheet(isPresented: $m.showUpdates) { UpdateSheet(m: m, updater: m.updater) }
@@ -625,7 +618,7 @@ struct ContentView: View {
           .floatingPlate(RoundedRectangle(cornerRadius: 5), text: Color(white: 0.92), opacity: 0.65)
           .help(m.baseSource(f) + (m.baseNotes(f).isEmpty ? "" : "\n" + m.baseNotes(f)) + (m.toneAnalysis.map { a in
             "\n片基 " + zip(["R", "G", "B"], a.base.values).map { String(format: "%@ %.3f", $0, $1) }.joined(separator: " · ")
-          } ?? "") + "\n白平衡按这个顺序定：取样中性灰 → 手动配平 → 标定预设的中性 → 自动；冷暖、绿洋红、阴影冷暖和阴影色调在它之后")
+          } ?? "") + "\n白平衡按这个顺序定：取样中性灰 → 标定预设的中性 → 自动；冷暖、绿洋红、阴影冷暖和阴影色调在它之后")
           .accessibilityElement(children: .combine).accessibilityLabel("片基和白平衡")
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(12)
       }
@@ -778,7 +771,7 @@ struct ContentView: View {
             ArrangedColumn(.demask, shown: SectionColumn.demask.defaults) { key in
               switch key {
               case "dust": DustSection(m: m)
-              case "input": inputSection
+              case "input": if readsAnImport { inputSection }
               default: EmptyView()
               }
             }
@@ -961,7 +954,6 @@ struct ContentView: View {
             }
             Divider()
             Button("管理预设…") { m.showPresets = true }
-            Button("配置与技术文档…") { showInfo = true }
             Button(m.copyStandRoll ? "翻拍预设标定…" : "本机预设标定…") { openCalibration() }
           } label: {
             Text(presetTitle(m.profile)).lineLimit(1)
@@ -992,15 +984,6 @@ struct ContentView: View {
           .labelsHidden().frame(maxWidth: .infinity, alignment: .leading).disabled(m.isWorking)
           .help("这一卷的画幅：翻拍的照片按它算画面在胶片上的大小，看片镜的视场和导出的 dpi 跟着它；扫描时按它识别画面。「自动」时翻拍照片的长边按 135 的 36 mm 算")
         }
-        labeled("胶片名") {
-          HStack(spacing: 6) {
-            TextField("胶片名", text: $m.filmName).textFieldStyle(.roundedBorder).font(.system(size: 12))
-              .onSubmit { m.matchFilm() }
-              .help("这一卷的胶片名，库里也显示；改成另一种胶片后回车或「应用」，预设跟着换：这次翻拍或这台扫描仪标定过它的，用标定的，否则用它的数据表，没有收录的用通用配置")
-            Button("应用") { m.matchFilm() }.controlSize(.small)
-              .help("预设跟着胶片名换：标定过的先用，否则用数据表；胶片名没改时预设不动")
-          }
-        }
         // The roll's switches in the order they act: how the pixels are read, then where the
         // channel slopes come from; under them, the slopes they come to. Apart from what the roll
         // is, above, by a rule.
@@ -1008,7 +991,7 @@ struct ContentView: View {
           Divider().padding(.vertical, 2)
         }
         if m.hasSensorPictures {
-          filmSwitch(m.preferences.lightCalibration == nil ? "去串色 · RGB 光源" : "去串色和平场 · RGB 光源",
+          filmSwitch("去串色 · RGB 光源",
             isOn: Binding(get: { m.crosstalkRemoved }, set: { m.removeCrosstalk($0) }), info: Self.crosstalkInfo)
             .disabled(m.isWorking)
         }
@@ -1059,16 +1042,15 @@ struct ContentView: View {
       }
       // This picture's flat: switched on or off, which one, and the same for the whole roll.
       if let selected, !isBlank, m.isLinearPicture(selected) {
-        let choices = m.flatChoices(for: selected), light = m.lightFlatAvailable(selected)
-        let applied = m.flatApplied(selected), usable = !choices.isEmpty || light
+        let choices = m.flatChoices(for: selected)
+        let applied = m.flatApplied(selected), usable = !choices.isEmpty
         SwitchRow("应用平场", isOn: Binding(get: { applied }, set: { m.setFlatApplied($0) }),
-          info: "这张照片除不除以平场。关掉：不补，连光源标定的平场也不用；打开：用它那张空白帧的平场，没有时用最近量的、尺寸合适的那个，再没有时用光源标定的。可以 ⌘Z 撤销。"
+          info: "这张照片除不除以平场。关掉：不补；打开：用它那张空白帧的平场，没有时用最近量的、尺寸合适的那个。可以 ⌘Z 撤销。"
             + (usable ? "" : "\n\n现在还没有和这张尺寸一样的平场：先拍一张空白帧，选中它点「设成平场」。"))
           .disabled(!usable || blocked != nil)
         HStack(spacing: 6) {
           Picker("用哪个", selection: Binding(
-            get: { selected.flatID.flatMap { $0 == AppModel.noFlat ? nil : $0 } ?? "light" }, set: { m.chooseFlat($0) })) {
-            if light { Text("光源标定").tag("light") }
+            get: { selected.flatID.flatMap { $0 == AppModel.noFlat ? nil : $0 } ?? choices.first?.id ?? "" }, set: { m.chooseFlat($0) })) {
             ForEach(choices, id: \.id) { p in Text(p.name).tag(p.id) }
           }
           .labelsHidden().frame(maxWidth: .infinity, alignment: .leading).disabled(!applied || !usable || blocked != nil)
@@ -1092,11 +1074,6 @@ struct ContentView: View {
               + m.scopeWords(m.blankScope(selected.id)) + "；这张随后取消勾选")
             .disabled(blocked != nil)
         }
-        if kinds == 0, let last = m.lastFittingFlat {
-          Button("用上次的") { m.useLastFlat() }
-            .help("用平场「\(last.name)」补平这一卷：\(last.source)。镜头、光圈、放大倍率和灯都没动过时才用")
-            .disabled(blocked != nil)
-        }
         Button("管理…") {
           m.flatsFocus = nil
           m.showFlats = true
@@ -1104,7 +1081,7 @@ struct ContentView: View {
       }
     }.font(.system(size: 11)).controlSize(.small)
   }
-  static let flatInfo = "平场去掉微距镜头的暗角和光源的不匀：四周比中间暗、边上偏色，翻拍时常见，转成正片以后边缘发亮、变色。\n\n做法：拿走底片，片夹或遮罩照旧，用和翻拍完全一样的镜头、光圈、放大倍率和灯拍一张空白帧，曝光到最亮处约 70%（看直方图），不要过曝；像素位移的照片也只要拍一张普通的。选中它，点「设成平场」（胶片条上右键也有）。App 量出它的明暗，把对应的照片逐个颜色通道除一遍，四周就和中间一样亮、一样色。白光、RGB 光源都行；去串色开着关着都行，换的时候跟着换算。\n\n用到哪些：这一卷还没有空白帧时用到整卷；已经有了，就从这张空白帧到下一张空白帧之前（这张之后没有照片时，往前到上一张空白帧之后）。新拍进来的照片跟着最近的一张。空白帧自己不补，会取消勾选，也不算进全卷斜率估计和片基；留着它做分界，或者删掉都行，平场跟着这一卷存着。\n\n换了光圈、对焦距离（放大倍率）、镜头或灯的位置，就再拍一张空白帧。「管理…」打开平场表格：所有平场在上面，这一卷的照片在下面，选一组照片（按住 Shift 或 Command 点选）换成另一个平场、不补，或回到光源标定的平场。下一卷设置没变时点「用上次的」。都可以撤销。\n\n片夹遮住的地方（不到最亮处四分之一）不补；尺寸和空白帧不同的照片（裁切模式、转了方向）不补，表格里标出来。扫描仪的扫描有它自己的校正，不用这个。"
+  static let flatInfo = "平场去掉微距镜头的暗角和光源的不匀：四周比中间暗、边上偏色，翻拍时常见，转成正片以后边缘发亮、变色。\n\n做法：拿走底片，片夹或遮罩照旧，用和翻拍完全一样的镜头、光圈、放大倍率和灯拍一张空白帧，曝光到最亮处约 70%（看直方图），不要过曝；像素位移的照片也只要拍一张普通的。选中它，点「设成平场」（胶片条上右键也有）。App 量出它的明暗，把对应的照片逐个颜色通道除一遍，四周就和中间一样亮、一样色。白光、RGB 光源都行；去串色开着关着都行，换的时候跟着换算。\n\n用到哪些：这一卷还没有空白帧时用到整卷；已经有了，就从这张空白帧到下一张空白帧之前（这张之后没有照片时，往前到上一张空白帧之后）。新拍进来的照片跟着最近的一张。空白帧自己不补，会取消勾选，也不算进全卷斜率估计和片基；留着它做分界，或者删掉都行，平场跟着这一卷存着。\n\n换了光圈、对焦距离（放大倍率）、镜头或灯的位置，就再拍一张空白帧。「管理…」打开平场表格：所有平场在上面，这一卷的照片在下面，选一组照片（按住 Shift 或 Command 点选）换成另一个平场或不补。下一卷设置没变时，在「用哪个」里选上次的平场，再点「应用到本卷」。都可以撤销。\n\n片夹遮住的地方（不到最亮处四分之一）不补；尺寸和空白帧不同的照片（裁切模式、转了方向）不补，表格里标出来。扫描仪的扫描有它自己的校正，不用这个。"
   /// A switch of the roll's in the film section: its name, the switch lined up with the others', ⓘ.
   func filmSwitch(_ title: String, isOn: Binding<Bool>, info: String) -> some View {
     SwitchRow(title, isOn: isOn, info: info)
@@ -1122,7 +1099,7 @@ struct ContentView: View {
     } ?? ""
     return "打开：按「\(p.name)」的标定转换：三个通道的斜率；标定时那种光下的中性，白平衡按它配平，开着自动也一样；取到很暗的点时还有暗部趾部。\n\n关掉：这一卷按标定之前的胶片 \(film) 转换：斜率在「全卷斜率估计」开着时先用它，没有时用数据表；白平衡回到自动（对齐各通道的黑）或你取的中性灰；不用趾部。预设本身不变，别的卷照旧用它；可以 ⌘Z 撤销，在胶片菜单里重新选这个预设也会打开。\n\n\(points)\(roll)点少、明暗没拉开，或标定和全卷斜率估计差很多时，关掉比较一下。"
   }
-  static let crosstalkInfo = "翻拍时相机的红、绿、蓝滤色片和光源的三种灯光谱有重叠：蓝灯有 34% 读进绿通道，绿灯约 12% 和 11% 读进红、蓝。每个通道掺了别的灯的光，转出来颜色发灰，要把饱和度拉到 1.8 左右才像 Capture One。\n\n打开后，从传感器读出的 RAW（无压缩 ARW）在算片基和密度之前，先在线性读数上把串色去掉；在翻拍页做过「光源标定」的话，再除以平场，把灯照在四周偏暗的地方补平。没有标定时，矩阵用 2026-10-29 用 IT8 色卡测的，没有平场。矩阵属于这台 A7R IV 和这组 RGB 灯；换了相机或灯就要重新标定。白光翻拍时关掉。\n\n整卷一起开关，可以 ⌘Z 撤销；取过的片基、中性灰和高光跟着换算。下一卷沿用这里的选择。\n\n「平场」一行里用空白帧量的平场，优先于光源标定的平场：用了它的照片，开关去串色时按同一张空白帧换算。"
+  static let crosstalkInfo = "翻拍时相机的红、绿、蓝滤色片和光源的三种灯光谱有重叠：蓝灯有 34% 读进绿通道，绿灯约 12% 和 11% 读进红、蓝。每个通道掺了别的灯的光，转出来颜色发灰，要把饱和度拉到 1.8 左右才像 Capture One。\n\n打开后，从传感器读出的 RAW（无压缩 ARW）在算片基和密度之前，先在线性读数上把串色去掉。矩阵用翻拍页「光源标定」最近测的，没有标定时用 2026-10-29 用 IT8 色卡测的；它属于这台 A7R IV 和这组 RGB 灯，换了相机或灯就要重新标定。白光翻拍时关掉。\n\n整卷一起开关，可以 ⌘Z 撤销；取过的片基和中性灰跟着换算。下一卷沿用这里的选择。\n\n暗角和灯的不匀用「平场」一行里的空白帧补：用了它的照片，开关去串色时按同一张空白帧换算。"
   /// The film base: where it was read in a line, picking it or going back to the automatic one,
   /// and the fine adjustment folded under it.
   var baseSection: some View {
@@ -1137,7 +1114,6 @@ struct ContentView: View {
           m.change("自动片基") {
             $0.base = nil
             $0.basePicked = nil
-            $0.baseFine = nil
           }
           m.announceAutoBase()
         }.help("回到自动片基：片间或片边测到的")
@@ -1160,7 +1136,7 @@ struct ContentView: View {
                 .help(from == i ? "在单张上标出这一张片边里取作片基的地方" : "片基取自第 \(m.frames[from].name) 张的片边；切到那一张能看到标出的地方")
             }
           }
-          // A frame whose edge reads apart from the roll's, and the copy light's balance.
+          // A frame whose edge reads apart from the roll's.
           let notes = m.baseNotes(f)
           if !notes.isEmpty {
             Text(notes).font(.system(size: 11)).foregroundStyle(Hardware.amberText).fixedSize(horizontal: false, vertical: true)
@@ -1176,19 +1152,10 @@ struct ContentView: View {
           Button("整卷共用这个片基") { m.shareFilmBase() }.font(.system(size: 11))
             .help("把这一张取的片基用于整卷：拍一张片头或片边取片基，整卷共用。片间测不到片基的卷用得着，比如翻拍或一张一个文件导入的卷")
         }
-        PanelSection("微调 · EV", key: "baseFine", open: false, level: .sub) {
-          if m.settings.baseFine != nil {
-            Button("归零") { m.change("片基微调") { $0.baseFine = nil } }.font(.system(size: 11))
-          }
-        } content: {
-          VStack(alignment: .leading, spacing: 7) {
-            ForEach(0..<3, id: \.self) { channel in baseSlider(channel) }
-            if let base = m.toneAnalysis?.base ?? m.settings.base ?? m.settings.rollBase {
-              Text(String(format: "基准 RGB  %.3f  %.3f  %.3f", base.r, base.g, base.b)).font(
-                .system(size: 11, design: .monospaced)
-              ).foregroundStyle(.secondary)
-            }
-          }
+        if let base = m.toneAnalysis?.base ?? m.settings.base ?? m.settings.rollBase {
+          Text(String(format: "基准 RGB  %.3f  %.3f  %.3f", base.r, base.g, base.b)).font(
+            .system(size: 11, design: .monospaced)
+          ).foregroundStyle(.secondary)
         }
       }
     }
@@ -1287,6 +1254,9 @@ struct ContentView: View {
     .buttonStyle(KeyStyle(latched: m.tool == .crop)).font(.system(size: 11)).disabled(m.selected == nil)
     .help(m.tool == .crop ? "结束裁切 · C" : "在画面上裁切：拖动边和角，边栏里可以逐边微调 · C")
   }
+  /// Whether the frame's white balance is the calibrated preset's neutral whatever 「自动」 says
+  /// (`ImagePipeline.analyze`): a negative converted with a preset that has one.
+  var balancesByCalibration: Bool { m.conversionProfile.offsets != nil && m.settings.inputIsNegative && !m.settings.isSlide }
   /// White balance: automatic or by hand, the roll as one, and the points picked on the frame.
   var balanceSection: some View {
     PanelSection("白平衡", key: "balance", info: "自动白平衡按画面估计，忽略外缘 5%（不改变导出范围），裁切里带着片边（片基、齿孔、边字）时只看片边以内；在「画面范围」里框选了去色罩区域时，只按青色框里估计。用本机或翻拍标定的预设时不按画面估计，按标定时记下的中性配平，开不开「自动」都一样；这个中性是在标定时的光下定的（比如阳光），阴天、树荫、室内的照片会带上光的颜色，用「中性灰」或冷暖、绿 / 洋红调。\n\n「阴影冷暖」「阴影色调」只动暗部（亮度 0.2 最多，0.55 以上和纯黑不动），阳光下的灰不变：晴天的阴影由蓝天照亮，本来就偏蓝，阴影冷暖往右拨把它暖回来；远处的雾气、只有蓝层曝了光的阴影常常蓝里带紫，再把阴影色调往左（绿）拨；它只去掉相反的偏色，往绿只动偏紫的暗处，草和中性的沙不变。「阴影中性」用滴管点阴影里应为灰色的地方（背光的水泥、路面、石头），两个一起按它设定，之后还能拖滑块微调；点在树林这类本身有颜色的东西上会把它也变成灰。\n\n「中性灰」用滴管点画面中应为灰色的地方，按这一点自动白平衡（「自动」保持开着）；滴管也在画面上方的工具条里（N）。取过点以后旁边出现「清除取样」：放弃取样点，打开「自动」，按画面估计，标定预设回到标定的中性；冷暖、绿 / 洋红和片基不动。\n\n反转片：片子本来的颜色就是画面，默认不自动白平衡，透过片子最亮处的光就是白。打开「自动」时每个通道各自从最暗拉到最亮，适合褪色、偏色的片子。「中性灰」把那一点配成灰。「清除取样」放弃取样点，回到片子本来的颜色。", reset: resetKey(.balance)) {
@@ -1297,16 +1267,19 @@ struct ContentView: View {
           set: { v in
             m.change("自动白平衡") {
               $0.autoWhiteBalance = v
-              $0.manualBalance = nil
               $0.neutralSample = nil
               $0.neutralPicked = nil
             }
           })
       ).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
+        // A calibrated preset balances by its own neutral, on or off: nothing for the switch to do.
+        .disabled(balancesByCalibration)
+        .help(balancesByCalibration ? "用标定预设时按标定记下的中性配平，开不开「自动」都一样；要改用「中性灰」或冷暖、绿 / 洋红" : "按画面自动白平衡")
     } content: {
       VStack(alignment: .leading, spacing: 10) {
-        // A picture that is a file each has no roll to share with: shown only to turn it off.
-        if !m.settings.isSlide && (m.selectedSharesRoll || m.settings.sharedBalance == true) {
+        // A picture that is a file each has no roll to share with, and a calibrated preset balances
+        // every frame by its one neutral already: shown then only to turn it off.
+        if !m.settings.isSlide && ((m.selectedSharesRoll && !balancesByCalibration) || m.settings.sharedBalance == true) {
         SwitchRow("整卷同一白平衡", isOn: Binding(get: { m.settings.sharedBalance == true }, set: { m.setSharedBalance($0) }),
           info: "像冲印店印一卷那样，整卷用同一个配光：白平衡按整卷所有画面一起统计，卷里每张的颜色一致，不再各自按自己的暗部去配平（比如阴影里的天光不会把一张整体拉偏）。每张的明暗照旧。\n\n只替换交给软件的部分：哪一张取了中性灰，或关了自动白平衡，那一张按你的来。用标定预设时，白平衡本来就按标定的中性，整卷一致。",
           off: m.selected == nil || m.isWorking)
@@ -1331,7 +1304,7 @@ struct ContentView: View {
             Label("阴影中性", systemImage: CanvasTool.shadowNeutral.symbol)
           }.buttonStyle(KeyStyle(latched: m.tool == .shadowNeutral)).disabled(m.selected == nil)
             .help("阴影中性：点阴影里应为灰色的地方（背光的水泥、路面、石头），按它设定阴影冷暖和阴影色调，亮处不变")
-          if m.settings.neutralSample != nil || m.settings.manualBalance != nil {
+          if m.settings.neutralSample != nil {
             Spacer(minLength: 2)
             // A key of its own, so the two pickers keep their names beside it.
             Button {
@@ -1343,10 +1316,6 @@ struct ContentView: View {
               .accessibilityLabel("清除取样")
           }
         }.font(.system(size: 11)).lineLimit(1).fixedSize(horizontal: false, vertical: true)
-        if m.settings.manualBalance != nil {
-          Text("保留了旧版中性点；可点「清除取样」使用新版校正。").font(.system(size: 11)).foregroundStyle(accent)
-            .fixedSize(horizontal: false, vertical: true)
-        }
       }
     }
   }
@@ -1383,7 +1352,7 @@ struct ContentView: View {
   }
   /// The ends: automatic, the roll as one, or set by hand.
   var levelsSection: some View {
-    PanelSection("色阶", key: "levels", info: "自动：按画面的密度范围设定黑白两端。范围不到 4 档的画面（雾、霾、很平的光）不拉满到黑和白，以中间为准撑开到 4 档，保留它本来的灰和柔；要更硬，调「对比度」或关掉自动。关闭后用黑点、白点和中间调手动设定。\n\n上面的直方图是色阶之前的：横轴从自动定出的黑到白，「黑」「中」「白」三条线是黑点、中间调（落在中灰的地方）和白点，可以直接拖；两边暗下去的部分是变成纯黑、纯白的。只在单张里显示。\n\n「整卷同一色阶」：整卷用同一组黑白两端，按整卷所有画面一起统计，像冲印店一卷用一个印放曝光：暗的场景就是暗的，亮的就是亮的。每张仍可以用「曝光」微调。关了自动色阶的那一张按你的来。\n\n反转片：自动把最暗的 0.5% 定为黑、最亮的 0.5% 定为白，三个通道用同一对两端，颜色不变；关掉时扫描仪的裸光是白，片子显示得和看片台上一样暗。", reset: resetKey(.levels)) {
+    PanelSection("色阶", key: "levels", info: "自动：按画面的密度范围设定黑白两端。范围不到 4 档的画面（雾、霾、很平的光）不拉满到黑和白，以中间为准撑开到 4 档，保留它本来的灰和柔；要更硬，调「对比度」或关掉自动。两端之后再用「影调」里的白色、黑色（或「自动白色、黑色」）微调，中间调用曲线。\n\n「整卷同一色阶」：整卷用同一组黑白两端，按整卷所有画面一起统计，像冲印店一卷用一个印放曝光：暗的场景就是暗的，亮的就是亮的。每张仍可以用「曝光」微调。关了自动色阶的那一张按你的来。\n\n反转片：自动把最暗的 0.5% 定为黑、最亮的 0.5% 定为白，三个通道用同一对两端，颜色不变；关掉时扫描仪的裸光是白，片子显示得和看片台上一样暗。", reset: resetKey(.levels)) {
       Toggle("自动", isOn: bool(\.autoLevels)).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
     } content: {
       VStack(alignment: .leading, spacing: 10) {
@@ -1391,19 +1360,6 @@ struct ContentView: View {
           SwitchRow("整卷同一色阶", isOn: Binding(get: { m.settings.sharedLevels == true }, set: { m.setSharedLevels($0) }),
             off: m.selected == nil || m.isWorking)
         }
-        // The frame's tones before the black and white points, the three marked on it and dragged.
-        if let range = m.toneRange {
-          LevelsHistogram(range: range, black: m.settings.black, white: m.settings.white, midtone: m.settings.midtone) { which, v in
-            switch which {
-            case .black: m.change("黑点") { $0.black = v }
-            case .white: m.change("白点") { $0.white = v }
-            case .midtone: m.change("中间调") { $0.midtone = v }
-            }
-          }
-        }
-        slider("黑点", key: \.black, range: 0...0.4)
-        slider("白点", key: \.white, range: 0.6...1)
-        slider("中间调", key: \.midtone, range: 0.4...2)
       }
     }
   }
@@ -1416,7 +1372,10 @@ struct ContentView: View {
         slider("自然饱和度", key: \.vibranceAmount, range: -1...1, format: "%+.2f")
         slider("饱和度", key: \.saturation, range: 0...1.8)
         slider("色彩降噪", key: \.colourNoiseAmount, range: 0...2)
-        SwitchRow("柔和的暗部和高光", isOn: bool(\.softEndsOn))
+        // The soft ends are a negative's print: a slide or a positive file goes straight to its ends.
+        if m.settings.inputIsNegative {
+          SwitchRow("柔和的暗部和高光", isOn: bool(\.softEndsOn))
+        }
       }
     }
   }
@@ -1532,34 +1491,23 @@ struct ContentView: View {
     }
   }
   /// How the file is read: as a negative or already positive, and its encoding.
+  /// Whether how the frame is read is the user's to say: a file imported, whose encoding the app
+  /// cannot know. Scans and the camera's readings are linear negatives (or the roll's slides) as
+  /// made; shown on them too once their gamma was changed, to set it back.
+  var readsAnImport: Bool { m.selected?.format == "导入" || m.settings.inputGamma != 1 }
   var inputSection: some View {
-    PanelSection("输入设置", key: "input", open: false, info: "本程序的 48-bit 扫描是线性的，输入 Gamma 为 1.0；编码未知的导入文件默认 2.2。已经反相的文件请关闭「负片去色罩 / 反相」。") {
+    PanelSection("输入设置", key: "input", open: false, info: "导入的文件编码未知，在这里说怎么读：已经反相的正片关掉「负片去色罩 / 反相」，输入 Gamma 是文件的编码（线性为 1.0，常见的 2.2）。本程序的扫描和相机读数本来就是线性负片，不显示这一节；反转片按 ② 胶片里的「本卷片种」。") {
       if !m.settings.inputIsNegative {
         Text(m.settings.isSlide ? "反转片" : "不反相").font(.system(size: 11)).foregroundStyle(Hardware.amberText)
       }
     } content: {
       VStack(alignment: .leading, spacing: 10) {
-        SwitchRow("负片去色罩 / 反相", isOn: bool(\.inputIsNegative))
+        // A slide is the roll's 片种 to say, not a switch of its own.
+        if !m.settings.isSlide {
+          SwitchRow("负片去色罩 / 反相", isOn: bool(\.inputIsNegative))
+        }
         slider("输入 Gamma", key: \.inputGamma, range: 1...3)
       }
-    }
-  }
-  func baseSlider(_ channel: Int) -> some View {
-    let names = ["R · 红", "G · 绿", "B · 蓝"]
-    return VStack(spacing: 2) {
-      HStack {
-        Text(names[channel]).font(.system(size: 12)).foregroundStyle(.secondary)
-        Spacer()
-        let fine = (m.settings.baseFine ?? .zero).values[channel]
-        ValueField(title: "片基微调 " + names[channel], text: String(format: "%+.3f", fine), value: fine, range: -0.5...0.5) {
-          m.adjustBase(channel, value: $0)
-        }
-      }
-      Fader(
-        title: "片基微调 " + names[channel],
-        value: Binding(
-          get: { (m.settings.baseFine ?? .zero).values[channel] },
-          set: { m.adjustBase(channel, value: $0) }), range: -0.5...0.5, detent: 0)
     }
   }
   func cropStepper(_ edge: Int, crop: NormalRect) -> some View {
@@ -1839,26 +1787,6 @@ struct ContentView: View {
       }
     }.padding(.horizontal, 18).padding(.vertical, 7)
       .animation(.snappy(duration: 0.25), value: m.exporting)
-  }
-  var profileInfo: some View {
-    VStack(alignment: .leading, spacing: 18) {
-      Text(m.profile.name).font(.title2)
-      Text(m.profile.process + " · ISO \(m.profile.iso)")
-      Text(m.profile.publication).foregroundStyle(.secondary)
-      Text(m.profile.notes).font(.system(size: 12))
-      Text(
-        String(
-          format: "中段密度斜率近似  R %.2f · G %.2f · B %.2f", m.profile.slopes.r, m.profile.slopes.g,
-          m.profile.slopes.b)
-      ).font(.system(size: 11, design: .monospaced))
-      if let url = URL(string: m.profile.sourceURL) { Link("打开官方技术文档", destination: url) }
-      Divider()
-      Text("输入已收录胶片名称会应用对应配置。未收录的胶片使用通用配置，也可以在胶片菜单的「管理预设…」打开的预设表格里导入附有来源和通道斜率的 JSON 文件。").font(.system(size: 12))
-      HStack {
-        Spacer()
-        Button("完成") { showInfo = false }.keyboardShortcut(.defaultAction)
-      }
-    }.padding(28).frame(width: 440)
   }
   func sectionTitle(_ text: String, symbol: String) -> some View { SectionTitle(text: text, symbol: symbol) }
   func labeled<V: View>(_ name: String, @ViewBuilder content: () -> V) -> some View {

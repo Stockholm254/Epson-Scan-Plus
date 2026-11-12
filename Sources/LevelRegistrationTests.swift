@@ -78,7 +78,7 @@ enum LevelRegistrationTests {
     let project = DeskProject(
       overviewPath: overviewURL.path, overviewDPI: 600, physicalWidthMM: 149.86, physicalHeightMM: 246.38,
       filmName: "Kodak Portra 160", profile: FilmProfile.builtins[0], scanDPI: 2400, frames: [scanned], scanBackendID: "epson2-linear-v1")
-    let projectURL = root.appendingPathComponent("Session.filmdesk")
+    let projectURL = root.appendingPathComponent(AppModel.projectFile)
     try JSONEncoder().encode(project).write(to: projectURL)
     let model = AppModel(libraryURL: root)
     model.loadProject(projectURL)

@@ -76,8 +76,6 @@ enum IT8Tests {
         calibration.flare.r * 100, calibration.flare.g * 100, calibration.flare.b * 100))
     try check(calibration.grayErrorBefore > 0.3 && calibration.grayError < 0.01,
       String(format: "taking it out, the grey scale's densest step goes from %.2f D off to %.3f D", calibration.grayErrorBefore, calibration.grayError))
-    try check(calibration.meanDeltaE < 0.3 && zip(calibration.matrix, m0).allSatisfy { abs($0 - $1) < 0.01 },
-      String(format: "the colour patches fit a 3×3 matrix to ΔE %.2f on average", calibration.meanDeltaE))
 
     // Where it applies: this app's linear scans and previews, not imports or 24-bit scans.
     let model = AppModel(libraryURL: folder)

@@ -163,10 +163,10 @@ enum RenderTests {
       let f = model.selected!
       return pipe.analyze(try model.source(for: f), settings: f.adjustments, profile: model.profile)
     }
-    model.change("对比度") { $0.contrast = 1.3; $0.warmth = 0.2; $0.black = 0.05; $0.rotation = 1 }
+    model.change("对比度") { $0.contrast = 1.3; $0.warmth = 0.2; $0.rotation = 1 }
     for _ in 0..<80 where model.rendering { settle(0.05) }
     try check(same(model.toneAnalysis, try fresh()),
-      "exposure, contrast, colour, levels and turns keep the analysis, which is the one the frame's settings give")
+      "exposure, contrast, colour and turns keep the analysis, which is the one the frame's settings give")
     let before = model.toneAnalysis
     model.change("饱和度") { $0.autoWhiteBalance = false; $0.saturation = 1.6 }
     for _ in 0..<80 where model.rendering { settle(0.05) }

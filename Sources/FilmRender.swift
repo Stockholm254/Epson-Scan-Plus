@@ -204,7 +204,6 @@ enum FilmRender {
     return m
   }
   private static let steel = material(NSColor(white: 0.78, alpha: 1), metal: 1, rough: 0.26)
-  private static let darkSteel = material(NSColor(white: 0.32, alpha: 1), metal: 1, rough: 0.34)
   private static let blackPlastic = material(NSColor(white: 0.035, alpha: 1), metal: 0, rough: 0.3, coat: 0.4)
   private static let felt = material(NSColor(white: 0.02, alpha: 1), metal: 0, rough: 1)
 

@@ -26,10 +26,10 @@ Epson Scan plus 可以作为 [MCP](https://modelcontextprotocol.io) 服务器，
 
 - **打开和导入**：`leak_open`（本卷某张或某个任务）、`leak_import`（给出路径导入正片，原文件不改）、`leak_import_reference`（导入别处做好的干净参考图，免费）。
 - **查看**：`leak_get_state`、`leak_list_jobs`、`leak_list_regions`、`leak_preview`、`leak_sample`。
-- **修复**：`leak_start`（有参考图按参考图，没有时按启用的局部区域）、`leak_set`、`leak_clear_correction`。
+- **修复**：`leak_start`（有参考图按参考图，没有时按启用的局部区域）、`leak_set`、`leak_clear_correction`；本卷照片修好后 `leak_apply_to_grading` 把修复用到 ③ 调色。
 - **用自己的图像模型做参考图**：`leak_reference_prompt`（只读，给出和 API 一样的提示词和步骤）、`leak_export_upload`（只打开保存缩图的窗口）。
 - **局部**：`leak_detect`、`leak_add_region`、`leak_update_region`、`leak_delete_region`、`leak_add_protection`。
-- **对齐、方向和预设**：`leak_set_landmarks`、`leak_rotate`、`leak_crop`、`leak_load_preset`。
+- **对齐、方向和预设**：`leak_set_landmarks`、`leak_rotate`、`leak_crop`（只用于导入的文件，本卷照片的方向和裁切在 ② 改）、`leak_load_preset`。
 
 有几件事留给你在 App 里确认：
 

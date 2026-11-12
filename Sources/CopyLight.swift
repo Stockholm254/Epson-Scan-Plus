@@ -130,13 +130,11 @@ extension ImagePipeline {
     return cells
   }
 
-  /// The copy light from its red, green and blue lights each alone on a blank frame (no film), in any
+  /// The copy light's crosstalk from its red, green and blue lights each alone on a blank frame (no film), in any
   /// order: which light each frame shows is told by its brightest channel. Each light's column of the
   /// crosstalk is the median of the other channels against its own, over the frame where it is well
-  /// exposed (between 5% and 95% of full); its flat field, once the crosstalk is out, its own channel
-  /// over a grid of 24 × 16 cells, each cell's median, against the brightest cell. Cells the light
-  /// hardly reaches (under a quarter of the brightest: the stand's mask) are left alone. Nil when the
-  /// three frames are not one light each, or a light is too weak to measure.
+  /// exposed (between 5% and 95% of full). Nil when the three frames are not one light each, or a light
+  /// is too weak to measure.
   func lightCalibration(_ frames: [CGImage], date: Date = Date()) -> (calibration: LightCalibration, exposure: RGB)? {
     guard frames.count == 3 else { return nil }
     let read = frames.map { samples($0, maxDimension: 600) }
@@ -145,7 +143,7 @@ extension ImagePipeline {
       let s = v.sorted()
       return s[s.count / 2]
     }
-    var columns = [Int: [Double]](), exposure = [Int: Double](), lights = [Int]()
+    var columns = [Int: [Double]](), exposure = [Int: Double]()
     for s in read {
       var pixels = [RGB]()
       for y in stride(from: s.height / 20, to: s.height - s.height / 20, by: 2) {
@@ -158,39 +156,13 @@ extension ImagePipeline {
       var column = [Double]()
       for c in 0..<3 { column.append(c == own ? 1 : median(lit.map { p in p.values[c] / p.values[own] })) }
       columns[own] = column
-      lights.append(own)
       exposure[own] = median(lit.map { p in p.values[own] })
     }
     guard columns.count == 3, let r = columns[0], let g = columns[1], let b = columns[2],
       [r, g, b].enumerated().allSatisfy({ j, col in (0..<3).allSatisfy { $0 == j || col[$0] < 0.8 } })
     else { return nil }
     let crosstalk = Crosstalk(m: (0..<3).flatMap { c in [r[c], g[c], b[c]] })
-    // Each light's own channel once the crosstalk is out, cell by cell.
-    let gw = 24, gh = 16
-    var values = [Float](repeating: 1, count: gw * gh * 3)
-    for (s, light) in zip(read, lights) {
-      var cells = [Double]()
-      for cy in 0..<gh {
-        for cx in 0..<gw {
-          var v = [Double]()
-          for y in (cy * s.height / gh)..<max(cy * s.height / gh + 1, (cy + 1) * s.height / gh) {
-            for x in (cx * s.width / gw)..<max(cx * s.width / gw + 1, (cx + 1) * s.width / gw) {
-              let p = s.pixel(x, y)
-              guard max(p.r, p.g, p.b) < 0.98 else { continue }
-              v.append(crosstalk.unmixed(p).values[light])
-            }
-          }
-          cells.append(median(v))
-        }
-      }
-      let top = cells.max() ?? 1
-      guard top > 0 else { return nil }
-      for (i, c) in cells.enumerated() {
-        let share = c / top
-        values[i * 3 + light] = Float(share >= 0.25 ? share : 1)
-      }
-    }
-    return (LightCalibration(date: date, crosstalk: crosstalk, flat: FlatField(width: gw, height: gh, values: values)),
+    return (LightCalibration(date: date, crosstalk: crosstalk),
       RGB(r: exposure[0] ?? 0, g: exposure[1] ?? 0, b: exposure[2] ?? 0))
   }
 }

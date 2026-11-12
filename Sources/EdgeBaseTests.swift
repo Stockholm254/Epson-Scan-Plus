@@ -156,16 +156,15 @@ enum EdgeBaseTests {
     // The strip over the single frame: where each base comes from, and how the balance is set.
     let strip = (model.baseShort(model.frames[0]), model.baseShort(model.frames[1]))
     model.frames[0].adjustments.base = orange
-    model.frames[0].adjustments.baseFine = RGB(r: 0.1, g: 0, b: 0)
     let pickedStrip = model.baseShort(model.frames[0])
     let autoStrip = model.balanceShort(model.frames[0])
     model.frames[0].adjustments.neutralSample = RGB(r: 0.1, g: 0.3, b: 0.2)
     model.frames[0].adjustments.warmth = 0.2
     model.frames[0].adjustments.shadowWarmth = -0.1
     let greyStrip = model.balanceShort(model.frames[0])
-    (model.frames[0].adjustments.base, model.frames[0].adjustments.baseFine) = (nil, nil)
+    model.frames[0].adjustments.base = nil
     (model.frames[0].adjustments.neutralSample, model.frames[0].adjustments.warmth, model.frames[0].adjustments.shadowWarmth) = (nil, 0, nil)
-    try check(strip == ("本张片边", "第 01 张片边") && pickedStrip == "手动取样 · 微调" && autoStrip == "自动"
+    try check(strip == ("本张片边", "第 01 张片边") && pickedStrip == "手动取样" && autoStrip == "自动"
       && greyStrip == "取样中性灰 · 冷暖 +0.20 · 阴影冷暖 -0.10",
       "the strip over the single frame says in a few words where its base comes from and how its balance is set: \(strip.1) / \(pickedStrip) / \(greyStrip)")
     // A roll whose only picture shows no base at its edges: the picture's clearest film stands in.

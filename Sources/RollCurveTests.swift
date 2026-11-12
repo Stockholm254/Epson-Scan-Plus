@@ -111,17 +111,12 @@ enum RollCurveTests {
     try check(after < 2.5 && after <= before,
       String(format: "the roll estimate keeps a grey ramp grey: %.1f levels of cast, %.1f with the data sheet", after, before))
 
-    // A film calibrated on this scanner is picked by name, without opening the preset menu.
+    // A film calibrated on this scanner is kept with the presets; its data sheet is still chosen by hand.
     let suite = "EpsonScanPlus.tests.\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: suite)!
     defer { defaults.removePersistentDomain(forName: suite) }
     let model = AppModel(libraryURL: folder.appendingPathComponent("roll-offline"), preferences: Preferences(defaults: defaults))
     model.keepProfile(calibrated)
-    // From another film: the film's name typed over it takes the film's V850 preset.
-    model.chooseProfile(FilmProfile.builtins.first { $0.id == "generic" }!)
-    model.filmName = portra.name
-    model.matchFilm()
-    try check(model.profile == calibrated && model.filmName == portra.name, "typing the film name picks its V850 preset")
     model.chooseProfile(portra)
     try check(model.profile == portra, "the data-sheet preset can still be chosen by hand")
 

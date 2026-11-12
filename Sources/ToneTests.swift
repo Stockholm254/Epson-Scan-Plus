@@ -275,51 +275,6 @@ enum ToneTests {
       String(format: "colour noise smoothed away, the lightness (the grain) kept exactly: red speckle %.3f → %.3f, blue %.3f → %.3f",
         spread(before, 0), spread(after, 0), spread(before, 2), spread(after, 2)))
 
-    // 色阶's histogram: a frame of one tone at 0.5 before the black and white points comes out at
-    // (0.5 - black) / (white - black) past them, as `ToneRange` counts it; put back, it is at 0.5
-    // whatever the points. The midtone's mark is where it makes mid-grey, and drags back to it.
-    func range(_ q: Double) -> ToneRange {
-      let n = 400, d = -1.0...3.0
-      var counts = [[Double]](repeating: [Double](repeating: 0, count: n), count: 3)
-      let i = Int((q - d.lowerBound) / (d.upperBound - d.lowerBound) * Double(n))
-      for c in 0..<3 { counts[c][i] = 1 }
-      return ToneRange(counts: counts, domain: d, black: nil, white: nil, stop: nil, pastWhite: 0, atWhite: 0, atBlack: 0, brightest: q)
-    }
-    let peaks = [(0.0, 1.0), (0.1, 0.9), (0.3, 0.7)].map { b, wh -> Int in
-      let c = LevelsHistogram.counts(range((0.5 - b) / (wh - b)), black: b, white: wh)[1]
-      return c.firstIndex(of: c.max()!)!
-    }
-    let midMark = LevelsHistogram.midPoint(black: 0.1, white: 0.9, midtone: 1.4)
-    try check(peaks.allSatisfy { abs($0 - LevelsHistogram.bins / 2) <= 1 }
-      && abs(pow((midMark - 0.1) / 0.8, 1 / 1.4) - 0.5) < 1e-9
-      && abs(LevelsHistogram.midtone(at: midMark, black: 0.1, white: 0.9) - 1.4) < 1e-9
-      && LevelsHistogram.midtone(at: 0.99, black: 0.1, white: 0.9) == 0.4,
-      "色阶's histogram shows a tone where it lies before the black and white points, whatever they are; the midtone's mark is its mid-grey and drags back to the same midtone")
-    // An even spread of tones from black to white: the coarse counts (120 steps across about three
-    // times black to white, as `ToneRange` keeps them) leave every other bar empty; the fine ones
-    // the GPU made (2048 steps over −1 to 3) leave none.
-    func spread(coarse: Bool) -> ToneRange {
-      let fineDomain = -1.0...3.0, n = 2048
-      let fine = (0..<3).map { _ in (0..<n).map { i -> Double in
-        let q = fineDomain.lowerBound + (Double(i) + 0.5) * 4 / Double(n)
-        return (0...1).contains(q) ? 1 : 0
-      } }
-      let domain = -0.3...2.7, bins = 120
-      var counts = [[Double]](repeating: [Double](repeating: 0, count: bins), count: 3)
-      for c in 0..<3 { for i in 0..<n where fine[c][i] > 0 {
-        let q = fineDomain.lowerBound + (Double(i) + 0.5) * 4 / Double(n)
-        counts[c][min(bins - 1, Int((q - domain.lowerBound) / 3 * Double(bins)))] += fine[c][i]
-      } }
-      return ToneRange(counts: counts, domain: domain, black: nil, white: nil, stop: nil, pastWhite: 0, atWhite: 0, atBlack: 0, brightest: 1,
-        fine: coarse ? [] : fine, fineDomain: fineDomain)
-    }
-    let inside = 2..<(LevelsHistogram.bins - 2)
-    let combed = LevelsHistogram.counts(spread(coarse: true), black: 0, white: 1)[1], smooth = LevelsHistogram.counts(spread(coarse: false), black: 0, white: 1)[1]
-    let empty = inside.filter { combed[$0] == 0 }.count
-    // 512 fine steps from black to white over 128 bars: four each.
-    try check(empty > 20 && inside.allSatisfy { abs(smooth[$0] - 4) < 0.01 },
-      "色阶's histogram is drawn from the fine counts: an even spread of tones fills every bar (from the coarse ones \(empty) of \(inside.count) were empty)")
-
     do {
       // Lightroom's presence, mixer and grading, on the picture as shown (`ImagePipeline.looks`).
       func patch(_ draw: (Int, Int) -> (Double, Double, Double), _ s: Adjustments) -> (CIImage, CIImage) {
