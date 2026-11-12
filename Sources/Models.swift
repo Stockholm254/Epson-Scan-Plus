@@ -732,7 +732,7 @@ extension CanvasTool {
   var step: AppModel.ConvertStep? {
     switch self {
     case .crop, .region, .base, .dust, .calibrate, .it8: return .demask
-    case .neutral, .shadowNeutral, .curve: return .grade
+    case .neutral, .shadowNeutral, .curve, .curvePick: return .grade
     default: return nil
     }
   }
@@ -751,9 +751,14 @@ enum CanvasTool: String, CaseIterable {
   /// Lightroom's targeted adjustment of the curves: a place on the picture held and dragged up or
   /// down moves the curve taken where that place lies on it. Its key is in the curves section.
   case curve = "曲线目标调整"
+  /// Capture One's picker under its curve: a click adds a point on the curve taken, or a neutral
+  /// point on red, green and blue (`CurvePick`, the mode last chosen). Its key is in the curves section.
+  case curvePick = "曲线取点"
 
   /// The tools a click reads a point of the picture with.
-  var picksPoint: Bool { self == .base || self == .neutral || self == .shadowNeutral || self == .calibrate || self == .it8 || self == .dust }
+  var picksPoint: Bool {
+    self == .base || self == .neutral || self == .shadowNeutral || self == .calibrate || self == .it8 || self == .dust || self == .curvePick
+  }
 
   /// Each tool's SF Symbol. The two samplers differ in glyph and carry a label as well: the
   /// film base is the orange mask, the neutral a grey in the picture.
@@ -769,6 +774,7 @@ enum CanvasTool: String, CaseIterable {
     case .it8: return "squareshape.split.3x3"
     case .dust: return "aqi.medium"
     case .curve: return "scope"
+    case .curvePick: return CurvePick.point.symbol
     }
   }
   /// Shown next to the symbol in the toolbar.
@@ -798,6 +804,8 @@ enum CanvasTool: String, CaseIterable {
     case .region: return "m"
     case .base: return "b"
     case .neutral: return "n"
+    // As in Capture One.
+    case .curvePick: return "u"
     case .shadowNeutral, .calibrate, .it8, .dust, .curve: return nil
     }
   }
@@ -814,6 +822,7 @@ enum CanvasTool: String, CaseIterable {
     case .it8: what = "IT8 色卡：按提示点色卡上的 6 个点"
     case .dust: what = "点选灰尘：在单张上点一处灰尘去掉它，点标出的圆圈改成留下或去掉"
     case .curve: what = "曲线目标调整：在单张上按住要调的地方上下拖，调它在曲线上的那一段"
+    case .curvePick: what = "曲线取点：取曲线点在当前曲线上加一个点；取中性点让点到的灰在它那个亮度上变灰（R、G、B 曲线各加一点）"
     }
     return what + (shortcut.map { " · \($0.uppercased())" } ?? "")
   }

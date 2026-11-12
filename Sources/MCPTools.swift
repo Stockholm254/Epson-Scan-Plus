@@ -71,6 +71,10 @@ enum MCPTools {
       "points": ["type": "array", "maxItems": 16, "items": ["type": "array", "minItems": 2, "maxItems": 2, "items": ["type": "number", "minimum": 0, "maximum": 1]],
         "description": "[[x, y], …]，0 到 1；省略或为空时恢复成直线"],
     ], required: ["channel"]),
+    Tool(name: "pick_curve_point", description: "曲线取点，和 App 里「曲线」下面的取点工具（U）一样：读这一点在曲线之前的正片值（转换以后、曲线查表之前），坐标同 pick_neutral。mode 为 point（取曲线点）：在 channel 那条点曲线上它所在的地方加一个控制点（rgb 曲线上按它的亮度），点落在曲线上，照片不变，之后用 set_curve 移动。mode 为 neutral（取中性点）：点在本来应该是灰的地方，给 red、green、blue 三条曲线各加一个点，让这一点三个通道输出一样，目标是它在曲线之后的亮度（0.2126 R + 0.7152 G + 0.0722 B），明暗不变；两端不动，所以只在这个亮度附近去掉偏色，在别的亮度上再取就再加一组点（离已有的点不到 0.02 时移动那个点）。整张偏色用 pick_neutral，阴影里的灰用 pick_shadow_neutral；它们都对了、只剩某一段亮度偏色时才用 neutral。这一点离曲线的端点太近或那里已有控制点时不改，并说明。可用 undo 撤销。", properties: point.merging([
+      "mode": ["type": "string", "enum": ["point", "neutral"], "description": "point 取曲线点，neutral 取中性点"],
+      "channel": ["type": "string", "enum": ["rgb", "red", "green", "blue"], "description": "point 时加在哪条曲线上，默认 rgb；neutral 总是 red、green、blue 三条"],
+    ]) { a, _ in a }, required: ["x", "y", "mode"]),
     Tool(name: "choose_preset", description: "选用胶片预设（按名称，部分匹配，如 \"Portra 160\"）。", properties: ["name": ["type": "string"]], required: ["name"]),
     Tool(name: "apply_to_roll", description: "把选中画面的调整同步到本卷所有画面（保留各张的方向和裁切）。", properties: [:]),
     Tool(name: "reset_adjustments", description: "把选中画面的调整恢复默认（保留输入 Gamma、方向和整卷估计）。", properties: [:]),
@@ -92,7 +96,7 @@ enum MCPTools {
   static let instructions = """
     Epson Scan plus 是彩色负片扫描与转换程序。转换的顺序：负片的线性读数除以片基（橙色色罩），换算成各通道高于片基的密度；按胶片预设或整卷估计的各通道斜率把三层的反差拉齐；再做白平衡、色阶和影调。
     - 先用 get_state 和 preview 看当前结果，用 sample 在可能是中性灰的地方取点：中性灰在正片里 R、G、B 应接近，在负片里三个通道高于片基的密度之比应接近通道斜率之比。
-    - 偏色先查片基（get_state 里的 film_base 和来源）；片基可疑时用 pick_film_base 点未曝光的片间，或 base_fine_ev 微调。再用 pick_neutral 或 warmth / tint。晴天的阴影由蓝天照亮，本来就比阳光下蓝；阳光下的灰已经是灰、只有暗部偏蓝时，用 shadow_warmth，不要动整体的 warmth；暗部蓝里带紫（常见于远处雾气、只有蓝层曝了光的阴影）时配合 shadow_tint 往负（绿），阴影里有中性的东西时用 pick_shadow_neutral 一次定两个。色调曲线（set_curve）在转换之后按通道查表，从黑到白都受影响，只在上面这些做不到时用；用之前看 get_state 的 curves，有人调过的曲线（比如把一条通道整体抬高）常常就是整张偏色的原因，用 set_curve 不给 points 把它恢复成直线。
+    - 偏色先查片基（get_state 里的 film_base 和来源）；片基可疑时用 pick_film_base 点未曝光的片间，或 base_fine_ev 微调。再用 pick_neutral 或 warmth / tint。晴天的阴影由蓝天照亮，本来就比阳光下蓝；阳光下的灰已经是灰、只有暗部偏蓝时，用 shadow_warmth，不要动整体的 warmth；暗部蓝里带紫（常见于远处雾气、只有蓝层曝了光的阴影）时配合 shadow_tint 往负（绿），阴影里有中性的东西时用 pick_shadow_neutral 一次定两个。色调曲线（set_curve）在转换之后按通道查表，从黑到白都受影响，只在上面这些做不到时用；用之前看 get_state 的 curves，有人调过的曲线（比如把一条通道整体抬高）常常就是整张偏色的原因，用 set_curve 不给 points 把它恢复成直线。白平衡和阴影都对了、只剩某一段亮度偏色（比如高光发黄）时，在那段亮度本来是灰的地方用 pick_curve_point（mode neutral），只动那个亮度附近。
     - 坐标是单张视图里画面的相对位置，0–1，左上为原点。
     - 翻拍的照片四周带着片基、漏光或片夹时，先用 auto_crop 裁到画面（whole_roll 整卷一起），再看和取样：自动白平衡和色阶只看裁切以内。
     - 每次调整都能在 App 里用 ⌘Z 撤销，也可以调用 undo。转换的工具不会扫描、删除或导出文件。
@@ -588,6 +592,20 @@ enum MCPTools {
       }
       let said = channel == "all" ? "已清掉全部曲线" : points.isEmpty ? "已把 \(channel) 曲线恢复成直线" : "已设定 \(channel) 曲线"
       return text(["message": said + "。可用 ⌘Z 或 undo 撤销。", "curves": curvesState(curves)])
+    case "pick_curve_point":
+      let p = try coordinate(arguments)
+      guard let mode = (arguments["mode"] as? String).flatMap(CurvePick.init(rawValue:)) else { throw DeskError.message("mode 应为 point 或 neutral。") }
+      let channels = ["rgb": 0, "red": 1, "green": 2, "blue": 3]
+      guard let channel = channels[(arguments["channel"] as? String) ?? "rgb"] else { throw DeskError.message("channel 应为 rgb、red、green 或 blue。") }
+      let (frame, profile) = try selected(model)
+      // Read from the single view's own picture where it shows this frame: the value under the pointer there.
+      let shown = onMain { model.selected?.id == frame.id ? model.positiveBeforeCurves(at: p) : nil }
+      let input = try shown
+        ?? pipe.beforeCurves(try model.source(for: frame, maxDimension: 2000), settings: frame.adjustments, profile: profile, analysis: nil, at: p)
+      let (done, said, curves) = onMain { (model.pickOnCurves(input, mode: mode, channel: channel), model.status, model.settings.curves) }
+      guard done else { throw DeskError.message(said + "。没有改。") }
+      return text(["message": said.replacingOccurrences(of: " · ⌘Z 撤销", with: "") + "。可用 ⌘Z 或 undo 撤销。",
+        "before_curves": rgb(input), "curves": curvesState(curves)])
     case "pick_shadow_neutral":
       let p = try coordinate(arguments)
       let (frame, _) = try selected(model)
