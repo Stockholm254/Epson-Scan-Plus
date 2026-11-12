@@ -35,7 +35,7 @@
 <table>
 <tr>
 <td width="50%" valign="top"><img src="doc/images/library.jpg" width="100%" alt="库"><br><b>库</b>：每卷一页底片保存页，标签旁边放着这一卷的胶卷，打开过的卷显示正片。同一批底片叠成一摞，能按卷名、胶片、画幅和备注搜索。</td>
-<td width="50%" valign="top"><img src="doc/images/shelf.jpg" width="100%" alt="新建工程的胶片架"><br><b>新建工程 · 胶片架</b>：100 款常见胶片的暗盒和 120 卷，照实物印刷，附厂家数据表。先选胶片、画幅、片边和片种。</td>
+<td width="50%" valign="top"><img src="doc/images/shelf.jpg" width="100%" alt="新建工程的胶片架"><br><b>新建工程 · 胶片架</b>：100 款常见胶片的暗盒和 120 卷，照实物印刷，附厂家数据表。先选胶片、画幅、片边和片种；选了胶片，下面列出它在这台 Mac 上已有的标定。</td>
 </tr>
 <tr>
 <td colspan="2" valign="top"><img src="doc/images/cassettes.jpg" width="100%" alt="胶片架上的暗盒"><br><b>照实物画的暗盒</b>：每一款的印刷都照着真暗盒的照片画，包括颜色、版式、字体和读的方向，暗盒顶盖和片口也照实物做。</td>
@@ -59,7 +59,7 @@
 </tr>
 <tr>
 <td valign="top"><img src="doc/images/single-view.jpg" width="100%" alt="③ 调色：单张和检查器"><br><b>② 去色罩 → ③ 调色</b>：② 除以片基，按全卷斜率估计或本机标定的通道斜率拉齐三层反差，负片变成干净的正片；③ 在它上面调色，右栏按调色的顺序排：白平衡、影调、色阶、色彩，每一节都能单独复位。两步各管各的设置，重置、同步、粘贴互不串扰。</td>
-<td valign="top"><img src="doc/images/crop-region.jpg" width="100%" alt="画面裁切和去色罩区域"><br><b>两种裁切</b>：琥珀色是显示和导出的画面；青色是算片基、白平衡和色阶的地方，自动避开片边、边字和齿孔。</td>
+<td valign="top"><img src="doc/images/crop-region.jpg" width="100%" alt="画面裁切和去色罩区域"><br><b>两种裁切</b>：琥珀色是显示和导出的画面，可以按比例（1:1、2:3、4:5、6:7……）裁，裁切时画三分线；青色是算片基、白平衡和色阶的地方，自动避开片边、边字和齿孔。</td>
 </tr>
 <tr>
 <td valign="top"><img src="doc/images/dust.jpg" width="100%" alt="除尘"><br><b>除尘</b>：在负片上找灰尘、毛发和纤维，用旁边的胶片补上，补的地方只会变亮。工具栏的「除尘标出」开关画出或隐藏这些圆圈。</td>
@@ -70,7 +70,7 @@
 <td valign="top"><img src="doc/images/leak-page.jpg" width="100%" alt="② 去色罩 › 去漏光"><br><b>去漏光（② 的最后一步）</b>：用同一张照片的干净参考图，或手画的区域，修复红色 / 品红 / 黄色漏光；输出的像素都来自原片。修好以后「用到 ③ 调色」，在修好的照片上接着调色和导出。</td>
 </tr>
 <tr>
-<td valign="top"><img src="doc/images/panels.jpg" width="100%" alt="左栏的三页"><br><b>左栏</b>：① 扫描仪的设置；② 的胶片页（胶片、预设和它的标定、片基）和输出页。</td>
+<td valign="top"><img src="doc/images/panels.jpg" width="100%" alt="左栏的三页"><br><b>左栏</b>：① 扫描仪或相机的设置（相机的曝光读数是一块会亮的肩屏）；② 的胶片页（胶片、预设和它的标定、片基）；③ 的输出页（格式、尺寸、接触表）。</td>
 <td valign="top"><img src="doc/images/shortcuts.jpg" width="100%" alt="键盘快捷键"><br><b>键盘快捷键</b>：⌘/ 打开一览，包括画面上不在菜单里的单个字母键。</td>
 </tr>
 </table>

@@ -419,6 +419,7 @@ extension ContentView {
         if !changed.isEmpty { Text("改过 \(changed.count) 张").tag(AppModel.ExportScope.changed) }
       }.pickerStyle(.segmented).labelsHidden()
         .help("导出哪些画面：当前这张（或 ⌘ / ⇧ 点选的几张）、勾选的，或导出以后又改过的")
+      exportPresetRow
       labeled("格式") {
         Picker("", selection: format) { ForEach(ExportFormat.allCases) { Text($0.title).tag($0) } }.labelsHidden()
       }
@@ -617,6 +618,38 @@ extension ContentView {
     .help(folder.map { "导出到 " + $0.path + (intoRoll ? "（每一卷导出到自己的 Exports）" : "") } ?? "还没有打开的卷")
   }
   /// How big the files come out, and whether they fit where they go.
+  /// Export presets, as Lightroom's: the app's three and the user's own; the current settings'
+  /// name, or 自定义 when they are none of them.
+  var exportPresetRow: some View {
+    labeled("预设") {
+      Menu(m.currentExportPreset?.name ?? "自定义") {
+        ForEach(ExportPreset.builtins) { p in Button(p.name) { m.applyExportPreset(p) } }
+        if !m.preferences.exportPresets.isEmpty {
+          Divider()
+          ForEach(m.preferences.exportPresets) { p in Button(p.name) { m.applyExportPreset(p) } }
+        }
+        Divider()
+        Button("把现在的设置存为预设…") {
+          let alert = NSAlert()
+          alert.messageText = "存为导出预设"
+          alert.informativeText = "格式、质量、色彩空间、尺寸和文件名存在一个名字下；导出的位置不存。"
+          let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+          field.placeholderString = "比如：冲印 · TIFF 8-bit · sRGB"
+          alert.accessoryView = field
+          alert.addButton(withTitle: "存")
+          alert.addButton(withTitle: "取消")
+          alert.window.initialFirstResponder = field
+          if alert.runModal() == .alertFirstButtonReturn { m.saveExportPreset(named: field.stringValue) }
+        }
+        if !m.preferences.exportPresets.isEmpty {
+          Menu("删除预设") {
+            ForEach(m.preferences.exportPresets) { p in Button(p.name, role: .destructive) { m.deleteExportPreset(p) } }
+          }
+        }
+      }.fixedSize()
+        .help("导出预设：一次换好格式、质量、色彩空间、尺寸和文件名，像 Lightroom 的导出预设；也能把现在的设置存成自己的")
+    }
+  }
   func exportSummary(_ items: [FilmFrame], format: ExportFormat) -> some View {
     let pixels = items.compactMap(m.exportedPixels)
     let shown = (m.selected.flatMap { s in items.first { $0.id == s.id } } ?? items.first).flatMap(m.exportedPixels)

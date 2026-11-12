@@ -4599,6 +4599,43 @@ final class AppModel: ObservableObject {
   }
   /// The pixels `f` is written with: its crop of the full picture, straightened and turned. File
   /// sizes read once (`filePixels`), as the output tab asks again with every change.
+  /// The export settings as they are now, under `name`.
+  func exportSettings(named name: String) -> ExportPreset {
+    ExportPreset(name: name, format: exportType, quality: preferences.jpegQuality, colorSpace: preferences.exportColorSpace.rawValue,
+      longEdge: preferences.exportLongEdge, nameTemplate: preferences.exportNameTemplate)
+  }
+  /// The preset, the app's or the user's, that the export settings are now; nil, none of them.
+  var currentExportPreset: ExportPreset? {
+    (ExportPreset.builtins + preferences.exportPresets).first { p in
+      // The JPEG quality only counts for a JPEG.
+      let now = exportSettings(named: p.name)
+      return p.format == now.format && p.colorSpace == now.colorSpace && p.longEdge == now.longEdge && p.nameTemplate == now.nameTemplate
+        && (p.format != ExportFormat.jpeg.rawValue || abs(p.quality - now.quality) < 0.005)
+    }
+  }
+  /// The settings of a preset taken: format, quality, colour space, size and file name.
+  func applyExportPreset(_ p: ExportPreset) {
+    if let f = ExportFormat(rawValue: p.format) {
+      exportType = f.rawValue
+      preferences.exportFormat = f
+    }
+    preferences.jpegQuality = p.quality
+    if let space = ExportColorSpace(rawValue: p.colorSpace) { preferences.exportColorSpace = space }
+    preferences.exportLongEdge = p.longEdge
+    preferences.exportNameTemplate = p.nameTemplate
+    status = "导出设置换成「\(p.name)」"
+  }
+  /// The export settings kept under `name`; one of that name already is replaced.
+  func saveExportPreset(named name: String) {
+    let name = name.trimmingCharacters(in: .whitespaces)
+    guard !name.isEmpty, !ExportPreset.builtins.contains(where: { $0.name == name }) else { return }
+    preferences.exportPresets.removeAll { $0.name == name }
+    preferences.exportPresets.append(exportSettings(named: name))
+    status = "导出设置存为预设「\(name)」"
+  }
+  func deleteExportPreset(_ p: ExportPreset) {
+    preferences.exportPresets.removeAll { $0.name == p.name }
+  }
   /// The frame's exported size as the export settings make it: its own, or smaller to the long edge.
   func exportedPixels(_ f: FilmFrame) -> CGSize? {
     exportPixels(f).map { s in

@@ -52,6 +52,22 @@ enum ExportFlowTests {
     }
     let m = model()
     let ids = m.frames.map(\.id)
+    // Export presets: the app's taken whole, the user's kept under a name and over a restart.
+    let share = ExportPreset.builtins[1], before = m.exportSettings(named: "before")
+    m.applyExportPreset(share)
+    let took = m.exportType == "jpeg" && m.preferences.exportColorSpace == .sRGB && m.preferences.exportLongEdge == 2048
+      && abs(m.preferences.jpegQuality - 0.9) < 1e-9 && m.currentExportPreset == share
+    m.preferences.exportLongEdge = 1600
+    let custom = m.currentExportPreset == nil
+    m.saveExportPreset(named: "  网页 1600  ")
+    let reread = Preferences(defaults: defaults)
+    let kept = reread.exportPresets.map(\.name) == ["网页 1600"] && reread.exportPresets.first?.longEdge == 1600 && m.currentExportPreset?.name == "网页 1600"
+    m.saveExportPreset(named: share.name)
+    m.deleteExportPreset(m.preferences.exportPresets[0])
+    try check(took && custom && kept && m.preferences.exportPresets.isEmpty && Preferences(defaults: defaults).exportPresets.isEmpty,
+      "an export preset sets the format, quality, colour space, size and name at once; one of the user's is kept over a restart, none takes a built-in's name, and it goes when deleted")
+    // The checks below on the settings they began with.
+    m.applyExportPreset(before)
     try check(m.frames.count == 3 && m.exportStamps.isEmpty && m.frames.allSatisfy { m.exportMark($0) == .notExported },
       "a roll never exported has no marks")
 

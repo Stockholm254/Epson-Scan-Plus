@@ -32,6 +32,27 @@ enum ExportFormat: String, CaseIterable, Identifiable {
 }
 
 /// Colour spaces for exports. Raw values are stored in settings and taken by `--color-space`.
+/// Export settings kept under a name, as Lightroom's export presets: the format, its quality,
+/// the colour space, the size and the file name; where the files go stays as it is.
+struct ExportPreset: Codable, Equatable, Identifiable {
+  var name: String
+  var format: String
+  var quality: Double
+  var colorSpace: String
+  var longEdge: Int
+  var nameTemplate: String
+  var id: String { name }
+  /// Those the app comes with: to keep, to share, to post.
+  static let builtins = [
+    ExportPreset(name: "存档 · TIFF 16-bit · Adobe RGB · 原尺寸", format: ExportFormat.tiff.rawValue, quality: 0.97,
+      colorSpace: ExportColorSpace.adobeRGB.rawValue, longEdge: 0, nameTemplate: ExportNaming.standard),
+    ExportPreset(name: "分享 · JPEG · sRGB · 长边 2048", format: ExportFormat.jpeg.rawValue, quality: 0.9,
+      colorSpace: ExportColorSpace.sRGB.rawValue, longEdge: 2048, nameTemplate: ExportNaming.standard),
+    ExportPreset(name: "社交网络 · JPEG · sRGB · 长边 1080", format: ExportFormat.jpeg.rawValue, quality: 0.85,
+      colorSpace: ExportColorSpace.sRGB.rawValue, longEdge: 1080, nameTemplate: ExportNaming.standard),
+  ]
+}
+
 enum ExportColorSpace: String, CaseIterable, Identifiable {
   case sRGB = "srgb", displayP3 = "p3", adobeRGB = "adobe", proPhoto = "prophoto"
   var id: String { rawValue }
@@ -100,6 +121,10 @@ final class Preferences: ObservableObject {
   /// Where new previews and imports create their project folders; nil is the default library.
   @Published var libraryPath: String? { didSet { defaults?.set(libraryPath, forKey: "libraryPath") } }
   @Published var exportFormat: ExportFormat { didSet { defaults?.set(exportFormat.rawValue, forKey: "exportFormat") } }
+  /// Export settings kept under names of the user's own (`ExportPreset`), after the app's.
+  @Published var exportPresets: [ExportPreset] {
+    didSet { defaults?.set(try? JSONEncoder().encode(exportPresets), forKey: "exportPresets") }
+  }
   /// The exported picture's long edge in pixels; 0, the frame's own size (as Lightroom's 调整大小以适合).
   @Published var exportLongEdge: Int { didSet { defaults?.set(exportLongEdge, forKey: "exportLongEdge") } }
   /// The long edges offered, besides the frame's own size.
@@ -213,6 +238,7 @@ final class Preferences: ObservableObject {
     exportFormat = defaults?.string(forKey: "exportFormat").flatMap(ExportFormat.init(rawValue:)) ?? .tiff
     sheetFormat = defaults?.string(forKey: "sheetFormat").flatMap(ExportFormat.init(rawValue:)) ?? .jpeg
     exportLongEdge = max(0, defaults?.integer(forKey: "exportLongEdge") ?? 0)
+    exportPresets = defaults?.data(forKey: "exportPresets").flatMap { try? JSONDecoder().decode([ExportPreset].self, from: $0) } ?? []
     exportColorSpace = defaults?.string(forKey: "exportColorSpace").flatMap(ExportColorSpace.init(rawValue:)) ?? .sRGB
     exportNameTemplate = defaults?.string(forKey: "exportNameTemplate") ?? ExportNaming.standard
     lastExportFolder = defaults?.string(forKey: "lastExportFolder")
