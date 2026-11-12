@@ -187,6 +187,11 @@ enum StepTests {
       && back.contains("试一下") && model.frames[1].adjustments.saturation == Adjustments().saturation && shots.contains("试一下"),
       "the assistant lists the presets, applies one by name, takes a snapshot of the frame's grading and goes back to it")
     edits.undo()
+    _ = reply("take_snapshot")
+    _ = reply("take_snapshot")
+    let unnamed = model.shownSnapshots.map(\.name)
+    try check(unnamed.count == 3 && Set(unnamed).count == 3 && unnamed.dropFirst().allSatisfy { $0.hasPrefix("快照 ") },
+      "snapshots taken without a name in the same minute are numbered, not put over one another: \(unnamed)")
     model.gradeSnapshots = [:]
     model.saveGradingPreset(named: "暖一点", groups: [.exposure])
     let replaced = model.preferences.gradingPresets

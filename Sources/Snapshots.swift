@@ -13,8 +13,14 @@ struct GradeSnapshot: Codable, Equatable, Identifiable {
 extension AppModel {
   /// The frame shown's snapshots, the oldest first.
   var shownSnapshots: [GradeSnapshot] { selectedID.flatMap { gradeSnapshots[$0] } ?? [] }
-  /// What the next snapshot is called unless named: 快照 and the time.
-  var nextSnapshotName: String { "快照 " + Date().formatted(date: .omitted, time: .shortened) }
+  /// What the next snapshot is called unless named: 快照 and the time, numbered when the frame
+  /// already has one of that name (two in a minute), so a default name never replaces one.
+  var nextSnapshotName: String {
+    let plain = "快照 " + Date().formatted(date: .omitted, time: .shortened)
+    let taken = Set(shownSnapshots.map(\.name))
+    guard taken.contains(plain) else { return plain }
+    return (2...).lazy.map { "\(plain) (\($0))" }.first { !taken.contains($0) } ?? plain
+  }
   /// The frame shown's grading kept as a snapshot named `name`; one of that name on it replaced.
   func takeSnapshot(named name: String) {
     guard let f = selected else { return }
