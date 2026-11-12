@@ -6,8 +6,8 @@ import SwiftUI
 /// to the right. Every figure has its own cells, the unlit segments barely there, the digits
 /// right-aligned in them as an LCD's are. Shutter and aperture large with the mode beside them;
 /// under a printed rule ISO in its box, the exposure scale where the panel is wide enough, the
-/// pictures taken in brackets and the battery's bars. In the dark appearance its lamp is on, the
-/// orange backlight cameras light for night work. The pointer over it moves the shadows and the
+/// pictures taken in brackets and the battery's bars. In the dark appearance its lamp is on, a
+/// blue backlight behind the same dark figures, as for night work. The pointer over it moves the shadows and the
 /// cover's sheen a little, as looking at it from the side would.
 struct TopLCD: View {
   /// The camera's own texts for them, as `CameraProperty.describe` gives them: 1/125, 0.5",
@@ -105,11 +105,11 @@ struct TopLCD: View {
   struct Colours {
     let top: Color, bottom: Color, ink: Color, shadow: Color, ghost: Double
   }
-  /// Unlit: the reflector a pale grey-green, as daylight shows it. Lit: the orange lamp behind it.
+  /// Unlit: the reflector a pale grey-green, as daylight shows it. Lit: the blue lamp behind it.
   static func colours(lit: Bool) -> Colours {
     lit
-      ? Colours(top: Color(red: 0.93, green: 0.62, blue: 0.27), bottom: Color(red: 0.78, green: 0.45, blue: 0.15),
-        ink: Color(red: 0.14, green: 0.06, blue: 0.02), shadow: Color(red: 0.35, green: 0.12, blue: 0).opacity(0.36), ghost: 0.03)
+      ? Colours(top: Color(red: 0.40, green: 0.68, blue: 0.98), bottom: Color(red: 0.20, green: 0.44, blue: 0.86),
+        ink: Color(red: 0.02, green: 0.05, blue: 0.16), shadow: Color(red: 0, green: 0.08, blue: 0.32).opacity(0.4), ghost: 0.035)
       : Colours(top: Color(red: 0.80, green: 0.82, blue: 0.77), bottom: Color(red: 0.69, green: 0.72, blue: 0.67),
         ink: Color(red: 0.09, green: 0.10, blue: 0.09), shadow: Color.black.opacity(0.28), ghost: 0.022)
   }
@@ -136,16 +136,17 @@ struct TopLCD: View {
     let window = body.insetBy(dx: 7, dy: 7)
     ctx.fill(Path(roundedRect: window.insetBy(dx: -1.5, dy: -1.5), cornerRadius: 7), with: .color(.black.opacity(0.9)))
     let screen = window.insetBy(dx: 2.5, dy: 2.5)
-    // The cover's chamfered edge between the well and the screen, catching the light above it.
-    ctx.stroke(Path(roundedRect: window.insetBy(dx: 0.9, dy: 0.9), cornerRadius: 5.6), with: .linearGradient(
-      Gradient(colors: [Color(white: 0.62), Color(white: 0.3), Color(white: 0.12)]),
-      startPoint: CGPoint(x: window.minX, y: window.minY), endPoint: CGPoint(x: window.minX + window.width * 0.25, y: window.maxY)), lineWidth: 1.8)
+    // The window's chamfered walls going down to the screen, lit from above as a recess is: the
+    // top wall in its own shadow, the bottom one catching the light.
+    ctx.stroke(Path(roundedRect: window.insetBy(dx: 1.25, dy: 1.25), cornerRadius: 5.4), with: .linearGradient(
+      Gradient(colors: [Color(white: 0.08), Color(white: 0.26), Color(white: 0.56)]),
+      startPoint: CGPoint(x: window.midX, y: window.minY), endPoint: CGPoint(x: window.midX, y: window.maxY)), lineWidth: 2.5)
     ctx.fill(Path(roundedRect: screen, cornerRadius: 4.5), with: .linearGradient(
       Gradient(colors: [c.top, c.bottom]), startPoint: CGPoint(x: screen.minX, y: screen.minY), endPoint: CGPoint(x: screen.maxX, y: screen.maxY)))
     if lit {
       // The lamp is brighter in the middle than at the ends.
       ctx.fill(Path(roundedRect: screen, cornerRadius: 4.5), with: .radialGradient(
-        Gradient(colors: [Color(red: 1, green: 0.8, blue: 0.45).opacity(0.45), .clear]),
+        Gradient(colors: [Color(red: 0.72, green: 0.9, blue: 1).opacity(0.45), .clear]),
         center: CGPoint(x: screen.midX, y: screen.midY), startRadius: 0, endRadius: screen.width * 0.6))
     }
     // The well's own shadow on the screen's top and left edges, under the cover.

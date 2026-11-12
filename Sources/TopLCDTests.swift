@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// The camera's settings on its top LCD: written as the panel writes them, each figure in its
-/// cells, dark segments on the pale reflector by day and on the orange lamp in the dark, dashes
+/// cells, dark segments on the pale reflector by day and on the blue lamp in the dark, dashes
 /// before it is connected.
 enum TopLCDTests {
   static func run(folder: URL) throws {
@@ -53,8 +53,8 @@ enum TopLCDTests {
       print("LCD ink \(day.ink) lit \(night.ink) off \(none.ink); reflector \(day.light) lamp \(night.light)")
       try check(day.ink > 0.05 && day.ink < 0.4 && abs(day.light.x - day.light.z) < 0.12 && day.light.y > 0.6,
         "by day the figures are dark on the pale grey-green reflector")
-      try check(night.ink > 0.05 && night.light.x > night.light.z + 0.3,
-        "in the dark appearance its orange lamp is on behind the same dark figures")
+      try check(night.ink > 0.05 && night.light.z > night.light.x + 0.3,
+        "in the dark appearance its blue lamp is on behind the same dark figures")
       try check(none.ink < day.ink * 0.6, "before the camera is connected the LCD shows only dashes")
     } else {
       throw DeskError.message("FAIL: the top LCD could not be drawn")
