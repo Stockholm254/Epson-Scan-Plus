@@ -1200,7 +1200,7 @@ struct ContentView: View {
           HStack {
             Text("拉直").font(.system(size: 12)).foregroundStyle(.secondary)
             Spacer()
-            ValueField(title: "拉直", text: String(format: "%+.2f°", m.screenAngle), value: m.screenAngle, range: -15...15) {
+            ValueField(title: "拉直", text: sliderText("%+.2f°", m.screenAngle), value: m.screenAngle, range: -15...15) {
               m.straighten($0)
             }
             Button("画线") {
@@ -1226,9 +1226,11 @@ struct ContentView: View {
     let region = m.settings.analysisRegion, cyan = CanvasTool.region.colour.map { Color(red: $0.red, green: $0.green, blue: $0.blue) }
     return VStack(alignment: .leading, spacing: 4) {
       Divider()
-      HStack(spacing: 6) {
-        Label("去色罩区域", systemImage: CanvasTool.region.symbol).font(.system(size: 12)).foregroundStyle(cyan ?? .primary)
-        Spacer()
+      // Its name on one line: in the narrowest sidebar it wrapped beside its keys, the keys
+      // going under it there instead.
+      let name = Label("去色罩区域", systemImage: CanvasTool.region.symbol).font(.system(size: 12)).foregroundStyle(cyan ?? .primary)
+        .lineLimit(1).fixedSize()
+      let keys = HStack(spacing: 6) {
         Button {
           m.useTool(m.tool == .region ? .select : .region)
         } label: {
@@ -1237,6 +1239,11 @@ struct ContentView: View {
           .help("在画面上拖出青色的框：片基估计、白平衡和色阶只看框里 · M")
         Button("跟随画面") { m.setAnalysisRegion(nil) }.font(.system(size: 11)).disabled(region == nil)
           .help("不再单独框选：按画面裁切，去掉四边 5%；裁切里带着片边时只看片边以内")
+      }
+      WidthFit {
+        HStack(spacing: 6) { name; Spacer(); keys }
+      } compact: {
+        VStack(alignment: .leading, spacing: 4) { name; keys }
       }
       Text(region.map { String(format: "框选了画面的 %.0f%%：片基估计、白平衡、色阶和高光只看青色框里，显示和导出仍按琥珀色的画面裁切", $0.width * $0.height * 100) }
         ?? (m.toneAnalysis?.followed.map { String(format: "跟随画面裁切：裁切里带着片边（片基、齿孔、边字），只看片边以内的 %.0f%%（青色虚线）。要避开漏光或一大片天空，框选只想让去色罩看的地方", $0.width * $0.height * 100) }
