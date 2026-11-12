@@ -57,6 +57,11 @@ enum MCPTools {
       "auto_white_balance": ["type": "boolean", "description": "自动白平衡"], "auto_levels": ["type": "boolean", "description": "自动色阶"],
       "shared_balance": ["type": "boolean", "description": "整卷同一白平衡：整卷共用一个按所有画面统计的白平衡，每张颜色一致；作用于选中画面所在的整卷"],
       "shared_levels": ["type": "boolean", "description": "整卷同一色阶：整卷共用一组黑白两端，暗的场景就是暗的，每张只按曝光微调；作用于选中画面所在的整卷"],
+      "texture": number("纹理（像 Lightroom）：最细的起伏加强（正）或柔化（负），颜色不变，-1 到 1", -1...1),
+      "clarity": number("清晰度（像 Lightroom）：中等尺度的局部反差，主要在中间调，黑白不动，-1 到 1", -1...1),
+      "dehaze": number("去朦胧（像 Lightroom）：去掉（正）或加上（负）一层白雾，-1 到 1", -1...1),
+      "vibrance": number("自然饱和度（像 Lightroom）：只加不太鲜艳的颜色，肤色加得少，-1 到 1", -1...1),
+      "auto_whites_blacks": ["type": "boolean", "description": "自动白色、黑色（像 Lightroom 按住 Shift 双击）：设白色、黑色，让这张最亮的 0.1% 正好到白、最暗的 0.1% 正好到黑；在其他参数之后算，要单张视图里算过的影调"],
       "base_fine_ev": ["type": "array", "items": ["type": "number", "minimum": -0.5, "maximum": 0.5], "minItems": 3, "maxItems": 3,
         "description": "片基逐通道微调 [R, G, B]，单位 EV，-0.5 到 0.5"],
     ]),
@@ -416,7 +421,10 @@ enum MCPTools {
       state["levels"] = ["auto": s.autoLevels, "black": s.black, "white": s.white, "midtone": s.midtone]
       state["curves"] = curvesState(s.curves)
       state["tone"] = ["exposure": s.exposure, "contrast": s.contrast, "saturation": s.saturation, "curves": s.curves != nil,
-        "highlights": s.highlightsAmount, "shadows": s.shadowsAmount, "whites": s.whitesAmount, "blacks": s.blacksAmount, "colour_noise": s.colourNoiseAmount, "soft_ends": s.softEndsOn]
+        "highlights": s.highlightsAmount, "shadows": s.shadowsAmount, "whites": s.whitesAmount, "blacks": s.blacksAmount,
+        "texture": s.textureAmount, "clarity": s.clarityAmount, "dehaze": s.dehazeAmount, "vibrance": s.vibranceAmount,
+        "colour_mixer": s.mixer.map { m in Dictionary(uniqueKeysWithValues: ColourMixer.bands.indices.map { b in (ColourMixer.bands[b].name, ["hue": m.values[b * 3], "saturation": m.values[b * 3 + 1], "luminance": m.values[b * 3 + 2]]) }) } ?? [:],
+        "colour_grading": s.grading.map { g in ["shadows": [g.shadowHue, g.shadowAmount], "midtones": [g.midHue, g.midAmount], "highlights": [g.highHue, g.highAmount], "balance": [g.balance], "blending": [g.blending]] } ?? [:], "colour_noise": s.colourNoiseAmount, "soft_ends": s.softEndsOn]
       state["input"] = ["negative": s.inputIsNegative, "reversal": s.isSlide, "gamma": s.inputGamma]
       state["negative_density_above_base"] = ["r": percentiles(densities[0]), "g": percentiles(densities[1]), "b": percentiles(densities[2])]
       state["positive_srgb"] = ["r": percentiles(outputs[0]), "g": percentiles(outputs[1]), "b": percentiles(outputs[2]),
@@ -511,7 +519,7 @@ enum MCPTools {
         return ["x": p.x, "y": p.y, "negative_linear": rgb(v), "density_above_base": rgb(d), "positive_srgb": rgb(out)]
       })
     case "adjust":
-      let known: Set = ["warmth", "tint", "shadow_warmth", "shadow_tint", "exposure", "contrast", "saturation", "black", "white", "midtone", "highlights", "shadows", "whites", "blacks", "auto_white_balance", "auto_levels", "base_fine_ev", "angle", "shared_balance", "shared_levels"]
+      let known: Set = ["warmth", "tint", "shadow_warmth", "shadow_tint", "exposure", "contrast", "saturation", "black", "white", "midtone", "highlights", "shadows", "whites", "blacks", "texture", "clarity", "dehaze", "vibrance", "auto_white_balance", "auto_levels", "base_fine_ev", "angle", "shared_balance", "shared_levels", "auto_whites_blacks"]
       let unknown = Set(arguments.keys).subtracting(known)
       guard unknown.isEmpty else { throw DeskError.message("不认识的参数：\(unknown.sorted().joined(separator: ", "))") }
       guard !arguments.isEmpty else { throw DeskError.message("没有要改的参数。") }
@@ -524,6 +532,7 @@ enum MCPTools {
         (\.warmth, "warmth", -1...1), (\.tint, "tint", -1...1), (\.shadowWarmthAmount, "shadow_warmth", -1...1), (\.shadowTintAmount, "shadow_tint", -1...1), (\.exposure, "exposure", -2...2), (\.contrast, "contrast", 0.5...1.6),
         (\.saturation, "saturation", 0...1.8), (\.black, "black", 0...0.4), (\.white, "white", 0.6...1), (\.midtone, "midtone", 0.4...2),
         (\.highlightsAmount, "highlights", -1...1), (\.shadowsAmount, "shadows", -1...1), (\.whitesAmount, "whites", -1...1), (\.blacksAmount, "blacks", -1...1),
+        (\.textureAmount, "texture", -1...1), (\.clarityAmount, "clarity", -1...1), (\.dehazeAmount, "dehaze", -1...1), (\.vibranceAmount, "vibrance", -1...1),
       ]
       let values = try numbers.compactMap { n in try value(n.1, n.2).map { (n.0, $0) } }
       let angle = try value("angle", -45...45)
@@ -550,6 +559,7 @@ enum MCPTools {
         }
         if let b = arguments["shared_balance"] as? Bool { model.setSharedBalance(b) }
         if let b = arguments["shared_levels"] as? Bool { model.setSharedLevels(b) }
+        if arguments["auto_whites_blacks"] as? Bool == true { model.autoWhitesBlacks() }
       }
       return [["type": "text", "text": "已调整：\(arguments.keys.sorted().joined(separator: ", "))。可用 ⌘Z 或 undo 撤销。"]]
     case "pick_film_base", "pick_neutral":

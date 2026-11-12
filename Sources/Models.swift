@@ -406,6 +406,49 @@ struct Adjustments: Codable, Equatable {
   /// 压高光, saved before whites took its place (0 to 1, the white brought down by 0.15 at 1): read
   /// as whites at minus it (`whitesAmount`), never set.
   var pressHighlights: Double? = nil
+  /// Lightroom's presence (`ImagePipeline.looks`, `Kernels.presence`): texture, clarity, dehaze;
+  /// and vibrance (`Kernels.saturated`): −1 to 1, nil as it is.
+  var texture: Double? = nil
+  var textureAmount: Double {
+    get { texture ?? 0 }
+    set { texture = newValue == 0 ? nil : newValue }
+  }
+  var clarity: Double? = nil
+  var clarityAmount: Double {
+    get { clarity ?? 0 }
+    set { clarity = newValue == 0 ? nil : newValue }
+  }
+  var dehaze: Double? = nil
+  var dehazeAmount: Double {
+    get { dehaze ?? 0 }
+    set { dehaze = newValue == 0 ? nil : newValue }
+  }
+  var vibrance: Double? = nil
+  var vibranceAmount: Double {
+    get { vibrance ?? 0 }
+    set { vibrance = newValue == 0 ? nil : newValue }
+  }
+  /// The colour mixer (`ColourMixer`), nil as it is; band `band`'s hue, saturation or luminance
+  /// (`kind` 0, 1, 2), for a slider.
+  var mixer: ColourMixer? = nil
+  subscript(mixer band: Int, kind kind: Int) -> Double {
+    get { mixer?.values[band * 3 + kind] ?? 0 }
+    set {
+      var m = mixer ?? ColourMixer()
+      m.values[band * 3 + kind] = newValue
+      mixer = m.isIdentity ? nil : m
+    }
+  }
+  /// Colour grading (`ColourGrading`), nil as it is.
+  var grading: ColourGrading? = nil
+  subscript(grading key: WritableKeyPath<ColourGrading, Double>) -> Double {
+    get { (grading ?? ColourGrading())[keyPath: key] }
+    set {
+      var g = grading ?? ColourGrading()
+      g[keyPath: key] = newValue
+      grading = g == ColourGrading() ? nil : g
+    }
+  }
   /// Colour noise smoothed away, the grain's lightness left as it is: 0 (or nil) off, 1 as a copy
   /// shot comes in with.
   var colourNoise: Double? = nil
@@ -577,6 +620,15 @@ struct FilmProfile: Codable, Identifiable, Equatable {
   }
 }
 
+/// A frame's colour label, as Lightroom's (keys 6 to 9 for the first four).
+enum FrameLabel: Int, CaseIterable {
+  case red, yellow, green, blue, purple
+  var name: String { ["红", "黄", "绿", "蓝", "紫"][rawValue] }
+  var colour: (r: Double, g: Double, b: Double) {
+    [(0.92, 0.26, 0.24), (0.96, 0.78, 0.2), (0.3, 0.75, 0.35), (0.25, 0.5, 0.95), (0.62, 0.38, 0.85)][rawValue]
+  }
+}
+
 struct FilmFrame: Identifiable, Codable {
   var id = UUID()
   var name: String
@@ -595,6 +647,11 @@ struct FilmFrame: Identifiable, Codable {
   }
   var format: String
   var enabled = true
+  /// Lightroom's marks for sorting a roll: stars 1 to 5, a flag (1 picked, −1 rejected) and a
+  /// colour label (`FrameLabel`); nil none.
+  var rating: Int? = nil
+  var flag: Int? = nil
+  var label: Int? = nil
   var adjustments = Adjustments()
   var scanPath: String? = nil
   var scanRect: NormalRect? = nil  // Physical footprint of the immutable original scan.
@@ -647,6 +704,7 @@ extension Adjustments {
     (sharedBalance, sharedLevels, rollPrint) = (o.sharedBalance, o.sharedLevels, o.rollPrint)
     (exposure, contrast, highlights, pressHighlights, shadows) = (o.exposure, o.contrast, o.highlights, o.pressHighlights, o.shadows)
     (whites, blacks) = (o.whites, o.blacks)
+    (texture, clarity, dehaze, vibrance, mixer, grading) = (o.texture, o.clarity, o.dehaze, o.vibrance, o.mixer, o.grading)
     (autoLevels, black, white, midtone) = (o.autoLevels, o.black, o.white, o.midtone)
     (saturation, colourNoise, softEnds) = (o.saturation, o.colourNoise, o.softEnds)
     (curves, sharpening) = (o.curves, o.sharpening)
@@ -672,7 +730,7 @@ extension Adjustments {
 /// de-masking reads and its leak repair stay its own whatever is chosen).
 enum SettingsGroup: String, CaseIterable, Identifiable {
   case whiteBalance, shadowColour, exposure, contrast, highlightsShadows, whitesBlacks, levels
-  case saturation, softEnds, colourNoise, curves, sharpening, rollShared
+  case saturation, softEnds, colourNoise, curves, sharpening, rollShared, presence, mixer, grading
   /// ③'s settings none of the others names: those a newer version adds before it is listed here.
   case otherGrading
   case base, baseFine, reading, edges
@@ -692,6 +750,9 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
     case .curves: return "曲线"
     case .sharpening: return "锐化"
     case .rollShared: return "整卷同一白平衡、色阶"
+    case .presence: return "纹理、清晰度、去朦胧、自然饱和度"
+    case .mixer: return "混色器"
+    case .grading: return "色彩分级"
     case .otherGrading: return "其他调色"
     case .base: return "片基"
     case .baseFine: return "片基微调"
@@ -727,6 +788,9 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
     case .curves: a.curves = o.curves
     case .sharpening: a.sharpening = o.sharpening
     case .rollShared: (a.sharedBalance, a.sharedLevels, a.rollPrint) = (o.sharedBalance, o.sharedLevels, o.rollPrint)
+    case .presence: (a.texture, a.clarity, a.dehaze, a.vibrance) = (o.texture, o.clarity, o.dehaze, o.vibrance)
+    case .mixer: a.mixer = o.mixer
+    case .grading: a.grading = o.grading
     case .otherGrading:
       // All of ③'s from `o`, then every named group back as it was.
       let kept = a
@@ -771,6 +835,11 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
     case .curves: return a.curves.map { $0.isIdentity ? "直线" : "改过" } ?? "直线"
     case .sharpening: return a.sharpening.map { String(format: "%.2f", $0) } ?? "默认"
     case .rollShared: return joined([a.sharedBalance == true ? "白平衡" : nil, a.sharedLevels == true ? "色阶" : nil], or: "各张自己的")
+    case .presence:
+      return joined([a.texture.map { "纹理 " + signed($0) }, a.clarity.map { "清晰度 " + signed($0) }, a.dehaze.map { "去朦胧 " + signed($0) },
+        a.vibrance.map { "自然饱和度 " + signed($0) }], or: "0")
+    case .mixer: return a.mixer.map { $0.isIdentity ? "未改" : "改过" } ?? "未改"
+    case .grading: return a.grading.map { $0.isIdentity ? "未改" : "改过" } ?? "未改"
     case .otherGrading: return isSet(in: a) ? "改过" : "默认"
     case .base: return a.basePicked != nil ? "取样" : a.base != nil ? "定过" : "自动"
     case .baseFine: return a.baseFine.map { "R \(signed($0.r)) · G \(signed($0.g)) · B \(signed($0.b)) EV" } ?? "0"

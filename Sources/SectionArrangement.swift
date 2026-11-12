@@ -13,7 +13,7 @@ enum SectionColumn: String, CaseIterable {
     switch self {
     case .film: return ["film", "calibration", "base", "frame"]
     case .demask: return ["dust", "input"]
-    case .grade: return ["balance", "tone", "levels", "colour", "curves", "sharpening"]
+    case .grade: return ["balance", "tone", "levels", "colour", "mixer", "grading", "curves", "sharpening"]
     }
   }
   var storageKey: String { "sectionOrder." + rawValue }

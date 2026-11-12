@@ -107,6 +107,9 @@ enum StepTests {
     (full.whites, full.blacks, full.autoLevels, full.black, full.white, full.midtone) = (-0.1, 0.1, false, 0.02, 0.95, 1.1)
     (full.saturation, full.colourNoise, full.softEnds, full.curves, full.sharpening) = (1.3, 0.5, true, ToneCurves(), 0.4)
     full.curves?.rgb = ToneCurve(points: [CurvePoint(x: 0, y: 0), CurvePoint(x: 0.5, y: 0.6), CurvePoint(x: 1, y: 1)])
+    (full.texture, full.clarity, full.dehaze, full.vibrance) = (0.2, 0.3, 0.1, 0.4)
+    full[mixer: 5, kind: 1] = -0.5
+    full.grading = ColourGrading(shadowHue: 220, shadowAmount: 0.3)
     (full.baseFine, full.base, full.inputGamma, full.filmEdges) = (RGB(r: 0.1, g: 0, b: 0), RGB(r: 0.5, g: 0.3, b: 0.2), 1.0, .rebate)
     var grouped = Adjustments(), whole = Adjustments(), rest = Adjustments()
     for g in SettingsGroup.of(.grading) { g.take(&grouped, from: full) }

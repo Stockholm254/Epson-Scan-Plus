@@ -2642,6 +2642,26 @@ final class FilmCanvasView: NSView {
       event.charactersIgnoringModifiers?.lowercased() == AppModel.loupeShortcut
     {
       model?.toggleLoupe()
+    } else if event.modifierFlags.intersection([.command, .control, .option]).isEmpty, model?.page != .capture,
+      let key = event.charactersIgnoringModifiers?.lowercased(), ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "p", "x"].contains(key)
+    {
+      // As Lightroom's: 0–5 stars, P picked, X rejected, 6–9 the red, yellow, green and blue labels.
+      switch key {
+      case "p": model?.setFlag(1)
+      case "x": model?.setFlag(-1)
+      case "6", "7", "8", "9": model?.setLabel(FrameLabel(rawValue: Int(key)! - 6))
+      default: model?.setRating(Int(key)!)
+      }
+    } else if event.modifierFlags.intersection([.command, .control, .option]).isEmpty, model?.singleView == true,
+      event.charactersIgnoringModifiers?.lowercased() == "j"
+    {
+      // J, as Lightroom's: what shows white red, what shows black blue.
+      model?.showClipping.toggle()
+    } else if event.modifierFlags.intersection([.command, .control, .option]).isEmpty, model?.singleView == true,
+      event.charactersIgnoringModifiers == "\\", model?.page == .convert, model?.convertStep == .grade
+    {
+      // \, as Lightroom's: ③'s before and after.
+      model?.showBefore.toggle()
     } else if event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
       let key = event.charactersIgnoringModifiers?.lowercased(),
       let tool = CanvasTool.allCases.first(where: { $0.shortcut == key }),

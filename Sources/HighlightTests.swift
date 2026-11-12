@@ -259,6 +259,47 @@ enum HighlightTests {
     let counted = pipe.screenShares(heldPicture)
     try check(abs(counted.white - heldSeen.white) < 1e-5 && abs(counted.black - heldSeen.black) < 1e-5,
       String(format: "counted on the picture as shown, %.3f%% shows white and %.3f%% black, as its pixels have it", counted.white * 100, counted.black * 100))
+    // The histogram as shown counts the picture on screen, each channel's 256 steps adding up to
+    // the whole, and moves with what acts after the ends: shadows +1 moves green's mean up.
+    let shownCounts = pipe.screenCounts(heldPicture)
+    var opened = Adjustments()
+    opened.shadows = 1
+    let liftedCounts = pipe.screenCounts(try pipe.preview(bright, settings: opened, profile: portra))
+    func mean(_ h: [Double]) -> Double { zip(h.indices, h).map { Double($0) * $1 }.reduce(0, +) / max(1e-9, h.reduce(0, +)) }
+    try check(shownCounts.count == 3 && shownCounts.allSatisfy { abs($0.reduce(0, +) - 1) < 0.001 } && mean(liftedCounts[1]) > mean(shownCounts[1]) + 3,
+      String(format: "the histogram counts the picture as shown, each channel adding up to the whole, and shadows +1 moves green's mean from %.0f to %.0f", mean(shownCounts[1]), mean(liftedCounts[1])))
+    // 自动白色 / 黑色, cut straight at the ends: the frame's brightest 0.1% just at white and its
+    // darkest just at black, no more clipped than that (8-bit rounding takes a little more to black),
+    // and not short of either. On the ramp a little past white, which whites reach.
+    var straightEnds = Adjustments()
+    straightEnds.softEnds = false
+    let straightAnalysis = pipe.analyze(plain, settings: straightEnds, profile: portra)
+    if let straightRange = pipe.toneRange(plain, settings: straightEnds, profile: portra, analysis: straightAnalysis) {
+      let ends = ImagePipeline.autoEnds(straightRange, straightEnds)
+      var auto = straightEnds
+      (auto.whitesAmount, auto.blacksAmount) = (ends.whites, ends.blacks)
+      let picture = try pipe.preview(plain, settings: auto, profile: portra)
+      let shares = pipe.screenShares(picture), counts = pipe.screenCounts(picture)
+      let tops = pipe.raster(picture, maxDimension: w)
+      var maxes = [Double]()
+      for y in 0..<tops.height { for x in 0..<tops.width { maxes.append(tops.pixel(x, y).values.max()! * 255) } }
+      maxes.sort()
+      let top999 = maxes[Int(Double(maxes.count - 1) * 0.999)]
+      try check(abs(ends.whites) < 1 && shares.white < 0.008 && top999 > 245 && shares.black < 0.008 && counts.count == 3,
+        String(format: "自动白色 / 黑色 puts the brightest 0.1%% at %.0f (whites %+.2f, %.2f%% white) and %.2f%% at black (blacks %+.2f)",
+          top999, ends.whites, shares.white * 100, shares.black * 100, ends.blacks))
+    } else {
+      try check(false, "自动白色 / 黑色 has a tone range to go by")
+    }
+    // J's clipping marks: what shows white red, black blue, the rest as it was.
+    let marked = pipe.raster(pipe.markClipping(heldPicture), maxDimension: w), unmarked = pipe.raster(heldPicture, maxDimension: w)
+    var redAtWhite = true, sameElsewhere = true
+    for y in 0..<unmarked.height { for x in 0..<unmarked.width {
+      let p = unmarked.pixel(x, y), q = marked.pixel(x, y)
+      if p.values.max()! >= 254.5 / 255 { redAtWhite = redAtWhite && q.r > 0.9 && q.g < 0.2 }
+      else if p.values.min()! > 1.5 / 255 { sameElsewhere = sameElsewhere && abs(q.g - p.g) < 0.003 }
+    } }
+    try check(redAtWhite && sameElsewhere, "J's clipping marks show what is white red and leave the rest as it was")
     try check(white > range.brightest && heldWhite < 1.35 && white > heldWhite + 0.2,
       String(format: "the shoulder takes the screen's white past the frame's brightest (%.2f against %.2f), where held at white it came at %.2f", white, range.brightest, heldWhite))
     var straight = Adjustments()

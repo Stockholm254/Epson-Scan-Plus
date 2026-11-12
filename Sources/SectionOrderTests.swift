@@ -11,14 +11,15 @@ enum SectionOrderTests {
     try check(SectionOrder.order(saved: "", defaults: grade) == grade,
       "a column never arranged shows its sections in the app's own order")
     // Saved: colour first, tone after levels; a key it no longer has dropped, one it gained since
-    // (sharpening, not saved) put after the one the app's own order has before it.
+    // (the mixer and grading after colour, sharpening after curves) put after the one the app's own
+    // order has before it.
     let saved = "colour,balance,levels,tone,curves,gone"
-    try check(SectionOrder.order(saved: saved, defaults: grade) == ["colour", "balance", "levels", "tone", "curves", "sharpening"],
+    try check(SectionOrder.order(saved: saved, defaults: grade) == ["colour", "mixer", "grading", "balance", "levels", "tone", "curves", "sharpening"],
       "a saved order is read back, keys no longer there left out and new ones put where the app's own order has them")
     // Dragged: tone from above onto curves goes after it; curves from below onto balance before it.
     let order = grade
-    try check(SectionOrder.place("tone", at: "curves", in: order) == ["balance", "levels", "colour", "curves", "tone", "sharpening"]
-      && SectionOrder.place("curves", at: "balance", in: order) == ["curves", "balance", "tone", "levels", "colour", "sharpening"]
+    try check(SectionOrder.place("tone", at: "curves", in: order) == ["balance", "levels", "colour", "mixer", "grading", "curves", "tone", "sharpening"]
+      && SectionOrder.place("curves", at: "balance", in: order) == ["curves", "balance", "tone", "levels", "colour", "mixer", "grading", "sharpening"]
       && SectionOrder.place("tone", at: "tone", in: order) == order,
       "a section dragged over another takes its place: after it coming from above, before it from below")
     // Moved by its menu among those shown: on a slide the film column shows no calibration or
@@ -36,7 +37,7 @@ enum SectionOrderTests {
     arranger.move("colour", by: -1)
     arranger.place("sharpening", at: "balance")
     let kept = SectionOrder.order(saved: defaults.string(forKey: SectionColumn.grade.storageKey) ?? "", defaults: grade)
-    try check(kept == ["sharpening", "balance", "tone", "colour", "levels", "curves"] && !arranger.isDefault,
+    try check(kept == ["sharpening", "balance", "tone", "colour", "levels", "mixer", "grading", "curves"] && !arranger.isDefault,
       "the order is kept as it is changed")
     arranger.reset()
     try check(arranger.isDefault && arranger.order == grade, "恢复默认顺序 puts the column back in the app's own order")

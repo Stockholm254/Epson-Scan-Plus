@@ -391,6 +391,17 @@ final class AppModel: ObservableObject {
       }
     }
   }
+  /// Clipping shown on the single view (J): what the screen shows white in red, black in blue.
+  @Published var showClipping = false {
+    didSet { if showClipping != oldValue { status = showClipping ? "显示溢出：红色是纯白，蓝色是纯黑 · J 关掉" : "不显示溢出"; refresh() } }
+  }
+  /// ③'s grading off on the single view (\), as Lightroom's before and after: the picture as ②
+  /// leaves it, until shown again.
+  @Published var showBefore = false {
+    didSet { if showBefore != oldValue { status = showBefore ? "调色前：② 去色罩的结果 · \\ 回到调色后" : "调色后"; refresh() } }
+  }
+  /// The single view shows ③'s before (`showBefore`): only in ③.
+  var showsBefore: Bool { showBefore && page == .convert && convertStep == .grade }
   /// ② shows the frame as de-masking leaves it: ③'s grading as new (white balance and levels
   /// automatic, nothing else), no light-leak repair, no sharpening; the picture 去漏光 works on too.
   var showsDemasked: Bool { page == .convert && convertStep == .demask }
@@ -400,8 +411,9 @@ final class AppModel: ObservableObject {
     d.adjustments.leakFix = nil
     return d
   }
-  /// The frame as the picture shows it now: in ②, de-masked only.
-  func asShown(_ f: FilmFrame) -> FilmFrame { showsDemasked ? Self.demasked(f) : f }
+  /// The frame as the picture shows it now: in ②, and in ③ showing its before (`showsBefore`),
+  /// de-masked only.
+  func asShown(_ f: FilmFrame) -> FilmFrame { showsDemasked || showsBefore ? Self.demasked(f) : f }
   /// ②'s film strip (and a copy roll's table in ②): each frame de-masked only, small, made while ②
   /// is shown, kept by what it is made from.
   @Published private(set) var demaskThumbnails = [UUID: CGImage]() {
@@ -1562,6 +1574,33 @@ final class AppModel: ObservableObject {
     saveProject()
     focusCanvas()
   }
+  /// Stars (0 clears), a flag (1 picked, −1 rejected, 0 clears; the same again takes it off) or a
+  /// colour label (the same again takes it off) for the frames chosen, or the one shown; one edit,
+  /// as Lightroom's keys 0–5, P, X and 6–9 set them.
+  func setRating(_ stars: Int) { mark("星级") { $0.rating = stars == 0 ? nil : min(5, max(1, stars)) } }
+  func setFlag(_ flag: Int) {
+    let same = (selection.first?.flag ?? 0) == flag
+    mark(flag == 1 ? "留用" : flag == -1 ? "不要" : "取消旗标") { $0.flag = flag == 0 || same ? nil : flag }
+  }
+  func setLabel(_ label: FrameLabel?) {
+    let same = label != nil && selection.first?.label == label?.rawValue
+    mark("颜色标签") { $0.label = same ? nil : label?.rawValue }
+  }
+  private func mark(_ name: String, _ change: (inout FilmFrame) -> Void) {
+    let ids = Set(selection.map(\.id))
+    guard !isWorking, !ids.isEmpty else { return }
+    recordEdit(name)
+    for i in frames.indices where ids.contains(frames[i].id) { change(&frames[i]) }
+    let f = frames.first { ids.contains($0.id) }
+    status = (ids.count > 1 ? "所选的 \(ids.count) 张：" : "第 \(f?.name ?? "") 张：") + (f.map(Self.markWords) ?? "")
+    saveProject()
+  }
+  /// A frame's marks in words: stars, flag, label.
+  static func markWords(_ f: FilmFrame) -> String {
+    let parts = [f.rating.map { String(repeating: "★", count: $0) }, f.flag.map { $0 > 0 ? "留用" : "不要" },
+      f.label.flatMap(FrameLabel.init(rawValue:)).map { $0.name + "色标签" }].compactMap { $0 }
+    return parts.isEmpty ? "没有星级、旗标和标签" : parts.joined(separator: " · ")
+  }
   func setAllEnabled(_ enabled: Bool) {
     guard !isWorking, !frames.isEmpty else { return }
     recordEdit(enabled ? "全部勾选" : "全部不勾选")
@@ -1654,7 +1693,7 @@ final class AppModel: ObservableObject {
   /// frame faces and the roll's own estimates are not settings, so they stay.
   /// The inspector's sections that a ⟲ in their title sets back on their own, as Capture One's
   /// tools do: the rest of the frame left as it is.
-  enum AdjustmentPart: String, CaseIterable { case balance = "白平衡", tone = "影调", levels = "色阶", colour = "色彩" }
+  enum AdjustmentPart: String, CaseIterable { case balance = "白平衡", tone = "影调", levels = "色阶", colour = "色彩", mixer = "混色器", grading = "色彩分级" }
   /// `a` with `part` as a new frame has it: a slide keeps its own colour (auto white balance off),
   /// a copy shot its colour noise reduction; everything else, the roll's switches among it, as it is.
   static func reset(_ part: AdjustmentPart, of a: Adjustments, copyShot: Bool) -> Adjustments {
@@ -1672,6 +1711,11 @@ final class AppModel: ObservableObject {
       (r.autoLevels, r.black, r.white, r.midtone) = (fresh.autoLevels, fresh.black, fresh.white, fresh.midtone)
     case .colour:
       (r.saturation, r.softEnds, r.colourNoise) = (fresh.saturation, nil, copyShot ? 1 : nil)
+      (r.texture, r.clarity, r.dehaze, r.vibrance) = (nil, nil, nil, nil)
+    case .mixer:
+      r.mixer = nil
+    case .grading:
+      r.grading = nil
     }
     return r
   }
@@ -1800,6 +1844,7 @@ final class AppModel: ObservableObject {
       let rollBase = picked ? old.adjustments.rollBase : measured ?? old.adjustments.rollBase
       let rollSlopes = f.adjustments.rollSlopes ?? old.adjustments.rollSlopes
       (f.name, f.rect, f.initialRect, f.enabled, f.format) = (old.name, old.rect, old.initialRect, old.enabled, old.format)
+      (f.rating, f.flag, f.label) = (old.rating, old.flag, old.label)
       if let read = f.edgeBase?.base { f.edgeBase?.base = Crosstalk.moved(read, from: f.crosstalk, to: old.crosstalk) }
       // Read through another flat field, the edges are looked at again.
       if f.flatField != old.flatField { f.edgeBase = nil }
@@ -2715,6 +2760,20 @@ final class AppModel: ObservableObject {
     setShared(on ? "整卷同一白平衡" : "每张单独白平衡", on) { $0.sharedBalance = on ? true : nil }
   }
   /// One pair of black and white ends for the selected frame's roll, likewise.
+  /// 自动白色 / 黑色 for the selected frame (`ImagePipeline.autoEnds`): its brightest 0.1% just at
+  /// white and its darkest just at black, from the tones the single view last counted; one edit.
+  func autoWhitesBlacks() {
+    guard let range = toneRange, selected != nil, !settings.isSlide else {
+      status = "在单张视图里打开这张负片，再点「自动」"
+      return
+    }
+    let ends = ImagePipeline.autoEnds(range, settings)
+    change("自动白色、黑色") {
+      $0.whitesAmount = (ends.whites * 100).rounded() / 100
+      $0.blacksAmount = (ends.blacks * 100).rounded() / 100
+    }
+    status = String(format: "自动白色 %+.2f、黑色 %+.2f：最亮的 0.1%% 到白，最暗的 0.1%% 到黑", ends.whites, ends.blacks)
+  }
   func setSharedLevels(_ on: Bool) {
     setShared(on ? "整卷同一色阶" : "每张单独色阶", on) { $0.sharedLevels = on ? true : nil }
   }
@@ -3389,7 +3448,8 @@ final class AppModel: ObservableObject {
     // The raw picture as `ImagePipeline.original` has it: as a negative, with no base to divide by,
     // in the white balance the frame around it is shown in (日光), not green as the sensor read it.
     let gains = original ? rawGains(frame) : nil
-    var settings = frame.adjustments
+    var settings = (showsBefore && !original ? Self.demasked(frame) : frame).adjustments
+    let clipping = showClipping && !original
     if original { (settings.base, settings.rollBase) = (nil, nil) }
     if curvesBypassed { settings.curves = nil }
     renderQueue.async {
@@ -3406,7 +3466,7 @@ final class AppModel: ObservableObject {
         let part = ImagePipeline.shared.render(full, region: region, across: across, settings: settings, profile: p,
           analysis: original ? nil : analysis, negative: negative, gains: gains)
       {
-        detail = Detail(key: key, region: part.region, image: part.image, scale: part.scale)
+        detail = Detail(key: key, region: part.region, image: clipping ? ImagePipeline.shared.markClipping(part.image) : part.image, scale: part.scale)
       }
       DispatchQueue.main.async { completion(detail) }
     }
@@ -3419,6 +3479,7 @@ final class AppModel: ObservableObject {
     encoder.outputFormatting = .sortedKeys
     let settings = (try? encoder.encode(frame.adjustments)).map { $0.base64EncodedString() } ?? ""
     let shown = (single ? "single " : "table ") + "\(!showNegative) \(showsOriginal)" + (single && curvesBypassed ? " no curves" : "")
+      + (single && showClipping ? " clipping" : "") + (single && showsBefore ? " before" : "")
       + (showsOriginal ? rawGains(frame).map { " gains \($0.values)" } ?? " as read" : "")
     return [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", shown, conversionProfile.id, settings, frame.dust?.signature ?? "",
       frame.flatField.map { "flat\($0.values.reduce(0, +))" } ?? "-", frame.crosstalk.map { "\($0.m)" } ?? "-"]
@@ -3582,7 +3643,7 @@ final class AppModel: ObservableObject {
     if !edit { editRegionLock = nil }
     rendering = true
     // In ② the frame de-masked only, unsharpened; its strip picture not taken from it.
-    let demasked = showsDemasked
+    let demasked = showsDemasked || showsBefore
     let request = SingleRender(
       token: token, frame: demasked ? Self.demasked(frame) : sharpened(frame), profile: conversionProfile, edit: edit,
       negative: showsNegative || tool == .base, original: showsOriginal,
@@ -3747,7 +3808,10 @@ final class AppModel: ObservableObject {
         let thumbnail = measured && !edit && !negative && !bypassed && !r.demasked ? ImagePipeline.shared.scaled(output, maxDimension: Self.thumbnailDimension) : nil
         var range = !measured || negative ? nil : ImagePipeline.shared.toneRange(cropped, settings: frame.adjustments, profile: p, analysis: analysis)
         // What shows white or black, counted on the picture itself where it is only the frame.
-        if !edit, range != nil { (range!.atWhite, range!.atBlack) = ImagePipeline.shared.screenShares(output) }
+        if !edit, range != nil {
+          (range!.atWhite, range!.atBlack) = ImagePipeline.shared.screenShares(output)
+          range!.screen = ImagePipeline.shared.screenCounts(output)
+        }
         var pixels = CGSize(width: input.width, height: input.height)
         if frame.hasFullResolution, let path = frame.scanPath ?? frame.sourcePath {
           let info = ImagePipeline.shared.info(URL(fileURLWithPath: path))
@@ -3778,7 +3842,7 @@ final class AppModel: ObservableObject {
           self.shownSingle = token
           self.shownCurves = negative ? nil : shownSettings.curves
           self.shownFrameID = frame.id
-          self.showOnCanvas(output)
+          self.showOnCanvas(self.showClipping ? ImagePipeline.shared.markClipping(output) : output)
           // Only what changed is set, as setting published state updates the window even to the same.
           if self.canvasRegion != context?.region { self.canvasRegion = context?.region }
           self.samplingInput = input

@@ -28,6 +28,8 @@ struct ContentView: View {
   /// wanted and the picture has the room. The 去漏光 page has none.
   @State private var captureSidebar = NavigationSplitViewVisibility.all
   @AppStorage("convertSidebarShown") private var convertSidebarShown = false
+  /// The colour mixer's kind of move shown: hue, saturation or luminance.
+  @AppStorage("mixerKind") private var mixerKind = 0
   @State private var inspector = true
   /// The status line shows a while after it changes, and stays while something is under way.
   /// The status line shows once something says a thing: at launch the library's own line says
@@ -763,6 +765,8 @@ struct ContentView: View {
               case "tone": toneSection
               case "levels": levelsSection
               case "colour": colourSection
+              case "mixer": mixerSection
+              case "grading": gradingSection
               case "curves": curvesSection
               case "sharpening": sharpeningSection
               default: EmptyView()
@@ -1353,9 +1357,9 @@ struct ContentView: View {
         // In the single view, the frame's tones against what an ordinary screen shows of them.
         if let range = m.toneRange {
           HStack {
-            Text("直方图 · SDR 范围").font(.system(size: 11)).foregroundStyle(.secondary)
+            Text("直方图").font(.system(size: 11)).foregroundStyle(.secondary)
             Spacer()
-            InfoButton(text: "按印放曝光画的直方图，比屏幕能显示的范围宽：标着「黑」「白」的竖线是色阶的黑点和白点，「+1」「+2」是白点以上一档、两档。\n\n亮的一段是普通（SDR）屏幕上有层次的范围，从屏幕上的黑到屏幕上的白；两边暗下去的部分在屏幕上已是纯黑或纯白。柔和的高光把白点以上的一段收进这个范围，亮的一段因此伸过「白」。高光落在暗下去的部分时，可以把「曝光」往负调，或把「高光」往负调让肩部伸得更远。\n\n下面的「纯白」「纯黑」按屏幕上这张实际的像素数，有一个通道到顶或到底就算，色彩降噪等两端之后的处理也算在内。\n\n纵向按平方根画，少量的高光也看得见。按整张的每个像素计数，只算裁切以内；曲线算在屏幕范围里。")
+            InfoButton(text: "屏幕上最终显示的这张：横轴从纯黑（0）到纯白（255），三条颜色是红、绿、蓝。所有调整都算在内（曝光、对比度、高光、阴影、白色、黑色、柔和的两端、中间调、曲线），拖哪个滑杆它都跟着变。左右两头有白条时，表示有像素切成了纯黑或纯白。\n\n下面几行说的是底片里比屏幕更多的东西：「白点以上」是有多少落在色阶的白点以上（屏幕上靠柔和的肩部收进来，或者切成白），「最亮的 0.1%」在白点以上几档；想把它们拉回来，用「白色」「高光」往左或「曝光」往负。「纯白」「纯黑」按屏幕上这张实际的像素数，有一个通道到顶或到底就算。\n\n纵向按平方根画，少量的高光也看得见。按整张的每个像素计数，只算裁切以内。")
           }
           ToneRangeView(range: range)
         }
@@ -1365,6 +1369,15 @@ struct ContentView: View {
         slider("阴影", key: \.shadowsAmount, range: -1...1, format: "%+.2f")
         slider("白色", key: \.whitesAmount, range: -1...1, format: "%+.2f")
         slider("黑色", key: \.blacksAmount, range: -1...1, format: "%+.2f")
+        if m.toneRange != nil && !m.settings.isSlide {
+          HStack {
+            Spacer()
+            Button("自动白色、黑色") { m.autoWhitesBlacks() }
+              .controlSize(.small)
+              .help("像 Lightroom 里按住 Shift 双击「白色」「黑色」：把这张最亮的 0.1% 正好放到白、最暗的 0.1% 正好放到黑，不多切也不少用；只改这两个滑杆，可以 ⌘Z 撤销")
+              .disabled(m.isWorking)
+          }
+        }
       }
     }
   }
@@ -1395,11 +1408,52 @@ struct ContentView: View {
     }
   }
   var colourSection: some View {
-    PanelSection("色彩", key: "colour", info: "色彩降噪只平滑颜色、不动明度：传感器和去串色带来的彩色噪点（尤其是蓝黄）会去掉，胶片颗粒的明暗结构保留。翻拍的照片默认 1。\n\n柔和的暗部和高光：最暗的地方不硬切成纯黑，而是平滑地压下去，暗部的颜色和层次因此保留下来，并略微补一点暗部的饱和度；最亮的地方用柔和的肩部收向白，不硬顶到白。高光超出白点较多的画面，肩部按这张最亮的 0.1% 伸长（最多两档），阳光下的白边、亮云在普通屏幕上也留着层次；亮颜色收下来时颜色不变：最亮的通道走肩部，另外两个保持原来的距离，所以朝天空和朝太阳的两面白墙仍分得出冷暖，也不截掉一个通道；只有比这张最亮的 0.1% 还亮的地方才褪成白。「高光」往负调时肩部伸得更远。肩部只收大块的明暗：白里的纹理和明暗过渡（路牌的白底、受光的金属杆）按原来的反差加回去，亮处不发平；暗的树叶到白路牌这种明显的边不算细节，边上不会出亮边。像相纸那样，中间段不变。", reset: resetKey(.colour)) {
+    PanelSection("色彩", key: "colour", info: "纹理、清晰度、去朦胧、自然饱和度和 Lightroom 的「外观」一样，在转换之后起作用：纹理加强最细的起伏（皮肤、树叶、颗粒），清晰度加强中等尺度的局部反差，主要在中间调，黑和白不动；两个都给三个通道加减一样多，颜色不变，往左就是柔化。去朦胧按每处最暗的通道估出一层白雾，往右把它去掉，远景变深、颜色回来；往左加一层淡雾。自然饱和度只加不太鲜艳的颜色，已经很鲜艳的和肤色加得少；「饱和度」是所有颜色一起加。\n\n色彩降噪只平滑颜色、不动明度：传感器和去串色带来的彩色噪点（尤其是蓝黄）会去掉，胶片颗粒的明暗结构保留。翻拍的照片默认 1。\n\n柔和的暗部和高光：最暗的地方不硬切成纯黑，而是平滑地压下去，暗部的颜色和层次因此保留下来，并略微补一点暗部的饱和度；最亮的地方用柔和的肩部收向白，不硬顶到白。高光超出白点较多的画面，肩部按这张最亮的 0.1% 伸长（最多两档），阳光下的白边、亮云在普通屏幕上也留着层次；亮颜色收下来时颜色不变：最亮的通道走肩部，另外两个保持原来的距离，所以朝天空和朝太阳的两面白墙仍分得出冷暖，也不截掉一个通道；只有比这张最亮的 0.1% 还亮的地方才褪成白。肩部只收大块的明暗：白里的纹理和明暗过渡（路牌的白底、受光的金属杆）按原来的反差加回去，亮处不发平；暗的树叶到白路牌这种明显的边不算细节，边上不会出亮边。像相纸那样，中间段不变。", reset: resetKey(.colour)) {
       VStack(alignment: .leading, spacing: 10) {
+        slider("纹理", key: \.textureAmount, range: -1...1, format: "%+.2f")
+        slider("清晰度", key: \.clarityAmount, range: -1...1, format: "%+.2f")
+        slider("去朦胧", key: \.dehazeAmount, range: -1...1, format: "%+.2f")
+        slider("自然饱和度", key: \.vibranceAmount, range: -1...1, format: "%+.2f")
         slider("饱和度", key: \.saturation, range: 0...1.8)
         slider("色彩降噪", key: \.colourNoiseAmount, range: 0...2)
         SwitchRow("柔和的暗部和高光", isOn: bool(\.softEndsOn))
+      }
+    }
+  }
+  /// Lightroom's colour mixer: one kind of move (hue, saturation, luminance) at a time, a slider for
+  /// each of the eight hues; folded until wanted.
+  var mixerSection: some View {
+    PanelSection("混色器", key: "mixer", open: false, info: "和 Lightroom 的混色器（HSL）一样：八种颜色各自改色相（左右各最多 30°）、饱和度和明度，灰的东西不动，颜色越鲜艳改得越多。上面切色相、饱和度、明度。在转换之后、曲线之前起作用。", reset: resetKey(.mixer)) {
+      VStack(alignment: .leading, spacing: 8) {
+        Picker("", selection: $mixerKind) {
+          ForEach(0..<3, id: \.self) { Text(ColourMixer.kinds[$0]).tag($0) }
+        }.pickerStyle(.segmented).labelsHidden().controlSize(.small)
+        ForEach(0..<ColourMixer.bands.count, id: \.self) { band in
+          slider("\(ColourMixer.bands[band].name) · \(ColourMixer.kinds[mixerKind])", key: \Adjustments.[mixer: band, kind: mixerKind], range: -1...1, format: "%+.2f")
+        }
+      }
+    }
+  }
+  /// Lightroom's colour grading: a wheel each for the shadows, midtones and highlights, balance and
+  /// blending under them; folded until wanted.
+  var gradingSection: some View {
+    PanelSection("色彩分级", key: "grading", open: false, info: "和 Lightroom 的色彩分级一样：阴影、中间调、高光各有一个色轮，拖动的方向是色相，离中心越远越浓；双击回到中心。明暗不变，只加颜色。「平衡」把阴影和高光的分界往暗或往亮挪，「混合」决定三段重叠多少。在转换之后、曲线之前起作用。", reset: resetKey(.grading)) {
+      VStack(alignment: .leading, spacing: 10) {
+        HStack(alignment: .top, spacing: 8) {
+          ForEach(0..<3, id: \.self) { part in
+            let keys: [(WritableKeyPath<ColourGrading, Double>, WritableKeyPath<ColourGrading, Double>, String)] = [
+              (\.shadowHue, \.shadowAmount, "阴影"), (\.midHue, \.midAmount, "中间调"), (\.highHue, \.highAmount, "高光")]
+            VStack(spacing: 4) {
+              ColourWheel(
+                hue: Binding(get: { m.settings[grading: keys[part].0] }, set: { v in m.change("色彩分级 · \(keys[part].2)") { $0[grading: keys[part].0] = v } }),
+                amount: Binding(get: { m.settings[grading: keys[part].1] }, set: { v in m.change("色彩分级 · \(keys[part].2)") { $0[grading: keys[part].1] = v } }))
+                .frame(width: 66, height: 66)
+              Text(keys[part].2).font(.system(size: 11)).foregroundStyle(.secondary)
+            }.frame(maxWidth: .infinity)
+          }
+        }
+        slider("平衡", key: \Adjustments.[grading: \ColourGrading.balance], range: -1...1, format: "%+.2f")
+        slider("混合", key: \Adjustments.[grading: \ColourGrading.blending], range: 0...1)
       }
     }
   }
@@ -1604,6 +1658,8 @@ struct ContentView: View {
                 .overlay(alignment: .topTrailing) {
                   if m.page == .convert && m.convertStep == .grade { ExportMarkView(mark: m.exportMark(f), note: m.exportNote(f)).padding(3) }
                 }
+                // Lightroom's marks: the colour label, the stars, the flag.
+                .overlay(alignment: .bottomLeading) { FrameMarks(frame: f).padding(3) }
                 // Repaired in 去漏光: ③ grades the repaired picture.
                 .overlay(alignment: .topLeading) {
                   if m.page != .capture, f.adjustments.leakFix != nil { LeakRepairMark().padding(3) }
@@ -1668,6 +1724,20 @@ struct ContentView: View {
                       Divider()
                       Button(f.enabled ? "取消勾选" : "勾选", systemImage: f.enabled ? "circle" : "checkmark.circle") {
                         m.setEnabled(f.id, enabled: !f.enabled)
+                      }.disabled(m.isWorking)
+                      Menu("星级、旗标和标签") {
+                        ForEach(0...5, id: \.self) { n in
+                          Button(n == 0 ? "无星级（0）" : String(repeating: "★", count: n) + "（\(n)）") { if f.id != m.selectedID { m.select(f.id) }; m.setRating(n) }
+                        }
+                        Divider()
+                        Button("留用（P）") { if f.id != m.selectedID { m.select(f.id) }; m.setFlag(1) }
+                        Button("不要（X）") { if f.id != m.selectedID { m.select(f.id) }; m.setFlag(-1) }
+                        Button("取消旗标") { if f.id != m.selectedID { m.select(f.id) }; m.setFlag(0) }
+                        Divider()
+                        ForEach(FrameLabel.allCases, id: \.self) { l in
+                          Button(l.name + "色标签" + (l.rawValue < 4 ? "（\(l.rawValue + 6)）" : "")) { if f.id != m.selectedID { m.select(f.id) }; m.setLabel(l) }
+                        }
+                        Button("取消颜色标签") { if f.id != m.selectedID { m.select(f.id) }; m.setLabel(nil) }
                       }.disabled(m.isWorking)
                       // 去漏光 as far as this frame has gone: its repair in ③, a job not taken there yet, or none.
                       if f.adjustments.leakFix != nil {

@@ -779,6 +779,7 @@ final class ImagePipeline {
     if let amount = s.colourNoise, amount > 0 {
       result = colourSmoothed(result, radius: amount * 0.0002 * Double(max(ci.extent.width, ci.extent.height)))
     }
+    result = looks(result, s)
     if let curves = s.curves { result = applyCurves(curves, to: result) }
     result = Self.straightened(result, degrees: s.angle ?? 0)
     if s.rotation % 4 != 0 {
@@ -803,7 +804,7 @@ final class ImagePipeline {
     if kind != .range {
       let needed = s.softEndsOn && s.inputIsNegative && Self.detailReach > 0 || s.highlightsAmount != 0 || s.shadowsAmount != 0
       guard let lit = needed ? lightBase(ci, s, profile, a) : ci else { return nil }
-      if needed { args[args.count - 1] = CIVector(x: Self.highlightLightness, y: 1, z: 0, w: 0) }
+      if needed { args[args.count - 1] = CIVector(x: Self.highlightLightness, y: 1, z: s.vibranceAmount, w: 0) }
       args.insert(lit, at: 1)
     }
     if let fix = s.leakFix, let planes = LeakFixStore.shared.planes(fix, over: ci.extent) {
@@ -891,7 +892,7 @@ final class ImagePipeline {
       s.inputIsNegative ? 1.0 : 1 / (s.isSlide ? Self.slideEncoding : max(s.inputGamma, 0.1)),
       // The lift of a colour past white (`highlightLightness`); 1 in y once `converted` puts the
       // frame's local lightness in as `lit`, 0 for highlights and shadows to go by the pixel's own.
-      CIVector(x: Self.highlightLightness, y: 0, z: 0, w: 0),
+      CIVector(x: Self.highlightLightness, y: 0, z: s.vibranceAmount, w: 0),
     ]
   }
   /// The power a slide's linear light is encoded with for the screen: its picture as it lies on a
@@ -1072,7 +1073,7 @@ final class ImagePipeline {
     return ToneRange(
       counts: counts, domain: from...to, black: black, white: white, stop: stop,
       pastWhite: above(top, 1 + width / 2), atWhite: white.map { above(top, $0) } ?? 0,
-      atBlack: black.map { below(bottom, $0) } ?? 0, brightest: quantile(top, 0.999),
+      atBlack: black.map { below(bottom, $0) } ?? 0, brightest: quantile(top, 0.999), darkest: quantile(bottom, 0.001),
       fine: channels, fineDomain: lo...(lo + span))
   }
   /// The shares of `image`, a picture as shown, with a channel at white and with one at black: what
@@ -1092,6 +1093,41 @@ final class ImagePipeline {
     }
     let tops = counted("CIMaximumComponent"), bottoms = counted("CIMinimumComponent")
     return (Double(tops[255 * 4]), Double(bottoms[0]))
+  }
+  /// 自动白色 / 黑色, as Lightroom's Shift and double click on them: the whites and blacks that put
+  /// the frame's brightest 0.1% (its brightest channel) just at white and its darkest 0.1% (its
+  /// darkest channel) just at black, as `Kernels.graded` moves them, after the highlights and
+  /// shadows have moved theirs; −1 to 1, so a frame further out than they reach is brought as far
+  /// as they go. `range` is the frame's tones on the print's straight line (`toneRange`).
+  static func autoEnds(_ range: ToneRange, _ s: Adjustments) -> (whites: Double, blacks: Double) {
+    func smooth(_ a: Double, _ b: Double, _ x: Double) -> Double { let t = min(1, max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t) }
+    let top = range.brightest + s.highlightsAmount * 0.15 * smooth(0.45, 0.85, range.brightest)
+    let bottom = range.darkest + s.shadowsAmount * 0.12 * smooth(0, 0.25, range.darkest) * (1 - smooth(0.3, 0.65, range.darkest))
+    // Each weighed, as the kernel weighs it, by the pixel's own value before anything moved it.
+    let whites = (1 - top) / (0.15 * max(smooth(0.5, 1, range.brightest), 0.05))
+    let blacks = -bottom / (0.15 * max(1 - smooth(0, 0.5, range.darkest), 0.05))
+    return (min(1, max(-1, whites)), min(1, max(-1, blacks)))
+  }
+  /// `image` with what shows white red and what shows black blue (`Kernels.clipMark`), as it is
+  /// encoded: for the single view's clipping (J), never exported.
+  func markClipping(_ image: CGImage) -> CGImage {
+    let ci = CIImage(cgImage: image, options: [.colorSpace: NSNull()])
+    guard let marked = Kernels.clipMark?.apply(extent: ci.extent, arguments: [ci]),
+      let cg = context.createCGImage(marked, from: ci.extent, format: .RGBA8, colorSpace: image.colorSpace ?? outputSpace)
+    else { return image }
+    return cg
+  }
+  /// `image` as shown, each channel counted in 256 steps from black to white, as shares of it.
+  func screenCounts(_ image: CGImage) -> [[Double]] {
+    let ci = CIImage(cgImage: image, options: [.colorSpace: NSNull()])
+    let counts = ci.applyingFilter("CIAreaHistogram", parameters: [
+      kCIInputExtentKey: CIVector(cgRect: ci.extent), "inputCount": 256, kCIInputScaleKey: 1,
+    ])
+    var out = [Float](repeating: 0, count: 256 * 4)
+    out.withUnsafeMutableBytes {
+      context.render(counts, toBitmap: $0.baseAddress!, rowBytes: 256 * 16, bounds: CGRect(x: 0, y: 0, width: 256, height: 1), format: .RGBAf, colorSpace: nil)
+    }
+    return (0..<3).map { c in (0..<256).map { Double(out[$0 * 4 + c]) } }
   }
   /// `image` turned clockwise on screen by `degrees` about its middle and cut to the largest
   /// rectangle of its own shape inside, so no corner is left empty; as ImageGeometry maps it.

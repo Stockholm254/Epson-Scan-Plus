@@ -115,6 +115,10 @@ struct EpsonScanPlusApp: App {
           .keyboardShortcut("l")
         // As the toolbar's key: the dust found ringed on the single view.
         Toggle("除尘标出", isOn: $model.showDust).keyboardShortcut("d", modifiers: [.command, .shift])
+        // As the single view's keys J and \, which these name: the menu cannot take a bare key
+        // without taking it from the text fields too.
+        Toggle("显示溢出（J）", isOn: $model.showClipping).disabled(!model.singleView)
+        Toggle("调色前（\\）", isOn: $model.showBefore).disabled(!(model.singleView && model.page == .convert && model.convertStep == .grade))
         Picker(
           "看片镜型号", selection: Binding(get: { model.preferences.loupeStyle }, set: { model.preferences.loupeStyle = $0 })
         ) {

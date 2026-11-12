@@ -92,24 +92,30 @@ struct ToneRange: Equatable {
   /// the last two as the scale puts them, or counted on the picture as shown
   /// (`ImagePipeline.screenShares`), which takes in what comes after the ends.
   var pastWhite: Double, atWhite: Double, atBlack: Double
-  /// Where the brightest 0.1% lie, in their brightest channel.
+  /// Where the brightest 0.1% lie, in their brightest channel; the darkest 0.1%, in their darkest.
   var brightest: Double
+  var darkest: Double = 0
   /// The counts as finely as they were made (`fine` steps over `fineDomain`, the first and last
   /// holding what lies beyond), for a view of a narrower stretch than `domain`: the levels' black
   /// to white, which `counts` covers in only a third or so of its steps.
   var fine: [[Double]] = []
   var fineDomain: ClosedRange<Double> = 0...1
+  /// The picture as shown, each channel in 256 steps from black to white, shares of the frame
+  /// (`ImagePipeline.screenCounts`): everything the grading does, the curves too. Empty until counted.
+  var screen: [[Double]] = []
 }
 
-/// A frame's histogram over more than a screen shows (`ToneRange`): the part an ordinary (SDR)
-/// screen shows with gradation lit, what it shows as black or white dimmed, the levels' black and
-/// white marked, and whole stops past the white. On a square-root scale, so a few highlights still
-/// show beside the midtones' thousands.
+/// A frame's histogram as the screen shows it (`ToneRange.screen`): each channel from black at the
+/// left to white at the right, everything the grading does counted in, so every slider moves it;
+/// the end steps, pure black and pure white, marked when anything lands there. On a square-root
+/// scale, so a few highlights still show beside the midtones' thousands. Before it is counted, the
+/// tones on the print's straight line as they go into the ends (`ToneRange.counts`).
 struct ToneRangeView: View {
   let range: ToneRange
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
       Canvas { ctx, size in
+        if range.screen.count == 3 { shown(ctx, size); return }
         let d = range.domain
         func x(_ q: Double) -> CGFloat { size.width * CGFloat((q - d.lowerBound) / (d.upperBound - d.lowerBound)) }
         let from = x(range.black ?? d.lowerBound), to = x(range.white ?? d.upperBound)
@@ -148,12 +154,40 @@ struct ToneRangeView: View {
       }
       .frame(height: 64)
       .padding(4).background(PlotScreen())
-      .accessibilityElement().accessibilityLabel("直方图 · SDR 范围").accessibilityValue(lines.joined(separator: "；"))
+      .accessibilityElement().accessibilityLabel("直方图").accessibilityValue(lines.joined(separator: "；"))
       // As many lines as the frame has, each one line: the sliders under them stay where they are
       // while one of them is dragged and the figures change.
       VStack(alignment: .leading, spacing: 1) {
         ForEach(Array(lines.enumerated()), id: \.offset) { Text($0.element).lineLimit(1).minimumScaleFactor(0.7) }
       }.font(.system(size: 11)).foregroundStyle(.secondary)
+    }
+  }
+  /// The picture as shown, 0 to 255.
+  private func shown(_ ctx: GraphicsContext, _ size: CGSize) {
+    let bins = range.screen[0].count
+    guard bins > 2 else { return }
+    let peak = max(1e-9, range.screen.flatMap { $0.dropFirst().dropLast() }.max() ?? 1)
+    var lit = ctx
+    lit.blendMode = .plusLighter
+    for c in 0..<3 {
+      var p = Path()
+      p.move(to: CGPoint(x: 0, y: size.height))
+      for b in 0..<bins {
+        let y = size.height * (1 - 0.92 * CGFloat(min(1, (range.screen[c][b] / peak).squareRoot())))
+        p.addLine(to: CGPoint(x: size.width * CGFloat(b) / CGFloat(bins), y: y))
+        p.addLine(to: CGPoint(x: size.width * CGFloat(b + 1) / CGFloat(bins), y: y))
+      }
+      p.addLine(to: CGPoint(x: size.width, y: size.height))
+      p.closeSubpath()
+      lit.fill(p, with: .color(HistogramView.colours[c].opacity(0.45)))
+    }
+    // Pure black and pure white, where anything lands on them: a bar at that end.
+    for (end, at) in [(0, CGFloat(0)), (bins - 1, size.width - 3)] where range.screen.contains(where: { $0[end] > 0.0005 }) {
+      ctx.fill(Path(CGRect(x: at, y: 0, width: 3, height: size.height)), with: .color(.white.opacity(0.55)))
+    }
+    for (q, label) in [(0.0, "0"), (0.5, "128"), (1.0, "255")] {
+      let x = min(max(size.width * CGFloat(q), 8), size.width - 10)
+      ctx.draw(Text(label).font(.system(size: 8)).foregroundStyle(.white.opacity(0.5)), at: CGPoint(x: x, y: 5))
     }
   }
   private func percent(_ v: Double) -> String {

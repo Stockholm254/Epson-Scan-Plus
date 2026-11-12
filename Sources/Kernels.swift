@@ -27,7 +27,7 @@ enum Kernels {
   /// control pushes past sRGB stay, for exports into a wider colour space.
   static let negativeUnclipped = color("negativeUnclipped", conversion + """
     [[stitchable]] float4 negativeUnclipped(coreimage::sample_t p, coreimage::sample_t lit, NEGATIVE_ARGS) {
-      return float4(saturated(graded(p, false, float3(1.0), float3(0.0), lit.r, NEGATIVE_PASS), tone, ends), 1.0);
+      return float4(saturated(graded(p, false, float3(1.0), float3(0.0), lit.r, NEGATIVE_PASS), tone, ends, local), 1.0);
     }
     """)
   /// What `negative` takes into its ends, unclipped: each channel on the print's straight line,
@@ -48,7 +48,7 @@ enum Kernels {
     """)
   static let negativeUnclippedFixed = color("negativeUnclippedFixed", conversion + """
     [[stitchable]] float4 negativeUnclippedFixed(coreimage::sample_t p, coreimage::sample_t a, coreimage::sample_t d, coreimage::sample_t lit, NEGATIVE_ARGS) {
-      return float4(saturated(graded(p, false, a.rgb, d.rgb, lit.r, NEGATIVE_PASS), tone, ends), 1.0);
+      return float4(saturated(graded(p, false, a.rgb, d.rgb, lit.r, NEGATIVE_PASS), tone, ends, local), 1.0);
     }
     """)
   static let negativeRangeFixed = color("negativeRangeFixed", conversion + """
@@ -88,6 +88,79 @@ enum Kernels {
     [[stitchable]] float4 guideApply(coreimage::sample_t p, coreimage::sample_t ab) {
       float v = ab.r * p.r + ab.g;
       return float4(v, v, v, 1.0);
+    }
+    """)
+  /// Lightroom's presence on the picture as shown (`ImagePipeline.looks`), amounts −1 to 1: texture
+  /// the finest detail against `fine`; clarity the midtones' local contrast against `broad` (most
+  /// at mid-grey, none at black or white); both moving every channel by the same, so the colour
+  /// stays. Dehaze lifts the haze off, its veil read as the darkest channel smoothed (`haze`), up
+  /// to six tenths of it at 1, as a veil of white light (I − h)/(1 − h), so what it veiled comes back
+  /// darker and in colour; less than 0 lays a pale veil on.
+  static let presence = color("presence", """
+    [[stitchable]] float4 presence(coreimage::sample_t p, coreimage::sample_t fine, coreimage::sample_t broad, coreimage::sample_t haze, float4 amounts) {
+      float3 luma = float3(0.2126, 0.7152, 0.0722);
+      float l = dot(p.rgb, luma), lf = dot(fine.rgb, luma), lb = dot(broad.rgb, luma);
+      float mid = clamp(4.0 * l * (1.0 - l), 0.0, 1.0);
+      float3 q = p.rgb + float3(amounts.x * 1.2 * (l - lf) + amounts.y * 0.8 * (lf - lb) * mid);
+      if (amounts.z > 0.0) {
+        float h = 0.6 * amounts.z * clamp(haze.r, 0.0, 0.8);
+        q = (q - float3(h)) / max(1.0 - h, 0.2);
+      } else if (amounts.z < 0.0) {
+        q = mix(q, float3(0.85), -amounts.z * 0.35);
+      }
+      return float4(q, p.a);
+    }
+    """)
+  /// Lightroom's colour mixer on the picture as shown: each pixel's hue looked up in `table` (a
+  /// degree a step, from `ColourMixer.table`): its hue turned, its saturation scaled, its colour
+  /// made lighter or darker, all of it as far as the pixel has colour (none for a grey, all from a
+  /// quarter saturation up). What lies past 0 or 1 in a wide export goes back on unchanged.
+  static let mixer = compiled("mixer", """
+    [[stitchable]] float4 mixer(coreimage::sampler image, coreimage::sampler table) {
+      float4 p = image.sample(image.coord());
+      float3 c = clamp(p.rgb, float3(0.0), float3(1.0));
+      float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b)), d = mx - mn;
+      if (d < 0.00001) { return p; }
+      float h = mx == c.r ? fmod((c.g - c.b) / d + 6.0, 6.0) : (mx == c.g ? (c.b - c.r) / d + 2.0 : (c.r - c.g) / d + 4.0);
+      h /= 6.0;
+      float4 m = table.sample(table.transform(float2(h * 360.0, 0.5)));
+      float s = d / max(mx, 0.00001), w = smoothstep(0.0, 0.25, s);
+      float h2 = fract(h + m.r * w + 1.0) * 6.0;
+      float s2 = clamp(s * (1.0 + m.g * w), 0.0, 1.0);
+      float f = h2 - floor(h2);
+      float pv = mx * (1.0 - s2), qv = mx * (1.0 - s2 * f), tv = mx * (1.0 - s2 * (1.0 - f));
+      int k = int(floor(h2)) % 6;
+      float3 rgb = k == 0 ? float3(mx, tv, pv) : k == 1 ? float3(qv, mx, pv) : k == 2 ? float3(pv, mx, tv)
+        : k == 3 ? float3(pv, qv, mx) : k == 4 ? float3(tv, pv, mx) : float3(mx, pv, qv);
+      rgb *= max(0.0, 1.0 + 0.5 * m.b * w);
+      return float4(rgb + (p.rgb - c), p.a);
+    }
+    """)
+  /// Lightroom's colour grading on the picture as shown: the shadows, midtones and highlights each
+  /// with their tint added (`ColourGrading.tint`, no lightness of its own), shared out by the
+  /// pixel's lightness: the shadows' fading out up to `shape.x`'s pivot (0.5, moved by the balance
+  /// a quarter either way), the highlights' fading in from it, over `shape.y`'s blending; then the
+  /// lightness put back as it was.
+  static let grade = color("grade", """
+    [[stitchable]] float4 grade(coreimage::sample_t p, float4 shadows, float4 midtones, float4 highlights, float4 shape) {
+      float3 luma = float3(0.2126, 0.7152, 0.0722);
+      float l = clamp(dot(p.rgb, luma), 0.0, 1.0);
+      float pivot = 0.5 + 0.25 * shape.x, width = 0.1 + 0.4 * clamp(shape.y, 0.0, 1.0);
+      float ws = 1.0 - smoothstep(pivot - width, pivot, l), wh = smoothstep(pivot, pivot + width, l);
+      float wm = max(0.0, 1.0 - ws - wh);
+      float3 q = p.rgb + shadows.xyz * ws + midtones.xyz * wm + highlights.xyz * wh;
+      q += float3(dot(p.rgb - q, luma));
+      return float4(q, p.a);
+    }
+    """)
+  /// Clipping shown (J), as Lightroom shows it: where a channel of the picture as shown is white, red;
+  /// where one is black, blue; the rest as it is.
+  static let clipMark = color("clipMark", """
+    [[stitchable]] float4 clipMark(coreimage::sample_t p) {
+      float mx = max(p.r, max(p.g, p.b)), mn = min(p.r, min(p.g, p.b));
+      if (mx >= 0.998) { return float4(1.0, 0.12, 0.12, p.a); }
+      if (mn <= 0.002) { return float4(0.1, 0.35, 1.0, p.a); }
+      return p;
     }
     """)
   /// Each pixel's colour apart from its lightness (luma), and the two put back together.
@@ -133,10 +206,19 @@ enum Kernels {
     #define NEGATIVE_ARGS float3 base, float3 slope, float3 toe, float3 gain, float3 balance, float4 levels, float4 tone, float4 color, float4 ends, float inverted, float4 fade, float4 lights, float4 shoulder, float encode, float4 local
     #define NEGATIVE_PASS base, slope, toe, gain, balance, levels, tone, color, ends, inverted, fade, lights, shoulder, encode, local
 
-    // Saturation (tone.w) about each pixel's lightness, more in the shadows (ends.z).
-    static float3 saturated(float3 q, float4 tone, float4 ends) {
+    // Saturation (tone.w) about each pixel's lightness, more in the shadows (ends.z); and vibrance
+    // (local.z, −1 to 1), as Lightroom's: more for the colours that have little, none for those
+    // already strong, and half for skin (red over green over blue, green about half way).
+    static float3 saturated(float3 q, float4 tone, float4 ends, float4 local) {
       float l = dot(q, float3(0.2126, 0.7152, 0.0722)), m = clamp(l, 0.0, 1.0);
-      return mix(float3(l), q, float3(tone.w * (1.0 + ends.z * (1.0 - m) * (1.0 - m))));
+      float amount = tone.w * (1.0 + ends.z * (1.0 - m) * (1.0 - m));
+      if (local.z != 0.0) {
+        float mx = max(q.r, max(q.g, q.b)), mn = min(q.r, min(q.g, q.b));
+        float s = clamp((mx - mn) / max(abs(mx), 0.0001), 0.0, 1.0);
+        float skin = q.r > q.g && q.g > q.b ? 1.0 - smoothstep(0.1, 0.3, abs((q.g - q.b) / max(q.r - q.b, 0.0001) - 0.45)) : 0.0;
+        amount *= max(0.0, 1.0 + local.z * (1.0 - s) * (1.0 - s) * (1.0 - 0.5 * skin));
+      }
+      return mix(float3(l), q, float3(amount));
     }
     // The tones up to the ends, and with `first` the saturation: on the print's straight line,
     // black at 0 and white at 1, unclipped.
@@ -199,7 +281,7 @@ enum Kernels {
       q += float3(fade.z * 0.1, -fade.z * 0.2, fade.z * 0.1) * dark * opposite;
       q += balanced;
       q = (q - float3(0.5)) * tone.z + float3(0.5);
-      if (first) { q = saturated(q, tone, ends); }
+      if (first) { q = saturated(q, tone, ends, local); }
       return q;
     }
     // The shoulder each value takes: from ends.y it rolls off towards white. Highlights running
@@ -285,7 +367,7 @@ enum Kernels {
     // 0.5. Blacks: full at black and under it, none over 0.5. Every tone stays in order.
     static float3 graded(float4 p, bool first, float3 fa, float3 fd, float lit, NEGATIVE_ARGS) {
       float3 q = toned(p, first, fa, fd, NEGATIVE_PASS);
-      float3 s = first ? q : saturated(q, tone, ends);
+      float3 s = first ? q : saturated(q, tone, ends, local);
       float m = max(s.r, max(s.g, s.b)), n = min(s.r, min(s.g, s.b));
       float detail = fade.w > 0.0 ? clamp(m - lit, -fade.w, fade.w) : 0.0;
       float around = local.y > 0.5 ? lit : m;

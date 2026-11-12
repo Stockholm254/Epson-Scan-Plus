@@ -119,5 +119,41 @@ enum RollGroupTests {
     model.unshareFilmBase()
     try check(model.frames.allSatisfy { $0.adjustments.rollBasePicked != true && $0.adjustments.rollBase == nil },
       "taking the shared base back leaves each frame to the base measured or estimated for it")
+
+    // Lightroom's marks: stars, flags and colour labels on the frames chosen, one edit each, the same
+    // flag or label again taking it off, kept in the project.
+    model.select(model.frames[0].id)
+    model.alsoSelected = [model.frames[1].id]
+    model.setRating(3)
+    model.setFlag(1)
+    model.setLabel(.green)
+    let marked = model.frames.prefix(2).allSatisfy { $0.rating == 3 && $0.flag == 1 && $0.label == FrameLabel.green.rawValue } && model.frames[2].rating == nil
+    model.setFlag(1)
+    let flagOff = model.frames[0].flag == nil
+    undo.undo()
+    let flagBack = model.frames[0].flag == 1
+    model.alsoSelected = []
+    model.setRating(0)
+    let reopenedMarks = AppModel(libraryURL: lib)
+    reopenedMarks.loadProject(model.projectURL!)
+    try check(marked && flagOff && flagBack && model.frames[0].rating == nil && model.frames[1].rating == 3
+      && reopenedMarks.frames[1].rating == 3 && reopenedMarks.frames[1].label == FrameLabel.green.rawValue
+      && AppModel.markWords(model.frames[1]) == "★★★ · 留用 · 绿色标签",
+      "stars, a flag and a colour label go on the frames chosen, the same flag again takes it off, undo puts it back, and the project keeps them")
+    // The single view's before (\\): in ③ the frame shows as ② leaves it; not in ②.
+    model.page = .convert
+    model.convertStep = .grade
+    model.select(model.frames[0].id)
+    model.change("曝光") { $0.exposure = 0.7 }
+    model.showBefore = true
+    let before = model.asShown(model.frames[0]).adjustments.exposure
+    model.showBefore = false
+    let after = model.asShown(model.frames[0]).adjustments.exposure
+    try check(before == 0 && after == 0.7 && model.loupeDetailKey(model.frames[0], single: true) != {
+        model.showClipping = true
+        defer { model.showClipping = false }
+        return model.loupeDetailKey(model.frames[0], single: true)
+      }(),
+      "\\ shows ③'s before (the exposure as new) and back; J's clipping marks ask the zoomed picture again")
   }
 }

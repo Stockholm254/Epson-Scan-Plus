@@ -316,5 +316,64 @@ enum ToneTests {
     // 512 fine steps from black to white over 128 bars: four each.
     try check(empty > 20 && inside.allSatisfy { abs(smooth[$0] - 4) < 0.01 },
       "色阶's histogram is drawn from the fine counts: an even spread of tones fills every bar (from the coarse ones \(empty) of \(inside.count) were empty)")
+
+    do {
+      // Lightroom's presence, mixer and grading, on the picture as shown (`ImagePipeline.looks`).
+      func patch(_ draw: (Int, Int) -> (Double, Double, Double), _ s: Adjustments) -> (CIImage, CIImage) {
+        let n = 64
+        var px = [Float](repeating: 1, count: n * n * 4)
+        for y in 0..<n { for x in 0..<n { let c = draw(x, y); (px[(y * n + x) * 4], px[(y * n + x) * 4 + 1], px[(y * n + x) * 4 + 2]) = (Float(c.0), Float(c.1), Float(c.2)) } }
+        let image = CIImage(bitmapData: Data(bytes: px, count: px.count * 4), bytesPerRow: n * 16, size: CGSize(width: n, height: n), format: .RGBAf, colorSpace: nil)
+        return (image, pipe.looks(image, s))
+      }
+      func values(_ image: CIImage) -> [[Float]] {
+        let e = image.extent, n = Int(e.width)
+        var px = [Float](repeating: 0, count: n * Int(e.height) * 4)
+        px.withUnsafeMutableBytes { pipe.context.render(image, toBitmap: $0.baseAddress!, rowBytes: n * 16, bounds: e, format: .RGBAf, colorSpace: nil) }
+        return stride(from: 0, to: px.count, by: 4).map { Array(px[$0..<$0 + 3]) }
+      }
+      func lumaSD(_ v: [[Float]]) -> Double {
+        let l = v.map { 0.2126 * Double($0[0]) + 0.7152 * Double($0[1]) + 0.0722 * Double($0[2]) }
+        let mean = l.reduce(0, +) / Double(l.count)
+        return (l.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(l.count)).squareRoot()
+      }
+      var crisp = Adjustments()
+      (crisp.clarity, crisp.texture) = (1, 1)
+      let (grey, crisped) = patch({ x, y in let v = 0.5 + 0.04 * sin(Double(x) * 0.6) * cos(Double(y) * 0.5); return (v, v, v) }, crisp)
+      let before = values(grey), after = values(crisped)
+      let neutral = after.allSatisfy { (p: [Float]) -> Bool in
+        let rg: Float = abs(p[0] - p[1]), gb: Float = abs(p[1] - p[2])
+        return rg < 1e-4 && gb < 1e-4
+      }
+      try check(lumaSD(after) > lumaSD(before) * 1.2 && neutral,
+        String(format: "clarity and texture +1 raise a grey texture's local contrast (%.3f → %.3f) and leave a grey grey", lumaSD(before), lumaSD(after)))
+      var clear = Adjustments()
+      clear.dehaze = 1
+      let (hazy, cleared) = patch({ x, _ in let v = 0.45 + (x % 8 < 4 ? 0.25 : 0); return (v, v * 0.98, v * 0.95) }, clear)
+      let hazyMin = values(hazy).map { $0.min()! }.min()!, clearedMin = values(cleared).map { $0.min()! }.min()!
+      try check(clearedMin < hazyMin - 0.05 && lumaSD(values(cleared)) > lumaSD(values(hazy)),
+        String(format: "dehaze +1 takes a veil off: the darkest from %.2f to %.2f, the contrast up", hazyMin, clearedMin))
+      var mixed = Adjustments()
+      mixed[mixer: 5, kind: 1] = -1
+      let (colours, remixed) = patch({ x, _ in x < 21 ? (0.2, 0.3, 0.8) : x < 42 ? (0.8, 0.25, 0.2) : (0.5, 0.5, 0.5) }, mixed)
+      let c0 = values(colours), c1 = values(remixed)
+      func spread(_ v: [Float]) -> Float { v.max()! - v.min()! }
+      try check(spread(c1[32 * 64 + 10]) < spread(c0[32 * 64 + 10]) * 0.6 && abs(spread(c1[32 * 64 + 30]) - spread(c0[32 * 64 + 30])) < 0.02
+        && spread(c1[32 * 64 + 55]) < 1e-4,
+        String(format: "the mixer's blue saturation −1 takes the blue towards grey (spread %.2f → %.2f), leaves a red and a grey as they were", spread(c0[32 * 64 + 10]), spread(c1[32 * 64 + 10])))
+      var graded = Adjustments()
+      graded.grading = ColourGrading(shadowHue: 240, shadowAmount: 1)
+      let (ramp, tinted) = patch({ x, _ in let v = Double(x) / 63; return (v, v, v) }, graded)
+      let dark = values(tinted)[32 * 64 + 10], light = values(tinted)[32 * 64 + 60], darkWas = values(ramp)[32 * 64 + 10]
+      let darkLuma = 0.2126 * dark[0] + 0.7152 * dark[1] + 0.0722 * dark[2], wasLuma = 0.2126 * darkWas[0] + 0.7152 * darkWas[1] + 0.0722 * darkWas[2]
+      try check(dark[2] > dark[0] + 0.03 && abs(darkLuma - wasLuma) < 0.002 && spread(light) < 0.01,
+        String(format: "grading the shadows blue turns a dark grey blue (red %.3f, blue %.3f), its lightness kept, and leaves a light grey grey", dark[0], dark[2]))
+      var vivid = Adjustments()
+      vivid.vibrance = 1
+      let plainBands = try render(defaults, portra), vividBands = try render(vivid, portra)
+      func chroma(_ r: Raster, _ y: Int) -> Double { let p = r.pixel(w / 2, y); return (max(p.r, p.g, p.b) - min(p.r, p.g, p.b)) * 255 }
+      try check(chroma(vividBands, h * 5 / 8) > chroma(plainBands, h * 5 / 8) + 2 && chroma(vividBands, 4) < chroma(plainBands, 4) + 1,
+        String(format: "vibrance +1 adds colour to a tinted band (%.0f → %.0f) and leaves the neutral one neutral", chroma(plainBands, h * 5 / 8), chroma(vividBands, h * 5 / 8)))
+    }
   }
 }
