@@ -319,7 +319,7 @@ enum CameraTests {
     try capture("EPS00001.JPG")
     try check(model.captureToast == "第 01 张已入库", "a filed picture says so over the live view for a moment")
     let root = model.sessionURL
-    try check(model.rollSource == .camera && model.poolPictures && model.frames.count == 1 && model.frames[0].format == "翻拍"
+    try check(model.rollSource == .camera && model.estimatesSlopes && model.frames.count == 1 && model.frames[0].format == "翻拍"
       && model.frames[0].sourcePath?.hasPrefix(root?.appendingPathComponent("Captures").path ?? "-") == true
       && !FileManager.default.fileExists(atPath: incoming.appendingPathComponent("EPS00001.JPG").path),
       "the first picture starts a camera roll, measured as one roll, and moves into its Captures folder")

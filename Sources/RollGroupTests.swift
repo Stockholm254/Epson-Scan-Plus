@@ -1,8 +1,8 @@
 import AppKit
 import Foundation
 
-/// One roll whatever took it: pictures a file each (as a camera takes them) measured together
-/// when asked, and a film base picked once and shared with the roll.
+/// One roll whatever took it: pictures a file each (as a camera takes them) estimated together with
+/// 全卷斜率估计, each a roll of their own to print, and a film base picked once and shared with the roll.
 enum RollGroupTests {
   static func run(folder: URL) throws {
     func check(_ value: Bool, _ label: String) throws {
@@ -24,7 +24,7 @@ enum RollGroupTests {
     let apart = AppModel.rollGroups(mixed, poolPictures: false).map(\.count)
     let pooled = AppModel.rollGroups(mixed, poolPictures: true).map(\.count)
     try check(apart == [2, 2, 1, 1, 1, 1] && pooled == [2, 2, 3, 1],
-      "scanned frames go together, a strip file on its own; pictures a file each go together only when asked, and only those read alike")
+      "scanned frames go together, a strip file on its own; pictures a file each each apart, or together (only those read alike)")
 
     // A roll of three pictures, a file each, on a film whose slopes are not the data sheet's.
     let base = RGB(r: 0.80, g: 0.52, b: 0.33)
@@ -71,15 +71,25 @@ enum RollGroupTests {
       for _ in 0..<40 where model.rendering { settle(0.05) }
     }
     estimate()
-    try check(model.frames.count == 3 && model.hasSinglePictures && !model.poolPictures
+    model.select(model.frames[0].id)
+    try check(model.frames.count == 3 && !model.estimatesSlopes && !model.selectedSharesRoll
       && model.frames.allSatisfy { $0.adjustments.rollSlopes == nil },
-      "pictures imported a file each are each apart until asked: no roll estimate, as before")
-    model.setPoolPictures(true)
+      "pictures imported a file each start with 全卷斜率估计 off, and are each a roll of their own to print")
+    model.setRollSlopeEstimate(true)
     estimate()
     let slopes = model.frames.compactMap(\.adjustments.rollSlopes)
     try check(slopes.count == 3 && slopes.allSatisfy { abs($0.r / truth.r - 1) < 0.04 && abs($0.b / truth.b - 1) < 0.04 },
-      String(format: "measured together they give the roll estimate, as the scanned frames do: R %.3f · B %.3f (true %.2f · %.2f)",
+      String(format: "with 全卷斜率估计 on they give the roll estimate, as the scanned frames do: R %.3f · B %.3f (true %.2f · %.2f)",
         slopes.first?.r ?? 0, slopes.first?.b ?? 0, truth.r, truth.b))
+
+    // Off again: the data sheet's slopes, the estimate cleared.
+    model.setRollSlopeEstimate(false)
+    estimate()
+    try check(!model.estimatesSlopes && model.frames.allSatisfy { $0.adjustments.rollSlopes == nil }
+      && ImagePipeline.slopes(model.frames[0].adjustments, model.profile).slopes == model.profile.slopes,
+      "with 全卷斜率估计 off the roll converts with the calibration, else the data sheet")
+    model.setRollSlopeEstimate(true)
+    estimate()
 
     // The base picked once, on the leader, for the whole roll.
     model.select(model.frames[0].id)
@@ -96,8 +106,8 @@ enum RollGroupTests {
     reopened.loadProject(model.projectURL!)
     for _ in 0..<40 where reopened.rendering { settle(0.05) }
     // The first picture is also the overview, whose gaps (there are none) would otherwise clear it.
-    try check(reopened.poolPictures && reopened.frames.allSatisfy { $0.adjustments.rollBase == base && $0.adjustments.rollBasePicked == true },
-      "the shared base and measuring together are kept in the project, and the overview's gaps do not clear the base")
+    try check(reopened.estimatesSlopes && reopened.frames.allSatisfy { $0.adjustments.rollBase == base && $0.adjustments.rollBasePicked == true },
+      "the shared base and 全卷斜率估计 are kept in the project, and the overview's gaps do not clear the base")
     undo.undo()
     undo.undo()
     try check(model.frames.allSatisfy { $0.adjustments.rollBasePicked != true && $0.adjustments.rollBase == nil },

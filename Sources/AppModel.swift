@@ -134,9 +134,8 @@ final class AppModel: ObservableObject {
   /// The open roll's name and notes in the library.
   @Published var rollName = ""
   @Published var rollNotes = ""
-  /// The roll's pictures that are a file each are measured together as one roll: asked for, as
-  /// files from elsewhere need not have been scanned alike.
-  @Published var poolPictures = false
+  /// 全卷斜率估计 as switched on this roll; nil, as `estimatesSlopesByDefault` says.
+  @Published var rollSlopeEstimate: Bool? = nil
   /// The roll converts with its calibrated preset's slopes, neutral and toe; off, as the film the
   /// preset was calibrated from (`conversionProfile`), the preset itself kept.
   @Published var useCalibration = true
@@ -1094,7 +1093,7 @@ final class AppModel: ObservableObject {
       selectedID = nil
       rollName = ""
       rollNotes = ""
-      poolPictures = false
+      rollSlopeEstimate = nil
       useCalibration = true
       rollFlats = []
       exportStamps = [:]
@@ -1884,10 +1883,10 @@ final class AppModel: ObservableObject {
     }
     if wait { apply(lookAtEdges(pending)) } else { renderQueue.async { let r = self.lookAtEdges(pending); DispatchQueue.main.async { apply(r) } } }
   }
-  /// The frames measured together as one roll, for the channel slopes and a shared film base:
-  /// the scanned frames; each file holding several frames, an imported strip, on its own; and the
-  /// pictures that are a file each, as a camera takes them, each apart, or with `poolPictures`
-  /// those read alike (input gamma, bit depth) together.
+  /// The frames taken together as one roll: the scanned frames; each file holding several frames,
+  /// an imported strip, on its own; and the pictures that are a file each, as a camera takes them,
+  /// each apart (the roll's print, its shared balance and levels), or with `poolPictures` those
+  /// read alike (input gamma, bit depth) together (the slope estimate, a film base shared).
   static func rollGroups(_ frames: [FilmFrame], poolPictures: Bool) -> [[FilmFrame]] {
     var perFile = [String: Int]()
     for path in frames.compactMap(\.sourcePath) { perFile[path, default: 0] += 1 }
@@ -1904,11 +1903,18 @@ final class AppModel: ObservableObject {
     }
     return order.map { groups[$0]! }
   }
-  /// The roll has pictures that are a file each, more than one: they can be measured together.
-  var hasSinglePictures: Bool {
+  /// 全卷斜率估计: the roll's channel slopes are estimated across all its frames (`rollGroups`,
+  /// pictures a file each read alike together) and used where the preset is not calibrated; off,
+  /// the calibration, else the data sheet.
+  var estimatesSlopes: Bool { rollSlopeEstimate ?? estimatesSlopesByDefault }
+  /// On for a roll scanned here or taken on the copy stand, and for a scan's or a strip file's
+  /// frames, one film read at once; off for pictures imported a file each, which need not have been
+  /// scanned alike.
+  var estimatesSlopesByDefault: Bool {
+    if rollSource == .camera || rollSource == .scanner { return true }
     var perFile = [String: Int]()
     for path in frames.compactMap(\.sourcePath) { perFile[path, default: 0] += 1 }
-    return perFile.values.filter { $0 == 1 }.count >= 2
+    return frames.contains { $0.sourcePath == nil } || perFile.values.contains { $0 > 1 }
   }
   /// The roll has pictures read from a camera's sensor, which can have the copy light's crosstalk
   /// taken out; and whether they have.
@@ -2059,11 +2065,12 @@ final class AppModel: ObservableObject {
       light.date.formatted(date: .abbreviated, time: .shortened), names[leak.light], names[leak.channel], leak.share * 100,
       light.flat.falloff.r * 100, light.flat.falloff.g * 100, light.flat.falloff.b * 100)
   }
-  /// Measures the roll's pictures that are a file each together, or each apart again.
-  func setPoolPictures(_ pool: Bool) {
-    guard pool != poolPictures else { return }
-    poolPictures = pool
-    status = pool ? "导入的单张一起做整卷估计" : "导入的单张各自估计"
+  /// Switches 全卷斜率估计 for the roll: its slopes estimated across its frames, or the
+  /// calibration's, else the data sheet's.
+  func setRollSlopeEstimate(_ on: Bool) {
+    guard on != estimatesSlopes else { return }
+    rollSlopeEstimate = on
+    status = on ? "全卷斜率估计：没有标定时按整卷画面估计通道斜率" : "全卷斜率估计关掉：斜率按标定，没有时按数据表"
     saveProject()
     updateRollSlopes()
   }
@@ -2299,14 +2306,9 @@ final class AppModel: ObservableObject {
     let film = FilmCalibration.film(p.name)
     return film == "本机标定胶片" || film == FilmProfile.builtins.first(where: { $0.id == "generic" })?.name ? nil : film
   }
-  /// What 单张一起做整卷估计 changes on this roll now. Its channel slopes, and which single pictures
-  /// 整卷同一白平衡 / 色阶 take as one roll; with the calibration in use the slopes are the
-  /// calibration's, so only those groups, or, with neither shared, nothing at all.
-  enum PoolEffect { case slopes, sharedOnly, nothing }
-  var poolEffect: PoolEffect {
-    guard profile.offsets != nil, useCalibration else { return .slopes }
-    return settings.sharedLevels == true || settings.sharedBalance == true ? .sharedOnly : .nothing
-  }
+  /// 全卷斜率估计 converts this roll: with the calibration in use the slopes are its own, and the
+  /// estimate is only shown beside them.
+  var slopeEstimateApplies: Bool { !(profile.offsets != nil && useCalibration) }
   /// Calibrated for how this roll is read: on the copy stand in this copy session, else on this scanner.
   func calibratedHere(_ p: FilmProfile) -> Bool {
     guard p.offsets != nil else { return false }
@@ -2359,28 +2361,32 @@ final class AppModel: ObservableObject {
     recordEdit(on ? "用标定" : "不用标定")
     useCalibration = on
     let film = Self.uncalibrated(profile, among: profiles)
-    status = on ? "按「\(profile.name)」的标定转换" : "这一卷先不用标定：按 \(film.name) 转换，有整卷估计时按整卷估计的斜率"
+    status = on ? "按「\(profile.name)」的标定转换" : "这一卷先不用标定：按 \(film.name) 转换" + (estimatesSlopes ? "，有全卷斜率估计时按它的斜率" : "的数据表")
     updateRollSlopes()
     refresh()
     updateThumbnails()
     saveProject()
   }
-  /// Estimates channel slopes across each roll (`rollGroups`) and shares them with its frames.
-  /// They are the fallback when the preset is not calibrated.
+  /// Estimates channel slopes across each roll (`rollGroups`) and shares them with its frames, with
+  /// 全卷斜率估计 on; off, clears them. They come after a calibrated preset, before the data sheet.
   func updateRollSlopes(completion: (() -> Void)? = nil) {
-    let snapshot = frames, film = conversionProfile, green = film.slopes.g, toe = film.toe, pool = poolPictures, blanks = blankFrameIDs
+    let snapshot = frames, film = conversionProfile, green = film.slopes.g, toe = film.toe, on = estimatesSlopes, blanks = blankFrameIDs
     rollSlopesRevision += 1
     let token = rollSlopesRevision
     renderQueue.async {
       var result = [UUID: RGB?]()
       // Slides have no layers' contrast to estimate: their dyes are the picture.
       // Blank frames have no film on them: no layers' contrast to measure.
-      let groups = Self.rollGroups(snapshot, poolPictures: pool).map({ $0.filter { $0.adjustments.inputIsNegative && !blanks.contains($0.id) } })
+      let groups = Self.rollGroups(snapshot, poolPictures: true).map({ $0.filter { $0.adjustments.inputIsNegative && !blanks.contains($0.id) } })
       // Read from their files (a roll opened the first time), the frames counted on the bar once
       // it takes more than half a second; from memory it is too quick to show.
       let started = Date(), total = groups.reduce(0) { $0 + $1.count }
       var read = 0, shown = false
       for members in groups where !members.isEmpty {
+        guard on else {
+          for f in members { result[f.id] = .some(nil) }
+          continue
+        }
         let inputs = members.compactMap { f -> (image: CGImage, settings: Adjustments)? in
           defer {
             read += 1
@@ -2424,6 +2430,12 @@ final class AppModel: ObservableObject {
       }
     }
   }
+  /// The selected frame has others in its roll to share a white balance or levels with: a scan's
+  /// frames, a strip file's; a picture that is a file each is a roll of its own.
+  var selectedSharesRoll: Bool {
+    guard let selected else { return false }
+    return (Self.rollGroups(frames, poolPictures: false).first { $0.contains { $0.id == selected.id } }?.count ?? 1) > 1
+  }
   /// One white balance for the selected frame's roll, `on` or off for every frame of it; one edit.
   func setSharedBalance(_ on: Bool) {
     setShared(on ? "整卷同一白平衡" : "每张单独白平衡", on) { $0.sharedBalance = on ? true : nil }
@@ -2434,7 +2446,7 @@ final class AppModel: ObservableObject {
   }
   private func setShared(_ name: String, _ on: Bool, _ apply: (inout Adjustments) -> Void) {
     guard let selected else { return }
-    let roll = Self.rollGroups(frames, poolPictures: poolPictures).first { $0.contains { $0.id == selected.id } } ?? [selected]
+    let roll = Self.rollGroups(frames, poolPictures: false).first { $0.contains { $0.id == selected.id } } ?? [selected]
     let ids = Set(roll.map(\.id))
     recordEdit(name)
     for i in frames.indices where ids.contains(frames[i].id) { apply(&frames[i].adjustments) }
@@ -2449,7 +2461,7 @@ final class AppModel: ObservableObject {
   }
   /// The print of every roll printed as one, from its frames together, apart from the main thread.
   func updateRollPrint(completion: (() -> Void)? = nil) {
-    let snapshot = frames, p = conversionProfile, pool = poolPictures, blanks = blankFrameIDs
+    let snapshot = frames, p = conversionProfile, blanks = blankFrameIDs
     rollPrintRevision += 1
     let token = rollPrintRevision
     guard snapshot.contains(where: { $0.adjustments.printsWithRoll }) else {
@@ -2458,7 +2470,7 @@ final class AppModel: ObservableObject {
     }
     renderQueue.async {
       var result = [UUID: RollPrint?]()
-      for group in Self.rollGroups(snapshot, poolPictures: pool) where group.contains(where: { $0.adjustments.printsWithRoll }) {
+      for group in Self.rollGroups(snapshot, poolPictures: false) where group.contains(where: { $0.adjustments.printsWithRoll }) {
         // Blank frames print as nothing: left out of the roll's print.
         let members = group.filter { !blanks.contains($0.id) }
         guard !members.isEmpty else { continue }
@@ -4208,7 +4220,7 @@ final class AppModel: ObservableObject {
       sessionURL = nil
       rollName = ""
       rollNotes = ""
-      poolPictures = false
+      rollSlopeEstimate = nil
       useCalibration = true
       rollFlats = []
       exportStamps = [:]
@@ -4791,7 +4803,7 @@ final class AppModel: ObservableObject {
     let name = rollName.trimmingCharacters(in: .whitespacesAndNewlines)
     project.rollName = name.isEmpty ? nil : name
     project.notes = rollNotes.isEmpty ? nil : rollNotes
-    project.poolPictures = poolPictures ? true : nil
+    project.estimateSlopes = rollSlopeEstimate
     project.useCalibration = useCalibration ? nil : false
     project.flats = rollFlats.isEmpty ? nil : rollFlats
     project.format = format == .auto ? nil : format.rawValue
@@ -4941,7 +4953,8 @@ final class AppModel: ObservableObject {
     startsAsSlides = nil
     rollName = p.rollName ?? ""
     rollNotes = p.notes ?? ""
-    poolPictures = p.poolPictures ?? false
+    // Saved before it was a switch of its own: single pictures measured together then.
+    rollSlopeEstimate = p.estimateSlopes ?? (p.poolPictures == true ? true : nil)
     useCalibration = p.useCalibration ?? true
     // A frame's blank-frame flat field, kept once with the roll, read back as the frame reads; a
     // frame that kept its own grid keeps it. One whose flat is not in the roll is left unflattened.

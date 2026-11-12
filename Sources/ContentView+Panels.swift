@@ -49,7 +49,7 @@ extension ContentView {
   var scanTab: some View {
     VStack(alignment: .leading, spacing: 18) {
       titled("扫描仪", symbol: "scanner", info:
-        "原始文件是未反相的负片，保留橙色色罩，作存档和重新转换用；去色罩的正片默认在扫完后导出到 Exports（格式和位置在 ② 去色罩工具栏的「导出」→「导出设置…」）。无损压缩对扫描数据几乎无效（LZW 反而变大），因此不压缩。\n\n整幅预览用于识别画面、接触表和看片镜。600 dpi 时每张 35 mm 约 850 像素，未正式扫描的画面也能看清细节；300 dpi 并不比 600 dpi 快多少，所以不提供。\n\n扫描仪每次扫描都自己设定读数的高低：正式扫描的蓝色比预览高约 11%，比一张宽的窗口还每次不同。每张正式扫描到达时都和预览里同一块逐像素配准，换算到预览的标尺上，片基和整卷估计都在这个标尺上测，所以整卷一致。原始文件不改动。\n\n反转片（幻灯片、正片）：扫描仪的读法和负片一样，都是线性、不反相的透射读数；区别在转换。反转片的读数本身就是画面，不去色罩、不用通道斜率，按线性读数配平和定色阶，再编码到屏幕。默认保留片子本来的颜色（不自动白平衡）。识别画面时找透光的画面，片框、片夹和片间未曝光的黑边都不算。反转片的暗部很密（最大密度 3 以上），最暗处的噪点比负片多，这台扫描仪的接口没有多次曝光。"
+        "原始文件是未反相的负片，保留橙色色罩，作存档和重新转换用；去色罩的正片默认在扫完后导出到 Exports（格式和位置在 ② 去色罩工具栏的「导出」→「导出设置…」）。无损压缩对扫描数据几乎无效（LZW 反而变大），因此不压缩。\n\n整幅预览用于识别画面、接触表和看片镜。600 dpi 时每张 35 mm 约 850 像素，未正式扫描的画面也能看清细节；300 dpi 并不比 600 dpi 快多少，所以不提供。\n\n扫描仪每次扫描都自己设定读数的高低：正式扫描的蓝色比预览高约 11%，比一张宽的窗口还每次不同。每张正式扫描到达时都和预览里同一块逐像素配准，换算到预览的标尺上，片基和全卷斜率估计都在这个标尺上测，所以整卷一致。原始文件不改动。\n\n反转片（幻灯片、正片）：扫描仪的读法和负片一样，都是线性、不反相的透射读数；区别在转换。反转片的读数本身就是画面，不去色罩、不用通道斜率，按线性读数配平和定色阶，再编码到屏幕。默认保留片子本来的颜色（不自动白平衡）。识别画面时找透光的画面，片框、片夹和片间未曝光的黑边都不算。反转片的暗部很密（最大密度 3 以上），最暗处的噪点比负片多，这台扫描仪的接口没有多次曝光。"
           + (m.scanner.ready ? "\n\n" + m.scanner.captureNote : ""))
       HStack(alignment: .top, spacing: 8) {
         StatusLED(lamp: lampState.lamp, size: 7).padding(.top, 4)
@@ -220,10 +220,10 @@ extension ContentView {
     if film.offsets != nil {
       return String(format: "%@ · R %.3f · G %.3f · B %.3f", film.id.contains("-copy-") ? "翻拍标定" : "本机标定", p.r, p.g, p.b)
     }
-    if let s = m.settings.rollSlopes { return String(format: "整卷估计 · R %.3f · G %.3f · B %.3f", s.r, s.g, s.b) }
+    if let s = m.settings.rollSlopes { return String(format: "全卷斜率估计 · R %.3f · G %.3f · B %.3f", s.r, s.g, s.b) }
     if film.setsChannelContrast {
       return String(format: "数据表 · R %.3f · G %.3f · B %.3f", p.r, p.g, p.b)
-        + (m.hasSinglePictures && !m.poolPictures ? "（单张各自估计不了）" : "")
+        + (m.estimatesSlopes ? "" : "（全卷斜率估计关着）")
     }
     return "通用 · 每张按自己的画面拉伸各通道"
   }
@@ -279,7 +279,8 @@ extension ContentView {
         return off + String(format: "斜率按整卷画面里的明暗过渡自动估计：R %.3f · G %.3f · B %.3f。", s.r, s.g, s.b)
       }
       return off + (film.setsChannelContrast
-        ? String(format: "本卷画面太少，估计不了斜率，按数据表：R %.3f · G %.3f · B %.3f。", film.slopes.r, film.slopes.g, film.slopes.b)
+        ? String(format: m.estimatesSlopes ? "本卷画面太少，估计不了斜率，按数据表：R %.3f · G %.3f · B %.3f。" : "「全卷斜率估计」关着，按数据表：R %.3f · G %.3f · B %.3f。",
+          film.slopes.r, film.slopes.g, film.slopes.b)
         : "本卷画面太少，估计不了斜率，每张按自己的画面拉伸各通道。")
     }
     if let s = m.settings.rollSlopes {
@@ -288,8 +289,8 @@ extension ContentView {
         : String(format: "这种胶片还没有本机标定，按整卷画面里的明暗过渡自动估计通道斜率：R %.3f · G %.3f · B %.3f。画面越多越准；拍一张灰卡可以标定。", s.r, s.g, s.b)
     }
     if film.setsChannelContrast {
-      return m.hasSinglePictures && !m.poolPictures
-        ? "按数据表斜率（\(film.publication)）：一张一个文件的画面各自估计不了。它们是同一卷、同样设置的话，打开下面的「单张一起做整卷估计」。"
+      return !m.estimatesSlopes
+        ? "按数据表斜率（\(film.publication)）：「全卷斜率估计」关着。这卷的画面是同一卷、同样的设备和设置拍或扫的话，可以打开它，按整卷画面里的明暗过渡估计斜率；能标定更准。"
         : "按数据表斜率（\(film.publication)；本卷画面太少，未能自动估计）。"
     }
     return "通用：每张按自己的画面拉伸各通道。"

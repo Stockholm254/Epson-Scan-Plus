@@ -78,7 +78,6 @@ extension AppModel {
     pendingShift = []
     _ = try makeSession()
     rollSource = .camera
-    poolPictures = true
     useCalibration = true
     rollFlats = []
   }

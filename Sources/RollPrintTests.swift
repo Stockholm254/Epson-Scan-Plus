@@ -13,22 +13,25 @@ enum RollPrintTests {
     let portra = FilmProfile.builtins.first { $0.id == "portra160" }!
     let w = 160, h = 110
     let base = RGB(r: 0.85, g: 0.57, b: 0.38)
-    // A scene of greys and a little colour, on Portra 160's slopes, `under` log exposure short, its
-    // light `blue` bluer.
-    func negative(under: Double, blue: Double) -> CGImage {
-      var samples = [UInt16](repeating: 65535, count: w * h * 4)
-      for y in 0..<h {
-        for x in 0..<w {
-          let exposure = 0.2 + 1.2 * Double(x) / Double(w - 1) - under
-          let tint = [0.0, y < h / 2 ? 0.05 : 0.0, blue]
-          for c in 0..<3 {
-            let v = base.values[c] * pow(10, -portra.slopes.values[c] * max(0, exposure + tint[c]) / 2.2)
-            samples[(y * w + x) * 4 + c] = UInt16(v * 65535)
+    // Scenes of greys and a little colour, on Portra 160's slopes, each `under` log exposure short,
+    // its light `blue` bluer: side by side on one strip, a file holding the roll's frames.
+    func strip(_ scenes: [(under: Double, blue: Double)]) -> CGImage {
+      let width = w * scenes.count
+      var samples = [UInt16](repeating: 65535, count: width * h * 4)
+      for (n, scene) in scenes.enumerated() {
+        for y in 0..<h {
+          for x in 0..<w {
+            let exposure = 0.2 + 1.2 * Double(x) / Double(w - 1) - scene.under
+            let tint = [0.0, y < h / 2 ? 0.05 : 0.0, scene.blue]
+            for c in 0..<3 {
+              let v = base.values[c] * pow(10, -portra.slopes.values[c] * max(0, exposure + tint[c]) / 2.2)
+              samples[(y * width + n * w + x) * 4 + c] = UInt16(v * 65535)
+            }
           }
         }
       }
       return CGImage(
-        width: w, height: h, bitsPerComponent: 16, bitsPerPixel: 64, bytesPerRow: w * 8,
+        width: width, height: h, bitsPerComponent: 16, bitsPerPixel: 64, bytesPerRow: width * 8,
         space: CGColorSpace(name: CGColorSpace.sRGB)!,
         bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder16Little.rawValue),
         provider: CGDataProvider(data: Data(bytes: samples, count: samples.count * 2) as CFData)!, decode: nil,
@@ -37,12 +40,8 @@ enum RollPrintTests {
     let root = folder.appendingPathComponent("roll-print", isDirectory: true)
     try? FileManager.default.removeItem(at: root)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    var urls = [URL]()
-    for (n, scene) in [(0.0, 0.0), (0.6, 0.0), (0.0, 0.12)].enumerated() {
-      let url = root.appendingPathComponent("p\(n).tif")
-      try pipe.saveTIFF(negative(under: scene.0, blue: scene.1), to: url, dpi: 2400)
-      urls.append(url)
-    }
+    let url = root.appendingPathComponent("strip.tif")
+    try pipe.saveTIFF(strip([(0.0, 0.0), (0.6, 0.0), (0.0, 0.12)]), to: url, dpi: 2400)
     let suite = "EpsonScanPlus.tests.\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: suite)!
     defer { defaults.removePersistentDomain(forName: suite) }
@@ -50,9 +49,15 @@ enum RollPrintTests {
     let edits = UndoManager()
     edits.groupsByEvent = false
     model.undoManager = edits
-    model.importURLs(urls)
-    model.setPoolPictures(true)
+    model.importURLs([url])
+    // The strip's three frames: one file, so one roll, as a scanned strip is.
+    let third = 1.0 / 3
+    model.setRect(model.frames[0].id, rect: NormalRect(x: 0, y: 0, width: third, height: 1))
+    model.addFrame(NormalRect(x: third, y: 0, width: third, height: 1))
+    model.addFrame(NormalRect(x: 2 * third, y: 0, width: third, height: 1))
     model.chooseProfile(portra)
+    try check(model.frames.count == 3 && Set(model.frames.compactMap(\.sourcePath)).count == 1 && model.selectedSharesRoll && model.estimatesSlopes,
+      "three frames on one strip file are one roll, to print as one and estimate the slopes across")
     func settle(_ seconds: Double) { RunLoop.current.run(until: Date().addingTimeInterval(seconds)) }
     var slopesDone = false
     model.updateRollSlopes { slopesDone = true }
