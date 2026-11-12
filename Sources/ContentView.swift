@@ -1392,8 +1392,9 @@ struct ContentView: View {
           ForEach(0..<3, id: \.self) { Text(ColourMixer.kinds[$0]).tag($0) }
         }.pickerStyle(.segmented).labelsHidden().controlSize(.small)
         ForEach(0..<ColourMixer.bands.count, id: \.self) { band in
+          // The colour alone beside its track (the tab above says what moves); its full name for undo.
           slider("\(ColourMixer.bands[band].name) · \(ColourMixer.kinds[mixerKind])", key: \Adjustments.[mixer: band, kind: mixerKind], range: -1...1, format: "%+.2f",
-            gradient: ColourMixer.track(band: band, kind: mixerKind))
+            gradient: ColourMixer.track(band: band, kind: mixerKind), label: ColourMixer.bands[band].name)
         }
       }
     }
@@ -1407,16 +1408,9 @@ struct ContentView: View {
           ForEach(0..<3, id: \.self) { part in
             let keys: [(WritableKeyPath<ColourGrading, Double>, WritableKeyPath<ColourGrading, Double>, String)] = [
               (\.shadowHue, \.shadowAmount, "阴影"), (\.midHue, \.midAmount, "中间调"), (\.highHue, \.highAmount, "高光")]
-            VStack(spacing: 4) {
-              ColourWheel(
-                hue: Binding(get: { m.settings[grading: keys[part].0] }, set: { v in m.change("色彩分级 · \(keys[part].2)") { $0[grading: keys[part].0] = v } }),
-                amount: Binding(get: { m.settings[grading: keys[part].1] }, set: { v in m.change("色彩分级 · \(keys[part].2)") { $0[grading: keys[part].1] = v } }))
-                .frame(width: 66, height: 66)
-              Text(keys[part].2).font(.system(size: 11)).foregroundStyle(.secondary)
-              // Its hue and amount in figures, as Lightroom's under the wheel; a dash at the middle.
-              Text(ColourGrading.readout(hue: m.settings[grading: keys[part].0], amount: m.settings[grading: keys[part].1]))
-                .font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary)
-            }.frame(maxWidth: .infinity)
+            GradingWheel(name: keys[part].2,
+              hue: Binding(get: { m.settings[grading: keys[part].0] }, set: { v in m.change("色彩分级 · \(keys[part].2)") { $0[grading: keys[part].0] = v } }),
+              amount: Binding(get: { m.settings[grading: keys[part].1] }, set: { v in m.change("色彩分级 · \(keys[part].2)") { $0[grading: keys[part].1] = v } }))
           }
         }
         slider("平衡", key: \Adjustments.[grading: \ColourGrading.balance], range: -1...1, format: "%+.2f")
@@ -1761,6 +1755,9 @@ struct ContentView: View {
             .background(FilmBase(look: m.stripLook))
             .padding(.horizontal, 4).padding(.top, 4)
         }.frame(height: 114)
+          // Its frames end where the strip does: scrolled past it they went on under the sidebar
+          // and the inspector, whose glass showed them as a brown smear.
+          .clipped()
           // Back from the library, the strip comes in on the frame shown.
           .onAppear { if let id = m.selectedID { proxy.scrollTo(id, anchor: .center) } }
           .onChange(of: m.selectedID) { _, id in
@@ -1805,11 +1802,11 @@ struct ContentView: View {
   }
   func slider(
     _ title: String, key: WritableKeyPath<Adjustments, Double>, range: ClosedRange<Double>,
-    format: String = "%.2f", gradient: [Color]? = nil
+    format: String = "%.2f", gradient: [Color]? = nil, label: String? = nil
   ) -> some View {
     VStack(spacing: 3) {
       HStack {
-        Text(title).font(.system(size: 12)).foregroundStyle(.secondary)
+        Text(label ?? title).font(.system(size: 12)).foregroundStyle(.secondary)
         Spacer()
         LiveValueField(live: LiveFigure.named(title), title: title, format: format, value: m.settings[keyPath: key], range: range) { v in
           LiveFigure.named(title).set(v)

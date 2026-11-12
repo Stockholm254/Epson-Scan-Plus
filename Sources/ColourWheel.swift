@@ -7,8 +7,9 @@ struct ColourWheel: View {
   @Binding var hue: Double
   @Binding var amount: Double
   /// Where it is being dragged, drawn at once: the values given come with the window's update, a
-  /// few a second while it is dragged (`WindowGate`).
-  @State private var dragged: (hue: Double, amount: Double)?
+  /// few a second while it is dragged (`WindowGate`). Kept by the wheel's column (`GradingWheel`),
+  /// whose figures follow it too.
+  @Binding var dragged: (hue: Double, amount: Double)?
   var body: some View {
     GeometryReader { g in
       let size = min(g.size.width, g.size.height), r = size / 2
@@ -66,6 +67,24 @@ struct FrameMarks: View {
       .background(Capsule().fill(Color.black.opacity(0.6)))
       .accessibilityElement().accessibilityLabel(AppModel.markWords(frame))
     }
+  }
+}
+
+/// A grading wheel with its name and figures under it, the figures following the knob as it is
+/// dragged.
+struct GradingWheel: View {
+  let name: String
+  @Binding var hue: Double
+  @Binding var amount: Double
+  @State private var dragged: (hue: Double, amount: Double)?
+  var body: some View {
+    VStack(spacing: 4) {
+      ColourWheel(hue: $hue, amount: $amount, dragged: $dragged).frame(width: 66, height: 66)
+      Text(name).font(.system(size: 11)).foregroundStyle(.secondary)
+      // Its hue and amount in figures, as Lightroom's under the wheel; a dash at the middle.
+      Text(ColourGrading.readout(hue: dragged?.hue ?? hue, amount: dragged?.amount ?? amount))
+        .font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary)
+    }.frame(maxWidth: .infinity)
   }
 }
 
