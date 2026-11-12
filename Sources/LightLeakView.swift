@@ -464,7 +464,7 @@ struct LeakPanel: View {
       HStack {
         Text(title).font(.system(size: 12)).foregroundStyle(.secondary)
         Spacer()
-        ValueField(title: title, text: String(format: format, lab.params[keyPath: key]), value: lab.params[keyPath: key], range: range, set: set)
+        ValueField(title: title, text: sliderText(format, lab.params[keyPath: key]), value: lab.params[keyPath: key], range: range, set: set)
       }
       Fader(title: title, value: Binding(get: { lab.params[keyPath: key] }, set: set), range: range, detent: 0)
     }

@@ -207,6 +207,9 @@ enum ToneTests {
     var reset = old
     reset.whitesAmount = 0
     try check(reset.whites == nil && reset.pressHighlights == nil && reset.whitesAmount == 0, "setting whites clears the old 压高光")
+    try check(sliderText("%+.2f", Adjustments().whitesAmount) == "+0.00" && sliderText("%+.2f", -0.004) == "+0.00"
+      && sliderText("%+.2f", -0.3) == "-0.30" && sliderText("%.1f%%", -0.02) == "0.0%",
+      "a slider at zero reads +0.00, not -0.00 (whites with nothing saved, or a value rounding to zero)")
     let press = try render(pressed, portra)
     let pressedLight = matching.pixel(Int(Double(w - 1) * light), 4).g * 255 - press.pixel(Int(Double(w - 1) * light), 4).g * 255
     let pressedDark = matching.pixel(Int(Double(w - 1) * dark), 4).g * 255 - press.pixel(Int(Double(w - 1) * dark), 4).g * 255

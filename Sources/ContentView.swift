@@ -1858,7 +1858,7 @@ struct ContentView: View {
       HStack {
         Text(title).font(.system(size: 12)).foregroundStyle(.secondary)
         Spacer()
-        ValueField(title: title, text: String(format: format, m.settings[keyPath: key]), value: m.settings[keyPath: key], range: range) { v in
+        ValueField(title: title, text: sliderText(format, m.settings[keyPath: key]), value: m.settings[keyPath: key], range: range) { v in
           m.change(title) { $0[keyPath: key] = v }
         }
       }

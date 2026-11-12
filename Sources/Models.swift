@@ -395,7 +395,8 @@ struct Adjustments: Codable, Equatable {
   var whites: Double? = nil
   var whitesAmount: Double {
     // 压高光, saved before whites were, brought the white down by 0.15 at 1: whites −1 does.
-    get { whites ?? -(pressHighlights ?? 0) }
+    // 0 − press, not −press: with nothing saved that is +0, which reads 「+0.00」, not 「-0.00」.
+    get { whites ?? 0 - (pressHighlights ?? 0) }
     set { (whites, pressHighlights) = (newValue == 0 ? nil : newValue, nil) }
   }
   var blacks: Double? = nil

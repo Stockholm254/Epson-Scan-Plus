@@ -468,6 +468,12 @@ final class GradientSliderCell: NSSliderCell {
   }
 }
 
+/// `value` written by `format`, a value that rounds to zero written as zero: 「+0.00」, never 「-0.00」.
+func sliderText(_ format: String, _ value: Double) -> String {
+  let text = String(format: format, value)
+  return text.hasPrefix("-") && !text.contains(where: { ("1"..."9").contains($0) }) ? String(format: format, 0.0) : text
+}
+
 /// A slider's figure that can be typed into: shown as its readout, a click makes it a field.
 /// Return, or clicking elsewhere, sets what was typed, within the slider's `range`; Escape keeps
 /// the value as it was. `scale` is how much bigger the figure is than the value (100 for a
