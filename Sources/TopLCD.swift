@@ -6,9 +6,11 @@ import SwiftUI
 /// to the right. Every figure has its own cells, the unlit segments barely there, the digits
 /// right-aligned in them as an LCD's are. Shutter and aperture large with the mode beside them;
 /// under a printed rule ISO in its box, the exposure scale where the panel is wide enough, the
-/// pictures taken in brackets and the battery's bars. In the dark appearance its lamp is on, a
-/// blue backlight behind the same dark figures, as for night work. The pointer over it moves the shadows and the
-/// cover's sheen a little, as looking at it from the side would.
+/// pictures taken in brackets and the battery's bars. Under it on the body, as on the camera, the
+/// lamp key with its bulb printed above: pressed, the orange backlight comes on behind the same
+/// dark figures, pressed again it goes off; until it is first pressed the lamp is on in the dark
+/// appearance and off in the light, and after that it stays as it was left. The pointer over it
+/// moves the shadows and the cover's sheen a little, as looking at it from the side would.
 struct TopLCD: View {
   /// The camera's own texts for them, as `CameraProperty.describe` gives them: 1/125, 0.5",
   /// f/5.6, ISO 100, +0.7 EV, M.
@@ -22,34 +24,52 @@ struct TopLCD: View {
   /// The battery's charge, 0–1; nil when not known.
   var battery: Double? = nil
   var connected = true
-  /// Lit, as in the dark appearance; nil follows the appearance.
+  /// Lit or not whatever the lamp key says, for pictures of it; nil, as the key has it.
   var lit: Bool? = nil
 
-  static let height: CGFloat = 92
+  /// The LCD in its window, and the strip of body under it with the lamp key.
+  static let lcdHeight: CGFloat = 92, keyStrip: CGFloat = 38
+  static let height = lcdHeight + keyStrip
   @Environment(\.colorScheme) private var scheme
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  /// The lamp as the key left it: −1 never pressed (it follows the appearance), 0 off, 1 on.
+  @AppStorage("topLCDLamp") private var lamp = -1
   /// Where the pointer is over it, −0.5…0.5 each way from the middle.
   @State private var look = CGSize.zero
 
+  /// On, from what the key left and the appearance.
+  static func isLit(_ lamp: Int, dark: Bool) -> Bool { lamp < 0 ? dark : lamp == 1 }
+  /// What pressing the key leaves: the other of what shows now.
+  static func pressed(_ lamp: Int, dark: Bool) -> Int { isLit(lamp, dark: dark) ? 0 : 1 }
+
   var body: some View {
+    let on = lit ?? Self.isLit(lamp, dark: scheme == .dark)
     GeometryReader { g in
-      Canvas { ctx, size in
-        Self.draw(&ctx, size: size, lcd: self, lit: lit ?? (scheme == .dark), look: look)
+      // Unlit and lit, the one faded over the other as the lamp comes on and goes off.
+      ZStack {
+        Canvas { ctx, size in Self.draw(&ctx, size: size, lcd: self, lit: false, look: look) }
+        Canvas { ctx, size in Self.draw(&ctx, size: size, lcd: self, lit: true, look: look) }.opacity(on ? 1 : 0)
       }
+      .accessibilityElement()
+      .accessibilityLabel("相机的设置")
+      .accessibilityValue(spoken)
       .onContinuousHover { phase in
         guard !reduceMotion else { return }
         switch phase {
         case .active(let p):
-          look = CGSize(width: p.x / max(g.size.width, 1) - 0.5, height: p.y / max(g.size.height, 1) - 0.5)
+          look = CGSize(width: p.x / max(g.size.width, 1) - 0.5, height: p.y / max(Self.lcdHeight, 1) - 0.5)
         case .ended:
           withAnimation(.easeOut(duration: 0.35)) { look = .zero }
         }
       }
     }
     .frame(height: Self.height)
-    .accessibilityElement()
-    .accessibilityLabel("相机的设置")
-    .accessibilityValue(spoken)
+    .overlay(alignment: .bottomLeading) {
+      LampKey(on: on) {
+        withAnimation(.easeOut(duration: 0.16)) { lamp = Self.pressed(lamp, dark: scheme == .dark) }
+      }
+      .padding(.leading, 13).padding(.bottom, 5)
+    }
   }
   private var spoken: String {
     guard connected else { return "未连接" }
@@ -105,11 +125,11 @@ struct TopLCD: View {
   struct Colours {
     let top: Color, bottom: Color, ink: Color, shadow: Color, ghost: Double
   }
-  /// Unlit: the reflector a pale grey-green, as daylight shows it. Lit: the blue lamp behind it.
+  /// Unlit: the reflector a pale grey-green, as daylight shows it. Lit: the orange lamp behind it.
   static func colours(lit: Bool) -> Colours {
     lit
-      ? Colours(top: Color(red: 0.40, green: 0.68, blue: 0.98), bottom: Color(red: 0.20, green: 0.44, blue: 0.86),
-        ink: Color(red: 0.02, green: 0.05, blue: 0.16), shadow: Color(red: 0, green: 0.08, blue: 0.32).opacity(0.4), ghost: 0.035)
+      ? Colours(top: Color(red: 0.93, green: 0.62, blue: 0.27), bottom: Color(red: 0.78, green: 0.45, blue: 0.15),
+        ink: Color(red: 0.14, green: 0.06, blue: 0.02), shadow: Color(red: 0.35, green: 0.12, blue: 0).opacity(0.36), ghost: 0.03)
       : Colours(top: Color(red: 0.80, green: 0.82, blue: 0.77), bottom: Color(red: 0.69, green: 0.72, blue: 0.67),
         ink: Color(red: 0.09, green: 0.10, blue: 0.09), shadow: Color.black.opacity(0.28), ghost: 0.022)
   }
@@ -132,8 +152,8 @@ struct TopLCD: View {
     ctx.fill(grain, with: .color(.white.opacity(0.06)))
     ctx.stroke(Path(roundedRect: body.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 9.5), with: .linearGradient(
       Gradient(colors: [.white.opacity(0.16), .white.opacity(0.02)]), startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height)), lineWidth: 1)
-    // The window, sunk into it: a dark well where the body turns down, then the LCD.
-    let window = body.insetBy(dx: 7, dy: 7)
+    // The window, sunk into it at the top: a dark well where the body turns down, then the LCD.
+    let window = CGRect(x: 7, y: 7, width: size.width - 14, height: min(size.height, lcdHeight) - 14)
     ctx.fill(Path(roundedRect: window.insetBy(dx: -1.5, dy: -1.5), cornerRadius: 7), with: .color(.black.opacity(0.9)))
     let screen = window.insetBy(dx: 2.5, dy: 2.5)
     // The window's chamfered walls going down to the screen, lit from above as a recess is: the
@@ -146,7 +166,7 @@ struct TopLCD: View {
     if lit {
       // The lamp is brighter in the middle than at the ends.
       ctx.fill(Path(roundedRect: screen, cornerRadius: 4.5), with: .radialGradient(
-        Gradient(colors: [Color(red: 0.72, green: 0.9, blue: 1).opacity(0.45), .clear]),
+        Gradient(colors: [Color(red: 1, green: 0.8, blue: 0.45).opacity(0.45), .clear]),
         center: CGPoint(x: screen.midX, y: screen.midY), startRadius: 0, endRadius: screen.width * 0.6))
     }
     // The well's own shadow on the screen's top and left edges, under the cover.
@@ -350,6 +370,74 @@ enum SevenSegment {
         tick.closeSubpath()
         p.addPath(tick)
       }
+    }
+    return p
+  }
+}
+
+/// The lamp key under the LCD, as on the camera's top: a small black domed key in a shallow
+/// recess, the bulb with its rays printed in white above it. It goes down a little as it is
+/// pressed.
+struct LampKey: View {
+  let on: Bool
+  let action: () -> Void
+  var body: some View {
+    Button(action: action) { EmptyView() }
+      .buttonStyle(LampKeyStyle())
+      .help(on ? "关掉肩屏照明" : "打开肩屏照明")
+      .accessibilityLabel("肩屏照明")
+      .accessibilityValue(on ? "开" : "关")
+      .accessibilityAddTraits(.isToggle)
+  }
+}
+
+struct LampKeyStyle: ButtonStyle {
+  func makeBody(configuration: Configuration) -> some View {
+    let down = configuration.isPressed
+    VStack(spacing: 3) {
+      LampMark().stroke(Color.white.opacity(0.86), style: StrokeStyle(lineWidth: 1, lineCap: .round, lineJoin: .round))
+        .frame(width: 12, height: 10)
+      ZStack {
+        // The recess the key sits in, its lower lip catching the light.
+        Circle().fill(Color.black.opacity(0.75)).frame(width: 22, height: 22)
+        Circle().strokeBorder(LinearGradient(colors: [.black.opacity(0.6), .white.opacity(0.14)], startPoint: .top, endPoint: .bottom), lineWidth: 0.8)
+          .frame(width: 22, height: 22)
+        // The cap: matte black, its dome lit from above.
+        Circle()
+          .fill(RadialGradient(colors: [Color(white: down ? 0.2 : 0.3), Color(white: 0.09), Color(white: 0.05)],
+            center: UnitPoint(x: 0.4, y: 0.3), startRadius: 0, endRadius: 11))
+          .overlay(Circle().strokeBorder(LinearGradient(colors: [.white.opacity(down ? 0.1 : 0.22), .clear], startPoint: .top, endPoint: .center), lineWidth: 0.8))
+          .frame(width: 18, height: 18)
+          .shadow(color: .black.opacity(down ? 0.3 : 0.7), radius: down ? 0.5 : 1.2, y: down ? 0.4 : 1.3)
+          .scaleEffect(down ? 0.94 : 1)
+          .offset(y: down ? 0.6 : 0)
+      }
+    }
+    .contentShape(Rectangle())
+    .animation(.easeOut(duration: 0.08), value: down)
+  }
+}
+
+/// The bulb printed over the lamp key: a round bulb on a short neck with two lines for its base,
+/// five short rays over it.
+struct LampMark: Shape {
+  func path(in r: CGRect) -> Path {
+    var p = Path()
+    let s = min(r.width / 12, r.height / 10), o = CGPoint(x: r.midX, y: r.minY)
+    func pt(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: o.x + x * s, y: o.y + y * s) }
+    // The bulb, open at its neck.
+    p.addArc(center: pt(0, 5.6), radius: 2.2 * s, startAngle: .degrees(130), endAngle: .degrees(50), clockwise: false)
+    p.addLine(to: pt(0.9, 8.1))
+    p.move(to: pt(-1.4, 7.3))
+    p.addLine(to: pt(-0.9, 8.1))
+    p.move(to: pt(-1, 8.6)); p.addLine(to: pt(1, 8.6))
+    p.move(to: pt(-0.7, 9.6)); p.addLine(to: pt(0.7, 9.6))
+    // The rays.
+    for a in [-90.0, -135, -45, 180, 0] {
+      let rad = a * .pi / 180
+      let c = pt(0, 5.6)
+      p.move(to: CGPoint(x: c.x + cos(rad) * 3.3 * s, y: c.y + sin(rad) * 3.3 * s))
+      p.addLine(to: CGPoint(x: c.x + cos(rad) * 4.7 * s, y: c.y + sin(rad) * 4.7 * s))
     }
     return p
   }

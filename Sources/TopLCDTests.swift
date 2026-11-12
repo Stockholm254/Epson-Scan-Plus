@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// The camera's settings on its top LCD: written as the panel writes them, each figure in its
-/// cells, dark segments on the pale reflector by day and on the blue lamp in the dark, dashes
+/// cells, dark segments on the pale reflector, and on the orange lamp when its key turns it on, dashes
 /// before it is connected.
 enum TopLCDTests {
   static func run(folder: URL) throws {
@@ -18,13 +18,21 @@ enum TopLCDTests {
     let spelled = ["buLb", "Auto", "----", "0123456789"].allSatisfy { $0.allSatisfy { SevenSegment.segments[$0] != nil } }
     try check(half.count == 2 && half[0].mark == "\"" && f.count == 2 && f[0].mark == "." && f[1].mark == nil && spelled,
       "a decimal point or seconds mark joins the figure before it, and every letter it spells has its segments")
+    // The lamp key: never pressed, the lamp follows the appearance; pressed, it is the other of
+    // what showed, and stays so in either appearance.
+    let first = TopLCD.pressed(-1, dark: true), again = TopLCD.pressed(first, dark: true)
+    try check(TopLCD.isLit(-1, dark: true) && !TopLCD.isLit(-1, dark: false) && first == 0 && !TopLCD.isLit(first, dark: true)
+      && again == 1 && TopLCD.isLit(again, dark: false) && TopLCD.pressed(-1, dark: false) == 1,
+      "the lamp key turns the backlight on and off, and until it is first pressed the lamp follows the appearance")
     try check(TopLCD.bars(0.8) == 3 && TopLCD.bars(0.5) == 2 && TopLCD.bars(0.2) == 1 && TopLCD.bars(0.02) == 0 && TopLCD.bars(nil) == 0,
       "the battery shows three bars full, fewer as it runs down")
 
     // Drawn: how much of the screen is dark segment, and the reflector's colour.
     func render(_ lcd: TopLCD, lit: Bool) -> (ink: Double, light: SIMD3<Double>)? {
       MainActor.assumeIsolated {
-        let r = ImageRenderer(content: lcd.frame(width: 252).environment(\.colorScheme, lit ? .dark : .light))
+        var lcd = lcd
+        lcd.lit = lit
+        let r = ImageRenderer(content: lcd.frame(width: 252))
         r.scale = 2
         guard let cg = r.cgImage else { return nil }
         let w = cg.width, h = cg.height
@@ -33,9 +41,9 @@ enum TopLCDTests {
         ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
         guard let data = ctx.data else { return nil }
         let px = Array(UnsafeBufferPointer(start: data.bindMemory(to: UInt8.self, capacity: w * h * 4), count: w * h * 4))
-        // Inside the screen, clear of its bevel: 12 points in from the sides, 12 from top and bottom.
+        // Inside the screen, clear of its bevel: 12 points in from the sides, 12 from its top and bottom.
         var dark = 0, n = 0, sum = SIMD3<Double>(repeating: 0), lights = 0
-        for y in stride(from: 24, to: h - 24, by: 1) {
+        for y in stride(from: 24, to: min(h, Int(TopLCD.lcdHeight) * 2) - 24, by: 1) {
           for x in stride(from: 24, to: w - 24, by: 1) {
             let i = (y * w + x) * 4
             let c = SIMD3(Double(px[i]), Double(px[i + 1]), Double(px[i + 2])) / 255
@@ -53,8 +61,8 @@ enum TopLCDTests {
       print("LCD ink \(day.ink) lit \(night.ink) off \(none.ink); reflector \(day.light) lamp \(night.light)")
       try check(day.ink > 0.05 && day.ink < 0.4 && abs(day.light.x - day.light.z) < 0.12 && day.light.y > 0.6,
         "by day the figures are dark on the pale grey-green reflector")
-      try check(night.ink > 0.05 && night.light.z > night.light.x + 0.3,
-        "in the dark appearance its blue lamp is on behind the same dark figures")
+      try check(night.ink > 0.05 && night.light.x > night.light.z + 0.3,
+        "with its lamp on, the orange backlight is behind the same dark figures")
       try check(none.ink < day.ink * 0.6, "before the camera is connected the LCD shows only dashes")
     } else {
       throw DeskError.message("FAIL: the top LCD could not be drawn")
