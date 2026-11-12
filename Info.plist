@@ -7,8 +7,8 @@
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundleIconName</key><string>AppIcon</string>
 <key>CFBundleIdentifier</key><string>local.epscan.mac</string>
-<key>CFBundleVersion</key><string>65</string>
-<key>CFBundleShortVersionString</key><string>0.20.3</string>
+<key>CFBundleVersion</key><string>66</string>
+<key>CFBundleShortVersionString</key><string>0.20.4</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>LSMinimumSystemVersion</key><string>26.0</string>
 <key>NSHighResolutionCapable</key><true/>
