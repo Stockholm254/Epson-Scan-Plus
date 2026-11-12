@@ -66,6 +66,7 @@ enum RegressionTests {
     try PreviewExportTests.run(folder: folder)
     try SectionOrderTests.run(folder: folder)
     try CalibrationListTests.run(folder: folder)
+    try TopLCDTests.run(folder: folder)
     try AppIconTests.run()
     let pipe = ImagePipeline.shared
     func check(_ value: Bool, _ label: String) throws {

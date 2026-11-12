@@ -471,7 +471,6 @@ struct CameraPanel: View {
         Text(camera.connected ? camera.model : camera.phase == .missing ? "没有 SDK" : camera.phase == .connecting ? "连接中" : "未连接").readout(10)
         if camera.connected { Text(camera.link.name).font(.system(size: 10)).foregroundStyle(.tertiary) }
         Spacer()
-        if let battery = camera.properties["BatteryRemain"] { Text("电量 \(battery.text)").font(.system(size: 11)).foregroundStyle(.secondary) }
       }
       if !camera.message.isEmpty {
         Text(camera.message).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -631,22 +630,15 @@ struct CameraPanel: View {
       }
     }
   }
-  /// Shutter, aperture and ISO together, large, as the camera's top display shows them.
+  /// Shutter, aperture and ISO together, large, as the camera's top display shows them, with the
+  /// mode, the compensation, the pictures taken and the battery.
   private var exposureReadout: some View {
-    HStack(spacing: 0) {
-      ForEach([("快门", "ShutterSpeed"), ("光圈", "FNumber"), ("ISO", "IsoSensitivity")], id: \.1) { label, name in
-        VStack(spacing: 2) {
-          Text((camera.properties[name]?.text ?? "--").replacingOccurrences(of: "ISO ", with: ""))
-            .font(.system(size: 17, weight: .semibold, design: .monospaced)).foregroundStyle(Hardware.lcdText)
-            .lineLimit(1).minimumScaleFactor(0.7)
-          Text(label).font(.system(size: 10)).foregroundStyle(Hardware.lcdText.opacity(0.6))
-        }.frame(maxWidth: .infinity)
-      }
-    }
-    .padding(.vertical, 9)
-    .background(RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.82)))
-    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.white.opacity(0.06)))
-    .accessibilityElement(children: .combine)
+    let p = camera.properties
+    return TopLCD(
+      shutter: p["ShutterSpeed"]?.text ?? "--", aperture: p["FNumber"]?.text ?? "--", iso: p["IsoSensitivity"]?.text ?? "--",
+      bias: p["ExposureBiasCompensation"]?.text, mode: p["ExposureProgramMode"]?.text, shots: camera.shots,
+      battery: p["BatteryRemain"].flatMap { $0.value >= 0 && $0.value <= 100 ? Double($0.value) / 100 : nil })
+      .help(p["BatteryRemain"].map { "电量 \($0.text)" } ?? "")
   }
 }
 
