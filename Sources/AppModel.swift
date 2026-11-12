@@ -414,22 +414,28 @@ final class AppModel: ObservableObject {
     }
     guard showsDemasked, overview != nil || frames.contains(where: { $0.sourcePath != nil }) else { return }
     let p = conversionProfile
-    let wanted = frames.map { ($0, analysisKey(Self.demasked($0), everything: true)) }.filter { demaskThumbnailKeys[$0.0.id] != $0.1 }
-    // A frame a step, so the single frame's render comes in between.
+    // Those not made as they are now, nor on their way.
+    let wanted = frames.map { ($0, analysisKey(Self.demasked($0), everything: true)) }
+      .filter { demaskThumbnailKeys[$0.0.id] != $0.1 && demaskPending[$0.0.id] != $0.1 }
+    // On a queue of their own, behind nothing and ahead of nothing the render queue does (the
+    // single frame, a flat measured, the strip's own positives): a frame a step.
     for (f, key) in wanted {
-      renderQueue.async { [weak self] in
+      demaskPending[f.id] = key
+      demaskQueue.async { [weak self] in
         guard let self else { return }
         let d = Self.demasked(f)
-        guard let small = try? self.source(for: d, maxDimension: 480),
-          let positive = try? ImagePipeline.shared.preview(small, settings: d.adjustments, profile: p)
-        else { return }
+        let positive = (try? self.source(for: d, maxDimension: 480)).flatMap { try? ImagePipeline.shared.preview($0, settings: d.adjustments, profile: p) }
         DispatchQueue.main.async {
+          if self.demaskPending[f.id] == key { self.demaskPending[f.id] = nil }
+          guard let positive else { return }
           self.demaskThumbnails[f.id] = positive
           self.demaskThumbnailKeys[f.id] = key
         }
       }
     }
   }
+  private var demaskPending = [UUID: String]()
+  private let demaskQueue = DispatchQueue(label: "local.epscan.demask-thumbnails", qos: .utility)
   /// The switcher's stops, in the order a roll goes through them: three steps after the library.
   /// 去漏光 is not one of them but ②'s last part, for the frames that need it: while it is open ②
   /// stays lit, its segment reading 「② 去色罩 › 去漏光」.
