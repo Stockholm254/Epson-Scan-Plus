@@ -279,5 +279,101 @@ enum LeakFixTests {
       && MCPTools.leakState(bare, job: kept[other])?["state"] as? String == "old_job_of_graded_picture"
       && MCPTools.leakState(bare, job: kept[id])?["state"] as? String == "job_not_applied" && MCPTools.leakState(bare, job: nil) == nil,
       "the assistant's state tells a repair used, a job not used yet and an old job of the graded picture apart")
+
+    // The colour map between two renderings of one picture (`LeakGradeMap`): a known grade undone,
+    // colours the picture never showed taken along, and another picture not taken for this one.
+    func leakPicture(_ w: Int, _ h: Int, _ f: (Double, Double) -> SIMD3<Double>) -> LeakImage {
+      var d = [UInt16](repeating: 0, count: w * h * 3)
+      for y in 0..<h { for x in 0..<w {
+        let q = f(Double(x) / Double(w - 1), Double(y) / Double(h - 1))
+        for c in 0..<3 { d[(y * w + x) * 3 + c] = UInt16((min(max(q[c], 0), 1) * 65535).rounded()) }
+      } }
+      return LeakImage(width: w, height: h, data: d)
+    }
+    let scene = leakPicture(240, 160) { x, y in
+      SIMD3(0.2 + 0.6 * x, 0.15 + 0.5 * y + 0.1 * sin(x * 9), 0.3 + 0.4 * (1 - x) * y + 0.05 * cos(y * 13))
+    }
+    func grade(_ q: SIMD3<Double>) -> SIMD3<Double> {
+      let warm = SIMD3(1.08, 1.0, 0.9) * q, grey = SIMD3(repeating: (warm.x + warm.y + warm.z) / 3)
+      let s = grey + 1.3 * (warm - grey)
+      return SIMD3(pow(max(s.x, 0), 0.85), pow(max(s.y, 0), 0.85), pow(max(s.z, 0), 0.85))
+    }
+    func regraded(_ image: LeakImage) -> LeakImage { leakPicture(image.width, image.height) { x, y in grade(image.at(x, y)) } }
+    func apart(_ a: LeakImage, _ b: LeakImage, where wanted: (Double, Double) -> Bool = { _, _ in true }) -> Double {
+      var sum = 0.0, n = 0.0
+      for j in 0..<100 { for i in 0..<100 {
+        let u = (Double(i) + 0.5) / 100, v = (Double(j) + 0.5) / 100
+        guard wanted(u, v) else { continue }
+        let d = a.at(u, v) - b.at(u, v)
+        sum += (abs(d.x) + abs(d.y) + abs(d.z)) / 3
+        n += 1
+      } }
+      return sum / max(1, n) * 255
+    }
+    let undo = LeakGradeMap.fit(from: regraded(scene), to: scene)
+    try check(undo.usable && undo.apart * 255 > 8 && undo.error * 255 < 1,
+      String(format: "a grade is undone by the map fitted between the graded picture and the plain one (%.1f / 255 apart, %.2f after)", undo.apart * 255, undo.error * 255))
+    // A reference: the picture cleaned, its top a sky of a colour the picture never had.
+    let clean = leakPicture(240, 160) { x, y in y < 0.3 ? SIMD3(0.35, 0.5, 0.75) : scene.at(x, y) }
+    let back = undo.apply(regraded(clean))
+    let skyMissed = apart(back, clean) { _, v in v < 0.28 }, restMissed = apart(back, clean) { _, v in v > 0.32 }
+    try check(restMissed < 1 && skyMissed < 4,
+      String(format: "a clean reference of the graded picture is taken back to the plain one's colours (%.2f / 255; %.1f where its colours were never in the picture)", restMissed, skyMissed))
+    // A photograph's colours come back all over it, unlike `scene`'s, which a colour table could
+    // even take for a turned picture: grain on it, then turned.
+    func grain(_ x: Double, _ y: Double) -> Double { let s = sin(x * 3117.6 + y * 12_517.3) * 43_758.5453; return s - s.rounded(.down) }
+    let grainy = leakPicture(240, 160) { x, y in scene.at(x, y) + SIMD3(repeating: 0.2 * (grain(x, y) - 0.5)) }
+    let mirrored = leakPicture(240, 160) { x, y in grainy.at(1 - x, y) }
+    let wrong = LeakGradeMap.fit(from: regraded(mirrored), to: grainy), same = LeakGradeMap.fit(from: scene, to: scene)
+    try check(wrong.verdict == .mismatch && same.verdict == .slight && same.apart < LeakGradeMap.negligible,
+      String(format: "nor is the map used between two different pictures (%.1f / 255 after), or two the same", wrong.error * 255))
+
+    // An old job of the graded picture whose reference is a clean version of it, reloaded from
+    // ②'s result: the reference is taken to ②'s colours, the old one kept; ⌘Z puts it all back.
+    let oldLab = LeakLab(root: root.appendingPathComponent("old-jobs"))
+    oldLab.renderFrame = { [unowned m] in try m.leakPositive($0) }
+    oldLab.renderNeutral = { [unowned m] in try m.leakNeutral($0, longest: $1) }
+    let labEdits = UndoManager()
+    labEdits.groupsByEvent = false
+    oldLab.undoManager = labEdits
+    m.leak = oldLab
+    guard var gradedOrigin = m.leakOrigin(m.frames[0]), let plainOrigin = m.leakOrigin(m.frames[0]) else {
+      throw DeskError.message("FAIL: the roll's frame has no 去漏光 origin")
+    }
+    gradedOrigin.neutral = nil
+    gradedOrigin.adjustments.exposure = 0.3
+    gradedOrigin.adjustments.saturation = 1.35
+    gradedOrigin.adjustments.warmth = 0.25
+    oldLab.open(origin: gradedOrigin)
+    oldLab.wait()
+    settle()
+    let placeholder = root.appendingPathComponent("placeholder.png")
+    try pipe.savePNG(negative(30, 20), to: placeholder)
+    oldLab.importReference(placeholder)
+    oldLab.wait()
+    settle()
+    guard let oldFolder = oldLab.folder, let gradedBase = oldLab.job?.base else { throw DeskError.message("FAIL: the old job was not kept") }
+    // The graded picture itself as the reference: a clean version of a picture without a leak.
+    oldLab.importReference(oldFolder.appendingPathComponent(gradedBase))
+    oldLab.wait()
+    settle()
+    let firstGuide = oldLab.job?.guide
+    oldLab.reload(origin: plainOrigin)
+    oldLab.wait()
+    settle()
+    oldLab.wait()
+    guard let reloaded = oldLab.job, let newBase = reloaded.base, let newGuide = reloaded.guide, let oldGuide = firstGuide else {
+      throw DeskError.message("FAIL: the reloaded job has no base or reference")
+    }
+    let plainBase = try LeakImage(contentsOf: oldFolder.appendingPathComponent(newBase))
+    let mappedGuide = try LeakImage(contentsOf: oldFolder.appendingPathComponent(newGuide))
+    let gradedGuide = try LeakImage(contentsOf: oldFolder.appendingPathComponent(oldGuide))
+    let wasApart = apart(gradedGuide, plainBase), nowApart = apart(mappedGuide, plainBase)
+    try check(reloaded.origin?.neutral == true && newGuide.hasPrefix("guide-regraded-") && newGuide != oldGuide && wasApart > 5 && nowApart < 1.5,
+      String(format: "an old job reloaded from ② takes its reference to ②'s colours (%.1f / 255 from ②'s picture, was %.1f), the old reference kept", nowApart, wasApart))
+    labEdits.undo()
+    settle()
+    try check(oldLab.job?.guide == firstGuide && oldLab.job?.origin?.neutral != true && oldLab.job?.base == gradedBase,
+      "⌘Z puts the job, its picture and its reference back as they were")
   }
 }
