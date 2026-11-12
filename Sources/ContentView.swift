@@ -736,13 +736,20 @@ struct ContentView: View {
         HStack {
           sectionTitle(grading ? "调色" : "去色罩", symbol: grading ? "slider.horizontal.3" : "circle.lefthalf.filled")
           Spacer()
-          if grading { snapshotMenu; gradingPresetMenu }
           // This step's settings only: ③'s 重置 leaves the base and the repair, ②'s the grading.
           let what = AppModel.scopeName(m.stepScope)
           Button(m.multiSelected ? "重置所选的\(what)" : "重置\(what)") { m.resetAdjustments(m.stepScope) }.font(.system(size: 11))
             .help((m.multiSelected ? "把所选的 \(m.selection.count) 张的" : "把这一张的") + what + "恢复成新照片的样子"
               + (grading ? "；② 去色罩的设置和去漏光的修复不动" : "；③ 的调色不动，方向、画面范围和去漏光的修复保留"))
             .disabled(frameControlsOff)
+        }
+        // ③'s own row under the title: its looks kept by name and the frame's snapshots.
+        if grading {
+          HStack(spacing: 6) {
+            gradingPresetMenu
+            snapshotMenu
+            Spacer()
+          }.padding(.top, -8)
         }
         Group {
           if grading {
