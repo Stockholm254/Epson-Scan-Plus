@@ -376,7 +376,7 @@ struct ContentView: View {
   @ViewBuilder var toolControls: some View {
       // Capturing places the frames; ② takes the mask off (the crops and the base), ③ grades (the
       // neutral grey).
-      let tools: [CanvasTool] = m.page == .capture ? [.select, .crop]
+      let tools: [CanvasTool] = m.page == .capture ? [.select, .crop, .base]
         : m.convertStep == .demask ? [.select, .crop, .region, .base] : [.select, .neutral]
       ForEach(tools, id: \.self) { t in
         Button {
@@ -1473,7 +1473,7 @@ struct ContentView: View {
                   // A frame not ticked for scanning and export lies dimmed; the one shown has the border.
                   Group {
                     // Module ① shows the raw pictures, ② the converted ones.
-                    if let cg = m.showsOriginal ? m.rawThumbnails[f.id] : m.thumbnails[f.id] {
+                    if let cg = m.showsOriginal ? m.rawThumbnails[f.id] : m.showsDemasked ? m.demaskThumbnails[f.id] ?? m.thumbnails[f.id] : m.thumbnails[f.id] {
                       Image(decorative: cg, scale: 1).resizable().aspectRatio(contentMode: .fit)
                         .padding(2)
                     } else {

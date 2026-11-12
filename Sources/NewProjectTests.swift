@@ -248,7 +248,10 @@ enum NewProjectTests {
     let slidesOpen = model.reversalRoll
     model.beginNewProject(profile: portra400, filmName: "Kodak Portra 400", reversal: true, format: .mm135)
     let crossProcessed = model.reversalRoll
+    model.lastCapture = folder.appendingPathComponent("last-roll-EPS00010.ARW")
     model.newProject()
+    try check(model.lastCapture == nil && model.lastShotBalance == nil,
+      "a new roll forgets the last roll's last picture: its focus check and base cast are not this roll's")
     try check(slidesOpen && crossProcessed && !model.reversalRoll && !model.preferences.scanReversal
       && !NewProjectSheet.startsAsSlides(.stock(FilmCatalog.stock(named: "Kodak Portra 400")?.id ?? ""), changing: false, m: model)
       && !NewProjectSheet.startsAsSlides(.named("Aerocolor 100"), changing: false, m: model)
@@ -257,8 +260,18 @@ enum NewProjectTests {
     model.beginNewProject(profile: portra400, filmName: "Kodak Portra 400", reversal: true, format: .mm135)
     try check(NewProjectSheet.startsAsSlides(.stock(FilmCatalog.stock(named: "Kodak Portra 400")?.id ?? ""), changing: true, m: model),
       "changing the film of a roll read as slides keeps it slides")
-    try check(lately.map(\.choice) == [.stock(velviaID), .stock(hp5ID), .stock(velviaID), .preset(own.id), .named("Aerocolor 100")]
-      && lately.map(\.format) == [.six7, nil, nil, nil, nil],
-      "the shelf starts with the films of the rolls last begun, newest first, each once in 120 (in its newest roll's format) and once in 135, a preset of this Mac as itself: \(lately.map { "\($0.choice) \($0.format?.rawValue ?? "-")" })")
+    let portra160ID = FilmCatalog.stock(named: "Kodak Portra 160")?.id ?? ""
+    try check(lately.map(\.choice) == [.stock(velviaID), .stock(hp5ID), .stock(velviaID), .stock(portra160ID), .named("Aerocolor 100")]
+      && lately.map(\.format) == [.six7, nil, nil, nil, nil] && lately.map(\.calibration) == [nil, nil, nil, own.id, nil],
+      "the shelf starts with the films of the rolls last begun, newest first, each once in 120 (in its newest roll's format) and once in 135, a calibration of this Mac as its film with the calibration taken along: \(lately.map { "\($0.choice) \($0.format?.rawValue ?? "-")" })")
+    // A film's calibrations are listed under it once it is chosen, not on the shelf as films: the
+    // calibration under its film, a preset of no film as itself.
+    var nameless = own
+    nameless.id = "test-nameless-\(UUID().uuidString.prefix(6))"
+    nameless.name = "本机标定胶片 · 翻拍 · 2026-10-30 19:41"
+    let mine = FilmProfile.builtins + [own, nameless]
+    try check(NewProjectSheet.shelved(own) == .stock(portra160ID) && NewProjectSheet.calibrations(of: .stock(portra160ID), among: mine).map(\.id) == [own.id]
+      && NewProjectSheet.shelved(nameless) == .preset(nameless.id) && NewProjectSheet.calibrations(of: .stock(velviaID), among: mine).isEmpty,
+      "a calibration is listed under the film it is of, one of no known film stands as itself")
   }
 }

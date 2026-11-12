@@ -178,6 +178,26 @@ enum CalibrationTests {
       && zip(placedNeutrals, curve).allSatisfy { p, c in (0..<3).allSatisfy { abs(p.d[$0] - c[$0]) < 0.005 } && p.off.allSatisfy { $0 < 0.005 } }
       && placedNeutrals.map(\.x) == placedNeutrals.map(\.x).sorted(),
       "the 2D view puts each neutral's red, green and blue on the preset's curves at the exposure its green gives")
+    // The points marked on their frame in ② only, where the calibration is: not in ③, and in ②
+    // while picking or with 「标出」 on.
+    var marked = FilmFrame(name: "07", rect: .full, format: "135")
+    marked.id = theirs[0].frame
+    let was = (copying.page, copying.convertStep, copying.showCalibrationPoints)
+    copying.page = .convert
+    copying.convertStep = .demask
+    copying.showCalibrationPoints = true
+    let inDemasking = copying.neutralMarks(on: marked).count
+    copying.convertStep = .grade
+    let inGrading = copying.neutralMarks(on: marked).count
+    copying.convertStep = .demask
+    copying.showCalibrationPoints = false
+    let switchedOff = copying.neutralMarks(on: marked).count
+    copying.useTool(.calibrate)
+    let picking = copying.neutralMarks(on: marked).count
+    copying.useTool(.select)
+    (copying.page, copying.convertStep, copying.showCalibrationPoints) = was
+    try check(inDemasking == 1 && inGrading == 0 && switchedOff == 0 && picking == 1,
+      "the neutral points are marked in ② with 「标出」 on or while picking, never over ③'s picture")
     // The panel lists them, a row each with its green density and how far off the line it lies;
     // taking one out takes the calibration up without it, and 「清除」 then starts from none.
     let rows = copying.calibrationRows
@@ -186,7 +206,18 @@ enum CalibrationTests {
       "the calibration's points are listed, each with its density and how far it lies off the line")
     copying.removeCalibrationPoint(at: 0)
     try check(copying.calibrationPoints == Array(picked.dropFirst()) && copying.calibrationRows.count == 2,
-      "taking one of the preset's points out takes the calibration up without it")
+      "taking one of the preset's points out takes the calibration up without it (the two left too close to make it again)")
+    // Picking on: a point added to the calibration in use makes the preset again with it, the
+    // picker kept for the next.
+    copying.useTool(.calibrate)
+    if copying.calibrationPoints.isEmpty, copying.resumableCalibration != nil { copying.resumeCalibration() }
+    var added = point(0.35)
+    added.at = CGPoint(x: 0.4, y: 0.7)
+    copying.calibrationPoints.append(added)
+    copying.calibrateAsPicked()
+    try check(copying.calibrationPoints.isEmpty && copying.profile.spots?.count == 3 && copying.tool == .calibrate,
+      "取点后自动生成: a point added makes the preset again from all of them, and picking goes on")
+    copying.useTool(.select)
     copying.clearCalibration()
     try check(copying.calibrationPoints.isEmpty && copying.resumableCalibration == nil && copying.calibrationRows.isEmpty
       && copying.presetNeutralPoints.isEmpty,

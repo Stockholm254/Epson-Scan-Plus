@@ -311,23 +311,25 @@ extension ContentView {
     let rows = m.calibrationRows
     let greens = rows.compactMap(\.green)
     let span = (greens.max() ?? 0) - (greens.min() ?? 0)
-    // The preset in use made here: its points are where adding begins.
-    let resumable = picking ? nil : m.resumableCalibration
+    // The preset in use made here: its points are where adding begins, and each point picked or
+    // taken out makes it again (`calibrateAsPicked`).
+    let resumable = m.resumableCalibration
     let step =
       ready ? "③ 可以生成预设；再取几个点能检查一致性。"
-      : resumable.map { "已有这个预设的 \($0) 个点：点「添加点」在它们上面接着点选，生成时连同它们替换这个预设；要从头标定，点「清除」。" }
-      ?? (m.calibrationPoints.isEmpty ? (picking ? (copy ? "② 在单张画面上点选本来是中性的东西，比如白牌子、灰水泥。" : "② 在单张画面上点选中性灰。") : "① 点「取中性点」开始。")
-      : "② 继续点选更亮或更暗的中性灰，跨度需 0.3 D 以上。")
+      : resumable.map { n in picking
+        ? "② 接着在单张画面上点选本来是中性的东西：每加一个点就重新生成这个预设（现在 \(n) 个点）；⌫ 去掉最后一个。"
+        : "已有这个预设的 \(n) 个点：点「添加点」在它们上面接着点选，每加或去一个点就重新生成、替换这个预设；要从头标定，点「清除」。" }
+      ?? (m.calibrationPoints.isEmpty ? (picking ? (copy ? "② 在单张画面上点选本来是中性的东西，比如白牌子、灰水泥；够两个、相差 0.3 D 以上就自动生成预设。" : "② 在单张画面上点选中性灰；够两个、相差 0.3 D 以上就自动生成预设。") : "① 点「取中性点」开始。")
+      : "② 继续点选更亮或更暗的中性灰，跨度到 0.3 D 就自动生成预设。")
     return VStack(alignment: .leading, spacing: 8) {
       HStack(spacing: 8) {
         Button {
-          if resumable != nil { m.resumeCalibration() }
           m.useTool(picking ? .select : .calibrate)
         } label: {
           Label(picking ? "完成取点" : resumable != nil ? "添加点" : "取中性点", systemImage: CanvasTool.calibrate.symbol)
             .lineLimit(1).fixedSize()
         }.buttonStyle(KeyStyle(latched: picking)).disabled(m.selected == nil)
-        .help(resumable != nil ? "在「\(m.profile.name)」的中性点上接着点选，生成时替换这个预设" : picking ? "结束取点" : "在单张画面上点选中性灰")
+        .help(picking ? "结束取点" : resumable != nil ? "在「\(m.profile.name)」的中性点上接着点选，每加一个点就重新生成这个预设" : "在单张画面上点选中性灰；够两个、相差 0.3 D 就自动生成预设")
         Text(String(format: "%d 点 · %.2f D", rows.count, span)).readout()
         Spacer(minLength: 0)
       }
@@ -348,10 +350,8 @@ extension ContentView {
         HStack {
           Text(m.calibrationPoints.isEmpty ? "「\(m.profile.name)」的中性点" : "中性点").font(.system(size: 11)).foregroundStyle(.secondary)
           Spacer()
-          if m.calibrationPoints.isEmpty {
-            Toggle("标出", isOn: $m.showCalibrationPoints).toggleStyle(.switch).controlSize(.mini).font(.system(size: 11))
-              .help("在单张画面上标出这个预设的中性点")
-          }
+          Toggle("标出", isOn: $m.showCalibrationPoints).toggleStyle(.switch).controlSize(.mini).font(.system(size: 11))
+            .help("在 ② 的单张画面上标出这些中性点（取点时总是标出）")
         }
         VStack(spacing: 0) {
           ForEach(Array(rows.enumerated()), id: \.offset) { i, r in
@@ -506,7 +506,7 @@ extension ContentView {
       SwitchRow("扫描后自动导出正片", isOn: Binding(get: { m.preferences.autoExport }, set: { m.preferences.autoExport = $0 }))
       Divider()
       titled("接触表", symbol: "square.grid.3x2", info:
-        "把勾选的画面排成一张图片，格式同上；上面的小图就是它排出来的样子，改排列、每行张数、背景和方向时跟着变。\n\n「预览 · 立即导出」按整幅预览的分辨率（600 dpi 预览时每张 35 mm 约 850 像素）直接生成，不扫描；已正式扫描的画面按同样的分辨率读取。\n\n「1200 dpi · 先扫描」时，尚未扫描或低于 1200 dpi 的画面先以 1200 dpi 扫描，结果保存为这些画面的原始文件，再生成 1200 dpi 的接触表。")
+        "把勾选的画面排成一张图片；上面的小图就是它排出来的样子，改排列、每行张数、背景和方向时跟着变。\n\n文件不超过 10 MB，方便发送：张数多、分辨率高（比如翻拍卷的预览有几千 dpi）时自动按比例缩小，不再报「过大」。格式在导出时选，和画面的导出分开记，默认 JPEG（16-bit TIFF 在 10 MB 里只放得下很小的一张）。\n\n「预览 · 立即导出」按整幅预览的分辨率（600 dpi 预览时每张 35 mm 约 850 像素）直接生成，不扫描；已正式扫描的画面按同样的分辨率读取。\n\n「1200 dpi · 先扫描」时，尚未扫描或低于 1200 dpi 的画面先以 1200 dpi 扫描，结果保存为这些画面的原始文件，再生成 1200 dpi 的接触表。")
       // As wide as the panel, as tall as the sheet's shape asks, within reason.
       let sheetAspect = SheetPreview.aspect(ticked, thumbnails: m.thumbnails, layout: m.preferences.sheet)
       let sheetFilm = m.preferences.sheet.showsFilm ? m.sheetFilm : nil

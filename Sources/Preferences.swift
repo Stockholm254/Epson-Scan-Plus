@@ -100,6 +100,8 @@ final class Preferences: ObservableObject {
   /// Where new previews and imports create their project folders; nil is the default library.
   @Published var libraryPath: String? { didSet { defaults?.set(libraryPath, forKey: "libraryPath") } }
   @Published var exportFormat: ExportFormat { didSet { defaults?.set(exportFormat.rawValue, forKey: "exportFormat") } }
+  /// The contact sheet's, apart from the frames': JPEG unless chosen otherwise, for a sheet to send.
+  @Published var sheetFormat: ExportFormat { didSet { defaults?.set(sheetFormat.rawValue, forKey: "sheetFormat") } }
   @Published var jpegQuality: Double { didSet { defaults?.set(jpegQuality, forKey: "jpegQuality") } }
   @Published var exportColorSpace: ExportColorSpace {
     didSet { defaults?.set(exportColorSpace.rawValue, forKey: "exportColorSpace") }
@@ -203,6 +205,7 @@ final class Preferences: ObservableObject {
     self.defaults = defaults
     libraryPath = defaults?.string(forKey: "libraryPath")
     exportFormat = defaults?.string(forKey: "exportFormat").flatMap(ExportFormat.init(rawValue:)) ?? .tiff
+    sheetFormat = defaults?.string(forKey: "sheetFormat").flatMap(ExportFormat.init(rawValue:)) ?? .jpeg
     exportColorSpace = defaults?.string(forKey: "exportColorSpace").flatMap(ExportColorSpace.init(rawValue:)) ?? .sRGB
     exportNameTemplate = defaults?.string(forKey: "exportNameTemplate") ?? ExportNaming.standard
     lastExportFolder = defaults?.string(forKey: "lastExportFolder")

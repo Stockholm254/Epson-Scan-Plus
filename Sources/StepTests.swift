@@ -37,6 +37,20 @@ enum StepTests {
     a.takeDemasking(from: Adjustments())
     try check(a.exposure == 0.5 && a.baseFine == nil && a.inputGamma == Adjustments().inputGamma, "②'s are the rest")
 
+    // ② shows the frame de-masked only: its base and how the film is read, none of ③'s grading
+    // or a light-leak repair; ③ as it is set.
+    model.frames[0].adjustments.leakFix = LeakFix(file: "/nonexistent.leakfix", job: "j", made: Date(), meanError: 0.4, worstError: 1)
+    model.convertStep = .demask
+    let inDemasking = model.asShown(model.frames[0]).adjustments
+    model.convertStep = .grade
+    let inGrading = model.asShown(model.frames[0]).adjustments
+    model.frames[0].adjustments.leakFix = nil
+    try check(model.showsDemasked == false && inDemasking.exposure == 0 && inDemasking.saturation == Adjustments().saturation
+      && inDemasking.curves == nil && inDemasking.leakFix == nil && inDemasking.baseFine == RGB(r: 0.1, g: 0, b: -0.1)
+      && inDemasking.inputGamma == 1.8 && inDemasking.autoWhiteBalance == Adjustments().autoWhiteBalance
+      && inGrading.exposure == 0.5 && inGrading.saturation == 1.3 && inGrading.leakFix != nil,
+      "② shows the frame de-masked only (its base and reading, no grading, no repair), ③ as it is graded")
+
     // 重置 in ③ leaves ②'s, in ② leaves ③'s.
     model.convertStep = .grade
     try check(model.stepScope == .grading, "in ③ the keys act on the grading")

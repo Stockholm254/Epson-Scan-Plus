@@ -13,6 +13,14 @@ struct CameraProperty: Equatable {
   var type: UInt32 = 0
   var text: String { Self.describe(name, value) }
   var isRange: Bool { type & 0x4000 != 0 }
+  /// What it can be set to, in order: a range's steps (at most 200 of them), else the values listed.
+  var choices: [Int64] {
+    guard isRange, values.count >= 2 else { return values }
+    let lo = values[0], hi = values[1], step = values.count > 2 ? max(1, values[2]) : 1
+    guard hi > lo else { return [lo] }
+    let n = min(200, (hi - lo) / step + 1)
+    return (0..<n).map { lo + $0 * step }
+  }
   /// `v` brought within what the camera takes: inside its range on its step, or the nearest of
   /// the values it lists.
   func nearest(_ v: Int64) -> Int64 {

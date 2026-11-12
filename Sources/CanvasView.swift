@@ -870,27 +870,28 @@ final class FilmCanvasView: NSView {
     if model.singleView, model.tool == .it8, let frame = model.selected {
       drawIT8(model.it8Marks, settings: frame.adjustments, aspect: model.shownAspect(frame))
     }
-    // Where the film base was read: picked by hand, or at the frame's edges; asked for, or while a
-    // base is being picked.
-    if model.singleView, let frame = model.selected, model.tool == .base || model.showBaseAreas {
+    // Where the film base was read: the spot picked by hand always in ②; the frame's edges read
+    // asked for, or while a base is being picked.
+    if model.singleView, let frame = model.selected, model.tool == .base || model.showsDemaskingMarks || model.page == .capture {
       let s = frame.adjustments
       let own = model.frames.firstIndex { $0.id == frame.id }.map { model.edgeBaseSource($0) == $0 } ?? false
-      if let found = frame.edgeBase, found.base != nil, model.tool == .base || own && s.base == nil && s.rollBasePicked != true {
+      if let found = frame.edgeBase, found.base != nil, model.tool == .base || model.showBaseAreas && own && s.base == nil && s.rollBasePicked != true {
         drawBaseAreas(found.areas, frame: frame, aspect: model.shownAspect(frame))
       }
       if s.base != nil, let picked = s.basePicked {
         drawBasePick(picked, settings: s, aspect: model.shownAspect(frame))
       }
     }
-    // The de-masking region, cyan, over the picture as cropped; also where it follows the picture
-    // inside the film's edge, which the crop takes in.
+    // The de-masking region, cyan, over the picture as cropped, always in ② (③ grades the picture,
+    // its keys are ②'s); also where it follows the picture inside the film's edge.
     if model.singleView, !model.editingSingle, !model.showsOriginal, let frame = model.selected,
+      model.showsDemaskingMarks || model.tool == .region,
       frame.adjustments.analysisRegion != nil || model.tool == .region || model.toneAnalysis?.followed != nil
     {
       drawAnalysisRegion(frame)
     }
     // The automatic base marked for a moment as an uncropped picture comes up, unless shown already.
-    if model.singleView, let frame = model.selected, let flash = model.baseFlash, flash.id == frame.id,
+    if model.singleView, model.showsDemaskingMarks, let frame = model.selected, let flash = model.baseFlash, flash.id == frame.id,
       model.tool != .base, !model.showBaseAreas, let found = frame.edgeBase, found.base != nil
     {
       let opacity = BaseFlash.opacity(CACurrentMediaTime() - flash.start)
@@ -904,7 +905,7 @@ final class FilmCanvasView: NSView {
     }
     // The frame's dust, while it is shown or being marked.
     if model.singleView, let frame = model.selected, let dust = frame.dust, !dust.spots.isEmpty,
-      model.showDust || model.tool == .dust
+      model.showDust && model.showsDemaskingMarks || model.tool == .dust
     {
       drawDust(dust, frame: frame, aspect: model.shownAspect(frame))
     }
