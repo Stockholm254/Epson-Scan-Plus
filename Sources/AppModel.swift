@@ -4900,6 +4900,7 @@ final class AppModel: ObservableObject {
     let quality = preferences.jpegQuality
     let sharpening = preferences.sharpening, longEdge = preferences.exportLongEdge
     let space = preferences.exportColorSpace, template = preferences.exportNameTemplate
+    let artist = preferences.exportArtist, copyright = preferences.exportCopyright
     let roll = sessionURL?.lastPathComponent ?? "", overviewPath = overviewURL?.path ?? ""
     let previewDPI = Int(overviewDPI)
     // A copy's dpi as the roll's format gives it, read here, on the main thread.
@@ -4939,7 +4940,7 @@ final class AppModel: ObservableObject {
               + (f.sourcePath == nil ? " · EPSON Perfection V800/V850" : ""),
             keywords: [filmTitle, f.format] + (rollFormat.map { [$0] } ?? []) + ["胶片扫描"],
             scanner: f.sourcePath == nil ? ("EPSON", "Perfection V800/V850") : nil, scanned: scanned,
-            software: "Epson Scan plus" + (version.map { " " + $0 } ?? ""))
+            software: "Epson Scan plus" + (version.map { " " + $0 } ?? ""), artist: artist, copyright: copyright)
           try ImagePipeline.shared.export(
             image, settings: f.adjustments, profile: film, url: url, format: format, dpi: dpi,
             quality: quality, sharpener: sharpener, colorSpace: space, metadata: metadata, analysis: analysis, longEdge: longEdge)

@@ -251,7 +251,8 @@ enum WorkflowTests {
       plain, settings: straight, profile: FilmProfile.builtins[0], url: tagged, format: .jpeg, dpi: 2400,
       metadata: ExportMetadata(
         title: "Kodak Portra 160 · 09", description: "Kodak Portra 160 · 第 09 张 · 2400 dpi", keywords: ["Kodak Portra 160", "135"],
-        scanner: ("EPSON", "Perfection V800/V850"), scanned: Date(timeIntervalSince1970: 1_793_000_000), software: "Epson Scan plus 0.4.8"))
+        scanner: ("EPSON", "Perfection V800/V850"), scanned: Date(timeIntervalSince1970: 1_793_000_000), software: "Epson Scan plus 0.4.8",
+        artist: " 摄影者 ", copyright: "© 2026 摄影者"))
     let props = CGImageSourceCopyPropertiesAtIndex(CGImageSourceCreateWithURL(tagged as CFURL, nil)!, 0, nil) as? [CFString: Any] ?? [:]
     let tiff = props[kCGImagePropertyTIFFDictionary] as? [CFString: Any] ?? [:]
     let exif = props[kCGImagePropertyExifDictionary] as? [CFString: Any] ?? [:]
@@ -260,6 +261,10 @@ enum WorkflowTests {
       && (tiff[kCGImagePropertyTIFFSoftware] as? String)?.hasPrefix("Epson Scan plus") == true, "exports name the scanner and the app")
     try check((exif[kCGImagePropertyExifDateTimeDigitized] as? String)?.hasPrefix("2026:") == true && exif[kCGImagePropertyExifDateTimeOriginal] == nil,
       "and the scan date, but not a capture date they cannot know")
+    try check(tiff[kCGImagePropertyTIFFArtist] as? String == "摄影者" && tiff[kCGImagePropertyTIFFCopyright] as? String == "© 2026 摄影者"
+      && ((iptc[kCGImagePropertyIPTCByline] as? [String])?.first ?? iptc[kCGImagePropertyIPTCByline] as? String) == "摄影者"
+      && iptc[kCGImagePropertyIPTCCopyrightNotice] as? String == "© 2026 摄影者",
+      "and the author and copyright notice from 输出, trimmed, in the TIFF and IPTC fields")
     try check((iptc[kCGImagePropertyIPTCKeywords] as? [String])?.contains("Kodak Portra 160") == true
       && (iptc[kCGImagePropertyIPTCCaptionAbstract] as? String)?.contains("第 09 张") == true, "the film and frame are keywords and caption")
     try check(ExportNaming.name("{name} {frame} {date}", film: "portra160", name: "Kodak Portra 160", frame: "09", roll: "r", date: Date(timeIntervalSince1970: 1_793_000_000))

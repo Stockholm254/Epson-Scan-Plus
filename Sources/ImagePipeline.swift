@@ -1485,7 +1485,12 @@ struct ExportMetadata {
   var scanner: (make: String, model: String)?
   var scanned: Date?
   var software: String
+  /// Who made the picture, and its copyright notice; nil or blank, none written.
+  var artist: String? = nil
+  var copyright: String? = nil
   var properties: [CFString: Any] {
+    let artist = artist?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+    let copyright = copyright?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
     let f = DateFormatter()
     f.locale = Locale(identifier: "en_US_POSIX")
     f.dateFormat = "yyyy:MM:dd HH:mm:ss"
@@ -1495,18 +1500,22 @@ struct ExportMetadata {
     ]
     if let scanner { (tiff[kCGImagePropertyTIFFMake], tiff[kCGImagePropertyTIFFModel]) = (scanner.make, scanner.model) }
     if let date { tiff[kCGImagePropertyTIFFDateTime] = date }
+    if let artist { tiff[kCGImagePropertyTIFFArtist] = artist }
+    if let copyright { tiff[kCGImagePropertyTIFFCopyright] = copyright }
     var exif: [CFString: Any] = [kCGImagePropertyExifUserComment: description]
     if let date { exif[kCGImagePropertyExifDateTimeDigitized] = date }
-    let iptc: [CFString: Any] = [
+    var iptc: [CFString: Any] = [
       kCGImagePropertyIPTCObjectName: title, kCGImagePropertyIPTCCaptionAbstract: description,
       kCGImagePropertyIPTCKeywords: keywords, kCGImagePropertyIPTCOriginatingProgram: "Epson Scan plus",
       kCGImagePropertyIPTCProgramVersion: software.replacingOccurrences(of: "Epson Scan plus ", with: ""),
       kCGImagePropertyIPTCSource: scanner.map { "\($0.make) \($0.model)" } ?? "Epson Scan plus",
     ]
-    let png: [CFString: Any] = [
+    var png: [CFString: Any] = [
       kCGImagePropertyPNGTitle: title, kCGImagePropertyPNGDescription: description,
       kCGImagePropertyPNGSoftware: software,
     ]
+    if let artist { (iptc[kCGImagePropertyIPTCByline], png[kCGImagePropertyPNGAuthor]) = ([artist], artist) }
+    if let copyright { (iptc[kCGImagePropertyIPTCCopyrightNotice], png[kCGImagePropertyPNGCopyright]) = (copyright, copyright) }
     return [
       kCGImagePropertyTIFFDictionary: tiff, kCGImagePropertyExifDictionary: exif,
       kCGImagePropertyIPTCDictionary: iptc, kCGImagePropertyPNGDictionary: png,
@@ -1629,4 +1638,8 @@ enum Proxies {
       if total > budget { try? files.removeItem(at: f.url) }
     }
   }
+}
+
+private extension String {
+  var nilIfEmpty: String? { isEmpty ? nil : self }
 }

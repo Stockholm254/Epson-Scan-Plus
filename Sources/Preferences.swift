@@ -154,6 +154,10 @@ final class Preferences: ObservableObject {
     didSet { defaults?.set(exportColorSpace.rawValue, forKey: "exportColorSpace") }
   }
   @Published var exportNameTemplate: String { didSet { defaults?.set(exportNameTemplate, forKey: "exportNameTemplate") } }
+  /// Who made the pictures and the copyright notice, written into every export (TIFF, IPTC and
+  /// PNG fields, as Lightroom's export metadata); empty, none.
+  @Published var exportArtist: String { didSet { defaults?.set(exportArtist, forKey: "exportArtist") } }
+  @Published var exportCopyright: String { didSet { defaults?.set(exportCopyright, forKey: "exportCopyright") } }
   /// The folder last chosen to export into (`AppModel.exportStart`).
   @Published var lastExportFolder: String? { didSet { defaults?.set(lastExportFolder, forKey: "lastExportFolder") } }
   /// ② 去色罩 or ③ 调色, the step last worked in (`AppModel.ConvertStep`'s raw value): a roll opens there.
@@ -261,6 +265,8 @@ final class Preferences: ObservableObject {
     exportPresets = defaults?.data(forKey: "exportPresets").flatMap { try? JSONDecoder().decode([ExportPreset].self, from: $0) } ?? []
     exportColorSpace = defaults?.string(forKey: "exportColorSpace").flatMap(ExportColorSpace.init(rawValue:)) ?? .sRGB
     exportNameTemplate = defaults?.string(forKey: "exportNameTemplate") ?? ExportNaming.standard
+    exportArtist = defaults?.string(forKey: "exportArtist") ?? ""
+    exportCopyright = defaults?.string(forKey: "exportCopyright") ?? ""
     lastExportFolder = defaults?.string(forKey: "lastExportFolder")
     lastStep = defaults?.string(forKey: "lastStep")
     stepsIntroduced = defaults?.bool(forKey: "stepsIntroduced") ?? false

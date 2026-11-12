@@ -464,6 +464,17 @@ extension ContentView {
           .lineLimit(1).truncationMode(.middle).frame(maxWidth: .infinity, alignment: .trailing)
           .help("按上面的模板，这一张导出时的文件名；同名已存在时自动加序号")
       }
+      // As Lightroom's export metadata: who made it and the notice, in every file exported.
+      labeled("作者") {
+        TextField("不写", text: Binding(get: { m.preferences.exportArtist }, set: { m.preferences.exportArtist = $0 }))
+          .textFieldStyle(.roundedBorder).font(.system(size: 11))
+          .help("写进每个导出文件的作者（TIFF 的 Artist、IPTC 的 By-line、PNG 的 Author），Lightroom、照片 App 和访达都读得到；空着就不写")
+      }
+      labeled("版权") {
+        TextField("比如 © 2026 某某", text: Binding(get: { m.preferences.exportCopyright }, set: { m.preferences.exportCopyright = $0 }))
+          .textFieldStyle(.roundedBorder).font(.system(size: 11))
+          .help("写进每个导出文件的版权声明（TIFF 的 Copyright、IPTC 的 Copyright Notice、PNG 的 Copyright）；空着就不写")
+      }
       labeled("位置") { exportFolderMenu }
       exportSummary(items, format: format.wrappedValue)
       VStack(spacing: 6) {
