@@ -33,10 +33,11 @@ enum WindowGateTests {
     }
     let during = gate.sent - sent, took = Date().timeIntervalSince(began)
     try check(model.adjustingContinuously && gate.held > held, "steps of a drag are held back")
-    pump(0.3)
+    // The last step held goes with the gate's next turn, at most an interval later.
+    pump(WindowGate.interval + 0.15)
     let all = gate.sent - sent
-    try check(Double(during) <= took / WindowGate.interval + 2 && during < 25 && all >= 2,
-      String(format: "a drag reaches the window about ten times a second, not with each of its 30 steps: %d during %.2f s, %d in all", during, took, all))
+    try check(Double(during) <= took / WindowGate.interval + 2 && during < 25 && all >= during + 1,
+      String(format: "a drag reaches the window twice a second, not with each of its 30 steps: %d during %.2f s, %d in all", during, took, all))
     try check(!model.adjustingContinuously && model.frames[0].adjustments.exposure == 29 * 0.02,
       "and once it stops the window has the last step")
     // A change after the drag reaches the window at once again.

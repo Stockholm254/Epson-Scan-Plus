@@ -209,8 +209,8 @@ enum RenderTests {
     live.set(0.25)
     let during = (live.active, live.shown)
     settle(LiveFigure.hold + 0.15)
-    try check(during == (true, "+0.25") && !live.active && WindowGate.interval == 0.25,
-      "a dragged slider's figure is drawn with every step and then left to the window, which is updated four times a second meanwhile")
+    try check(during == (true, "+0.25") && !live.active && WindowGate.interval == 0.5,
+      "a dragged slider's figure is drawn with every step and then left to the window, which is updated twice a second meanwhile")
     // The picture matched to the window's screen off the main thread, on the GPU, in the window
     // server's byte order; in the window's own space there is nothing to do.
     let p3 = CGColorSpace(name: CGColorSpace.displayP3)!

@@ -475,7 +475,7 @@ func sliderText(_ format: String, _ value: Double) -> String {
 }
 
 /// The figure of a slider being dragged, ahead of the window: while a slider moves the window is
-/// updated four times a second (`WindowGate`), the slider's own figure with every step. It is
+/// updated twice a second (`WindowGate`), the slider's own figure with every step. It is
 /// drawn by a view of its own (`LiveFigureView`), set straight from the slider: a SwiftUI text
 /// changing sixty times a second had the whole inspector laid out again each time. One for each
 /// slider's title; `active` changes as a drag begins and a moment after its last step.
@@ -494,7 +494,7 @@ final class LiveFigure: ObservableObject {
   }
   /// How long after the last step the window's figure is shown again: by then the window has
   /// been updated with it (`WindowGate.interval`).
-  static let hold: CFTimeInterval = 0.4
+  static let hold: CFTimeInterval = WindowGate.interval + 0.15
   /// The figure as last set.
   private(set) var shown = ""
   func set(_ v: Double) {

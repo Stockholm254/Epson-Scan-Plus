@@ -14,10 +14,11 @@ import QuartzCore
 /// like) still update with every change.
 final class WindowGate: ObservableObject {
   let objectWillChange = ObservableObjectPublisher()
-  /// Four a second: each is some 45 ms on a copy roll, and at ten the main thread was busy all
-  /// the while, the slider's knob catching on it. The slider's figure follows every step all the
-  /// same (`LiveFigure`), as the picture does.
-  static let interval: CFTimeInterval = 0.25
+  /// Twice a second, as the histograms beside the picture are shown while it moves (`catchUp`):
+  /// each update is some 45–60 ms on a copy roll, and at ten a second the main thread was busy all
+  /// the while, the slider's knob catching on it (at four, a hitch a quarter of a second). The
+  /// slider's figure follows every step all the same (`LiveFigure`), as the picture does.
+  static let interval: CFTimeInterval = 0.5
   private var watching: AnyCancellable?
   private var sentAt: CFTimeInterval = 0
   private var waiting = false
