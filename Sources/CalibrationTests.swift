@@ -178,6 +178,26 @@ enum CalibrationTests {
       && zip(placedNeutrals, curve).allSatisfy { p, c in (0..<3).allSatisfy { abs(p.d[$0] - c[$0]) < 0.005 } && p.off.allSatisfy { $0 < 0.005 } }
       && placedNeutrals.map(\.x) == placedNeutrals.map(\.x).sorted(),
       "the 2D view puts each neutral's red, green and blue on the preset's curves at the exposure its green gives")
+    // The points marked on their frame in ② only, where the calibration is: not in ③, and in ②
+    // while picking or with 「标出」 on.
+    var marked = FilmFrame(name: "07", rect: .full, format: "135")
+    marked.id = theirs[0].frame
+    let was = (copying.page, copying.convertStep, copying.showCalibrationPoints)
+    copying.page = .convert
+    copying.convertStep = .demask
+    copying.showCalibrationPoints = true
+    let inDemasking = copying.neutralMarks(on: marked).count
+    copying.convertStep = .grade
+    let inGrading = copying.neutralMarks(on: marked).count
+    copying.convertStep = .demask
+    copying.showCalibrationPoints = false
+    let switchedOff = copying.neutralMarks(on: marked).count
+    copying.useTool(.calibrate)
+    let picking = copying.neutralMarks(on: marked).count
+    copying.useTool(.select)
+    (copying.page, copying.convertStep, copying.showCalibrationPoints) = was
+    try check(inDemasking == 1 && inGrading == 0 && switchedOff == 0 && picking == 1,
+      "the neutral points are marked in ② with 「标出」 on or while picking, never over ③'s picture")
     // The panel lists them, a row each with its green density and how far off the line it lies;
     // taking one out takes the calibration up without it, and 「清除」 then starts from none.
     let rows = copying.calibrationRows
@@ -186,7 +206,18 @@ enum CalibrationTests {
       "the calibration's points are listed, each with its density and how far it lies off the line")
     copying.removeCalibrationPoint(at: 0)
     try check(copying.calibrationPoints == Array(picked.dropFirst()) && copying.calibrationRows.count == 2,
-      "taking one of the preset's points out takes the calibration up without it")
+      "taking one of the preset's points out takes the calibration up without it (the two left too close to make it again)")
+    // Picking on: a point added to the calibration in use makes the preset again with it, the
+    // picker kept for the next.
+    copying.useTool(.calibrate)
+    if copying.calibrationPoints.isEmpty, copying.resumableCalibration != nil { copying.resumeCalibration() }
+    var added = point(0.35)
+    added.at = CGPoint(x: 0.4, y: 0.7)
+    copying.calibrationPoints.append(added)
+    copying.calibrateAsPicked()
+    try check(copying.calibrationPoints.isEmpty && copying.profile.spots?.count == 3 && copying.tool == .calibrate,
+      "取点后自动生成: a point added makes the preset again from all of them, and picking goes on")
+    copying.useTool(.select)
     copying.clearCalibration()
     try check(copying.calibrationPoints.isEmpty && copying.resumableCalibration == nil && copying.calibrationRows.isEmpty
       && copying.presetNeutralPoints.isEmpty,
@@ -304,14 +335,14 @@ enum CalibrationTests {
     linked.applyFilm(profile: session, filmName: "Kodak Portra 160", reversal: false, format: linked.format)
     try check(sheetTaken && linked.profile.id == session.id && linked.filmName == "Kodak Portra 160" && linked.calibration(for: "Kodak Portra 160")?.id == session.id,
       "on the shelf the film's data sheet picked on its calibrated roll is taken, and the calibration picked is taken too")
-    // 单张一起做整卷估计 under a calibration: the slopes are the calibration's, so it changes nothing
-    // unless the roll shares its balance or levels; on the data sheet it sets the slopes.
-    let underCalibration = linked.poolEffect
+    // 全卷斜率估计 under a calibration: the slopes are the calibration's, so it converts nothing;
+    // on the data sheet it sets the slopes.
+    let underCalibration = linked.slopeEstimateApplies
     linked.chooseProfile(portra)
-    let underSheet = linked.poolEffect
+    let underSheet = linked.slopeEstimateApplies
     linked.chooseProfile(session)
-    try check(underCalibration == .nothing && underSheet == .slopes,
-      "单张一起做整卷估计 says it changes nothing under the calibration, and sets the slopes on the data sheet")
+    try check(!underCalibration && underSheet,
+      "全卷斜率估计 says it converts nothing under the calibration, and sets the slopes on the data sheet")
     // A calibration is drawn as its film, a tab saying where it was calibrated; the plain can is for one of no known film.
     let drawn = NewProjectSheet.look(.preset(session.id), m: linked)
     let stockID = FilmCatalog.stock(named: "Kodak Portra 160")!.id

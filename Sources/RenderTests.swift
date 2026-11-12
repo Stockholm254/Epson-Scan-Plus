@@ -150,7 +150,10 @@ enum RenderTests {
     try check(quiet == (1, 0) && updates == 1 && model.displayed === last,
       "a new picture of the frame is drawn by the canvas without updating the window (\(quiet)); with no canvas, the window is updated")
 
-    // The analysis kept over the print's own controls is the one the frame's settings give.
+    // The analysis kept over the print's own controls is the one the frame's settings give: in ③,
+    // where they are graded (② shows the frame de-masked only, its grading as new).
+    model.convertStep = .grade
+    for _ in 0..<80 where model.rendering { settle(0.05) }
     func same(_ a: ToneAnalysis?, _ b: ToneAnalysis) -> Bool {
       guard let a else { return false }
       return a.base == b.base && a.balance == b.balance && a.low == b.low && a.high == b.high && a.gain == b.gain
@@ -194,6 +197,8 @@ enum RenderTests {
       filmName: "Kodak Portra 160", profile: FilmProfile.builtins[0], scanDPI: 2400, frames: three)).write(to: stripProject)
     let table = AppModel(libraryURL: strip)
     table.readOnly = true
+    // Graded, in ③: a change of exposure is ③'s (② shows the frames de-masked only).
+    table.convertStep = .grade
     table.loadProject(stripProject)
     for _ in 0..<100 where table.rendering || table.thumbnails.count < 3 { settle(0.1) }
     settle(0.5)

@@ -4,7 +4,8 @@ import SwiftUI
 /// 新建工程's questions, asked before the roll begins: which film it is, negative or slide, and its
 /// format, as a shelf of film to take one from. The catalog's common stocks stand on it as their
 /// cassettes or 120 rolls, rendered in 3D (`FilmRender`, as the format chosen holds them), found by any word of their name,
-/// maker, speed or kind; the presets calibrated on this Mac stand first, and a name typed that the
+/// maker, speed or kind; a film's calibrations on this Mac are listed once it is chosen (a tab on
+/// its cassette says it has some), and a name typed that the
 /// catalog lacks can be used as it is. The formats lie under it as pieces of film to their scale.
 /// All of it starts as last chosen and can be changed later in ② 去色罩's film section.
 struct NewProjectSheet: View {
@@ -16,6 +17,11 @@ struct NewProjectSheet: View {
     case named(String)
   }
   @State private var choice: Choice = .stock(FilmCatalog.stocks[0].id)
+  /// Which of the film's calibrations on this Mac the roll converts with; nil, none (its data
+  /// sheet, or the generic negative).
+  @State private var calibrationID: String?
+  /// What the roll is begun with: the film, or the calibration of it chosen.
+  private var taken: Choice { calibrationID.map { .preset($0) } ?? choice }
   @State private var query = ""
   @State private var reversal = false
   @State private var format = FilmFormat.auto
@@ -101,12 +107,14 @@ struct NewProjectSheet: View {
             if !recent.isEmpty {
               recentRow
             }
-            if !calibrated.isEmpty {
-              shelfRow("本机标定", calibrated.map { .preset($0.id) })
-            }
             ForEach(makers, id: \.self) { maker in
               shelfRow(maker + (FilmCatalog.makerAliases[maker]?.first.map { " · \($0)" } ?? ""),
                 FilmCatalog.stocks.filter { $0.maker == maker }.map { .stock($0.id) })
+            }
+            // A calibration is listed under its film once that is chosen; those of no film known
+            // stand here, on their own.
+            if !filmless.isEmpty {
+              shelfRow("其他预设", filmless.map { .preset($0.id) })
             }
           } else if shown.isEmpty {
             Text("目录里没有「\(query)」。").font(.system(size: 12)).foregroundStyle(.secondary).padding(.top, 14)
@@ -164,27 +172,33 @@ struct NewProjectSheet: View {
     VStack(alignment: .leading, spacing: 4) {
       Text("最近用过").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).padding(.leading, 2)
       LazyVGrid(columns: [GridItem(.adaptive(minimum: 86, maximum: 96), spacing: 10, alignment: .top)], alignment: .leading, spacing: 8) {
-        ForEach(recent, id: \.self) { used in cell(used.choice, used: used.format) }
+        ForEach(recent, id: \.self) { used in cell(used.choice, used: used.format, calibration: used.calibration) }
       }
       Rectangle().fill(LinearGradient(colors: [Color.primary.opacity(0.16), Color.primary.opacity(0.02)], startPoint: .top, endPoint: .bottom))
         .frame(height: 5).clipShape(RoundedRectangle(cornerRadius: 1.5)).padding(.top, -6)
     }.padding(.bottom, 8)
   }
-  /// `used`: the format of the roll the film was last used in, drawn so and taken with it.
-  private func cell(_ item: Choice, used: FilmFormat? = nil) -> some View {
-    let on = item == choice && (used == nil || used == format)
+  /// `used`: the format of the roll the film was last used in, drawn so and taken with it;
+  /// `calibration`, the calibration that roll converted with, taken with it too.
+  private func cell(_ item: Choice, used: FilmFormat? = nil, calibration: String? = nil) -> some View {
+    let on = item == choice && (used == nil || used == format) && (used == nil || calibration == calibrationID)
     let look = self.look(item)
     let gauge = used.map { Self.gauge(item, format: $0) } ?? self.gauge(for: item)
+    // Its calibrations on this Mac, on a tab: the roll's own where it is a roll's, else how many.
+    let own = Self.calibrations(of: item, m: m)
+    let tab: String? = look.calibration.map(Self.calibrationTab)
+      ?? (used != nil ? calibration.flatMap { id in own.first { $0.id == id } }.flatMap(Self.calibration).map(Self.calibrationTab)
+        : own.isEmpty ? nil : own.count == 1 ? Self.calibration(own[0]).map(Self.calibrationTab) ?? "标定" : "标定 \(own.count)")
     return Button {
-      withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) { pick(item, format: used) }
+      withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) { pick(item, format: used, calibration: used == nil ? .film : .this(calibration)) }
     } label: {
       VStack(spacing: 3) {
         FilmObject(look: look, gauge: gauge, turns: true)
           .frame(width: 70, height: 92)
-          // A calibration of the film, on a tab where it was calibrated.
+          // Calibrations of the film, on a tab: where it was calibrated, or how many there are.
           .overlay(alignment: .topTrailing) {
-            if let c = look.calibration {
-              Text(Self.calibrationTab(c)).font(.system(size: 9, weight: .bold))
+            if let tab {
+              Text(tab).font(.system(size: 9, weight: .bold))
                 .foregroundStyle(.white).padding(.horizontal, 4).padding(.vertical, 1.5)
                 .background(Capsule().fill(Hardware.accent))
             }
@@ -210,7 +224,7 @@ struct NewProjectSheet: View {
     .onHover { inside in
       withAnimation(.easeOut(duration: 0.12)) { hovering = inside ? item : (hovering == item ? nil : hovering) }
     }
-    .simultaneousGesture(TapGesture(count: 2).onEnded { pick(item, format: used); begin() })
+    .simultaneousGesture(TapGesture(count: 2).onEnded { pick(item, format: used, calibration: used == nil ? .film : .this(calibration)); begin() })
     .help(look.help)
     .accessibilityLabel(look.title + "，" + look.kindText)
     .accessibilityAddTraits(on ? .isSelected : [])
@@ -220,7 +234,7 @@ struct NewProjectSheet: View {
 
   /// The film taken, large, and what converts it.
   private var chosen: some View {
-    let look = self.look(choice)
+    let look = self.look(taken)
     return HStack(alignment: .center, spacing: 16) {
       FilmObject(look: look, gauge: gauge(for: choice), turns: true).frame(width: 84, height: 112).zIndex(1)
       VStack(alignment: .leading, spacing: 5) {
@@ -237,9 +251,45 @@ struct NewProjectSheet: View {
         Text(conversion(look)).font(.system(size: 11)).foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
         if let sheet = Self.sheet(choice, m: m) { published(sheet) }
+        calibrationList
       }
       Spacer(minLength: 0)
     }
+  }
+  /// The film's calibrations on this Mac, one to convert with or none: listed once the film is
+  /// chosen, not standing on the shelf as films of their own.
+  @ViewBuilder private var calibrationList: some View {
+    let own = Self.calibrations(of: choice, m: m)
+    if !own.isEmpty {
+      VStack(alignment: .leading, spacing: 2) {
+        Text("已有的标定").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).padding(.top, 4)
+        calibrationRow(nil, title: "不用标定", detail: Self.withoutCalibration(choice))
+        ForEach(own, id: \.id) { p in
+          calibrationRow(p.id, title: Self.calibration(p).map { $0.hasPrefix("翻拍") ? "翻拍标定" + $0.dropFirst(2) : $0 + " 标定" } ?? p.name,
+            detail: p.publication.isEmpty ? "本机" : p.publication)
+        }
+      }
+    }
+  }
+  private func calibrationRow(_ id: String?, title: String, detail: String) -> some View {
+    let on = calibrationID == id
+    return Button {
+      withAnimation(.easeOut(duration: 0.12)) { calibrationID = id }
+    } label: {
+      HStack(spacing: 6) {
+        Image(systemName: on ? "largecircle.fill.circle" : "circle").foregroundStyle(on ? Hardware.accent : Color.secondary)
+        Text(title).font(.system(size: 11.5, weight: on ? .semibold : .regular))
+          .foregroundStyle(on ? AnyShapeStyle(Hardware.amberText) : AnyShapeStyle(.primary))
+        Text(detail).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
+      }.contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .accessibilityAddTraits(on ? .isSelected : [])
+  }
+  /// What a film converts with when none of its calibrations is taken.
+  static func withoutCalibration(_ item: Choice) -> String {
+    if case .stock(let id) = item, let s = FilmCatalog.stocks.first(where: { $0.id == id }), s.preset != nil { return "按数据表的通道斜率" }
+    return "按通用彩色负片"
   }
   /// What the maker publishes about the film: what it is for, the data sheet's facts, and links to
   /// the sheet and the maker's page, opened in the browser.
@@ -429,7 +479,7 @@ struct NewProjectSheet: View {
     let here: String = {
       guard changing, case .stock(let id) = choice, let s = FilmCatalog.stocks.first(where: { $0.id == id }),
         let c = m.calibration(for: s.name) else { return "" }
-      return "这一卷的\(m.copyStandRoll ? "这次翻拍" : "扫描仪")为它标定过「\(c.name)」：要用标定的，在「本机标定」里选它。"
+      return "这一卷的\(m.copyStandRoll ? "这次翻拍" : "扫描仪")为它标定过「\(c.name)」：要用标定的，在下面「已有的标定」里选它。"
     }()
     if case .stock(let id) = choice, let s = FilmCatalog.stocks.first(where: { $0.id == id }), let preset = s.preset,
       let p = FilmProfile.builtins.first(where: { $0.id == preset }) {
@@ -441,7 +491,7 @@ struct NewProjectSheet: View {
     return "App 里没有它的数据表：按通用彩色负片转换，胶片名照它记；拍过灰阶或色卡后，可以在本机标定。"
   }
   private var summary: String {
-    let look = look(choice)
+    let look = look(taken)
     let calibration = look.calibrated ? "" : look.calibration.map { "（\($0.hasPrefix("翻拍") ? "翻拍标定" + $0.dropFirst(2) : $0 + " 标定")）" } ?? ""
     return (changing ? "将改为：" : "将新建：") + "\(look.maker.map { $0 == "本机标定" || $0 == "目录外" ? "" : $0 + " " } ?? "")\(look.name)\(calibration) · \(reversal ? "反转片" : "负片") · \(format.rawValue)" + (edges == .auto ? "" : " · \(edges.summary)")
   }
@@ -450,7 +500,7 @@ struct NewProjectSheet: View {
 
   /// The films on the shelf, in its order: the Mac's presets and the catalog's, or what was found.
   private var onShelf: [Choice] {
-    query.isEmpty ? calibrated.map { Choice.preset($0.id) } + FilmCatalog.stocks.map { Choice.stock($0.id) } : shown
+    query.isEmpty ? FilmCatalog.stocks.map { Choice.stock($0.id) } + filmless.map { Choice.preset($0.id) } : shown
   }
   /// The next or the last film on the shelf, from the one taken.
   private func step(_ by: Int) {
@@ -465,19 +515,24 @@ struct NewProjectSheet: View {
   struct Used: Hashable {
     let choice: Choice
     let format: FilmFormat?
+    /// The calibration of this Mac the roll converted with.
+    var calibration: String? = nil
   }
   /// The films of the rolls last begun in the library, newest first, each once in each gauge: read
   /// as the sheet opens (the library stays as it is under it), not on every redraw.
   @State private var recent: [Used] = []
-  /// The films of the rolls in `entries`, newest first and at most `limit`: a preset of this Mac as
-  /// itself, else the roll's film in the catalog, else its own name when it has one; each with the
-  /// newest of its rolls' formats, once in 135 (or 自动) and once in 120.
+  /// The films of the rolls in `entries`, newest first and at most `limit`: a calibration of this
+  /// Mac as its film (and the calibration with it), else the roll's film in the catalog, else its
+  /// own name when it has one; each with the newest of its rolls' formats, once in 135 (or 自动) and
+  /// once in 120.
   static func recent(_ entries: [RollEntry], profiles: [FilmProfile], limit: Int = 6) -> [Used] {
     var found = [Used]()
     for e in entries.sorted(by: { $0.date > $1.date }) where found.count < limit {
       let item: Choice
-      if !FilmProfile.builtins.contains(where: { $0.id == e.profile.id }), profiles.contains(where: { $0.id == e.profile.id }) {
-        item = .preset(e.profile.id)
+      var calibration: String?
+      if !FilmProfile.builtins.contains(where: { $0.id == e.profile.id }), let p = profiles.first(where: { $0.id == e.profile.id }) {
+        item = shelved(p)
+        if case .preset = item {} else { calibration = p.id }
       } else if let s = FilmCatalog.stock(named: e.film) {
         item = .stock(s.id)
       } else if !e.film.isEmpty, !(FilmProfile.builtins + profiles).contains(where: { $0.name == e.film }) {
@@ -487,12 +542,37 @@ struct NewProjectSheet: View {
       }
       let format = e.format.flatMap(FilmFormat.init(rawValue:)).flatMap { $0 == .auto ? nil : $0 }
       let medium = { (f: FilmFormat?) in f.map { $0 != .mm135 } ?? false }
-      if !found.contains(where: { $0.choice == item && medium($0.format) == medium(format) }) { found.append(Used(choice: item, format: format)) }
+      if !found.contains(where: { $0.choice == item && medium($0.format) == medium(format) && $0.calibration == calibration }) {
+        found.append(Used(choice: item, format: format, calibration: calibration))
+      }
     }
     return found
   }
-  private var calibrated: [FilmProfile] {
-    m.profiles.filter { p in !FilmProfile.builtins.contains { $0.id == p.id } }
+  /// This Mac's presets: its calibrations and those imported.
+  static func own(_ m: AppModel) -> [FilmProfile] { own(m.profiles) }
+  static func own(_ profiles: [FilmProfile]) -> [FilmProfile] { profiles.filter { p in !FilmProfile.builtins.contains { $0.id == p.id } } }
+  /// Those of no film the shelf has, which stand on it as themselves.
+  private var filmless: [FilmProfile] { Self.own(m).filter { Self.shelved($0) == .preset($0.id) } }
+  /// Where a preset of this Mac stands on the shelf: under the film it is of, in the catalog or by
+  /// its name; itself when it is of no film.
+  static func shelved(_ p: FilmProfile) -> Choice {
+    guard let film = AppModel.film(of: p) else { return .preset(p.id) }
+    if let s = FilmCatalog.stock(named: film) { return .stock(s.id) }
+    return .named(film)
+  }
+  /// A choice's film, as the catalog or the roll names it.
+  static func filmName(_ item: Choice, m: AppModel) -> String? {
+    switch item {
+    case .stock(let id): return FilmCatalog.stocks.first { $0.id == id }?.name
+    case .named(let name): return name.isEmpty ? nil : name
+    case .preset: return nil
+    }
+  }
+  /// The calibrations (and presets imported) of this Mac for a film, as they were made.
+  static func calibrations(of item: Choice, m: AppModel) -> [FilmProfile] { calibrations(of: item, among: m.profiles) }
+  static func calibrations(of item: Choice, among profiles: [FilmProfile]) -> [FilmProfile] {
+    if case .preset = item { return [] }
+    return own(profiles).filter { shelved($0) == item }
   }
   private var makers: [String] {
     FilmCatalog.stocks.map(\.maker).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
@@ -502,7 +582,7 @@ struct NewProjectSheet: View {
   private var shown: [Choice] {
     let words = query.split(separator: " ").map { FilmCatalog.fold(String($0)) }.filter { !$0.isEmpty }
     guard !words.isEmpty else { return [] }
-    let presets = calibrated.filter { p in words.allSatisfy { FilmCatalog.fold(p.name).contains($0) } }.map { Choice.preset($0.id) }
+    let presets = filmless.filter { p in words.allSatisfy { FilmCatalog.fold(p.name).contains($0) } }.map { Choice.preset($0.id) }
     let stocks = FilmCatalog.search(query).map { Choice.stock($0.id) }
     return presets + stocks
   }
@@ -511,9 +591,16 @@ struct NewProjectSheet: View {
   private var typedIsListed: Bool {
     FilmCatalog.stocks.contains { FilmCatalog.fold($0.name) == FilmCatalog.fold(typed) || FilmCatalog.fold($0.stock) == FilmCatalog.fold(typed) }
   }
+  /// Which calibration a film picked comes with: the one this roll, scanner or copy session made
+  /// of it (as converting it would take up), or the one a roll it was used in had.
+  enum Calibrating { case film, this(String?) }
   /// `format`: the format to take with it, from a roll it was used in.
-  private func pick(_ item: Choice, format used: FilmFormat? = nil) {
+  private func pick(_ item: Choice, format used: FilmFormat? = nil, calibration: Calibrating = .film) {
     choice = item
+    switch calibration {
+    case .film: calibrationID = Self.filmName(item, m: m).flatMap { m.calibration(for: $0) }?.id
+    case .this(let id): calibrationID = id
+    }
     if let used { format = used }
     // The kind of film the stock is: a slide is not inverted; the rest are negatives.
     if let kind = look(item).kind { reversal = kind == .slide }
@@ -523,7 +610,7 @@ struct NewProjectSheet: View {
     }
   }
   private func begin() {
-    let (p, name) = Self.film(choice, m: m)
+    let (p, name) = Self.film(taken, m: m)
     if changing {
       m.applyFilm(profile: p, filmName: name, reversal: reversal, format: format, edges: edges)
     } else {
@@ -550,11 +637,11 @@ struct NewProjectSheet: View {
       return (generic, name.isEmpty ? generic.name : name)
     }
   }
-  /// The open roll's film as the shelf has it: its preset when it is one of this Mac's, else its
-  /// film in the catalog, else its name.
+  /// The open roll's film as the shelf has it: a preset of this Mac under its film (itself when it
+  /// is of none), else its film in the catalog, else its name.
   static func current(_ m: AppModel) -> Choice {
-    if !FilmProfile.builtins.contains(where: { $0.id == m.profile.id }), m.profiles.contains(where: { $0.id == m.profile.id }) {
-      return .preset(m.profile.id)
+    if !FilmProfile.builtins.contains(where: { $0.id == m.profile.id }), let p = m.profiles.first(where: { $0.id == m.profile.id }) {
+      return shelved(p)
     }
     if let s = FilmCatalog.stock(named: m.filmName) { return .stock(s.id) }
     return .named(m.filmName)
@@ -567,6 +654,9 @@ struct NewProjectSheet: View {
     edges = m.filmEdges
     let now = Self.current(m)
     if case .named(let name) = now, name.isEmpty {} else { choice = now }
+    // The roll's own calibration taken again; or the film's of this roll, scanner or copy session.
+    let mine = !FilmProfile.builtins.contains { $0.id == m.profile.id } && Self.shelved(m.profile) == choice
+    calibrationID = mine ? m.profile.id : Self.filmName(choice, m: m).flatMap { m.calibration(for: $0) }?.id
     reversal = Self.startsAsSlides(choice, changing: changing, m: m)
     if let preselect { pick(preselect) }
     DispatchQueue.main.async { searching = true }

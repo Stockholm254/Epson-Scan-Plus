@@ -134,9 +134,8 @@ final class AppModel: ObservableObject {
   /// The open roll's name and notes in the library.
   @Published var rollName = ""
   @Published var rollNotes = ""
-  /// The roll's pictures that are a file each are measured together as one roll: asked for, as
-  /// files from elsewhere need not have been scanned alike.
-  @Published var poolPictures = false
+  /// 全卷斜率估计 as switched on this roll; nil, as `estimatesSlopesByDefault` says.
+  @Published var rollSlopeEstimate: Bool? = nil
   /// The roll converts with its calibrated preset's slopes, neutral and toe; off, as the film the
   /// preset was calibrated from (`conversionProfile`), the preset itself kept.
   @Published var useCalibration = true
@@ -247,18 +246,25 @@ final class AppModel: ObservableObject {
   /// Rotate and mirror act on the current frame, or on every frame while syncing.
   @Published var syncOrientation = false
   /// Neutral patches picked with the calibration tool, across frames and rolls of one film.
-  @Published var calibrationPoints = [NeutralPoint]()
+  @Published var calibrationPoints = [NeutralPoint]() {
+    // A point added is marked where it was picked, until 「标出」 is switched off.
+    didSet { if calibrationPoints.count > oldValue.count { showCalibrationPoints = true } }
+  }
   /// The current preset's neutral points marked on their frames; on once a preset is made.
   @Published var showCalibrationPoints = false
   /// The roll being opened from the library in the background, until it is open.
   @Published private(set) var openingRoll: URL?
+  /// ②'s own marks over the picture (the calibration's neutral points, where the base was read,
+  /// the dust rings) are drawn in ② alone, where their keys are: ③ shows its own.
+  var showsDemaskingMarks: Bool { page == .convert && convertStep == .demask }
   /// The neutral points to mark on `frame`, numbered as listed, in its source: those being picked,
-  /// else, asked for, those the current preset was calibrated from.
+  /// else those the current preset was calibrated from; in ②, while picking or with 「标出」 on.
   func neutralMarks(on frame: FilmFrame) -> [(number: Int, at: CGPoint)] {
+    guard showsDemaskingMarks, tool == .calibrate || showCalibrationPoints else { return [] }
     if !calibrationPoints.isEmpty {
       return calibrationPoints.enumerated().compactMap { i, p in p.frame == frame.id ? p.at.map { (i + 1, $0) } : nil }
     }
-    guard showCalibrationPoints, let spots = profile.spots else { return [] }
+    guard let spots = profile.spots else { return [] }
     return spots.enumerated().compactMap { i, s in s.frame == frame.id ? (i + 1, CGPoint(x: s.x, y: s.y)) : nil }
   }
   @Published var measuringTarget = false
@@ -375,8 +381,61 @@ final class AppModel: ObservableObject {
       preferences.lastStep = convertStep.rawValue
       if convertStep == .demask, [.neutral, .shadowNeutral, .curve, .curvePick].contains(tool) { tool = .select }
       if convertStep == .grade, [.crop, .region, .base].contains(tool) { tool = .select }
+      // ② shows the frames de-masked only, ③ graded: the picture, the table and the strip again.
+      if page == .convert {
+        refresh()
+        updateDemaskThumbnails()
+      }
     }
   }
+  /// ② shows the frame as de-masking leaves it: ③'s grading as new (white balance and levels
+  /// automatic, nothing else), no light-leak repair, no sharpening; the picture 去漏光 works on too.
+  var showsDemasked: Bool { page == .convert && convertStep == .demask }
+  static func demasked(_ f: FilmFrame) -> FilmFrame {
+    var d = f
+    d.adjustments.takeGrading(from: Adjustments())
+    d.adjustments.leakFix = nil
+    return d
+  }
+  /// The frame as the picture shows it now: in ②, de-masked only.
+  func asShown(_ f: FilmFrame) -> FilmFrame { showsDemasked ? Self.demasked(f) : f }
+  /// ②'s film strip (and a copy roll's table in ②): each frame de-masked only, small, made while ②
+  /// is shown, kept by what it is made from.
+  @Published private(set) var demaskThumbnails = [UUID: CGImage]() {
+    // A copy roll's table in ② is laid out from them, as they come.
+    didSet { if onSheetPage && !showsNegative && showsDemasked { refresh() } }
+  }
+  private var demaskThumbnailKeys = [UUID: String]()
+  func updateDemaskThumbnails() {
+    let ids = Set(frames.map(\.id))
+    if demaskThumbnails.keys.contains(where: { !ids.contains($0) }) {
+      demaskThumbnails = demaskThumbnails.filter { ids.contains($0.key) }
+      demaskThumbnailKeys = demaskThumbnailKeys.filter { ids.contains($0.key) }
+    }
+    guard showsDemasked, overview != nil || frames.contains(where: { $0.sourcePath != nil }) else { return }
+    let p = conversionProfile
+    // Those not made as they are now, nor on their way.
+    let wanted = frames.map { ($0, analysisKey(Self.demasked($0), everything: true)) }
+      .filter { demaskThumbnailKeys[$0.0.id] != $0.1 && demaskPending[$0.0.id] != $0.1 }
+    // On a queue of their own, behind nothing and ahead of nothing the render queue does (the
+    // single frame, a flat measured, the strip's own positives): a frame a step.
+    for (f, key) in wanted {
+      demaskPending[f.id] = key
+      demaskQueue.async { [weak self] in
+        guard let self else { return }
+        let d = Self.demasked(f)
+        let positive = (try? self.source(for: d, maxDimension: 480)).flatMap { try? ImagePipeline.shared.preview($0, settings: d.adjustments, profile: p) }
+        DispatchQueue.main.async {
+          if self.demaskPending[f.id] == key { self.demaskPending[f.id] = nil }
+          guard let positive else { return }
+          self.demaskThumbnails[f.id] = positive
+          self.demaskThumbnailKeys[f.id] = key
+        }
+      }
+    }
+  }
+  private var demaskPending = [UUID: String]()
+  private let demaskQueue = DispatchQueue(label: "local.epscan.demask-thumbnails", qos: .utility)
   /// The switcher's stops, in the order a roll goes through them: three steps after the library.
   /// 去漏光 is not one of them but ②'s last part, for the frames that need it: while it is open ②
   /// stays lit, its segment reading 「② 去色罩 › 去漏光」.
@@ -423,7 +482,9 @@ final class AppModel: ObservableObject {
         page = .library
         return
       }
-      if page == .capture, [CanvasTool.base, .neutral, .shadowNeutral, .region, .curvePick].contains(tool) { tool = .select }
+      // The base can be picked while capturing too (to set the lights by); the grey pickers, the
+      // curves' picker and the de-masking region are ②'s and ③'s.
+      if page == .capture, [CanvasTool.neutral, .shadowNeutral, .region, .curvePick].contains(tool) { tool = .select }
       // Once, after the steps were split: where things went.
       if page == .convert, !preferences.stepsIntroduced {
         preferences.stepsIntroduced = true
@@ -443,6 +504,7 @@ final class AppModel: ObservableObject {
       }
       // Out of ①, the converted frame comes up (from the live view, the canvas with it).
       if shown == .capture, page != .capture { announceAutoBase() }
+      if showsDemasked { updateDemaskThumbnails() }
     }
   }
   /// The module the canvas showed last, the library passed over; what it shows while the library
@@ -1047,6 +1109,8 @@ final class AppModel: ObservableObject {
     let had = sessionURL != nil && !frames.isEmpty
     saveProject()
     sessionURL = nil
+    // The last roll's last picture is not this one's: its focus check and base cast go with it.
+    forgetLastShot()
     rollName = ""
     rollNotes = ""
     rollSource = nil
@@ -1099,7 +1163,7 @@ final class AppModel: ObservableObject {
       selectedID = nil
       rollName = ""
       rollNotes = ""
-      poolPictures = false
+      rollSlopeEstimate = nil
       useCalibration = true
       rollFlats = []
       exportStamps = [:]
@@ -1362,8 +1426,10 @@ final class AppModel: ObservableObject {
     case .region: setAnalysisRegion(nil)
     case .it8: undoIT8Mark()
     case .calibrate:
+      if calibrationPoints.isEmpty, resumableCalibration != nil { resumeCalibration() }
       guard !calibrationPoints.isEmpty else { return }
       calibrationPoints.removeLast()
+      calibrateAsPicked()
       status = "已撤回一个中性点 · 还有 \(calibrationPoints.count) 个"
     default: removeSelected()
     }
@@ -1889,10 +1955,10 @@ final class AppModel: ObservableObject {
     }
     if wait { apply(lookAtEdges(pending)) } else { renderQueue.async { let r = self.lookAtEdges(pending); DispatchQueue.main.async { apply(r) } } }
   }
-  /// The frames measured together as one roll, for the channel slopes and a shared film base:
-  /// the scanned frames; each file holding several frames, an imported strip, on its own; and the
-  /// pictures that are a file each, as a camera takes them, each apart, or with `poolPictures`
-  /// those read alike (input gamma, bit depth) together.
+  /// The frames taken together as one roll: the scanned frames; each file holding several frames,
+  /// an imported strip, on its own; and the pictures that are a file each, as a camera takes them,
+  /// each apart (the roll's print, its shared balance and levels), or with `poolPictures` those
+  /// read alike (input gamma, bit depth) together (the slope estimate, a film base shared).
   static func rollGroups(_ frames: [FilmFrame], poolPictures: Bool) -> [[FilmFrame]] {
     var perFile = [String: Int]()
     for path in frames.compactMap(\.sourcePath) { perFile[path, default: 0] += 1 }
@@ -1909,11 +1975,18 @@ final class AppModel: ObservableObject {
     }
     return order.map { groups[$0]! }
   }
-  /// The roll has pictures that are a file each, more than one: they can be measured together.
-  var hasSinglePictures: Bool {
+  /// 全卷斜率估计: the roll's channel slopes are estimated across all its frames (`rollGroups`,
+  /// pictures a file each read alike together) and used where the preset is not calibrated; off,
+  /// the calibration, else the data sheet.
+  var estimatesSlopes: Bool { rollSlopeEstimate ?? estimatesSlopesByDefault }
+  /// On for a roll scanned here or taken on the copy stand, and for a scan's or a strip file's
+  /// frames, one film read at once; off for pictures imported a file each, which need not have been
+  /// scanned alike.
+  var estimatesSlopesByDefault: Bool {
+    if rollSource == .camera || rollSource == .scanner { return true }
     var perFile = [String: Int]()
     for path in frames.compactMap(\.sourcePath) { perFile[path, default: 0] += 1 }
-    return perFile.values.filter { $0 == 1 }.count >= 2
+    return frames.contains { $0.sourcePath == nil } || perFile.values.contains { $0 > 1 }
   }
   /// The roll has pictures read from a camera's sensor, which can have the copy light's crosstalk
   /// taken out; and whether they have.
@@ -2064,11 +2137,12 @@ final class AppModel: ObservableObject {
       light.date.formatted(date: .abbreviated, time: .shortened), names[leak.light], names[leak.channel], leak.share * 100,
       light.flat.falloff.r * 100, light.flat.falloff.g * 100, light.flat.falloff.b * 100)
   }
-  /// Measures the roll's pictures that are a file each together, or each apart again.
-  func setPoolPictures(_ pool: Bool) {
-    guard pool != poolPictures else { return }
-    poolPictures = pool
-    status = pool ? "导入的单张一起做整卷估计" : "导入的单张各自估计"
+  /// Switches 全卷斜率估计 for the roll: its slopes estimated across its frames, or the
+  /// calibration's, else the data sheet's.
+  func setRollSlopeEstimate(_ on: Bool) {
+    guard on != estimatesSlopes else { return }
+    rollSlopeEstimate = on
+    status = on ? "全卷斜率估计：没有标定时按整卷画面估计通道斜率" : "全卷斜率估计关掉：斜率按标定，没有时按数据表"
     saveProject()
     updateRollSlopes()
   }
@@ -2304,14 +2378,9 @@ final class AppModel: ObservableObject {
     let film = FilmCalibration.film(p.name)
     return film == "本机标定胶片" || film == FilmProfile.builtins.first(where: { $0.id == "generic" })?.name ? nil : film
   }
-  /// What 单张一起做整卷估计 changes on this roll now. Its channel slopes, and which single pictures
-  /// 整卷同一白平衡 / 色阶 take as one roll; with the calibration in use the slopes are the
-  /// calibration's, so only those groups, or, with neither shared, nothing at all.
-  enum PoolEffect { case slopes, sharedOnly, nothing }
-  var poolEffect: PoolEffect {
-    guard profile.offsets != nil, useCalibration else { return .slopes }
-    return settings.sharedLevels == true || settings.sharedBalance == true ? .sharedOnly : .nothing
-  }
+  /// 全卷斜率估计 converts this roll: with the calibration in use the slopes are its own, and the
+  /// estimate is only shown beside them.
+  var slopeEstimateApplies: Bool { !(profile.offsets != nil && useCalibration) }
   /// Calibrated for how this roll is read: on the copy stand in this copy session, else on this scanner.
   func calibratedHere(_ p: FilmProfile) -> Bool {
     guard p.offsets != nil else { return false }
@@ -2364,28 +2433,32 @@ final class AppModel: ObservableObject {
     recordEdit(on ? "用标定" : "不用标定")
     useCalibration = on
     let film = Self.uncalibrated(profile, among: profiles)
-    status = on ? "按「\(profile.name)」的标定转换" : "这一卷先不用标定：按 \(film.name) 转换，有整卷估计时按整卷估计的斜率"
+    status = on ? "按「\(profile.name)」的标定转换" : "这一卷先不用标定：按 \(film.name) 转换" + (estimatesSlopes ? "，有全卷斜率估计时按它的斜率" : "的数据表")
     updateRollSlopes()
     refresh()
     updateThumbnails()
     saveProject()
   }
-  /// Estimates channel slopes across each roll (`rollGroups`) and shares them with its frames.
-  /// They are the fallback when the preset is not calibrated.
+  /// Estimates channel slopes across each roll (`rollGroups`) and shares them with its frames, with
+  /// 全卷斜率估计 on; off, clears them. They come after a calibrated preset, before the data sheet.
   func updateRollSlopes(completion: (() -> Void)? = nil) {
-    let snapshot = frames, film = conversionProfile, green = film.slopes.g, toe = film.toe, pool = poolPictures, blanks = blankFrameIDs
+    let snapshot = frames, film = conversionProfile, green = film.slopes.g, toe = film.toe, on = estimatesSlopes, blanks = blankFrameIDs
     rollSlopesRevision += 1
     let token = rollSlopesRevision
     renderQueue.async {
       var result = [UUID: RGB?]()
       // Slides have no layers' contrast to estimate: their dyes are the picture.
       // Blank frames have no film on them: no layers' contrast to measure.
-      let groups = Self.rollGroups(snapshot, poolPictures: pool).map({ $0.filter { $0.adjustments.inputIsNegative && !blanks.contains($0.id) } })
+      let groups = Self.rollGroups(snapshot, poolPictures: true).map({ $0.filter { $0.adjustments.inputIsNegative && !blanks.contains($0.id) } })
       // Read from their files (a roll opened the first time), the frames counted on the bar once
       // it takes more than half a second; from memory it is too quick to show.
       let started = Date(), total = groups.reduce(0) { $0 + $1.count }
       var read = 0, shown = false
       for members in groups where !members.isEmpty {
+        guard on else {
+          for f in members { result[f.id] = .some(nil) }
+          continue
+        }
         let inputs = members.compactMap { f -> (image: CGImage, settings: Adjustments)? in
           defer {
             read += 1
@@ -2429,6 +2502,12 @@ final class AppModel: ObservableObject {
       }
     }
   }
+  /// The selected frame has others in its roll to share a white balance or levels with: a scan's
+  /// frames, a strip file's; a picture that is a file each is a roll of its own.
+  var selectedSharesRoll: Bool {
+    guard let selected else { return false }
+    return (Self.rollGroups(frames, poolPictures: false).first { $0.contains { $0.id == selected.id } }?.count ?? 1) > 1
+  }
   /// One white balance for the selected frame's roll, `on` or off for every frame of it; one edit.
   func setSharedBalance(_ on: Bool) {
     setShared(on ? "整卷同一白平衡" : "每张单独白平衡", on) { $0.sharedBalance = on ? true : nil }
@@ -2439,7 +2518,7 @@ final class AppModel: ObservableObject {
   }
   private func setShared(_ name: String, _ on: Bool, _ apply: (inout Adjustments) -> Void) {
     guard let selected else { return }
-    let roll = Self.rollGroups(frames, poolPictures: poolPictures).first { $0.contains { $0.id == selected.id } } ?? [selected]
+    let roll = Self.rollGroups(frames, poolPictures: false).first { $0.contains { $0.id == selected.id } } ?? [selected]
     let ids = Set(roll.map(\.id))
     recordEdit(name)
     for i in frames.indices where ids.contains(frames[i].id) { apply(&frames[i].adjustments) }
@@ -2454,7 +2533,7 @@ final class AppModel: ObservableObject {
   }
   /// The print of every roll printed as one, from its frames together, apart from the main thread.
   func updateRollPrint(completion: (() -> Void)? = nil) {
-    let snapshot = frames, p = conversionProfile, pool = poolPictures, blanks = blankFrameIDs
+    let snapshot = frames, p = conversionProfile, blanks = blankFrameIDs
     rollPrintRevision += 1
     let token = rollPrintRevision
     guard snapshot.contains(where: { $0.adjustments.printsWithRoll }) else {
@@ -2463,7 +2542,7 @@ final class AppModel: ObservableObject {
     }
     renderQueue.async {
       var result = [UUID: RollPrint?]()
-      for group in Self.rollGroups(snapshot, poolPictures: pool) where group.contains(where: { $0.adjustments.printsWithRoll }) {
+      for group in Self.rollGroups(snapshot, poolPictures: false) where group.contains(where: { $0.adjustments.printsWithRoll }) {
         // Blank frames print as nothing: left out of the roll's print.
         let members = group.filter { !blanks.contains($0.id) }
         guard !members.isEmpty else { continue }
@@ -2554,7 +2633,15 @@ final class AppModel: ObservableObject {
   }
   /// Solves this scanner's preset for the current film from the picked neutral points, keeps it
   /// and applies it to the project. The current preset supplies the film and the green slope.
-  func makeScannerPreset() {
+  /// The preset made again from the points as they stand, once they are enough (two, 0.3 D
+  /// apart): after each one picked on the picture or taken out, the picker kept.
+  func calibrateAsPicked() {
+    let greens = calibrationPoints.map { $0.density[1] }
+    guard calibrationPoints.count >= 2, (greens.max() ?? 0) - (greens.min() ?? 0) >= FilmCalibration.minimumSpan else { return }
+    makeScannerPreset(keepPicking: true)
+  }
+  /// `keepPicking`: made as points are picked, the picker stays on for the next.
+  func makeScannerPreset(keepPicking: Bool = false) {
     do {
       let measured = calibrationMeasured
       let fit = try FilmCalibration.fit(calibrationPoints, greenSlope: profile.slopes.g, curve: measured ? profile.dataSheetToe : nil)
@@ -2588,7 +2675,7 @@ final class AppModel: ObservableObject {
       calibrationPoints = []
       resumedCalibration = nil
       showCalibrationPoints = true
-      if tool == .calibrate { tool = .select }
+      if tool == .calibrate && !keepPicking { tool = .select }
       chooseProfile(made)
       // Made again under the same name, it says so: the menu shows the same name as before.
       let before = replaced.map { old -> String in
@@ -2617,7 +2704,8 @@ final class AppModel: ObservableObject {
     if calibrationPoints.isEmpty, resumableCalibration != nil { resumeCalibration() }
     guard calibrationPoints.indices.contains(i) else { return }
     calibrationPoints.remove(at: i)
-    status = "去掉了中性点 \(i + 1)，还有 \(calibrationPoints.count) 个" + (calibrationPoints.count >= 2 ? "；点「生成」用剩下的点重新标定" : "")
+    status = "去掉了中性点 \(i + 1)，还有 \(calibrationPoints.count) 个"
+    calibrateAsPicked()
   }
   /// The neutral points as the calibration panel lists them: those being picked, else those the
   /// preset in use was made from; with each one's frame, its green density above the base, and
@@ -3200,7 +3288,9 @@ final class AppModel: ObservableObject {
       // Frames of their own files (a camera's, imports) on a page laid out as a contact sheet:
       // positives from the film strip's, negatives read small from their files.
       if onSheetPage {
-        let page = sheetPageFrames, positive = !showsNegative, original = showsOriginal, positives = thumbnails, pages = contactPages.count
+        // In ② the frames de-masked only, the strip's graded ones until they are made.
+        let page = sheetPageFrames, positive = !showsNegative, original = showsOriginal, pages = contactPages.count
+        let positives = showsDemasked ? thumbnails.merging(demaskThumbnails) { _, demasked in demasked } : thumbnails
         let aspects = page.map { sheetAspect($0, positive: positive) }
         let index = contactPage
         // Each tile as it is: the film strip's positive, else the frame's own conversion.
@@ -3245,7 +3335,7 @@ final class AppModel: ObservableObject {
         return
       }
       // Frames that lie on the displayed overview; imports from other files are not on it.
-      let onOverview = frames.filter { $0.sourcePath == nil || $0.sourcePath == overviewURL?.path }
+      let onOverview = frames.filter { $0.sourcePath == nil || $0.sourcePath == overviewURL?.path }.map(asShown)
       guard !showsNegative, let overview, !onOverview.isEmpty else {
         displayed = overview
         rendering = false
@@ -3289,10 +3379,13 @@ final class AppModel: ObservableObject {
     let edit = editingSingle
     if !edit { editRegionLock = nil }
     rendering = true
+    // In ② the frame de-masked only, unsharpened; its strip picture not taken from it.
+    let demasked = showsDemasked
     let request = SingleRender(
-      token: token, frame: sharpened(frame), profile: conversionProfile, edit: edit, negative: showsNegative || tool == .base, original: showsOriginal,
-      bypassed: curvesBypassed, sharpening: preferences.sharpening, previewDPI: Int(overviewDPI), analysisKey: analysisKey(frame),
-      overview: overview)
+      token: token, frame: demasked ? Self.demasked(frame) : sharpened(frame), profile: conversionProfile, edit: edit,
+      negative: showsNegative || tool == .base, original: showsOriginal,
+      bypassed: curvesBypassed, sharpening: demasked ? nil : preferences.sharpening, previewDPI: Int(overviewDPI),
+      analysisKey: analysisKey(asShown(frame)), overview: overview, demasked: demasked)
     wantedLock.lock()
     wantedSingle = request
     let queued = singleQueued
@@ -3310,6 +3403,8 @@ final class AppModel: ObservableObject {
     let sharpening: SharpeningProfile?, previewDPI: Int, analysisKey: String
     /// The preview it may be cut from, kept with its analysis so the key's identity of it holds.
     let overview: CGImage?
+    /// ②'s, de-masked only: not the frame's strip picture.
+    var demasked = false
   }
   /// The single render asked for last, not yet begun; a newer request, or another view, replaces it.
   private var wantedSingle: SingleRender?
@@ -3435,7 +3530,7 @@ final class AppModel: ObservableObject {
         if bypassed { shownSettings.curves = nil }
         // The kernel follows the size the source was loaded at, as in source(for:) and contextSource(for:).
         let loaded = edit ? 3000 : (frame.sourcePath != nil ? 3000 : 2200)
-        let sharpener = negative ? nil : Sharpening.sharpener(r.sharpening, frame: frame, maxDimension: loaded)
+        let sharpener = negative || r.demasked ? nil : Sharpening.sharpener(r.sharpening, frame: frame, maxDimension: loaded)
         guard
           let output = ImagePipeline.shared.render(
             input, settings: shownSettings, profile: p, analysis: analysis, negative: negative,
@@ -3446,7 +3541,7 @@ final class AppModel: ObservableObject {
         self.step(0.9, "直方图", token, since: started)
         let hist = measured ? Self.histograms(output, curves: negative ? nil : shownSettings.curves) : nil
         // The film strip's copy, no larger than it is ever shown.
-        let thumbnail = measured && !edit && !negative && !bypassed ? ImagePipeline.shared.scaled(output, maxDimension: Self.thumbnailDimension) : nil
+        let thumbnail = measured && !edit && !negative && !bypassed && !r.demasked ? ImagePipeline.shared.scaled(output, maxDimension: Self.thumbnailDimension) : nil
         var range = !measured || negative ? nil : ImagePipeline.shared.toneRange(cropped, settings: frame.adjustments, profile: p, analysis: analysis)
         // What shows white or black, counted on the picture itself where it is only the frame.
         if !edit, range != nil { (range!.atWhite, range!.atBlack) = ImagePipeline.shared.screenShares(output) }
@@ -3535,6 +3630,8 @@ final class AppModel: ObservableObject {
         self.shownCurves = nil
         self.shownFrameID = frame.id
         self.showOnCanvas(output)
+        // The base can be picked here too, on the film as the sensor read it.
+        self.samplingInput = context?.image ?? raw
         if self.canvasRegion != context?.region { self.canvasRegion = context?.region }
         if edit { self.editRegionLock = context?.region }
         if self.exposureReading != exposure { self.exposureReading = exposure }
@@ -3550,7 +3647,7 @@ final class AppModel: ObservableObject {
     }
   }
   /// The film base's reading in `raw` (the frame's pixels as the sensor read them, cropped): where
-  /// the app found the base at the frame's edges, else where it was picked, else the brightest film.
+  /// it was picked by hand, else where the app found it at the frame's edges, else the brightest film.
   func baseBalance(of frame: FilmFrame, raw: CGImage) -> BaseBalance? {
     let crop = frame.rect
     func inCrop(_ a: NormalRect) -> CGRect {
@@ -3559,6 +3656,10 @@ final class AppModel: ObservableObject {
     let edges = (frame.edgeBase?.base != nil ? frame.edgeBase?.areas ?? [] : []).map(inCrop)
       .filter { $0.intersects(CGRect(x: 0, y: 0, width: 1, height: 1)) }
     let picked = frame.adjustments.basePicked.map { p in frame.sourcePath != nil ? inCrop(p) : p.cg }
+    // Picked by hand (in ① or ②): that spot, which is what the lights are set by.
+    if let picked, frame.adjustments.base != nil {
+      return ImagePipeline.shared.baseBalance(raw, areas: [picked.insetBy(dx: -0.004, dy: -0.004)], source: "手动取样")
+    }
     return edges.isEmpty
       ? ImagePipeline.shared.baseBalance(raw, areas: picked.map { [$0.insetBy(dx: -0.004, dy: -0.004)] } ?? [], source: picked == nil ? "最亮的胶片" : "手动取样")
       : ImagePipeline.shared.baseBalance(raw, areas: edges, source: "片边")
@@ -3576,6 +3677,11 @@ final class AppModel: ObservableObject {
   /// The film base's balance in the last picture taken, for the camera page, where ① shows the
   /// live view: read once the picture's edges have been looked at.
   @Published private(set) var lastShotBalance: LastShotBalance?
+  /// Another roll begun or opened: the picture taken last was another roll's.
+  func forgetLastShot() {
+    lastCapture = nil
+    lastShotBalance = nil
+  }
   struct LastShotBalance: Equatable {
     var frame: String
     var balance: BaseBalance
@@ -3674,6 +3780,7 @@ final class AppModel: ObservableObject {
   }
   func updateThumbnails() {
     if showsOriginal { updateRawThumbnails() }
+    if showsDemasked { updateDemaskThumbnails() }
     guard overview != nil else { return }
     thumbnailRevision += 1
     let request = ThumbnailPass(
@@ -3809,11 +3916,14 @@ final class AppModel: ObservableObject {
         base: RGB((0..<3).map { analysis.base.values[$0] * pow(2, fine.values[$0]) }),
         gamma: frames[i].adjustments.inputGamma,
         at: CGPoint(x: crop.x + pt.x * crop.width, y: crop.y + pt.y * crop.height), name: frames[i].name)
+      // Added to the calibration in use, made here: its points first.
+      if calibrationPoints.isEmpty, resumableCalibration != nil { resumeCalibration() }
       calibrationPoints.append(point)
       let span = calibrationPoints.map { $0.density[1] }
       status = String(
         format: "已取 %d 个中性点 · 本点绿色密度 %.2f · 跨度 %.2f D", calibrationPoints.count, point.density[1],
         (span.max() ?? 0) - (span.min() ?? 0))
+      calibrateAsPicked()
       return
     }
     if tool == .base {
@@ -4217,7 +4327,7 @@ final class AppModel: ObservableObject {
       sessionURL = nil
       rollName = ""
       rollNotes = ""
-      poolPictures = false
+      rollSlopeEstimate = nil
       useCalibration = true
       rollFlats = []
       exportStamps = [:]
@@ -4679,12 +4789,12 @@ final class AppModel: ObservableObject {
     let date = Self.today()
     let safeFilm = String(filmName.map { $0.isLetter || $0.isNumber ? $0 : "_" }.prefix(40))
     panel.nameFieldStringValue = "接触表_\(safeFilm)_\(date)"
-    let chooser = FormatChooser(selected: preferences.exportFormat)
+    // The sheet's own format, JPEG first: written at most 10 MB, a sheet to send.
+    let chooser = FormatChooser(selected: preferences.sheetFormat)
     chooser.attach(to: panel)
     guard panel.runModal() == .OK, let url = panel.url else { return }
-    preferences.exportFormat = chooser.format
+    preferences.sheetFormat = chooser.format
     preferences.lastExportFolder = url.deletingLastPathComponent().path
-    exportType = chooser.format.rawValue
     if needScan.isEmpty || usePreviews {
       composeContactSheet(ids: items.map(\.id), to: url, format: chooser.format, fromPreview: usePreviews)
     } else {
@@ -4747,7 +4857,8 @@ final class AppModel: ObservableObject {
         DispatchQueue.main.async {
           if let last = ids.last { self.wrote(last, stamp: nil) }
           self.endExport(stop)
-          self.status = "接触表已导出：\(url.lastPathComponent) · \(Int(size.width)) × \(Int(size.height))"
+          let bytes = ContactSheet.fileBytes(url).map { " · " + ExportEstimate.text($0) } ?? ""
+          self.status = "接触表已导出：\(url.lastPathComponent) · \(Int(size.width)) × \(Int(size.height))\(bytes)（不超过 10 MB）"
           self.exported = (self.status, [url])
           self.exportsDone += 1
           completion?(nil)
@@ -4800,7 +4911,7 @@ final class AppModel: ObservableObject {
     let name = rollName.trimmingCharacters(in: .whitespacesAndNewlines)
     project.rollName = name.isEmpty ? nil : name
     project.notes = rollNotes.isEmpty ? nil : rollNotes
-    project.poolPictures = poolPictures ? true : nil
+    project.estimateSlopes = rollSlopeEstimate
     project.useCalibration = useCalibration ? nil : false
     project.flats = rollFlats.isEmpty ? nil : rollFlats
     project.format = format == .auto ? nil : format.rawValue
@@ -4914,6 +5025,7 @@ final class AppModel: ObservableObject {
   private func takeProject(_ read: ReadProject, _ url: URL) {
     let p = read.project, overviewPath = read.overviewPath, cg = read.overview
     let folder = url.deletingLastPathComponent()
+    if sessionURL != folder { forgetLastShot() }
     sessionURL = folder
     projectFileName = url.lastPathComponent
     alsoSelected = []
@@ -4950,7 +5062,8 @@ final class AppModel: ObservableObject {
     startsAsSlides = nil
     rollName = p.rollName ?? ""
     rollNotes = p.notes ?? ""
-    poolPictures = p.poolPictures ?? false
+    // Saved before it was a switch of its own: single pictures measured together then.
+    rollSlopeEstimate = p.estimateSlopes ?? (p.poolPictures == true ? true : nil)
     useCalibration = p.useCalibration ?? true
     // A frame's blank-frame flat field, kept once with the roll, read back as the frame reads; a
     // frame that kept its own grid keeps it. One whose flat is not in the roll is left unflattened.

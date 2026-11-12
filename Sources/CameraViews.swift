@@ -341,17 +341,46 @@ struct FocusCheck: View {
   @State private var histogram: Histogram?
   @State private var scale = 2
   @State private var loading = false
+  /// What is checked: the live view as it comes, or the last picture taken at full resolution.
+  enum Source: Hashable { case live, shot }
+  @State private var source = Source.live
+  /// The live frame about the focus point: with the camera's magnifier on, the live view is that
+  /// part of the sensor pixel for pixel, so it is the middle of it.
+  private var liveCrop: CGImage? {
+    guard let live = camera.live else { return nil }
+    let w = CGFloat(live.width), h = CGFloat(live.height), side = min(248, w, h)
+    let at = camera.magnification > 0 ? CGPoint(x: 0.5, y: 0.5) : camera.focusPoint
+    let x = min(max(at.x * w - side / 2, 0), w - side), y = min(max(at.y * h - side / 2, 0), h - side)
+    return live.cropping(to: CGRect(x: x, y: y, width: side, height: side).integral)
+  }
   var body: some View {
+    let live = source == .live
     VStack(alignment: .leading, spacing: 10) {
-      SectionTitle(text: "对焦检查", symbol: "plus.magnifyingglass")
+      HStack {
+        SectionTitle(text: "对焦检查", symbol: "plus.magnifyingglass")
+        Spacer()
+        Picker("看", selection: $source) {
+          Text("实时").tag(Source.live)
+          Text("上一张").tag(Source.shot)
+        }.pickerStyle(.segmented).labelsHidden().fixedSize()
+          .help("实时：取景画面里对焦框那一块，跟着对焦变（打开相机的对焦放大时是传感器的原始像素）；上一张：拍好的文件的全分辨率像素")
+      }
       Picker("倍率", selection: $scale) {
         Text("100%").tag(1)
         Text("200%").tag(2)
         Text("400%").tag(4)
       }.pickerStyle(.segmented).labelsHidden()
-      // A square as wide as the panel, the file's pixels shown about its middle.
+      // A square as wide as the panel, the live frame's or the file's pixels about its middle.
       Color.black.opacity(0.4).aspectRatio(1, contentMode: .fit).overlay {
-        if let crop {
+        if live {
+          if let shown = liveCrop {
+            Image(decorative: shown, scale: NSScreen.main?.backingScaleFactor ?? 2).resizable().interpolation(.none)
+              .frame(width: CGFloat(shown.width) * CGFloat(scale) / (NSScreen.main?.backingScaleFactor ?? 2),
+                height: CGFloat(shown.height) * CGFloat(scale) / (NSScreen.main?.backingScaleFactor ?? 2))
+          } else {
+            Text(camera.liveOn ? "等取景画面…" : "打开取景后在这里实时看对焦").font(.system(size: 11)).foregroundStyle(.secondary)
+          }
+        } else if let crop {
           let shown = crop
           let pixels = 248 / CGFloat(scale)
           Image(decorative: shown, scale: NSScreen.main?.backingScaleFactor ?? 2).resizable().interpolation(.none)
@@ -363,7 +392,10 @@ struct FocusCheck: View {
         }
       }.clipped()
         .help("取的是相机文件本身的全分辨率像素（RAW 按系统默认显示），以对焦框的位置为中心。")
-      if let crop {
+      if live, let s = camera.sharpness {
+        Text(String(format: "清晰度×10⁴ R %.1f G %.1f B %.1f", s.r * 1e4, s.g * 1e4, s.b * 1e4)).fixedSize().readout(10)
+          .help("取景画面对焦框里的清晰度，跟着对焦变：转对焦环到最大")
+      } else if !live, let crop {
         let s = Sharpness.measure(crop, in: CGRect(x: 0, y: 0, width: 1, height: 1))
         Text(String(format: "清晰度×10⁴ R %.1f G %.1f B %.1f", s.r * 1e4, s.g * 1e4, s.b * 1e4)).fixedSize().readout(10)
           .help("这块原图的清晰度：三个通道差得多时，说明有色差，红和蓝的焦点不在同一处")
@@ -384,7 +416,10 @@ struct FocusCheck: View {
         Text(url.lastPathComponent).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
         Button("按对焦点重新取") { load(url) }.font(.system(size: 11))
       }
-    }.onChange(of: m.lastCapture) { _, url in if let url { load(url) } }
+    }.onChange(of: m.lastCapture) { _, url in
+      // A new roll: the last roll's picture goes.
+      if let url { load(url) } else { (crop, histogram) = (nil, nil) }
+    }
       .onAppear { if crop == nil, let url = m.lastCapture { load(url) } }
   }
   func load(_ url: URL) {
@@ -476,43 +511,49 @@ struct CameraPanel: View {
       if camera.connected {
         Divider()
         HStack {
-          Text("曝光").font(.system(size: 12, weight: .medium))
+          SectionTitle(text: "曝光", symbol: "camera.aperture")
           Spacer()
           InfoButton(
-            text: "模式由相机上的转盘决定：M 档时快门、光圈都能改，A 档只改光圈，S 档只改快门。光圈要电子镜头才能远程改（比如 Sigma 70mm F2.8 DG Macro Art）；翻拍底片一般从 f/5.6–8 开始试。",
+            text: "模式由相机上的转盘决定：M 档时快门、光圈都能改，A 档只改光圈，S 档只改快门。光圈要电子镜头才能远程改（比如 Sigma 70mm F2.8 DG Macro Art）；翻拍底片一般从 f/5.6–8 开始试。\n\n每一项点 ‹ › 走一档，点中间的数值从列表里选。",
             about: "曝光")
         }
-        setting("快门", "ShutterSpeed")
-        setting("光圈", "FNumber")
-        setting("ISO", "IsoSensitivity")
-        setting("模式", "ExposureProgramMode")
-        setting("曝光补偿", "ExposureBiasCompensation")
+        exposureReadout
+        VStack(spacing: 8) {
+          setting("快门", "ShutterSpeed")
+          setting("光圈", "FNumber")
+          setting("ISO", "IsoSensitivity")
+          setting("模式", "ExposureProgramMode")
+          setting("曝光补偿", "ExposureBiasCompensation")
+        }
         Divider()
         HStack {
-          Text("白平衡").font(.system(size: 12, weight: .medium))
+          SectionTitle(text: "白平衡", symbol: "thermometer.sun")
           Spacer()
           InfoButton(
             text: "RAW 的数据不受白平衡影响，App 解码时整卷固定 5500K；这里只改实时取景和 JPEG 的颜色。固定一个色温，取景每张颜色一致。",
             about: "相机白平衡")
         }
-        setting("模式", "WhiteBalance")
-        if camera.properties["WhiteBalance"]?.value == CameraController.colourTemperatureMode {
-          HStack(spacing: 6) {
-            Text("色温").font(.system(size: 11)).foregroundStyle(.secondary)
-            Spacer()
-            Button("−") { camera.nudgeColourTemperature(by: -100) }.help("冷一点：减 100K")
-            Menu(camera.properties["Colortemp"]?.text ?? "--") {
-              ForEach([3200, 4000, 5000, 5500, 6500] as [Int64], id: \.self) { k in
-                Button("\(k)K") { camera.setColourTemperature(k) }
-              }
-            }.menuStyle(.borderlessButton).fixedSize().font(.system(size: 11))
-            Button("+") { camera.nudgeColourTemperature(by: 100) }.help("暖一点：加 100K")
+        VStack(spacing: 8) {
+          setting("模式", "WhiteBalance")
+          if camera.properties["WhiteBalance"]?.value == CameraController.colourTemperatureMode {
+            HStack {
+              Text("色温").font(.system(size: 13)).foregroundStyle(.secondary)
+              Spacer()
+              CameraStepper(text: camera.properties["Colortemp"]?.text ?? "--", choices: [3200, 4000, 5000, 5500, 6500].map { k in ("\(k)K", { camera.setColourTemperature(k) }) },
+                back: { camera.nudgeColourTemperature(by: -100) }, on: { camera.nudgeColourTemperature(by: 100) },
+                backHelp: "冷一点：减 100K", onHelp: "暖一点：加 100K")
+            }
+          } else {
+            HStack {
+              Text("色温").font(.system(size: 13)).foregroundStyle(.secondary)
+              Spacer()
+              Button("固定为 5500K") { camera.setColourTemperature(5500) }.font(.system(size: 12))
+                .help("把相机的白平衡设成色温 5500K：取景每张颜色一致")
+            }
           }
-        } else {
-          Button("设为色温 5500K") { camera.setColourTemperature(5500) }.font(.system(size: 11))
         }
         Divider()
-        Text("对焦").font(.system(size: 12, weight: .medium))
+        SectionTitle(text: "对焦", symbol: "scope")
         HStack {
           Button("AF-S") { camera.set("FocusMode", 2) }
           Button("MF") { camera.set("FocusMode", 1) }
@@ -572,21 +613,40 @@ struct CameraPanel: View {
     }
   }
   /// A setting with the values the camera offers for it.
+  /// A setting of the camera: ‹ and › a step either way along what it takes, the value its list.
   func setting(_ title: String, _ name: String) -> some View {
     let p = camera.properties[name]
     return HStack {
-      Text(title).font(.system(size: 12)).foregroundStyle(.secondary)
+      Text(title).font(.system(size: 13)).foregroundStyle(.secondary)
       Spacer()
       if let p, p.settable, !p.values.isEmpty {
-        Menu(p.text) {
-          ForEach(p.values, id: \.self) { v in
-            Button(CameraProperty.describe(name, v)) { camera.set(name, v) }
-          }
-        }.menuStyle(.borderlessButton).fixedSize().font(.system(size: 11))
+        let all = p.choices
+        let i = all.firstIndex(of: p.value)
+        let back: (() -> Void)? = i.flatMap { k in k > 0 ? { camera.set(name, all[k - 1]) } : nil }
+        let on: (() -> Void)? = i.flatMap { k in k + 1 < all.count ? { camera.set(name, all[k + 1]) } : nil }
+        CameraStepper(text: p.text, choices: all.map { v in (CameraProperty.describe(name, v), { camera.set(name, v) }) }, back: back, on: on)
       } else {
-        Text(p?.text ?? "--").readout(10)
+        Text(p?.text ?? "--").font(.system(size: 13, weight: .medium)).monospacedDigit().foregroundStyle(.secondary)
+          .help("相机上的转盘或镜头决定，这里改不了")
       }
     }
+  }
+  /// Shutter, aperture and ISO together, large, as the camera's top display shows them.
+  private var exposureReadout: some View {
+    HStack(spacing: 0) {
+      ForEach([("快门", "ShutterSpeed"), ("光圈", "FNumber"), ("ISO", "IsoSensitivity")], id: \.1) { label, name in
+        VStack(spacing: 2) {
+          Text((camera.properties[name]?.text ?? "--").replacingOccurrences(of: "ISO ", with: ""))
+            .font(.system(size: 17, weight: .semibold, design: .monospaced)).foregroundStyle(Hardware.lcdText)
+            .lineLimit(1).minimumScaleFactor(0.7)
+          Text(label).font(.system(size: 10)).foregroundStyle(Hardware.lcdText.opacity(0.6))
+        }.frame(maxWidth: .infinity)
+      }
+    }
+    .padding(.vertical, 9)
+    .background(RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.82)))
+    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.white.opacity(0.06)))
+    .accessibilityElement(children: .combine)
   }
 }
 
@@ -599,5 +659,36 @@ extension View {
   func onHeightChange(_ action: @escaping (CGFloat) -> Void) -> some View {
     background(GeometryReader { g in Color.clear.preference(key: LaidOutHeight.self, value: g.size.height) })
       .onPreferenceChange(LaidOutHeight.self, perform: action)
+  }
+}
+
+
+/// A camera setting's key: ‹ a step back, the value (its list on a click), › a step on.
+struct CameraStepper: View {
+  let text: String
+  let choices: [(String, () -> Void)]
+  let back: (() -> Void)?
+  let on: (() -> Void)?
+  var backHelp = "前一档"
+  var onHelp = "后一档"
+  var body: some View {
+    HStack(spacing: 0) {
+      Button { back?() } label: {
+        Image(systemName: "chevron.left").font(.system(size: 11, weight: .semibold)).frame(width: 24, height: 24).contentShape(Rectangle())
+      }.disabled(back == nil).help(backHelp)
+      Menu {
+        ForEach(Array(choices.enumerated()), id: \.offset) { _, c in Button(c.0, action: c.1) }
+      } label: {
+        Text(text).font(.system(size: 13, weight: .medium)).monospacedDigit().lineLimit(1).frame(minWidth: 58)
+      }
+      .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+      Button { on?() } label: {
+        Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).frame(width: 24, height: 24).contentShape(Rectangle())
+      }.disabled(on == nil).help(onHelp)
+    }
+    .buttonStyle(.plain)
+    .padding(.horizontal, 2)
+    .background(Capsule().fill(Color.primary.opacity(0.07)))
+    .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
   }
 }

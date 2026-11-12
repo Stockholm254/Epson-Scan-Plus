@@ -143,17 +143,33 @@ enum ContactSheet {
     // First pass: each frame's printed size at the sheet's resolution, without rendering pixels.
     // A frame's size from its file's header where that tells it: the frames were decoded here
     // once just for it, a second for a 61-megapixel copy, and again to be drawn.
-    let sizes = try tiles.map { t -> CGSize in
-      let known = t.size?()
-      let image = known == nil ? try t.source() : nil
-      let pixels = known ?? CGSize(width: image!.width, height: image!.height)
-      let scale = Double(dpi) / max(1, t.dpi)
-      let sideways = ((settings(t).rotation % 4) + 4) % 2 == 1
-      let w = Double(pixels.width) * scale, h = Double(pixels.height) * scale
-      return sideways ? CGSize(width: h, height: w) : CGSize(width: w, height: h)
+    let pixels = try tiles.map { t -> CGSize in
+      if let known = t.size?() { return known }
+      let image = try t.source()
+      return CGSize(width: image.width, height: image.height)
     }
-    let cell = Self.cell(for: sizes)
-    let g = geometry(count: tiles.count, cell: cell, layout: layout, sizes: sizes)
+    func sized(_ dpi: Double) -> [CGSize] {
+      zip(tiles, pixels).map { t, p in
+        let scale = dpi / max(1, t.dpi)
+        let sideways = ((settings(t).rotation % 4) + 4) % 2 == 1
+        let w = Double(p.width) * scale, h = Double(p.height) * scale
+        return sideways ? CGSize(width: h, height: w) : CGSize(width: w, height: h)
+      }
+    }
+    // At the resolution asked for, unless its file would pass the limit: then as fine as it fits,
+    // the sheet's whole layout scaling with it (a copy roll's preview is thousands of dpi).
+    var sheetDPI = Double(dpi)
+    var sizes = sized(sheetDPI)
+    var cell = Self.cell(for: sizes)
+    var g = geometry(count: tiles.count, cell: cell, layout: layout, sizes: sizes)
+    let shrink = Self.fitting(Double(g.size.width * g.size.height), format: format, quality: quality)
+    if shrink < 1 {
+      sheetDPI *= shrink
+      sizes = sized(sheetDPI)
+      cell = Self.cell(for: sizes)
+      g = geometry(count: tiles.count, cell: cell, layout: layout, sizes: sizes)
+    }
+    let dpi = max(1, Int(sheetDPI.rounded()))
     let width = Int(g.size.width), height = Int(g.size.height)
     let bits = format.sixteenBit ? 16 : 8
     guard Double(width) * Double(height) * Double(bits / 2) < 3e9 else {
@@ -209,7 +225,7 @@ enum ContactSheet {
       try autoreleasepool {
         var ci = try pipe.output(try t.source(), settings: settings(t), profile: profile, sharpener: t.sharpener)
         let fit = min(cell.width / sizes[i].width, cell.height / sizes[i].height, 1)
-        let scale = Double(dpi) / max(1, t.dpi) * fit
+        let scale = sheetDPI / max(1, t.dpi) * fit
         if abs(scale - 1) > 0.0005, let lanczos = CIFilter(name: "CILanczosScaleTransform") {
           lanczos.setValue(ci, forKey: kCIInputImageKey)
           lanczos.setValue(scale, forKey: kCIInputScaleKey)
@@ -235,6 +251,35 @@ enum ContactSheet {
     }
     guard let sheet = ctx.makeImage() else { throw DeskError.message("无法生成接触表。") }
     try pipe.write(sheet, to: url, format: format, dpi: dpi, quality: quality)
-    return g.size
+    // The estimate a little short for this sheet: written smaller again until it fits.
+    var written = CGSize(width: sheet.width, height: sheet.height)
+    for _ in 0..<4 {
+      guard let bytes = Self.fileBytes(url), bytes > Self.fileLimit else { break }
+      let k = (Self.fileLimit / bytes).squareRoot() * 0.95
+      let scale = Double(written.width) * k / Double(sheet.width)
+      let ci = CIImage(cgImage: sheet).applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: scale, kCIInputAspectRatioKey: 1])
+      guard let smaller = pipe.context.createCGImage(ci, from: ci.extent.integral, format: bits == 16 ? .RGBA16 : .RGBA8, colorSpace: pipe.outputSpace) else { break }
+      written = CGSize(width: smaller.width, height: smaller.height)
+      try pipe.write(smaller, to: url, format: format, dpi: max(1, Int((Double(dpi) * Double(smaller.width) / Double(sheet.width)).rounded())), quality: quality)
+    }
+    return written
+  }
+  /// What a contact sheet's file may take: a sheet is for sending and sharing, 10 MB.
+  static let fileLimit = 10_000_000.0
+  /// How much a sheet of `area` pixels is made smaller (in each direction) for its file to fit
+  /// `fileLimit` in `format`: 1 when it fits as it is.
+  static func fitting(_ area: Double, format: ExportFormat, quality: Double) -> Double {
+    // A little under the limit: the file's header, its colour profile and its metadata come on top.
+    let budget = fileLimit * 0.97 / bytesPerPixel(format, quality: quality)
+    return area > budget ? (budget / area).squareRoot() : 1
+  }
+  /// A sheet's bytes a pixel in `format`, as `ExportEstimate` has a film scan's, four fifths of it:
+  /// the paper and rebate between the frames compress well.
+  static func bytesPerPixel(_ format: ExportFormat, quality: Double) -> Double {
+    let scan = ExportEstimate.bytes(CGSize(width: 1000, height: 1000), format: format, quality: quality) / 1_000_000
+    return format == .tiff || format == .tiff8 ? scan : scan * 0.8
+  }
+  static func fileBytes(_ url: URL) -> Double? {
+    (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber).map { $0.doubleValue }
   }
 }

@@ -376,7 +376,7 @@ struct ContentView: View {
   @ViewBuilder var toolControls: some View {
       // Capturing places the frames; ② takes the mask off (the crops and the base), ③ grades (the
       // neutral grey).
-      let tools: [CanvasTool] = m.page == .capture ? [.select, .crop]
+      let tools: [CanvasTool] = m.page == .capture ? [.select, .crop, .base]
         : m.convertStep == .demask ? [.select, .crop, .region, .base] : [.select, .neutral]
       ForEach(tools, id: \.self) { t in
         Button {
@@ -463,7 +463,7 @@ struct ContentView: View {
         ProgressView(value: Double(p.done), total: Double(max(p.total, 1))).progressViewStyle(.linear).frame(width: 90).controlSize(.small)
         Text("\(p.what) \(p.done) / \(p.total)").font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
           .help(p.what == "读取原图"
-            ? "第一次打开这一卷：正在读每张原图（翻拍的一张 370 MB），做整卷估计，同时存一份 3000 像素的无损小样，下次打开就快了；先显示的是库里存着的小图"
+            ? "第一次打开这一卷：正在读每张原图（翻拍的一张 370 MB），做全卷斜率估计，同时存一份 3000 像素的无损小样，下次打开就快了；先显示的是库里存着的小图"
             : "正在把每张转成正片：先显示的是库里存着的小图，转好一张换一张")
       }
     }
@@ -901,7 +901,7 @@ struct ContentView: View {
         // The roll's switches in the order they act: how the pixels are read, then where the
         // channel slopes come from; under them, the slopes they come to. Apart from what the roll
         // is, above, by a rule.
-        if m.hasSensorPictures || m.hasLinearPictures || m.profile.offsets != nil || m.hasSinglePictures {
+        if m.hasSensorPictures || m.hasLinearPictures || m.profile.offsets != nil || negativeRoll {
           Divider().padding(.vertical, 2)
         }
         if m.hasSensorPictures {
@@ -915,18 +915,15 @@ struct ContentView: View {
             info: calibrationSwitchInfo)
             .disabled(m.isWorking || m.selected == nil)
         }
-        if m.hasSinglePictures {
-          // With the calibration in use the slopes are its own: dimmed and said so where the switch
-          // changes nothing, and what it still does where the roll shares its balance or levels.
-          let effect = m.poolEffect
+        if negativeRoll {
+          // With the calibration in use the slopes are its own: dimmed and said so.
           VStack(alignment: .leading, spacing: 3) {
-            filmSwitch("单张一起做整卷估计", isOn: Binding(get: { m.poolPictures }, set: { m.setPoolPictures($0) }),
-              info: "一张一个文件的画面（翻拍，或一张张导入的扫描）算作一卷：一起估计通道斜率，「整卷同一白平衡 / 色阶」也把它们当一卷。只在它们是同一卷、用同样的设备和设置拍或扫时打开；读法不同（Gamma、位深）的文件不会混在一起。App 里翻拍的卷自动打开。\n\n斜率的先后是本机标定、整卷估计、数据表：用着标定时，斜率按标定，整卷估计不参与转换，只在 ⓘ 里作对照；这时它只决定「整卷同一白平衡 / 色阶」把哪些单张当一卷。关掉「\(calibrationSwitchTitle)」后，整卷估计排在数据表前面。")
-              .opacity(effect == .nothing ? 0.5 : 1)
-            if effect != .slopes {
-              Text(effect == .nothing
-                ? "用着标定，斜率来自标定，整卷估计不参与转换"
-                : "用着标定，斜率来自标定；这项只决定「整卷同一白平衡 / 色阶」把哪些单张当一卷")
+            filmSwitch("全卷斜率估计", isOn: Binding(get: { m.estimatesSlopes }, set: { m.setRollSlopeEstimate($0) }),
+              info: Self.slopeEstimateInfo)
+              .opacity(m.slopeEstimateApplies ? 1 : 0.5)
+              .disabled(m.isWorking)
+            if !m.slopeEstimateApplies {
+              Text("用着标定，斜率来自标定，全卷估计不参与转换")
                 .font(.system(size: 10.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
           }
@@ -1004,20 +1001,23 @@ struct ContentView: View {
       }
     }.font(.system(size: 11)).controlSize(.small)
   }
-  static let flatInfo = "平场去掉微距镜头的暗角和光源的不匀：四周比中间暗、边上偏色，翻拍时常见，转成正片以后边缘发亮、变色。\n\n做法：拿走底片，片夹或遮罩照旧，用和翻拍完全一样的镜头、光圈、放大倍率和灯拍一张空白帧，曝光到最亮处约 70%（看直方图），不要过曝；像素位移的照片也只要拍一张普通的。选中它，点「设成平场」（胶片条上右键也有）。App 量出它的明暗，把对应的照片逐个颜色通道除一遍，四周就和中间一样亮、一样色。白光、RGB 光源都行；去串色开着关着都行，换的时候跟着换算。\n\n用到哪些：这一卷还没有空白帧时用到整卷；已经有了，就从这张空白帧到下一张空白帧之前（这张之后没有照片时，往前到上一张空白帧之后）。新拍进来的照片跟着最近的一张。空白帧自己不补，会取消勾选，也不算进整卷估计和片基；留着它做分界，或者删掉都行，平场跟着这一卷存着。\n\n换了光圈、对焦距离（放大倍率）、镜头或灯的位置，就再拍一张空白帧。「管理…」打开平场表格：所有平场在上面，这一卷的照片在下面，选一组照片（按住 Shift 或 Command 点选）换成另一个平场、不补，或回到光源标定的平场。下一卷设置没变时点「用上次的」。都可以撤销。\n\n片夹遮住的地方（不到最亮处四分之一）不补；尺寸和空白帧不同的照片（裁切模式、转了方向）不补，表格里标出来。扫描仪的扫描有它自己的校正，不用这个。"
+  static let flatInfo = "平场去掉微距镜头的暗角和光源的不匀：四周比中间暗、边上偏色，翻拍时常见，转成正片以后边缘发亮、变色。\n\n做法：拿走底片，片夹或遮罩照旧，用和翻拍完全一样的镜头、光圈、放大倍率和灯拍一张空白帧，曝光到最亮处约 70%（看直方图），不要过曝；像素位移的照片也只要拍一张普通的。选中它，点「设成平场」（胶片条上右键也有）。App 量出它的明暗，把对应的照片逐个颜色通道除一遍，四周就和中间一样亮、一样色。白光、RGB 光源都行；去串色开着关着都行，换的时候跟着换算。\n\n用到哪些：这一卷还没有空白帧时用到整卷；已经有了，就从这张空白帧到下一张空白帧之前（这张之后没有照片时，往前到上一张空白帧之后）。新拍进来的照片跟着最近的一张。空白帧自己不补，会取消勾选，也不算进全卷斜率估计和片基；留着它做分界，或者删掉都行，平场跟着这一卷存着。\n\n换了光圈、对焦距离（放大倍率）、镜头或灯的位置，就再拍一张空白帧。「管理…」打开平场表格：所有平场在上面，这一卷的照片在下面，选一组照片（按住 Shift 或 Command 点选）换成另一个平场、不补，或回到光源标定的平场。下一卷设置没变时点「用上次的」。都可以撤销。\n\n片夹遮住的地方（不到最亮处四分之一）不补；尺寸和空白帧不同的照片（裁切模式、转了方向）不补，表格里标出来。扫描仪的扫描有它自己的校正，不用这个。"
   /// A switch of the roll's in the film section: its name, the switch lined up with the others', ⓘ.
   func filmSwitch(_ title: String, isOn: Binding<Bool>, info: String) -> some View {
     SwitchRow(title, isOn: isOn, info: info)
   }
   var calibrationSwitchTitle: String { m.profile.id.contains("-copy-") ? "用翻拍标定" : "用本机标定" }
+  /// The roll is converted as negatives, through channel slopes: slides have none.
+  var negativeRoll: Bool { m.selected != nil && !m.settings.isSlide }
+  static let slopeEstimateInfo = "按整卷所有画面里的明暗过渡估计红、蓝通道的斜率（绿沿用预设），用在没有标定的卷上。斜率的先后：本机标定 → 全卷斜率估计 → 厂家数据表；关掉时是本机标定 → 数据表。\n\n一起估计的是：扫描的画面；一个文件里的整条胶片；一张一个文件的画面（翻拍、一张张导入的扫描）里读法相同（输入 Gamma、位深）的。它们要是同一卷、用同样的设备和设置拍或扫的；至少 2 张有细节的画面才估计得出来，画面越多越准。估计会随画面内容偏：树叶多时蓝偏低，亮的灰越亮越蓝；能标定就标定。\n\n默认：扫描和翻拍的卷打开，一张张导入的单张关着。用着标定时它不参与转换，只在转换依据的 ⓘ 里作对照。「整卷同一白平衡 / 色阶」不受它影响：一张一个文件的画面各自一卷。"
   /// What the calibration switch does, with this preset's own numbers.
   var calibrationSwitchInfo: String {
     let p = m.profile, film = AppModel.uncalibrated(p, among: m.profiles).name
     let points = PresetTable.pointCount(p).map { "这个预设用了 \($0) 个中性点，" } ?? ""
     let roll = m.settings.rollSlopes.map {
-      String(format: "本卷整卷估计 R %.3f · B %.3f，标定 R %.3f · B %.3f。", $0.r, $0.b, p.slopes.r, p.slopes.b)
+      String(format: "本卷全卷斜率估计 R %.3f · B %.3f，标定 R %.3f · B %.3f。", $0.r, $0.b, p.slopes.r, p.slopes.b)
     } ?? ""
-    return "打开：按「\(p.name)」的标定转换：三个通道的斜率；标定时那种光下的中性，白平衡按它配平，开着自动也一样；取到很暗的点时还有暗部趾部。\n\n关掉：这一卷按标定之前的胶片 \(film) 转换：斜率先用整卷估计，没有时用数据表；白平衡回到自动（对齐各通道的黑）或你取的中性灰；不用趾部。预设本身不变，别的卷照旧用它；可以 ⌘Z 撤销，在胶片菜单里重新选这个预设也会打开。\n\n\(points)\(roll)点少、明暗没拉开，或标定和整卷估计差很多时，关掉比较一下。"
+    return "打开：按「\(p.name)」的标定转换：三个通道的斜率；标定时那种光下的中性，白平衡按它配平，开着自动也一样；取到很暗的点时还有暗部趾部。\n\n关掉：这一卷按标定之前的胶片 \(film) 转换：斜率在「全卷斜率估计」开着时先用它，没有时用数据表；白平衡回到自动（对齐各通道的黑）或你取的中性灰；不用趾部。预设本身不变，别的卷照旧用它；可以 ⌘Z 撤销，在胶片菜单里重新选这个预设也会打开。\n\n\(points)\(roll)点少、明暗没拉开，或标定和全卷斜率估计差很多时，关掉比较一下。"
   }
   static let crosstalkInfo = "翻拍时相机的红、绿、蓝滤色片和光源的三种灯光谱有重叠：蓝灯有 34% 读进绿通道，绿灯约 12% 和 11% 读进红、蓝。每个通道掺了别的灯的光，转出来颜色发灰，要把饱和度拉到 1.8 左右才像 Capture One。\n\n打开后，从传感器读出的 RAW（无压缩 ARW）在算片基和密度之前，先在线性读数上把串色去掉；在翻拍页做过「光源标定」的话，再除以平场，把灯照在四周偏暗的地方补平。没有标定时，矩阵用 2026-10-29 用 IT8 色卡测的，没有平场。矩阵属于这台 A7R IV 和这组 RGB 灯；换了相机或灯就要重新标定。白光翻拍时关掉。\n\n整卷一起开关，可以 ⌘Z 撤销；取过的片基、中性灰和高光跟着换算。下一卷沿用这里的选择。\n\n「平场」一行里用空白帧量的平场，优先于光源标定的平场：用了它的照片，开关去串色时按同一张空白帧换算。"
   /// The film base: where it was read in a line, picking it or going back to the automatic one,
@@ -1191,7 +1191,8 @@ struct ContentView: View {
       ).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
     } content: {
       VStack(alignment: .leading, spacing: 10) {
-        if !m.settings.isSlide {
+        // A picture that is a file each has no roll to share with: shown only to turn it off.
+        if !m.settings.isSlide && (m.selectedSharesRoll || m.settings.sharedBalance == true) {
         SwitchRow("整卷同一白平衡", isOn: Binding(get: { m.settings.sharedBalance == true }, set: { m.setSharedBalance($0) }),
           info: "像冲印店印一卷那样，整卷用同一个配光：白平衡按整卷所有画面一起统计，卷里每张的颜色一致，不再各自按自己的暗部去配平（比如阴影里的天光不会把一张整体拉偏）。每张的明暗照旧。\n\n只替换交给软件的部分：哪一张取了中性灰，或关了自动白平衡，那一张按你的来。用标定预设时，白平衡本来就按标定的中性，整卷一致。",
           off: m.selected == nil || m.isWorking)
@@ -1262,7 +1263,7 @@ struct ContentView: View {
       Toggle("自动", isOn: bool(\.autoLevels)).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
     } content: {
       VStack(alignment: .leading, spacing: 10) {
-        if !m.settings.isSlide {
+        if !m.settings.isSlide && (m.selectedSharesRoll || m.settings.sharedLevels == true) {
           SwitchRow("整卷同一色阶", isOn: Binding(get: { m.settings.sharedLevels == true }, set: { m.setSharedLevels($0) }),
             off: m.selected == nil || m.isWorking)
         }
@@ -1477,7 +1478,7 @@ struct ContentView: View {
                   // A frame not ticked for scanning and export lies dimmed; the one shown has the border.
                   Group {
                     // Module ① shows the raw pictures, ② the converted ones.
-                    if let cg = m.showsOriginal ? m.rawThumbnails[f.id] : m.thumbnails[f.id] {
+                    if let cg = m.showsOriginal ? m.rawThumbnails[f.id] : m.showsDemasked ? m.demaskThumbnails[f.id] ?? m.thumbnails[f.id] : m.thumbnails[f.id] {
                       Image(decorative: cg, scale: 1).resizable().aspectRatio(contentMode: .fit)
                         .padding(2)
                     } else {

@@ -676,7 +676,9 @@ struct DeskProject: Codable {
   var notes: String? = nil
   /// Where its pictures came from (`RollSource`); nil for rolls the app tells by their frames.
   var source: String? = nil
-  /// Its pictures that are a file each are estimated together, as one roll; nil, apart.
+  /// 全卷斜率估计 switched on or off for it; nil, as the kind of roll says (`estimatesSlopesByDefault`).
+  var estimateSlopes: Bool? = nil
+  /// Saved before 全卷斜率估计: its pictures that are a file each were estimated together. Read only.
   var poolPictures: Bool? = nil
   /// False: its calibrated preset converts as the film it was calibrated from; nil, with it.
   var useCalibration: Bool? = nil

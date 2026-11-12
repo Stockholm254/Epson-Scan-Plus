@@ -397,6 +397,8 @@ enum CanvasTests {
     try zoomed.startCameraRoll()
     zoomed.addCapturedFrame(bigURL, original: bigURL, linear: true)
     zoomed.turn(clockwise: true)
+    // Graded, in ③: the curves below bend the picture there (② shows it de-masked only).
+    zoomed.convertStep = .grade
     zoomed.singleView = true
     zoomed.refresh()
     for _ in 0..<400 where zoomed.rendering { settle(0.05) }
