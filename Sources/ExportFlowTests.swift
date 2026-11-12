@@ -111,6 +111,11 @@ enum ExportFlowTests {
     let reopened = model()
     try check(reopened.exportStamps.count == 2 && reopened.exportMark(reopened.frames[0]) == .exported && reopened.exportMark(reopened.frames[2]) == .notExported,
       "the marks are saved with the roll and read back")
+    // A file deleted in Finder: its frame is no longer marked once the roll is opened again.
+    if let gone = m.exportStamps[ids[1]]?.file { try? fm.removeItem(atPath: gone) }
+    let again = model()
+    try check(again.exportMark(again.frames[0]) == .exported && again.exportMark(again.frames[1]) == .notExported,
+      "an export whose file was deleted no longer marks its frame")
 
     // 停止: after the frame being written, the files written kept.
     let stopped = root.appendingPathComponent("stopped", isDirectory: true)

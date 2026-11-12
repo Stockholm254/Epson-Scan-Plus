@@ -97,9 +97,10 @@ struct EpsonScanPlusApp: App {
       CommandMenu("模块") {
         // The library always; the modules once a project is new, opened or imported.
         Button(AppModel.Page.library.title) { model.page = .library }.keyboardShortcut("l", modifiers: [.command, .shift])
-        ForEach(AppModel.Page.allCases.filter { $0 != .library }, id: \.self) { page in
-          Button(page.title) { model.page = page }
-            .keyboardShortcut(KeyEquivalent(Character("\(AppModel.Page.allCases.firstIndex(of: page)!)")), modifiers: [.command, .option])
+        // ① ② ③ by their numbers; 去漏光, ②'s last part, from a frame's menu or ⌥⌘L.
+        ForEach(AppModel.Station.allCases.filter { $0 != .library }, id: \.self) { station in
+          Button(station.title) { model.station = station }
+            .keyboardShortcut(KeyEquivalent(Character("\(station.rawValue)")), modifiers: [.command, .option])
             .disabled(!model.hasProject)
         }
         Divider()
@@ -142,7 +143,10 @@ struct EpsonScanPlusApp: App {
         // Lightroom's: one frame's settings given to others, chosen now or later.
         Button("拷贝调整") { model.copySettings() }.keyboardShortcut("c", modifiers: [.command, .shift])
           .disabled(model.selected == nil || model.page != .convert)
-        Button(model.multiSelected ? "粘贴调整到所选的 \(model.selection.count) 张" : "粘贴调整") { model.pasteSettings() }
+        // Pasted as the step takes it: in ③ the grading, in ② the de-masking.
+        Button(model.multiSelected ? "粘贴\(AppModel.scopeName(model.stepScope))到所选的 \(model.selection.count) 张" : "粘贴\(AppModel.scopeName(model.stepScope))") {
+          model.pasteSettings(model.stepScope)
+        }
           .keyboardShortcut("v", modifiers: [.command, .shift])
           .disabled(model.copiedSettings == nil || model.selected == nil || model.isWorking || model.page != .convert)
         Divider()

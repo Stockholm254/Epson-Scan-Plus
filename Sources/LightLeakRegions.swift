@@ -128,7 +128,8 @@ struct LeakRegionsSection: View {
       HStack {
         Button("对应点…") { lab.showAlign = true }.disabled(!lab.hasReference)
           .help("自动对齐不确定时，手动标出原片和参考图上的同一位置")
-        Button("裁切…") { lab.showCrop = true }
+        Button("裁切…") { lab.showCrop = true }.disabled(lab.geometryIsTheRolls)
+          .help(lab.geometryIsTheRolls ? "本卷照片的裁切和拉直在 ② 去色罩里改（画面裁切工具）" : "按转好方向的原片取范围，可以拉直")
       }
       HStack {
         Button("保存预设…") { lab.chooseSavePreset() }

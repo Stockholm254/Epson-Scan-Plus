@@ -18,21 +18,50 @@ enum Kernels {
   /// the same either way.
   static let negative = color("negative", conversion + """
     [[stitchable]] float4 negative(coreimage::sample_t p, NEGATIVE_ARGS) {
-      return float4(clamp(graded(p, true, NEGATIVE_PASS), float3(0.0), float3(1.0)), 1.0);
+      return float4(clamp(graded(p, true, float3(1.0), float3(0.0), NEGATIVE_PASS), float3(0.0), float3(1.0)), 1.0);
     }
     """)
   /// The tones first and the saturation after them, without the final clip: colours the saturation
   /// control pushes past sRGB stay, for exports into a wider colour space.
   static let negativeUnclipped = color("negativeUnclipped", conversion + """
     [[stitchable]] float4 negativeUnclipped(coreimage::sample_t p, NEGATIVE_ARGS) {
-      return float4(saturated(graded(p, false, NEGATIVE_PASS), tone, ends), 1.0);
+      return float4(saturated(graded(p, false, float3(1.0), float3(0.0), NEGATIVE_PASS), tone, ends), 1.0);
     }
     """)
   /// What `negative` takes into its ends, unclipped: each channel on the print's straight line,
   /// black at 0 and white at 1, past them as far as the negative goes (`ImagePipeline.toneRange`).
   static let negativeRange = color("negativeRange", conversion + """
     [[stitchable]] float4 negativeRange(coreimage::sample_t p, NEGATIVE_ARGS) {
-      return float4(toned(p, true, NEGATIVE_PASS), 1.0);
+      return float4(toned(p, true, float3(1.0), float3(0.0), NEGATIVE_PASS), 1.0);
+    }
+    """)
+  /// The three again for a frame with a light-leak repair (`LeakFix`): each pixel's reading on the
+  /// print's straight line, before the exposure and levels, corrected as the repair measured,
+  /// `a` times it plus `d`, from two pictures of the correction as large as the frame's. Everything
+  /// after it, the whole of ③ 调色, works on the repaired picture as on any other.
+  static let negativeFixed = color("negativeFixed", conversion + """
+    [[stitchable]] float4 negativeFixed(coreimage::sample_t p, coreimage::sample_t a, coreimage::sample_t d, NEGATIVE_ARGS) {
+      return float4(clamp(graded(p, true, a.rgb, d.rgb, NEGATIVE_PASS), float3(0.0), float3(1.0)), 1.0);
+    }
+    """)
+  static let negativeUnclippedFixed = color("negativeUnclippedFixed", conversion + """
+    [[stitchable]] float4 negativeUnclippedFixed(coreimage::sample_t p, coreimage::sample_t a, coreimage::sample_t d, NEGATIVE_ARGS) {
+      return float4(saturated(graded(p, false, a.rgb, d.rgb, NEGATIVE_PASS), tone, ends), 1.0);
+    }
+    """)
+  static let negativeRangeFixed = color("negativeRangeFixed", conversion + """
+    [[stitchable]] float4 negativeRangeFixed(coreimage::sample_t p, coreimage::sample_t a, coreimage::sample_t d, NEGATIVE_ARGS) {
+      return float4(toned(p, true, a.rgb, d.rgb, NEGATIVE_PASS), 1.0);
+    }
+    """)
+  /// The picture 去漏光 repairs: the negative taken off its mask and put on the print's scale, black
+  /// at 0 and white at 1 (`printed`), with none of ③'s grading after it, clipped. `LeakFix` reads
+  /// the repair back off it onto the straight line, where the fixed kernels put it.
+  static let negativeNeutral = color("negativeNeutral", conversion + """
+    [[stitchable]] float4 negativeNeutral(coreimage::sample_t p, NEGATIVE_ARGS) {
+      float faded;
+      float3 s = straight(p, float3(1.0), float3(0.0), faded, NEGATIVE_PASS);
+      return float4(clamp(printed(s, NEGATIVE_PASS), float3(0.0), float3(1.0)), 1.0);
     }
     """)
   /// Each pixel's colour apart from its lightness (luma), and the two put back together.
@@ -93,22 +122,35 @@ enum Kernels {
     // gamma (color.w) to linear, each channel through its gain and black (gain, balance), the ends
     // (levels.x, levels.y) and the exposure, a scale, then encoded for the screen (`encode`, a
     // power). A file already positive comes through with nothing in front, encoded as it came.
-    static float3 toned(float4 p, bool first, NEGATIVE_ARGS) {
+    // Each channel on the print's straight line, before the print exposure and the levels: log
+    // exposure for a negative, linear light for a positive. A light-leak repair's correction (`a`
+    // times it plus `d`; 1 and 0 without one) goes on the reading as ② leaves it, the film's
+    // exposure, before the gain and white balance the frame's analysis gives and anything ③ sets,
+    // so none of them moves the repair, nor it them. `faded` is how far the white balance has
+    // faded in (`ImagePipeline.unexposedFade`), 1 on a positive.
+    static float3 straight(float4 p, float3 a, float3 d, thread float &faded, NEGATIVE_ARGS) {
       float3 v = max(p.rgb, float3(0.000001));
-      float3 q;
-      // How far the white balance has faded in (`ImagePipeline.unexposedFade`): 1 on a positive.
-      float faded = 1.0;
+      faded = 1.0;
+      if (inverted < 0.5) { return (pow(v, float3(color.w)) * a + d) * gain + balance; }
+      float3 e = log(max(base, float3(0.000001)) / v) * (color.w / 2.302585093) / slope;
+      e += toe * log(max(float3(1.0) - exp(-e / max(toe, float3(0.000001))), float3(0.02)));
+      e = e * a + d;
+      float3 b = balance;
+      if (fade.x > 0.0) { faded = min((1.0 - exp(-max((e.r + e.g + e.b) / 3.0, 0.0) / fade.x)) / fade.y, 1.0); b *= faded; }
+      return e * gain + b;
+    }
+    // The straight line on the print's scale, black at 0 and white at 1 (levels.x, levels.y), with
+    // the print exposure; a positive's linear light encoded for the screen.
+    static float3 printed(float3 s, NEGATIVE_ARGS) {
       if (inverted < 0.5) {
-        float3 t = pow(v, float3(color.w)) * gain + balance;
-        t = (t - float3(levels.x)) / max(levels.y - levels.x, 0.000001) * pow(2.0, tone.x);
-        q = sign(t) * pow(abs(t), float3(encode));
-      } else {
-        float3 e = log(max(base, float3(0.000001)) / v) * (color.w / 2.302585093) / slope;
-        e += toe * log(max(float3(1.0) - exp(-e / max(toe, float3(0.000001))), float3(0.02)));
-        float3 b = balance;
-        if (fade.x > 0.0) { faded = min((1.0 - exp(-max((e.r + e.g + e.b) / 3.0, 0.0) / fade.x)) / fade.y, 1.0); b *= faded; }
-        q = (e * gain + b + float3(tone.x * 0.30103) - float3(levels.x)) / max(levels.y - levels.x, 0.001);
+        float3 t = (s - float3(levels.x)) / max(levels.y - levels.x, 0.000001) * pow(2.0, tone.x);
+        return sign(t) * pow(abs(t), float3(encode));
       }
+      return (s + float3(tone.x * 0.30103) - float3(levels.x)) / max(levels.y - levels.x, 0.001);
+    }
+    static float3 toned(float4 p, bool first, float3 fa, float3 fd, NEGATIVE_ARGS) {
+      float faded;
+      float3 q = printed(straight(p, fa, fd, faded, NEGATIVE_PASS), NEGATIVE_PASS);
       q = (q - float3(levels.z)) / max(levels.w - levels.z, 0.01);
       // Shadow warmth (color.z): red up and blue down by up to 0.2 in the dark tones, all of it at a
       // lightness of 0.2 and none over 0.55, so the sunlit greys keep their balance; none at black
@@ -192,8 +234,8 @@ enum Kernels {
       return pow(q, float3(1.0 / max(tone.y, 0.1)));
     }
     // The tones, and with `first` the saturation ahead of the ends.
-    static float3 graded(float4 p, bool first, NEGATIVE_ARGS) {
-      return ended(toned(p, first, NEGATIVE_PASS), NEGATIVE_PASS);
+    static float3 graded(float4 p, bool first, float3 fa, float3 fd, NEGATIVE_ARGS) {
+      return ended(toned(p, first, fa, fd, NEGATIVE_PASS), NEGATIVE_PASS);
     }
 
     """

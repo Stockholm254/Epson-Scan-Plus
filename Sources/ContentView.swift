@@ -17,6 +17,8 @@ struct ContentView: View {
   @Gated var m: AppModel
   init(m: AppModel) { _m = Gated(wrappedValue: m) }
   @State var showInfo = false
+  /// The contact sheet's picture in the output tab, opened large.
+  @State var sheetPreviewOpen = false
   /// The strip's frame a dragged frame is over, to take its place.
   @State var dropTarget: UUID?
   /// The window's, which the Edit menu's Undo and Redo use.
@@ -56,12 +58,16 @@ struct ContentView: View {
   }
   /// Module ②'s sidebar, opened on calibrating the preset: its film tab, the section unfolded.
   func openCalibration() {
+    // Calibrating a preset is ②'s: the film's slopes.
+    m.convertStep = .demask
     m.panelTab = .film
     UserDefaults.standard.set(true, forKey: "panelSection.calibration")
     withAnimation(Liquid.flow) { convertSidebarShown = true }
   }
   /// Module ②'s sidebar, opened on the export settings.
   func openExportSettings() {
+    // Exporting is ③'s.
+    m.convertStep = .grade
     m.panelTab = .output
     withAnimation(Liquid.flow) { convertSidebarShown = true }
   }
@@ -109,6 +115,8 @@ struct ContentView: View {
     }
     // From one module to another the sidebar and the inspector slide, the pages cross-fade.
     .animation(Liquid.pageChange, value: m.page)
+    // ② ↔ ③: the same picture, the step's controls cross-fading in, as a page's do.
+    .animation(Liquid.pageChange, value: m.convertStep)
     // No sidebar on the library or ③: no key for one.
     .toolbar(removing: m.page == .library || m.page == .leak ? .sidebarToggle : nil)
     .navigationTitle(windowTitle)
@@ -117,6 +125,11 @@ struct ContentView: View {
     .onChange(of: m.activityStatus) { showStatus() }
     // An export done shows, also one whose words are those the line said last.
     .onChange(of: m.exportsDone) { showStatus() }
+    // ② works with the film in the left panel, ③ exports from it.
+    .onChange(of: m.convertStep) { _, step in
+      m.panelTab = step == .demask ? .film : .output
+      if step == .demask, m.page == .convert { withAnimation(Liquid.flow) { convertSidebarShown = true } }
+    }
     // A batch of scans takes minutes a frame, an export of a roll a while: the Dock icon counts
     // the frames done, and once the batch ends with the app behind another, it bounces once.
     .onChange(of: m.scanBatch.badge ?? m.exportProgress.badge) { was, now in
@@ -185,7 +198,8 @@ struct ContentView: View {
         // The library, a new project and importing are the library tab's, the first in the switcher.
         // The frame's colour and tone set from its own picture, on this Mac (`AutoAdjust`). Opening it
         // on the leak page stays in the 画面 menu (⌥⌘L) and the light table's context menu.
-        if m.page == .convert {
+        // Each step's own keys: ③ the automatic grade, ② the dust it ringed.
+        if m.page == .convert && m.convertStep == .grade {
           Button {
             m.autoAdjust()
           } label: {
@@ -193,6 +207,8 @@ struct ContentView: View {
           }
           .help("自动调整这张：白平衡和色阶回到自动，按画面定曝光和阴影冷暖，对比度、饱和度不动；只在本机计算，不上传，⌘Z 撤销（⇧⌘A）")
           .disabled(m.selected == nil || m.isWorking)
+        }
+        if m.page == .convert && m.convertStep == .demask {
           // The dust found ringed on the single view, or the picture clear of rings.
           Toggle(isOn: $m.showDust) {
             Label("除尘标出", systemImage: CanvasTool.dust.symbol)
@@ -205,16 +221,20 @@ struct ContentView: View {
     ToolbarItem(placement: .principal) {
       // The modules open once there is a project: until then their segments are greyed out. The
       // system's segmented control, as SwiftUI's segmented picker does not grey a segment alone.
-      let pages = AppModel.Page.allCases
-      ModuleSwitch(
-        titles: pages.map(\.title), selected: pages.firstIndex(of: m.page) ?? 0,
-        enabled: pages.map { $0 == .library || m.hasProject },
-        help: m.hasProject
-          ? "库（⇧⌘L）：所有的卷，新建工程和导入；模块 ① 采集、② 去色罩、③ 去漏光（⌥⌘1–3）"
-          : "先在库里新建工程、打开一卷或导入，① 采集、② 去色罩、③ 去漏光才能用"
-      ) { i in
-        let p = pages[i]
-        if p == .library || m.hasProject { m.page = p } else { m.objectWillChange.send() }
+      let stations = AppModel.Station.allCases
+      HStack(spacing: 8) {
+        // While a frame is repaired, ② names its last part: 去漏光 is in ②, not a step after it.
+        ModuleSwitch(
+          titles: stations.map { $0 == .demask && m.page == .leak ? "② 去色罩 › 去漏光" : $0.title },
+          selected: stations.firstIndex(of: m.station) ?? 0,
+          enabled: stations.map { $0 == .library || m.hasProject },
+          help: m.hasProject
+            ? "库（⇧⌘L）：所有的卷，新建工程和导入；① 采集、② 去色罩（负片变成干净的正片，必要时去漏光）、③ 调色（调色和导出）（⌥⌘1–3）"
+            : "先在库里新建工程、打开一卷或导入，① 采集、② 去色罩、③ 调色才能用"
+        ) { i in
+          let s = stations[i]
+          if s == .library || m.hasProject { m.station = s } else { m.objectWillChange.send() }
+        }
       }
     }
     // The assistant by the modules, in the middle, clear of the inspector's part of the toolbar,
@@ -236,8 +256,8 @@ struct ContentView: View {
         } label: {
           Label("扫描所选 \(m.enabledCount)", systemImage: "scanner")
         }.leadingAction().disabled(!m.scanner.ready || !m.hasScanTargets || m.isWorking)
-      } else if m.page == .convert {
-        // Exporting, with its settings behind it in the sidebar.
+      } else if m.page == .convert && m.convertStep == .grade {
+        // Exporting, ③'s, with its settings behind it in the sidebar.
         Menu {
           Button(m.exportSelectionTitle) { m.exportImages(all: false) }.disabled(m.selected == nil || m.isWorking)
           Button(m.quickExportTitle) { m.exportHere(m.selection) }.disabled(m.selected == nil || m.isWorking || m.exportFolder == nil)
@@ -354,8 +374,11 @@ struct ContentView: View {
   }
   /// The canvas tools, and fitting the picture.
   @ViewBuilder var toolControls: some View {
-      // Capturing places the frames; the pickers belong to taking the mask off.
-      ForEach(m.page == .capture ? [CanvasTool.select, .crop] : [CanvasTool.select, .crop, .region, .base, .neutral], id: \.self) { t in
+      // Capturing places the frames; ② takes the mask off (the crops and the base), ③ grades (the
+      // neutral grey).
+      let tools: [CanvasTool] = m.page == .capture ? [.select, .crop]
+        : m.convertStep == .demask ? [.select, .crop, .region, .base] : [.select, .neutral]
+      ForEach(tools, id: \.self) { t in
         Button {
           m.useTool(t)
         } label: {
@@ -367,6 +390,19 @@ struct ContentView: View {
           }
         }.buttonStyle(KeyStyle(latched: m.tool == t)).controlSize(.small).help(t.help)
           .accessibilityLabel(t.rawValue)
+      }
+      // ②'s last, optional part: the frame shown into 去漏光, and back with its repair into ③.
+      if m.page == .convert && m.convertStep == .demask {
+        Divider().frame(height: 18)
+        Button {
+          if let id = m.selectedID { m.openInLeak(id) }
+        } label: {
+          HStack(spacing: 4) {
+            Image(systemName: "wand.and.rays").frame(width: 16, height: 14)
+            Text(m.selected?.adjustments.leakFix == nil ? "去漏光" : "改去漏光").font(.system(size: 11))
+          }
+        }.buttonStyle(.bordered).controlSize(.small).disabled(m.selected == nil || m.isWorking)
+          .help("去漏光（可选 · ⌥⌘L）：在 ② 的结果上修这一张的漏光，修好后「用到 ③ 调色」，在修好的照片上接着调色")
       }
       // Only the single frame zooms; the light table always shows the whole roll.
       if m.singleView {
@@ -694,33 +730,44 @@ struct ContentView: View {
   /// its base and the frame's extent are in the sidebar's first tab. Every section folds, and opens
   /// as it was left.
   var adjustPanel: some View {
-    ScrollView {
+    let grading = m.convertStep == .grade
+    return ScrollView {
       VStack(alignment: .leading, spacing: 16) {
         HStack {
-          sectionTitle("调整", symbol: "slider.horizontal.3")
+          sectionTitle(grading ? "调色" : "去色罩", symbol: grading ? "slider.horizontal.3" : "circle.lefthalf.filled")
           Spacer()
-          Button(m.multiSelected ? "重置所选" : "重置") { m.resetAdjustments() }.font(.system(size: 11))
-            .help(m.multiSelected ? "把所选的 \(m.selection.count) 张都恢复成新照片的调整" : "把这一张恢复成新照片的调整")
-            .help("把这一张的调整恢复默认；输入 Gamma、方向和整卷估计保留")
+          // This step's settings only: ③'s 重置 leaves the base and the repair, ②'s the grading.
+          let what = AppModel.scopeName(m.stepScope)
+          Button(m.multiSelected ? "重置所选的\(what)" : "重置\(what)") { m.resetAdjustments(m.stepScope) }.font(.system(size: 11))
+            .help((m.multiSelected ? "把所选的 \(m.selection.count) 张的" : "把这一张的") + what + "恢复成新照片的样子"
+              + (grading ? "；② 去色罩的设置和去漏光的修复不动" : "；③ 的调色不动，方向、画面范围和去漏光的修复保留"))
             .disabled(frameControlsOff)
         }
         Group {
-        balanceSection
-        Divider()
-        toneSection
-        Divider()
-        levelsSection
-        Divider()
-        colourSection
-        Divider()
-        DustSection(m: m)
-        Divider()
-        curvesSection
-        Divider()
-        // A scan sharpens by the scanner's measured MTF, a camera copy by the copy stand's camera's.
-        sharpeningSection
-        Divider()
-        inputSection
+          if grading {
+            // ③ 调色: on the picture ② leaves, repaired where 去漏光 was used.
+            leakRepairSection
+            balanceSection
+            Divider()
+            toneSection
+            Divider()
+            levelsSection
+            Divider()
+            colourSection
+            Divider()
+            curvesSection
+            Divider()
+            // A scan sharpens by the scanner's measured MTF, a camera copy by the copy stand's camera's.
+            sharpeningSection
+          } else {
+            // ② 去色罩: the film, its base and the frame's extent are in the left panel; here what
+            // is cleaned off the negative, how it is read, and the steps after.
+            DustSection(m: m)
+            Divider()
+            inputSection
+            Divider()
+            nextSteps
+          }
         }.disabled(frameControlsOff)
       }.padding(18)
         .buttonStyle(.bordered).controlSize(.small)
@@ -733,9 +780,11 @@ struct ContentView: View {
         Button {
           m.syncSettings()
         } label: {
-          Label(m.multiSelected ? "同步到所选的 \(m.selection.count) 张" : "同步到本卷", systemImage: "square.on.square").frame(maxWidth: .infinity)
+          let what = AppModel.scopeName(m.stepScope)
+          Label(m.multiSelected ? "同步\(what)到所选的 \(m.selection.count) 张" : "同步\(what)到本卷", systemImage: "square.on.square").frame(maxWidth: .infinity)
         }.buttonStyle(.bordered).controlSize(.regular)
-          .help(m.multiSelected ? "把这一张的调整用到所选的每一张（⌘ 或 ⇧ 点胶片条选的）" : "把这一张的调整用到本卷每一张；⌘ 或 ⇧ 点胶片条多选几张时，只用到所选的")
+          .help((m.multiSelected ? "把这一张的\(AppModel.scopeName(m.stepScope))用到所选的每一张（⌘ 或 ⇧ 点胶片条选的）" : "把这一张的\(AppModel.scopeName(m.stepScope))用到本卷每一张；⌘ 或 ⇧ 点胶片条多选几张时，只用到所选的")
+            + (m.convertStep == .grade ? "。只同步调色：各张的片基、画面范围和去漏光不动" : "。只同步去色罩：各张的调色不动，方向、画面范围和去漏光保留"))
           .disabled(frameControlsOff)
           .padding(.horizontal, 18).padding(.vertical, 10)
       }.background(.bar)
@@ -1254,7 +1303,10 @@ struct ContentView: View {
       CurveEditor(
         curves: Binding(
           get: { m.settings.curves ?? ToneCurves() },
-          set: { value in m.change("曲线") { $0.curves = value.normalized } }),
+          set: { value in
+            m.change("曲线") { $0.curves = value.normalized }
+            m.curveState.edits &+= 1
+          }),
         histogram: m.histogram, channels: m.channelHistograms, state: m.curveState,
         targeting: Binding(get: { m.tool == .curve }, set: { m.tool = $0 ? .curve : .select }),
         bypassed: Binding(get: { m.curvesBypassed }, set: { m.curvesBypassed = $0 }),
@@ -1430,8 +1482,13 @@ struct ContentView: View {
                   }.opacity(f.enabled ? 1 : 0.35)
                 }.frame(width: 84, height: 60)
                 // Exported as it is now, changed since, or on its way out: in ②, where frames are exported.
+                // Exporting is ③'s: its marks there, not over ②'s work.
                 .overlay(alignment: .topTrailing) {
-                  if m.page == .convert { ExportMarkView(mark: m.exportMark(f)).padding(3) }
+                  if m.page == .convert && m.convertStep == .grade { ExportMarkView(mark: m.exportMark(f), note: m.exportNote(f)).padding(3) }
+                }
+                // Repaired in 去漏光: ③ grades the repaired picture.
+                .overlay(alignment: .topLeading) {
+                  if m.page != .capture, f.adjustments.leakFix != nil { LeakRepairMark().padding(3) }
                 }
                 .accessibilityValue(f.enabled ? "已勾选" : "未勾选")
                 .overlay(
@@ -1478,13 +1535,16 @@ struct ContentView: View {
                       Button(m.selectionEnabled ? "取消勾选所选的 \(chosen.count) 张" : "勾选所选的 \(chosen.count) 张",
                         systemImage: m.selectionEnabled ? "circle" : "checkmark.circle") { m.setSelectionEnabled(!m.selectionEnabled) }.disabled(m.isWorking)
                       if m.copiedSettings != nil {
-                        Button("粘贴调整到所选的 \(chosen.count) 张", systemImage: "doc.on.clipboard") { m.pasteSettings() }.disabled(m.isWorking || m.page != .convert)
+                        Button("粘贴\(AppModel.scopeName(m.stepScope))到所选的 \(chosen.count) 张", systemImage: "doc.on.clipboard") { m.pasteSettings(m.stepScope) }.disabled(m.isWorking || m.page != .convert)
                       }
                       Button("删除所选的 \(chosen.count) 张", systemImage: "trash", role: .destructive) { m.remove(m.selectionIDs) }.disabled(m.isWorking)
                     } else {
                       Button("导出这张…", systemImage: "square.and.arrow.up") {
                         if let now = m.frames.first(where: { $0.id == f.id }) { m.exportImages([now]) }
                       }.disabled(m.isWorking)
+                      if m.exportStamps[f.id] != nil {
+                        Button("在 Finder 中显示导出的文件", systemImage: "folder") { m.revealExport(f) }
+                      }
                       Divider()
                       Button(f.enabled ? "取消勾选" : "勾选", systemImage: f.enabled ? "circle" : "checkmark.circle") {
                         m.setEnabled(f.id, enabled: !f.enabled)
@@ -1497,9 +1557,9 @@ struct ContentView: View {
                           m.copySettings()
                         }
                         if m.copiedSettings != nil, m.copiedSettings?.id != f.id {
-                          Button("把拷贝的调整粘贴到这张", systemImage: "doc.on.clipboard") {
+                          Button("把拷贝的\(AppModel.scopeName(m.stepScope))粘贴到这张", systemImage: "doc.on.clipboard") {
                             if f.id != m.selectedID { m.select(f.id) }
-                            m.pasteSettings()
+                            m.pasteSettings(m.stepScope)
                           }.disabled(m.isWorking)
                         }
                       }

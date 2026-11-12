@@ -177,6 +177,9 @@ struct LevelsHistogram: View {
   let black: Double, white: Double, midtone: Double
   var set: (Mark, Double) -> Void
   @State private var dragging: Mark?
+  /// The marks as dragged, drawn at once: the values given come with the window's update, at
+  /// most ten a second during a drag (`WindowGate`). Let go when those arrive.
+  @State private var draft: [Mark: Double] = [:]
   static let bins = 96
   /// The counts on the scale before the black and white points, `bins` steps from 0 to 1, the
   /// first and last holding what lies beyond.
@@ -203,6 +206,7 @@ struct LevelsHistogram: View {
     return min(2, max(0.4, log(q) / log(0.5)))
   }
   var body: some View {
+    let black = draft[.black] ?? self.black, white = draft[.white] ?? self.white, midtone = draft[.midtone] ?? self.midtone
     let counts = Self.counts(range, black: black, white: white)
     let mid = Self.midPoint(black: black, white: white, midtone: midtone)
     GeometryReader { geo in
@@ -246,15 +250,26 @@ struct LevelsHistogram: View {
             let start = Double(g.startLocation.x / w)
             dragging = [(Mark.black, black), (.midtone, mid), (.white, white)].min { abs($0.1 - start) < abs($1.1 - start) }?.0
           }
+          let value: Double
           switch dragging {
-          case .black: set(.black, min(0.4, max(0, min(v, white - 0.05))))
-          case .white: set(.white, max(0.6, min(1, max(v, black + 0.05))))
-          case .midtone: set(.midtone, Self.midtone(at: v, black: black, white: white))
-          case nil: break
+          case .black: value = min(0.4, max(0, min(v, white - 0.05)))
+          case .white: value = max(0.6, min(1, max(v, black + 0.05)))
+          case .midtone: value = Self.midtone(at: v, black: black, white: white)
+          case nil: return
+          }
+          if let mark = dragging {
+            draft[mark] = value
+            set(mark, value)
           }
         }
-        .onEnded { _ in dragging = nil })
+        .onEnded { _ in
+          dragging = nil
+          // The window's last update comes within a tenth of a second; should none change the
+          // values (the step refused), the marks go back to them all the same.
+          DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { if dragging == nil { draft = [:] } }
+        })
     }
+    .onChange(of: [self.black, self.white, self.midtone]) { if dragging == nil { draft = [:] } }
     .frame(height: 56)
     .padding(4).background(PlotScreen())
     .accessibilityElement().accessibilityLabel("色阶直方图")

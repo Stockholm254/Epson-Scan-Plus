@@ -195,9 +195,9 @@ struct ShotFailure: Error { let message: String }
     model.loadProject(rollURL.appendingPathComponent(AppModel.projectFile))
     guard !model.frames.isEmpty else { throw ShotFailure(message: "截图用的那一卷打不开：\(rollURL.path)") }
 
-    // ② taking the mask off: the light table, the loupe on the frame; the light table cut out.
+    // ③ grading: the light table, the loupe on the frame; the light table cut out.
     model.page = .convert
-    model.panelTab = .film
+    model.convertStep = .grade
     settle(3)
     // Every frame converted, not the first few over black cells.
     var converting = 0.0
@@ -214,8 +214,7 @@ struct ShotFailure: Error { let message: String }
     try save(main, "main-window.jpg", width: 1600)
     if let cut = Picture.crop(main, to: workArea(Picture.columns(window)), window: window) { try save(cut, "loupe.jpg", width: 1400) }
 
-    // The same with the left panel open, the areas numbered: its film tab, the preset's
-    // calibration unfolded under the film.
+    // The same with the left panel open, the areas numbered: ③'s, the export.
     let calibrationFolded = sections(["calibration": true])
     standard.set(true, forKey: "convertSidebarShown")
     settle(1.5)
@@ -223,22 +222,24 @@ struct ShotFailure: Error { let message: String }
     let whole = try Picture.capture(window, work: work)
     let columns = Picture.columns(window)
     try save(Picture.numbered(whole, window: window, columns: columns), "main-annotated.jpg", width: 2000)
+    let outputPanel = whole
 
-    // The left panel's pages, side by side: ① V850, ② 胶片 with 预设标定, ② 输出.
-    model.panelTab = .output
+    // The left panels side by side: ① V850, ② 胶片与画面 with 预设标定 unfolded, ③ 输出.
+    model.convertStep = .demask
+    settle(1.5)
+    let filmPanel = try Picture.capture(window, work: work)
+    model.convertStep = .grade
     settle()
-    let outputPanel = try Picture.capture(window, work: work)
     // Each from below the window's buttons.
     func panel(_ rect: CGRect?) -> CGRect? { rect.map { CGRect(x: $0.minX, y: 46, width: $0.width, height: $0.maxY - 46) } }
     let panels = [
       Picture.crop(capturePanel, to: panel(captureColumns.sidebar), window: window),
-      Picture.crop(whole, to: panel(columns.sidebar), window: window),
-      Picture.crop(outputPanel, to: panel(Picture.columns(window).sidebar), window: window),
+      Picture.crop(filmPanel, to: panel(columns.sidebar), window: window),
+      Picture.crop(outputPanel, to: panel(columns.sidebar), window: window),
     ].compactMap { $0 }
     if panels.count == 3, let row = Picture.sideBySide(panels) { try save(row, "panels.jpg", width: 1600) }
     calibrationFolded()
     standard.set(false, forKey: "convertSidebarShown")
-    model.panelTab = .film
 
     // The single view, the same frame.
     model.toggleLoupe(false)
@@ -282,6 +283,8 @@ struct ShotFailure: Error { let message: String }
       model.showSingle(true)
       settle(2)
       model.preferences.showDustMarks = false
+      // The crops and the dust are ②'s.
+      model.convertStep = .demask
       model.tool = .region
       settle(1.5)
       let region = try Picture.capture(window, work: work)
@@ -294,6 +297,7 @@ struct ShotFailure: Error { let message: String }
       let dust = try Picture.capture(window, work: work)
       if let cut = Picture.crop(dust, to: workArea(Picture.columns(window)), window: window) { try save(cut, "dust.jpg", width: 1400) }
       dustBack()
+      model.convertStep = .grade
       model.showSingle(false)
       // Back to the window's roll for the library and the leak page.
       model.loadProject(rollURL.appendingPathComponent(AppModel.projectFile))

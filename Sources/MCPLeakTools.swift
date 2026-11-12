@@ -31,7 +31,7 @@ extension MCPTools {
   static let leakTools: [Tool] = [
     Tool(name: "leak_get_state", description: "读取去漏光页的状态：当前照片与来源、是否已有参考图（及生成记录）、是否已应用去漏光，场景判断（白天 / 夜晚 / 混合及把握）、去偏色强度、保护设置、基础调整，以及参考匹配的对齐方向、可靠度、样本数和留出样本误差。", properties: [:]),
     Tool(name: "leak_list_jobs", description: "列出保存过的去漏光任务：编号、名称、是否已有参考图、最后修改时间。", properties: [:]),
-    Tool(name: "leak_open", description: "切到去漏光页并打开一张照片（App 要先有工程：在库里新建、打开或导入过）：frame 为本卷画面编号（如 \"09\"，按它当前的调色），或 job 为 leak_list_jobs 里的任务编号。", properties: [
+    Tool(name: "leak_open", description: "切到去漏光页并打开一张照片（App 要先有工程：在库里新建、打开或导入过）：frame 为本卷画面编号（如 \"09\"，按 ② 去色罩的结果，不带 ③ 的调色），或 job 为 leak_list_jobs 里的任务编号。", properties: [
       "frame": ["type": "string", "description": "本卷画面编号"], "job": ["type": "string", "description": "任务编号"],
     ]),
     Tool(name: "leak_start", description: "开始去漏光（免费，不调用 API）：有参考图时按它在本地拟合并应用；没有参考图时只按启用的局部区域校正，区域外的像素不变。两样都没有时会提示先请用户生成或导入参考图，或先标出区域。", properties: [:]),
@@ -97,10 +97,12 @@ extension MCPTools {
       "path": fileField,
     ], required: ["path"]),
     Tool(name: "leak_save_preset", description: "请用户保存去漏光预设：只在 App 里打开保存窗口，由用户选位置；本工具自己不写文件。", properties: [:]),
+    Tool(name: "leak_apply_to_grading", description: "把去漏光用到 ③ 调色（免费，不调用 API）：修复按去漏光页的结果量回这张照片的转换里，之后 ③ 的白平衡、影调、色阶、色彩、曲线和导出都在修好的照片上；原片不改，可用 ⌘Z 或 undo 撤销。去漏光页的基础调整不带过去。只对本卷照片、按 ② 结果建立的任务、去漏光页没有旋转或裁切时可用；做完切到 ③ 调色，返回和去漏光页结果的平均差（0–255）。", properties: [:]),
     Tool(name: "leak_export", description: "请用户导出去漏光结果：只在 App 里打开导出窗口（全分辨率 16 位 Adobe RGB TIFF，附 sRGB JPEG 和参数记录），由用户选位置；本工具自己不写文件。没有去漏光时导出的是带基础调整和片边处理的原片。", properties: [:]),
   ]
   static let leakInstructions = """
     去漏光页（FilmLightLab 修订 9）修复正片上的红色 / 品红漏光：参考图（同一张照片的干净版本，通常由图像模型生成）只指导平滑的色彩和明暗校正，输出像素都来自原片。
+    - 去漏光是可选的一步，在 ② 去色罩和 ③ 调色之间：本卷的照片按 ② 去色罩的结果进来（不带 ③ 的调色），修好以后用 leak_apply_to_grading 把修复用到 ③ 调色，之后在 ③ 接着调色（adjust、set_curve 等）和导出。导入的文件没有 ② 和 ③，修好以后用 leak_export。
     - 先用 leak_open 打开本卷照片或任务（或 leak_import 导入文件），leak_get_state 和 leak_preview 看情况；已有参考图时 leak_start 在本地免费修复。
     - 生成参考图要上传缩图并计费，只能由用户确认：用 leak_request_reference 在 App 里打开确认窗口，不要替用户决定。用户已有干净版本时用 leak_import_reference，免费。
     - 不想用 API 时：用户可以用自己订阅的图像模型做参考图——leak_export_upload 请用户存缩图（提示词同时复制），或 leak_reference_prompt 把提示词给用户；用户在 ChatGPT 等应用里上传、下载结果后，用 leak_import_reference 导入，再 leak_start。
@@ -630,6 +632,20 @@ extension MCPTools {
         lab.chooseReferenceUpload()
       }
       return say("已在 App 里打开保存缩图的窗口，由用户选位置；存好后提示词会复制到剪贴板。本工具没有写文件，也没有上传。")
+    case "leak_apply_to_grading":
+      try requireBase(lab)
+      try idle(lab)
+      if let why = onMain({ lab.whyNotIntoGrading }) { throw DeskError.message(why) }
+      let frame = onMain { lab.job?.origin?.frame }
+      onMain { model.applyLeakRepair() }
+      try settle(lab)
+      // The frame takes the repair on the main thread once the measurement is back.
+      let deadline = Date().addingTimeInterval(30)
+      while Date() < deadline, onMain({ model.frames.first { $0.id == frame }?.adjustments.leakFix == nil }) { usleep(50_000) }
+      guard let fix = onMain({ model.frames.first { $0.id == frame }?.adjustments.leakFix }) else {
+        throw DeskError.message("没有用到调色：" + onMain { lab.notice })
+      }
+      return say(String(format: "已用到 ③ 调色：和去漏光页的结果平均差 %.2f / 255（99%% 在 %.1f 以内）。现在在 ③ 调色。", fix.meanError ?? 0, fix.worstError ?? 0))
     case "leak_save_preset", "leak_export":
       try requireProject()
       try requireBase(lab)

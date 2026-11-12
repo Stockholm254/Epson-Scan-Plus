@@ -18,6 +18,10 @@ struct LeakJob: Codable, Identifiable {
     var film: String? = nil
     var format: String? = nil
     var dpi: Int? = nil
+    /// True when the job's picture is the frame as ② 去色罩 leaves it, with none of ③'s grading
+    /// (`ImagePipeline.neutral`): its repair can be taken into ③ (`AppModel.applyLeakRepair`).
+    /// Nil in jobs from before, made of the graded picture: they export as before.
+    var neutral: Bool? = nil
   }
   struct Generated: Codable, Equatable {
     struct Usage: Codable, Equatable { var total_tokens: Int?, input_tokens: Int?, output_tokens: Int? }
@@ -85,6 +89,9 @@ final class LeakLab: ObservableObject {
   weak var undoManager: UndoManager?
   /// A roll frame's positive at full resolution, from the app, as the origin converts it.
   var renderFrame: ((LeakJob.Origin) throws -> CGImage)?
+  /// The frame as the job's picture shows it (`ImagePipeline.neutral`), at most `longest` pixels
+  /// across, and the scale it is on: what the repair is measured on to take it into ③.
+  var renderNeutral: ((LeakJob.Origin, Int) throws -> (image: CGImage, scale: LeakNeutralScale))?
   private let preferences: Preferences?
   private var base: LeakImage? {
     didSet { baseRevision += 1 }
@@ -402,6 +409,8 @@ final class LeakLab: ObservableObject {
   /// Whether the job open is `origin`'s frame, converted otherwise than it is now.
   func stale(for origin: LeakJob.Origin) -> Bool {
     guard let o = job?.origin, o.frame == origin.frame, o.project == origin.project else { return false }
+    // A job of the frame as ② leaves it changes only with ②; ③'s grading comes after it.
+    if o.neutral == true { return !AppModel.sameDemasking(o.adjustments, origin.adjustments) || o.profile != origin.profile }
     return o.adjustments != origin.adjustments || o.profile != origin.profile
   }
   private static let rebuildLabel = "重建正片预览"
@@ -1025,6 +1034,70 @@ final class LeakLab: ObservableObject {
       }
     }
   }
+  /// A frame of the roll as ② leaves it: its orientation and crop are ②'s, not turned or cut here.
+  var geometryIsTheRolls: Bool { job?.origin?.neutral == true }
+  /// Whether the repair can go into ③ 调色: a frame of the open roll, its job made of the frame as
+  /// ② leaves it, not turned or cut here (that is ②'s to do), and something repaired. Else why not.
+  var whyNotIntoGrading: String? {
+    guard let j = job, j.origin != nil else { return "导入的照片不在卷里：去漏光以后用「导出」" }
+    guard j.origin?.neutral == true else { return "这个任务是从调好色的正片开始的（以前的做法）：在「照片」一节点「从 ② 的结果重新载入」，区域和参考图都留着" }
+    guard params.rotation == 0, params.crop == LeakCrop() else { return "方向和裁切请在 ② 去色罩里改；去漏光里的旋转和裁切去掉以后才能用到调色" }
+    guard repaired else { return "还没有去漏光" }
+    return nil
+  }
+  /// The repair measured back onto the conversion (`LeakFix.measure`): the frame's picture drawn
+  /// again as the job's was, repaired with the job's settings but none of the page's basic
+  /// adjustments (exposure, warmth, tint and contrast are ③'s now), and the change read off it
+  /// onto the straight line; then put on a grid over the frame's picture as the conversion reads
+  /// it, `place` taking each point of that to where it shows. `completion` on the main thread.
+  func measureRepair(gridAspect: Double, place: @escaping (CGPoint) -> CGPoint,
+    completion: @escaping (Result<(field: LeakFixField, mean: Double, worst: Double), Error>) -> Void)
+  {
+    guard let j = job, let origin = j.origin, let base, let renderNeutral, whyNotIntoGrading == nil else {
+      completion(.failure(DeskError.message(whyNotIntoGrading ?? "没有可以用到调色的去漏光。")))
+      return
+    }
+    var input = params
+    (input.exposure, input.temperature, input.tint, input.contrast) = (0, 0, 0, 0)
+    run("把去漏光用到调色") {
+      do {
+        let drawn = try renderNeutral(origin, max(base.width, base.height) + 200)
+        let before = LeakEngine.resized(try LeakImage(drawn.image), width: base.width)
+        let after = try LeakEngine.result(before, base: base, params: input, picture: Self.pictureHint(j, input))
+        // Measured at half the page's size at most: the correction is smooth, the boxes 1/80 across.
+        let k = min(1, 900 / Double(max(before.width, before.height)))
+        let w = max(8, Int(Double(before.width) * k)), h = max(8, Int(Double(before.height) * k))
+        let m = LeakFix.measure(before: Self.screenValues(before, w, h), after: Self.screenValues(after, w, h),
+          width: w, height: h, scale: drawn.scale, radius: max(4, max(w, h) / 80))
+        // Kept as a grid of at most 160 across, over the picture as the conversion reads it.
+        let (sa, sw, sh) = LeakFix.shrunk(m.a, width: w, height: h, longest: 160)
+        let (sd, _, _) = LeakFix.shrunk(m.d, width: w, height: h, longest: 160)
+        let gw = gridAspect >= 1 ? 160 : max(8, Int((160 * gridAspect).rounded()))
+        let gh = gridAspect >= 1 ? max(8, Int((160 / gridAspect).rounded())) : 160
+        let field = LeakFixField(width: gw, height: gh,
+          a: LeakFix.resampled(sa, width: sw, height: sh, to: gw, gh, place: place),
+          d: LeakFix.resampled(sd, width: sw, height: sh, to: gw, gh, place: place))
+        return { completion(.success((field, m.mean, m.worst))) }
+      } catch {
+        return { completion(.failure(error)) }
+      }
+    }
+  }
+  /// A picture's values as the screen's sRGB, 0–1, `width` × `height`, row after row from the top.
+  static func screenValues(_ image: LeakImage, _ width: Int, _ height: Int) -> [Float] {
+    var rgba = [Float](repeating: 0, count: width * height * 4)
+    let space = CGColorSpace(name: CGColorSpace.extendedSRGB)!
+    rgba.withUnsafeMutableBytes { raw in
+      guard let ctx = CGContext(data: raw.baseAddress, width: width, height: height, bitsPerComponent: 32, bytesPerRow: width * 16, space: space,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.floatComponents.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+      else { return }
+      ctx.interpolationQuality = .high
+      ctx.draw(image.cgImage(), in: CGRect(x: 0, y: 0, width: width, height: height))
+    }
+    var rgb = [Float](repeating: 0, count: width * height * 3)
+    for i in 0..<(width * height) { for c in 0..<3 { rgb[i * 3 + c] = rgba[i * 4 + c] } }
+    return rgb
+  }
   static func stem(_ name: String) -> String {
     var value = (name as NSString).deletingPathExtension.precomposedStringWithCanonicalMapping
       .replacingOccurrences(of: "[<>:\"/\\\\|?*\\x00-\\x1f\\x7f]", with: "_", options: .regularExpression)
@@ -1076,13 +1149,99 @@ extension AppModel {
     page = .leak
     leak.open(origin: origin)
   }
-  /// What a light-leak job keeps of a frame of the open roll: its conversion as it is now.
+  /// What a light-leak job keeps of a frame of the open roll: its conversion as it is now. The
+  /// job's picture is the frame as ② leaves it (`neutral`), so its repair can go into ③.
   func leakOrigin(_ frame: FilmFrame) -> LeakJob.Origin? {
     projectPath.map {
-      LeakJob.Origin(project: $0, frame: frame.id, frameName: frame.name, adjustments: frame.adjustments, profile: conversionProfile,
+      var origin = LeakJob.Origin(project: $0, frame: frame.id, frameName: frame.name, adjustments: frame.adjustments, profile: conversionProfile,
         film: filmName, format: format.shortMM == nil ? nil : format.rawValue,
         dpi: frame.hasFullResolution ? pixelDPI(frame).map { Int($0.rounded()) } : nil)
+      origin.adjustments.leakFix = nil
+      origin.neutral = true
+      return origin
     }
+  }
+  /// The frame of `origin` as 去漏光 works on it (`ImagePipeline.neutral`), at most `longest`
+  /// pixels across (nil, at full resolution), as the job converts it.
+  func leakNeutral(_ origin: LeakJob.Origin, longest: Int?) throws -> (image: CGImage, scale: LeakNeutralScale) {
+    let read = { (self.projectPath, self.frames.first { $0.id == origin.frame }) }
+    let (path, found) = Thread.isMainThread ? read() : DispatchQueue.main.sync(execute: read)
+    guard path == origin.project, var frame = found else {
+      let roll = URL(fileURLWithPath: origin.project).deletingLastPathComponent().lastPathComponent
+      throw DeskError.message("请先打开第 \(origin.frameName) 张所在的工程「\(roll)」。")
+    }
+    frame.adjustments = origin.adjustments
+    frame.adjustments.leakFix = nil
+    let image = try longest.map { try source(for: frame, maxDimension: $0) } ?? source(for: frame, full: true)
+    let pipeline = ImagePipeline.shared
+    let (ci, scale) = try pipeline.neutral(image, settings: frame.adjustments, profile: origin.profile)
+    guard let cg = pipeline.context.createCGImage(ci, from: ci.extent, format: .RGBAf, colorSpace: CGColorSpace(name: CGColorSpace.extendedSRGB)!)
+    else { throw DeskError.message("无法生成正片。") }
+    return (cg, scale)
+  }
+  /// 去漏光's repair taken into ③ 调色: measured (`LeakLab.measureRepair`), kept in the roll's
+  /// Repairs folder, and set on the frame as one edit; then ③, where it is graded.
+  func applyLeakRepair() {
+    guard let j = leak.job, let origin = j.origin, origin.project == projectPath,
+      let i = frames.firstIndex(where: { $0.id == origin.frame }), let root = sessionURL
+    else { leak.notice = leak.whyNotIntoGrading ?? "请先打开这张照片所在的卷。"; return }
+    let f = frames[i]
+    let s = f.adjustments
+    let aspect = exportPixels(f).map { size -> Double in
+      // The picture as the conversion reads it: before it is straightened and turned.
+      let turned = ((s.rotation % 4) + 4) % 2 == 1
+      return turned ? Double(size.height / size.width) : Double(size.width / size.height)
+    } ?? 1.5
+    let place = { (p: CGPoint) in ImageGeometry.display(p, settings: s, aspect: aspect) }
+    leak.measureRepair(gridAspect: aspect, place: place) { [weak self] result in
+      guard let self else { return }
+      switch result {
+      case .failure(let error):
+        self.leak.errorText = error.localizedDescription
+      case .success(let measured):
+        let name = "\(Self.exportFrameName(f.name))-\(String(Int(Date().timeIntervalSince1970), radix: 36)).leakfix"
+        let url = root.appendingPathComponent("Repairs", isDirectory: true).appendingPathComponent(name)
+        do { try measured.field.write(to: url) } catch {
+          self.leak.errorText = "去漏光的校正存不下来：\(error.localizedDescription)"
+          return
+        }
+        guard let k = self.frames.firstIndex(where: { $0.id == f.id }) else { return }
+        self.recordEdit("把去漏光用到调色")
+        let old = self.frames[k].adjustments.leakFix
+        self.frames[k].adjustments.leakFix = LeakFix(
+          file: url.path, job: j.id, made: Date(), meanError: measured.mean, worstError: measured.worst)
+        if let old { LeakFixStore.shared.forget(old.file) }
+        self.refresh()
+        self.updateThumbnails()
+        self.saveProject()
+        if self.selectedID != f.id { self.select(f.id) }
+        self.convertStep = .grade
+        self.page = .convert
+        self.status = String(format: "第 %@ 张的去漏光已用到 ③ 调色：之后的调色都在修好的照片上；和去漏光页的结果平均差 %.1f / 255", f.name, measured.mean)
+      }
+    }
+  }
+  /// Whether two settings of a frame make the same picture for 去漏光 (`ImagePipeline.neutral`):
+  /// the same base, slopes, white balance, ends and geometry, whatever ③ grades after them.
+  static func sameDemasking(_ a: Adjustments, _ b: Adjustments) -> Bool {
+    func part(_ s: Adjustments) -> Adjustments {
+      var p = s
+      // ③'s settings all as new, and the repair itself, which comes of this picture.
+      p.takeGrading(from: Adjustments())
+      p.leakFix = nil
+      return p
+    }
+    return part(a) == part(b)
+  }
+  /// The frame's repair taken out again, as one edit; its file stays, for ⌘Z.
+  func removeLeakRepair(_ id: UUID) {
+    guard let i = frames.firstIndex(where: { $0.id == id }), frames[i].adjustments.leakFix != nil else { return }
+    recordEdit("去掉去漏光")
+    frames[i].adjustments.leakFix = nil
+    refresh()
+    updateThumbnails()
+    saveProject()
+    status = "第 \(frames[i].name) 张不再用去漏光的修复"
   }
   /// A frame of the open roll at full resolution, converted as `origin` says and as an export
   /// would convert it.
@@ -1094,6 +1253,8 @@ extension AppModel {
       let roll = URL(fileURLWithPath: origin.project).deletingLastPathComponent().lastPathComponent
       throw DeskError.message("请先打开第 \(origin.frameName) 张所在的工程「\(roll)」。")
     }
+    // A job made of the frame as ② leaves it: that picture again, at full resolution.
+    if origin.neutral == true { return try leakNeutral(origin, longest: nil).image }
     // The job's conversion, the frame's sharpening as the roll works it out when the job set none.
     let strength = frame.adjustments.sharpening
     frame.adjustments = origin.adjustments
@@ -1112,6 +1273,10 @@ extension AppModel {
     lab.renderFrame = { [weak self] origin in
       guard let self else { throw DeskError.message("App 正在关闭。") }
       return try self.leakPositive(origin)
+    }
+    lab.renderNeutral = { [weak self] origin, longest in
+      guard let self else { throw DeskError.message("App 正在关闭。") }
+      return try self.leakNeutral(origin, longest: longest)
     }
     lab.credentials.restore()
     return lab

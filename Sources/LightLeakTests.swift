@@ -484,8 +484,9 @@ enum LightLeakTests {
     }
     func said(_ r: (content: [[String: Any]], isError: Bool)) -> String { r.content.first?["text"] as? String ?? "" }
     let names = MCPTools.tools.map(\.name)
-    try check(names.filter { $0.hasPrefix("leak_") }.count == 25 && Set(names).count == names.count && MCPTools.instructions.contains("leak_request_reference"),
-      "the MCP server lists the 去漏光 tools beside the conversion ones")
+    try check(names.filter { $0.hasPrefix("leak_") }.count == 26 && Set(names).count == names.count && MCPTools.instructions.contains("leak_request_reference")
+      && MCPTools.instructions.contains("leak_apply_to_grading"),
+      "the MCP server lists the 去漏光 tools beside the conversion ones, the repair into ③ among them")
     app.page = .convert
     app.openInLeak(frame.id)
     pageLab.wait()

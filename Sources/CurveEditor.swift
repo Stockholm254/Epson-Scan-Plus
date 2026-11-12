@@ -17,6 +17,9 @@ final class CurveState: ObservableObject {
   @Published var channel = 0
   /// The parametric curve taken, in place of a point curve.
   @Published var parametric = false
+  /// Counts the editor's changes to the curves: the editor draws each at once, while the window
+  /// waits for its gate (`WindowGate`) during a drag.
+  @Published var edits = 0
 }
 
 /// Edits the curves as Lightroom's curve panel does. The parametric curve: four zones of the tones

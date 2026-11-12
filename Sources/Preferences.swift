@@ -107,6 +107,10 @@ final class Preferences: ObservableObject {
   @Published var exportNameTemplate: String { didSet { defaults?.set(exportNameTemplate, forKey: "exportNameTemplate") } }
   /// The folder last chosen to export into (`AppModel.exportStart`).
   @Published var lastExportFolder: String? { didSet { defaults?.set(lastExportFolder, forKey: "lastExportFolder") } }
+  /// ② 去色罩 or ③ 调色, the step last worked in (`AppModel.ConvertStep`'s raw value): a roll opens there.
+  var lastStep: String? { didSet { defaults?.set(lastStep, forKey: "lastStep") } }
+  /// Whether the window has said once that grading moved to ③ and 去漏光 into ②.
+  var stepsIntroduced: Bool { didSet { defaults?.set(stepsIntroduced, forKey: "stepsIntroduced") } }
   @Published var sheet: ContactSheet.Layout {
     didSet { defaults?.set(try? JSONEncoder().encode(sheet), forKey: "contactSheet") }
   }
@@ -202,6 +206,8 @@ final class Preferences: ObservableObject {
     exportColorSpace = defaults?.string(forKey: "exportColorSpace").flatMap(ExportColorSpace.init(rawValue:)) ?? .sRGB
     exportNameTemplate = defaults?.string(forKey: "exportNameTemplate") ?? ExportNaming.standard
     lastExportFolder = defaults?.string(forKey: "lastExportFolder")
+    lastStep = defaults?.string(forKey: "lastStep")
+    stepsIntroduced = defaults?.bool(forKey: "stepsIntroduced") ?? false
     let quality = defaults?.double(forKey: "jpegQuality") ?? 0
     jpegQuality = quality > 0 ? min(1, max(0.5, quality)) : 0.97
     sheet = defaults?.data(forKey: "contactSheet").flatMap { try? JSONDecoder().decode(ContactSheet.Layout.self, from: $0) }

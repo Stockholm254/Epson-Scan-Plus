@@ -839,7 +839,7 @@ final class FilmCanvasView: NSView {
             .foregroundColor: NSColor.black.withAlphaComponent(appear),
           ])
         // Exported as it is now, changed since, or on its way out, beside its number, as the strip marks it.
-        if model.page == .convert, let mark = Self.markImage(model.exportMark(f)) {
+        if model.page == .convert, model.convertStep == .grade, let mark = Self.markImage(model.exportMark(f)) {
           mark.draw(
             in: NSRect(x: label.maxX + 3, y: label.minY + 1, width: 17, height: 17), from: .zero, operation: .sourceOver,
             fraction: appear, respectFlipped: true, hints: nil)
@@ -1353,6 +1353,9 @@ final class FilmCanvasView: NSView {
         guard let model, let now = model.frames.first(where: { $0.id == frame.id }) else { return }
         model.exportImages([now])
       })
+      if model.exportStamps[frame.id] != nil {
+        menu.addItem(ActionMenuItem("在 Finder 中显示导出的文件", symbol: "folder") { [weak model] in model?.revealExport(frame) })
+      }
       menu.addItem(.separator())
       menu.addItem(ActionMenuItem(frame.enabled ? "取消勾选" : "勾选", symbol: frame.enabled ? "circle" : "checkmark.circle", enabled: free) { [weak model] in
         model?.setEnabled(frame.id, enabled: !frame.enabled)
@@ -1893,7 +1896,7 @@ final class FilmCanvasView: NSView {
       h.combine(f.id)
       h.combine(f.name)
       h.combine(f.enabled)
-      h.combine(model.page == .convert ? model.exportMark(f) : .notExported)
+      h.combine(model.page == .convert && model.convertStep == .grade ? model.exportMark(f) : .notExported)
       let r = model.contactRect(f)
       for v in [r.x, r.y, r.width, r.height] { h.combine(v) }
     }

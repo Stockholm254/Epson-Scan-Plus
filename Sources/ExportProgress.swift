@@ -90,3 +90,21 @@ enum ExportEstimate {
     return values?.volumeAvailableCapacityForImportantUsage.map(Double.init)
   }
 }
+
+/// When something was done, as a Chinese sentence says it, whatever language the system's is:
+/// 刚才, 5 分钟前, 今天 14:20, 昨天 09:05, 11 月 3 日.
+enum WhenSaid {
+  static func ago(_ date: Date, now: Date = Date()) -> String {
+    let s = now.timeIntervalSince(date)
+    if s < 60 { return "刚才" }
+    if s < 3600 { return "\(Int(s / 60)) 分钟前" }
+    let calendar = Calendar(identifier: .gregorian)
+    let hm = calendar.dateComponents([.hour, .minute], from: date)
+    let clock = String(format: "%02d:%02d", hm.hour ?? 0, hm.minute ?? 0)
+    if calendar.isDate(date, inSameDayAs: now) { return "今天 " + clock }
+    if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: yesterday) { return "昨天 " + clock }
+    let md = calendar.dateComponents([.year, .month, .day], from: date)
+    let thisYear = calendar.component(.year, from: now) == md.year
+    return (thisYear ? "" : "\(md.year ?? 0) 年 ") + "\(md.month ?? 0) 月 \(md.day ?? 0) 日"
+  }
+}

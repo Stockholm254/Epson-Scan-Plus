@@ -13,10 +13,10 @@ extension ContentView {
             ForEach(AppModel.CaptureSource.allCases, id: \.self) { Text($0.short).tag($0).help($0.rawValue) }
           }
         } else if m.page != .library {
-          // Module ②'s film, its preset and calibrating it, its base and the frame's extent; exporting.
-          Picker("面板", selection: $m.panelTab) {
-            ForEach(AppModel.PanelTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-          }
+          // ② the film, its preset and calibrating it, its base and the frame's extent; ③ exporting:
+          // each step its own, named, not a tab of the other's.
+          Text(m.convertStep == .demask ? "② 胶片与画面" : "③ 输出").font(.system(size: 12, weight: .semibold))
+            .frame(maxWidth: .infinity)
         }
       }.pickerStyle(.segmented).labelsHidden().padding(.horizontal, 14).padding(.vertical, 10)
       Divider()
@@ -30,13 +30,13 @@ extension ContentView {
               case .camera: cameraTab.transition(.opacity)
               }
             } else {
-              switch m.panelTab {
-              case .film: filmTab.transition(.opacity)
-              case .output: outputTab.transition(.opacity)
+              switch m.convertStep {
+              case .demask: filmTab.transition(.opacity)
+              case .grade: outputTab.transition(.opacity)
               }
             }
           }
-          .animation(.easeInOut(duration: 0.18), value: m.panelTab)
+          .animation(.easeInOut(duration: 0.18), value: m.convertStep)
           .animation(.easeInOut(duration: 0.18), value: m.captureSource)
           Spacer(minLength: 16)
         }.padding(16).buttonStyle(.bordered).controlSize(.small)
@@ -488,10 +488,20 @@ extension ContentView {
       titled("接触表", symbol: "square.grid.3x2", info:
         "把勾选的画面排成一张图片，格式同上；上面的小图就是它排出来的样子，改排列、每行张数、背景和方向时跟着变。\n\n「预览 · 立即导出」按整幅预览的分辨率（600 dpi 预览时每张 35 mm 约 850 像素）直接生成，不扫描；已正式扫描的画面按同样的分辨率读取。\n\n「1200 dpi · 先扫描」时，尚未扫描或低于 1200 dpi 的画面先以 1200 dpi 扫描，结果保存为这些画面的原始文件，再生成 1200 dpi 的接触表。")
       // As wide as the panel, as tall as the sheet's shape asks, within reason.
+      let sheetAspect = SheetPreview.aspect(ticked, thumbnails: m.thumbnails, layout: m.preferences.sheet)
       SheetPreview(frames: ticked, thumbnails: m.thumbnails, layout: m.preferences.sheet)
-        .aspectRatio(max(0.9, SheetPreview.aspect(ticked, thumbnails: m.thumbnails, layout: m.preferences.sheet)), contentMode: .fit)
+        .aspectRatio(max(0.9, sheetAspect), contentMode: .fit)
         .frame(maxWidth: .infinity, maxHeight: 240)
         .animation(.spring(response: 0.42, dampingFraction: 0.82), value: m.preferences.sheet)
+        .contentShape(Rectangle())
+        .onTapGesture { if !ticked.isEmpty { sheetPreviewOpen = true } }
+        .help("点一下放大看接触表排出来的样子")
+        // Large, beside the panel, and still following the settings under it.
+        .popover(isPresented: $sheetPreviewOpen, arrowEdge: .trailing) {
+          SheetPreview(frames: ticked, thumbnails: m.thumbnails, layout: m.preferences.sheet)
+            .aspectRatio(max(0.5, sheetAspect), contentMode: .fit)
+            .frame(width: 640).frame(maxHeight: 720).padding(16)
+        }
         .overlay {
           if ticked.isEmpty {
             Text("没有勾选的画面").font(.system(size: 11)).foregroundStyle(.secondary)

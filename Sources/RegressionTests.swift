@@ -12,6 +12,8 @@ enum RegressionTests {
     try MultiSelectTests.run(folder: folder)
     try ExportFlowTests.run(folder: folder)
     try WindowGateTests.run(folder: folder)
+    try LeakFixTests.run(folder: folder)
+    try StepTests.run(folder: folder)
     try StraightenTests.run(folder: folder)
     try ToneTests.run(folder: folder)
     try HighlightTests.run(folder: folder)

@@ -18,7 +18,7 @@ enum Shortcuts {
   static let groups: [Group] = [
     Group(title: "库和模块", keys: [
       Key(keys: "⇧⌘L", does: "库"),
-      Key(keys: "⌥⌘1 – 3", does: "① 采集、② 去色罩、③ 去漏光"),
+      Key(keys: "⌥⌘1 – 3", does: "① 采集、② 去色罩、③ 调色"),
       Key(keys: "⌘N", does: "新建工程"),
       Key(keys: "⌘O", does: "导入图像（③ 里导入正片）"),
       Key(keys: "⇧⌘O", does: "打开工程"),

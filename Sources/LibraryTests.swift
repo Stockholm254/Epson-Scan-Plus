@@ -193,7 +193,7 @@ enum LibraryTests {
     AppModel.firstPage = .convert
     model.page = .capture
     try check(AppModel.opensOn == .library && model.page == .library && !model.hasProject && model.libraryRoots.count == 1
-      && AppModel.Page.allCases.map(\.title) == ["库", "① 采集", "② 去色罩", "③ 去漏光"],
+      && AppModel.Station.allCases.map(\.title) == ["库", "① 采集", "② 去色罩", "③ 调色"],
       "the window opens on the library, the first tab and unnumbered, the modules ①②③ after it shut until there is a project; a library chosen elsewhere lists only itself")
     let refusedLeak = MCPTools.call("leak_export_upload", [:], model: model)
     try check(refusedLeak.isError && (refusedLeak.content.first?["text"] as? String ?? "").contains("新建工程") && model.page == .library,

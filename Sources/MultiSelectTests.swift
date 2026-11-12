@@ -52,6 +52,8 @@ enum MultiSelectTests {
     try check(model.frames.map(\.adjustments.exposure) == [0, 0, 0, 0, 0.8] && model.frames[0].adjustments.rotation == 1,
       "重置 sets the three back and keeps how each faces; a frame not chosen keeps its own")
     model.frames[0].adjustments.saturation = 1.4
+    // Saturation is ③'s: 同步 there gives the grading.
+    model.convertStep = .grade
     model.syncSettings()
     try check(model.frames.map(\.adjustments.saturation) == [1.4, 1.4, 1.4, 1, 1] && model.frames[4].adjustments.exposure == 0.8,
       "同步 takes the frame shown's settings to the frames chosen with it, not the roll")

@@ -467,6 +467,9 @@ struct Adjustments: Codable, Equatable {
   /// Straightening, in degrees clockwise on screen, before the quarter turns: the frame turned
   /// about its middle and cut to the largest rectangle of its own shape inside. Nil is level.
   var angle: Double? = nil
+  /// A light-leak repair from 去漏光, applied in the conversion before ③'s grading (`LeakFix`);
+  /// each frame's own, never synced, pasted or reset with the rest.
+  var leakFix: LeakFix? = nil
   /// Turns the displayed picture 90°. Rotation is applied before the mirror, so a
   /// mirrored frame needs the opposite raw step to turn the same way on screen.
   mutating func turn(clockwise: Bool) {
@@ -621,6 +624,39 @@ struct FilmFrame: Identifiable, Codable {
   var needsRescan: Bool { scanPath != nil && sourcePath == nil && !captureRect.contains(rect) }
 }
 
+/// Which of a frame's settings: ③ 调色's (how the positive is graded), ② 去色罩's (how the
+/// negative becomes it: the film, its base, the frame's geometry and region, a leak repair), or all.
+/// 重置, 同步 and 粘贴 in the window act on the step's own, so neither step reaches into the other's.
+enum SettingsScope { case all, demasking, grading }
+
+extension Adjustments {
+  /// `other`'s ③ 调色 settings in place of these, ② 去色罩's kept: the one list of what grading is.
+  /// Every setting not named here is ②'s.
+  mutating func takeGrading(from o: Adjustments) {
+    (autoWhiteBalance, manualBalance, neutralSample, neutralPicked) = (o.autoWhiteBalance, o.manualBalance, o.neutralSample, o.neutralPicked)
+    (warmth, tint, shadowWarmth, shadowTint) = (o.warmth, o.tint, o.shadowWarmth, o.shadowTint)
+    (sharedBalance, sharedLevels, rollPrint) = (o.sharedBalance, o.sharedLevels, o.rollPrint)
+    (exposure, contrast, highlights, pressHighlights, shadows) = (o.exposure, o.contrast, o.highlights, o.pressHighlights, o.shadows)
+    (autoLevels, black, white, midtone) = (o.autoLevels, o.black, o.white, o.midtone)
+    (saturation, colourNoise, softEnds) = (o.saturation, o.colourNoise, o.softEnds)
+    (curves, sharpening) = (o.curves, o.sharpening)
+  }
+  /// `other`'s ② 去色罩 settings in place of these, ③ 调色's kept.
+  mutating func takeDemasking(from o: Adjustments) {
+    let grading = self
+    self = o
+    takeGrading(from: grading)
+  }
+  /// `other`'s settings of `scope` in place of these.
+  mutating func take(_ scope: SettingsScope, from o: Adjustments) {
+    switch scope {
+    case .all: self = o
+    case .grading: takeGrading(from: o)
+    case .demasking: takeDemasking(from: o)
+    }
+  }
+}
+
 struct DeskProject: Codable {
   var version = 1
   var overviewPath: String
@@ -687,6 +723,18 @@ enum DeskError: LocalizedError {
   var errorDescription: String? {
     if case .message(let s) = self { return s }
     return nil
+  }
+}
+
+extension CanvasTool {
+  /// The step of ② 去色罩 and ③ 调色 a tool belongs to: ② takes the mask off (the crops, the base,
+  /// dust, calibrating the film), ③ grades (the greys, the curves); nil for both, or neither.
+  var step: AppModel.ConvertStep? {
+    switch self {
+    case .crop, .region, .base, .dust, .calibrate, .it8: return .demask
+    case .neutral, .shadowNeutral, .curve: return .grade
+    default: return nil
+    }
   }
 }
 

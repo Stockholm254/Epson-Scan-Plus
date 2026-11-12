@@ -5,6 +5,8 @@ import SwiftUI
 /// changed since. Small, in the frame's corner, and only in ② where frames are exported.
 struct ExportMarkView: View {
   let mark: ExportMark
+  /// The file and when, for the tooltip.
+  var note: String? = nil
   var body: some View {
     ZStack {
       switch mark {
@@ -30,7 +32,7 @@ struct ExportMarkView: View {
     // the strip is drawn.
     .background { if mark != .notExported { Circle().fill(.black.opacity(0.45)).padding(-1.5) } }
     .animation(.spring(response: 0.32, dampingFraction: 0.62), value: mark)
-    .help(help)
+    .help(note.map { help + "\n" + $0 } ?? help)
     .accessibilityLabel(help)
   }
   static let green = Color(red: 0.3, green: 0.72, blue: 0.4)

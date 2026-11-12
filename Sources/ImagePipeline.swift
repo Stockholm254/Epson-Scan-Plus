@@ -298,6 +298,8 @@ final class ImagePipeline {
     /// Where that part lies in the picture, while the region follows it and the film's edge was
     /// found inside the crop (`followedRegion`).
     var followed: NormalRect?
+    /// Where the part lies in the picture, 0–1 from its top left.
+    var rect = NormalRect.full
   }
   /// The part of a frame's picture the de-masking statistics read: its de-masking region where one
   /// is set (`Adjustments.analysisRegion`); else, where the crop takes in the film's edge (rebate,
@@ -309,10 +311,10 @@ final class ImagePipeline {
       guard region.width > 0, region.height > 0, let part = try? crop(image, rect: region) else {
         return AnalysisPart(image: image, margin: 0, followed: nil)
       }
-      return AnalysisPart(image: part, margin: 0, followed: nil)
+      return AnalysisPart(image: part, margin: 0, followed: nil, rect: region)
     }
     if let followed = followedRegion(image, settings: settings), let part = try? crop(image, rect: followed) {
-      return AnalysisPart(image: part, margin: 0, followed: followed)
+      return AnalysisPart(image: part, margin: 0, followed: followed, rect: followed)
     }
     return AnalysisPart(image: image, margin: 0.05, followed: nil)
   }
@@ -334,8 +336,12 @@ final class ImagePipeline {
   }
   /// `r` is the part read (`analysisPart`), `margin` the share of each side of it left out; `base`
   /// the base to take its film against where none is picked or known for the roll.
-  func densities(_ r: Samples, settings: Adjustments, margin: Double, base fallback: RGB? = nil) -> (base: RGB, density: [[Double]]) {
-    var pixels = [[Double]]()
+  /// `correct` gives a sample's densities as a light-leak repair leaves them (`leakCorrection`), by
+  /// where it lies in the part.
+  func densities(_ r: Samples, settings: Adjustments, margin: Double, base fallback: RGB? = nil,
+    correct: ((Int, Int, [Double]) -> [Double])? = nil) -> (base: RGB, density: [[Double]])
+  {
+    var pixels = [[Double]](), places = [(Int, Int)]()
     // Statistics are deliberately separate from the export crop. Never feed the expanded
     // crop/film-base editing context into these statistics.
     let marginX = margin > 0 ? max(1, Int(ceil(Double(r.width) * margin))) : 0
@@ -344,7 +350,10 @@ final class ImagePipeline {
       for x in marginX..<max(marginX + 1, r.width - marginX) {
         let p = r.pixel(x, y).values
         // Clipped light (leaks, clear film) carries no density.
-        if p.min()! < 0.995 && p.max()! > 0 { pixels.append(p.map { max(1e-6, $0) }) }
+        if p.min()! < 0.995 && p.max()! > 0 {
+          pixels.append(p.map { max(1e-6, $0) })
+          places.append((x, y))
+        }
       }
     }
     // A picked base wins, then the roll's base from between the frames, then this frame's thinnest film.
@@ -353,9 +362,10 @@ final class ImagePipeline {
     // Only near-opaque areas, over 3.0 D above the base in every channel (holder, frame lines),
     // are left out, so a linear scan's densest highlights stay in the statistics.
     var density = [[Double](), [Double](), [Double]()]
-    for p in pixels {
-      let d = (0..<3).map { log10(max(0.0001, base.values[$0]) / p[$0]) * settings.inputGamma }
+    for (k, p) in pixels.enumerated() {
+      var d = (0..<3).map { log10(max(0.0001, base.values[$0]) / p[$0]) * settings.inputGamma }
       guard d.contains(where: { $0 < 3 }) else { continue }
+      if let correct { d = correct(places[k].0, places[k].1, d) }
       for c in 0..<3 { density[c].append(d[c]) }
     }
     if density[0].isEmpty {
@@ -364,6 +374,22 @@ final class ImagePipeline {
     return (base, density)
   }
 
+  /// A sample's densities as a frame's light-leak repair leaves them (`LeakFix`), for the statistics
+  /// ③ reads (auto white balance and levels, the roll's print), so a leak no longer pulls them as
+  /// the picture shows it repaired: each channel to the film's exposure through its slope and toe,
+  /// corrected there as the kernel corrects it, and back. The sample by its place on the part's
+  /// grid, `width` × `height`; nil without a repair, or for a positive.
+  func leakCorrection(_ s: Adjustments, profile: FilmProfile, part: AnalysisPart, width: Int, height: Int) -> ((Int, Int, [Double]) -> [Double])? {
+    guard s.inputIsNegative, let fix = s.leakFix, let field = LeakFixStore.shared.field(fix), width > 0, height > 0 else { return nil }
+    let slopes = Self.slopes(s, profile).slopes.values, toe = Self.toe(s, profile).values, r = part.rect
+    return { x, y, d in
+      let at = field.sample(r.x + (Double(x) + 0.5) / Double(width) * r.width, r.y + (Double(y) + 0.5) / Double(height) * r.height)
+      return (0..<3).map { c in
+        let e = FilmToe.exposure(d[c] / slopes[c], width: toe[c])
+        return FilmToe.density(at.a[c] * e + at.d[c], width: toe[c]) * slopes[c]
+      }
+    }
+  }
   /// The slopes a frame converts with, and whether they fix each channel's contrast: a calibrated
   /// preset first, then the roll's own estimate, then the preset's data-sheet slopes. Only the
   /// generic preset without a roll estimate leaves channel contrast to per-frame stretching.
@@ -462,8 +488,10 @@ final class ImagePipeline {
       a.followed = part.followed
       return a
     }
-    let (base, density) = densities(samples(part.image, maxDimension: 300), settings: settings, margin: part.margin,
-      base: thinnestOfCrop(image, part, settings, maxDimension: 300))
+    let read = samples(part.image, maxDimension: 300)
+    let (base, density) = densities(read, settings: settings, margin: part.margin,
+      base: thinnestOfCrop(image, part, settings, maxDimension: 300),
+      correct: leakCorrection(settings, profile: profile, part: part, width: read.width, height: read.height))
     var a = analyze(base: base, density: density, settings: settings, profile: profile)
     a.followed = part.followed
     if let sampled = a.reach, let counted = pixelReach(part.image, settings: settings, profile: profile, analysis: a) {
@@ -497,8 +525,10 @@ final class ImagePipeline {
     // Each frame's part read (`analysisPart`), its highlight reach too.
     let each = frames.map { f -> (image: CGImage, base: RGB, density: [[Double]], settings: Adjustments) in
       let part = analysisPart(f.image, f.settings)
-      let d = densities(samples(part.image, maxDimension: 300), settings: f.settings, margin: part.margin,
-        base: thinnestOfCrop(f.image, part, f.settings, maxDimension: 300))
+      let read = samples(part.image, maxDimension: 300)
+      let d = densities(read, settings: f.settings, margin: part.margin,
+        base: thinnestOfCrop(f.image, part, f.settings, maxDimension: 300),
+        correct: leakCorrection(f.settings, profile: profile, part: part, width: read.width, height: read.height))
       return (part.image, d.base, d.density, f.settings)
     }.filter { !$0.density[0].isEmpty }
     var pooled = [[Double](), [Double](), [Double]()]
@@ -552,12 +582,12 @@ final class ImagePipeline {
   /// they keep their light while the grain is still averaged away, and a preview and a full export,
   /// both brought to that size, read alike. Nil for a positive.
   func pixelReach(_ image: CGImage, settings s: Adjustments, profile: FilmProfile, analysis a: ToneAnalysis) -> Double? {
-    guard Self.reachDimension > 0, s.inputIsNegative, let toned = Kernels.negativeRange else { return nil }
+    guard Self.reachDimension > 0, s.inputIsNegative, Kernels.negativeRange != nil else { return nil }
     let scale = min(1, Double(Self.reachDimension) / Double(max(image.width, image.height)))
     let ci = CIImage(cgImage: image, options: [.colorSpace: NSNull()]).transformed(by: CGAffineTransform(scaleX: scale, y: scale))
     var plain = s
     (plain.exposure, plain.contrast, plain.warmth, plain.tint, plain.shadowWarmth, plain.shadowTint, plain.black, plain.white) = (0, 1, 0, 0, nil, nil, 0, 1)
-    guard let tones = toned.apply(extent: ci.extent, arguments: Self.arguments(ci, plain, profile, a)) else { return nil }
+    guard let tones = converted(.range, ci, plain, profile, a) else { return nil }
     // Each pixel's brightest channel, counted in `n` steps from `lo` to `lo + span`, past them in the end steps.
     let n = 2048, lo = -1.0, span = 4.0
     let peaks = tones.applyingFilter("CIMaximumComponent").applyingFilter("CIColorMatrix", parameters: [
@@ -729,10 +759,10 @@ final class ImagePipeline {
     sharpener: Sharpener? = nil, extendedRange: Bool = false
   ) throws -> CIImage {
     let a = analysis ?? analyze(image, settings: s, profile: profile)
-    guard let kernel = extendedRange ? Kernels.negativeUnclipped : Kernels.negative else { throw DeskError.message("图像处理内核初始化失败。") }
+    guard (extendedRange ? Kernels.negativeUnclipped : Kernels.negative) != nil else { throw DeskError.message("图像处理内核初始化失败。") }
     let source = try sharpener.map { try sharpen(image, with: $0) } ?? image
     let ci = CIImage(cgImage: source, options: [.colorSpace: NSNull()])
-    guard var result = kernel.apply(extent: ci.extent, arguments: Self.arguments(ci, s, profile, a)) else {
+    guard var result = converted(extendedRange ? .unclipped : .clipped, ci, s, profile, a) else {
       throw DeskError.message("图像处理失败。")
     }
     if let amount = s.colourNoise, amount > 0 {
@@ -749,6 +779,52 @@ final class ImagePipeline {
     }
     return result.transformed(
       by: CGAffineTransform(translationX: -result.extent.minX, y: -result.extent.minY))
+  }
+  /// Which of the conversion's kernels: the picture clipped, unclipped for a wide export, or its
+  /// tones on the straight line up to the ends (`toneRange`, `pixelReach`).
+  enum Conversion { case clipped, unclipped, range }
+  /// The conversion `kind` of `ci` with `s` and `a`: with the frame's light-leak repair spread
+  /// over it when it has one (`LeakFix`), else exactly as without.
+  func converted(_ kind: Conversion, _ ci: CIImage, _ s: Adjustments, _ profile: FilmProfile, _ a: ToneAnalysis) -> CIImage? {
+    var args = Self.arguments(ci, s, profile, a)
+    if let fix = s.leakFix, let planes = LeakFixStore.shared.planes(fix, over: ci.extent) {
+      let fixed: CIColorKernel? = switch kind {
+      case .clipped: Kernels.negativeFixed
+      case .unclipped: Kernels.negativeUnclippedFixed
+      case .range: Kernels.negativeRangeFixed
+      }
+      args.insert(contentsOf: [planes.a, planes.d], at: 1)
+      return fixed?.apply(extent: ci.extent, arguments: args)
+    }
+    let plain: CIColorKernel? = switch kind {
+    case .clipped: Kernels.negative
+    case .unclipped: Kernels.negativeUnclipped
+    case .range: Kernels.negativeRange
+    }
+    return plain?.apply(extent: ci.extent, arguments: args)
+  }
+  /// 去漏光's picture of a frame (`Kernels.negativeNeutral`): taken off its mask and put on the
+  /// print's scale with none of ③'s grading, straightened, turned and mirrored as the frame shows,
+  /// unclipped colours kept as they are; with the scale it is on, for `LeakFix.measure`.
+  func neutral(_ image: CGImage, settings s: Adjustments, profile: FilmProfile) throws -> (image: CIImage, scale: LeakNeutralScale) {
+    var plain = s
+    plain.leakFix = nil
+    plain.exposure = 0
+    let a = analyze(image, settings: plain, profile: profile)
+    guard let kernel = Kernels.negativeNeutral else { throw DeskError.message("图像处理内核初始化失败。") }
+    let ci = CIImage(cgImage: image, options: [.colorSpace: NSNull()])
+    guard var result = kernel.apply(extent: ci.extent, arguments: Self.arguments(ci, plain, profile, a)) else {
+      throw DeskError.message("图像处理失败。")
+    }
+    result = Self.straightened(result, degrees: s.angle ?? 0)
+    if s.rotation % 4 != 0 { result = result.oriented(forExifOrientation: [1, 6, 3, 8][((s.rotation % 4) + 4) % 4]) }
+    if s.flipHorizontal == true { result = result.transformed(by: CGAffineTransform(scaleX: -1, y: 1)) }
+    result = result.transformed(by: CGAffineTransform(translationX: -result.extent.minX, y: -result.extent.minY))
+    let scale = LeakNeutralScale(
+      negative: plain.inputIsNegative, low: a.low, high: a.high,
+      encode: plain.inputIsNegative ? 1 : 1 / (plain.isSlide ? Self.slideEncoding : max(plain.inputGamma, 0.1)),
+      gain: a.gain.values, balance: a.balance.values)
+    return (result, scale)
   }
   /// The `negative` kernels' arguments for `ci`.
   static func arguments(_ ci: CIImage, _ s: Adjustments, _ profile: FilmProfile, _ a: ToneAnalysis) -> [Any] {
@@ -867,9 +943,9 @@ final class ImagePipeline {
   /// read a stop lower at 300 pixels across than at 3000). The screen's black and white are found
   /// by sending a grey ramp over that scale through the frame's ends, midtone and curves.
   func toneRange(_ image: CGImage, settings s: Adjustments, profile: FilmProfile, analysis a: ToneAnalysis) -> ToneRange? {
-    guard let toned = Kernels.negativeRange, let ended = Kernels.negative else { return nil }
+    guard Kernels.negativeRange != nil, let ended = Kernels.negative else { return nil }
     let ci = CIImage(cgImage: image, options: [.colorSpace: NSNull()])
-    guard let tones = toned.apply(extent: ci.extent, arguments: Self.arguments(ci, s, profile, a)) else { return nil }
+    guard let tones = converted(.range, ci, s, profile, a) else { return nil }
     // Counted on the GPU in `n` steps from `lo` to `lo + span`, past them in the end steps: each
     // channel, and each pixel's brightest and darkest channel; shares of the frame.
     let n = 2048, lo = -1.0, span = 4.0, width = span / Double(n)

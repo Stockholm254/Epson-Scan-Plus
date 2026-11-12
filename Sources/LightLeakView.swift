@@ -60,16 +60,19 @@ struct LeakViewer: View {
             Text("参考图").tag(true)
           }.pickerStyle(.segmented).frame(width: 130).help("参考图只提供平滑的色彩校正；结果的每个像素都来自原片")
         }
-        Button {
-          lab.rotate(by: -90)
-        } label: {
-          Image(systemName: "rotate.left")
-        }.help("左转 90°：重建正片预览；已有参考图会自动匹配方向，本地免费重算")
-        Button {
-          lab.rotate(by: 90)
-        } label: {
-          Image(systemName: "rotate.right")
-        }.help("右转 90°")
+        // A frame of the roll faces as ② turns it: turned here, its repair could not go into ③.
+        Group {
+          Button {
+            lab.rotate(by: -90)
+          } label: {
+            Image(systemName: "rotate.left")
+          }.help(lab.geometryIsTheRolls ? "方向在 ② 去色罩里转（单张视图下面的旋转键）" : "左转 90°：重建正片预览；已有参考图会自动匹配方向，本地免费重算")
+          Button {
+            lab.rotate(by: 90)
+          } label: {
+            Image(systemName: "rotate.right")
+          }.help(lab.geometryIsTheRolls ? "方向在 ② 去色罩里转（单张视图下面的旋转键）" : "右转 90°")
+        }.disabled(lab.geometryIsTheRolls)
       }.buttonStyle(.bordered).controlSize(.small).disabled(!lab.hasBase || lab.busy != nil)
         .padding(.horizontal, 16).padding(.vertical, 10)
       ZStack {
@@ -243,6 +246,28 @@ struct LeakPanel: View {
         adjustments
       }.padding(18).buttonStyle(.bordered).controlSize(.small)
     }
+    // Back into the roll's flow, pinned under the sections: the repair into ③ 调色, or on without it.
+    .safeAreaInset(edge: .bottom, spacing: 0) {
+      if frame != nil {
+        VStack(spacing: 6) {
+          Divider()
+          let why = lab.whyNotIntoGrading
+          Button {
+            m.applyLeakRepair()
+          } label: {
+            Label("用到 ③ 调色", systemImage: "arrow.right").frame(maxWidth: .infinity)
+          }.buttonStyle(KeyStyle(prominent: true)).controlSize(.regular)
+            .disabled(why != nil || lab.busy != nil)
+            .help(why ?? "把这次去漏光放进这张照片的转换：回到 ③ 调色，之后的调色、导出、接触表都在修好的照片上；原片不改，随时可以在 ③ 里去掉")
+          if let why { note(why).frame(maxWidth: .infinity, alignment: .leading) }
+          HStack {
+            Button("返回 ② 去色罩") { m.station = .demask }.help("回到 ② 去色罩；这次的修改留在任务里，下次打开接着修")
+            Spacer()
+            Button("不修，到 ③ 调色") { m.station = .grade }.help("这张不用去漏光，直接到 ③ 调色")
+          }.buttonStyle(.link).font(.system(size: 11))
+        }.padding(.horizontal, 18).padding(.vertical, 10).background(.bar)
+      }
+    }
   }
   func header(_ text: String, symbol: String, info: String) -> some View {
     HStack {
@@ -262,7 +287,7 @@ struct LeakPanel: View {
 
   var photo: some View {
     VStack(alignment: .leading, spacing: 10) {
-      header("照片", symbol: "photo", info: "本卷的照片按它当前的调色在本机转换为 Adobe RGB 16 位正片后处理，不用先导出再导入；导出时按建立任务时的调色重新转换全分辨率。\n\n也可以导入其他软件（如 Capture One）已去色罩、反相的正片：推荐带 ICC 的全分辨率 16 位 TIFF；PNG、JPEG 也可导入，但 8 位输入不会增加真实色阶。原文件不改动，任务保存在 App 的支持文件夹里，不写入照片库。")
+      header("照片", symbol: "photo", info: "去漏光在 ② 去色罩和 ③ 调色之间，可选。本卷的照片按 ② 去色罩的结果（去掉色罩、配好白平衡和黑白场，不带 ③ 的调色）在本机转换为 Adobe RGB 16 位正片后处理，不用先导出再导入。修好以后点「用到 ③ 调色」，修复就放进这张照片的转换里，回到 ③ 接着调色和导出；原片不改，随时可以在 ③ 里去掉。也可以照旧在这一页「导出」修好的正片（不带 ③ 的调色）。以前建立的任务是从调好色的正片开始的，只能导出。\n\n也可以导入其他软件（如 Capture One）已去色罩、反相的正片：推荐带 ICC 的全分辨率 16 位 TIFF；PNG、JPEG 也可导入，但 8 位输入不会增加真实色阶。原文件不改动，任务保存在 App 的支持文件夹里，不写入照片库。")
       if let j = lab.job {
         Text(j.sourceName).font(.system(size: 12, weight: .medium))
         if let meta = j.meta {
@@ -270,9 +295,14 @@ struct LeakPanel: View {
             .foregroundStyle(.secondary)
         }
         if let origin = j.origin {
-          if let f = frame {
+          if let f = frame, origin.neutral != true {
+            // A job from before: made of the graded picture, it can only export. Drawn again from ②,
+            // its regions, protections and reference stay, the reference fitted again here, free.
+            note("这个任务是以前从调好色的正片开始的，只能导出。从 ② 的结果重新载入以后就能用到 ③ 调色；区域、保护和参考图都留着，参考图在本机重新拟合，不调用 API。", color: Hardware.amberText)
+            Button("从 ② 的结果重新载入") { if let o = m.leakOrigin(f) { lab.reload(origin: o) } }.disabled(lab.busy != nil)
+          } else if let f = frame {
             if !f.hasFullResolution { note("这张尚未正式扫描，用的是预览像素；正式扫描后点「按当前调色重新载入」。", color: Hardware.amberText) }
-            if f.adjustments != origin.adjustments {
+            if origin.neutral == true ? !AppModel.sameDemasking(f.adjustments, origin.adjustments) : f.adjustments != origin.adjustments {
               note("这张的调色在建立任务后改过；导出仍按建立任务时的调色。", color: Hardware.amberText)
               Button("按当前调色重新载入") { if let o = m.leakOrigin(f) { lab.reload(origin: o) } }.disabled(lab.busy != nil)
             }
@@ -309,7 +339,12 @@ struct LeakPanel: View {
         Text(!lab.hasBase ? "等待照片" : lab.repaired ? "已应用去漏光" : "尚未去漏光").readout(11)
         Spacer()
       }
-      if lab.repaired { note("可以用工具栏的「导出 16 位 TIFF」导出；先检查灯光红晕、红色物体和边缘。") }
+      if lab.repaired {
+        // A frame of the roll goes on into ③; a file imported here leaves as a file.
+        note(lab.whyNotIntoGrading == nil
+          ? "先检查灯光红晕、红色物体和边缘，再点下面的「用到 ③ 调色」，在 ③ 里接着调色和导出。"
+          : "可以用工具栏的「导出 16 位 TIFF」导出；先检查灯光红晕、红色物体和边缘。")
+      }
       else if lab.hasBase { note("不去漏光也能导出：导出的是带基础调整和片边处理的原片。") }
       Button {
         lab.start()
@@ -400,8 +435,11 @@ struct LeakPanel: View {
   }
 
   var adjustments: some View {
-    PanelSection("基础调整", key: "leakAdjust", info: "在去漏光之前作用于原片，只在这一页：本卷的照片已经按 ② 去色罩的调色进来，这里再叠一层，不改 ② 的设置。所以同一张的颜色先在 ② 调好，这里只为去漏光微调；导入的文件没有 ② 的调色，就在这里调。\n\n曝光按线性光的 EV 调整，冷暖与绿 / 品红按通道调整，对比度为 S 形曲线。手动调整不受去漏光的限制。", symbol: "slider.horizontal.3") {
+    PanelSection("基础调整", key: "leakAdjust", info: "在去漏光之前作用于原片，只在这一页，不改 ② 和 ③ 的设置。本卷的照片按 ② 去色罩的结果进来（不带 ③ 的调色）；「用到 ③ 调色」时这里的调整不带过去，颜色和明暗在 ③ 里调。导入的文件没有 ② 和 ③，就在这里调，再用「导出」。\n\n曝光按线性光的 EV 调整，冷暖与绿 / 品红按通道调整，对比度为 S 形曲线。手动调整不受去漏光的限制。", symbol: "slider.horizontal.3") {
       VStack(alignment: .leading, spacing: 10) {
+        if lab.job?.origin?.neutral == true {
+          note("只为看清漏光：用到 ③ 调色时不带过去。")
+        }
         fader("曝光", "%+.2f EV", \.exposure, -2...2)
         fader("冷 ↔ 暖", "%+.0f", \.temperature, -100...100)
         fader("绿 / 洋红", "%+.0f", \.tint, -100...100)

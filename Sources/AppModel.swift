@@ -356,14 +356,60 @@ final class AppModel: ObservableObject {
     case library = "库", capture = "采集", convert = "去色罩", leak = "去漏光"
     var number: String {
       switch self {
-      case .library: return ""
+      case .library, .leak: return ""
       case .capture: return "①"
       case .convert: return "②"
-      case .leak: return "③"
       }
     }
     /// Its name with its number, as the switcher and the menu show it.
     var title: String { number.isEmpty ? rawValue : "\(number) \(rawValue)" }
+  }
+  /// ② 去色罩 and ③ 调色: one workspace, the same picture, strip and light table, with the step's
+  /// controls. ② takes the negative to a positive (the film, its base, the frame's extent, the copy
+  /// light's crosstalk and flat field, dust); ③ grades it (white balance, tones, levels, colour,
+  /// curves, sharpening) and exports it. 去漏光 lies between them, for the frames that need it:
+  /// it works on the picture as ② leaves it, and its repair comes back into ③ (`LeakFix`).
+  enum ConvertStep: String { case demask, grade }
+  @Published var convertStep = ConvertStep.demask {
+    didSet {
+      // Each step's own tools on the picture: ②'s crops and base, ③'s grey pickers.
+      guard convertStep != oldValue else { return }
+      preferences.lastStep = convertStep.rawValue
+      if convertStep == .demask, [.neutral, .shadowNeutral, .curve].contains(tool) { tool = .select }
+      if convertStep == .grade, [.crop, .region, .base].contains(tool) { tool = .select }
+    }
+  }
+  /// The switcher's stops, in the order a roll goes through them: three steps after the library.
+  /// 去漏光 is not one of them but ②'s last part, for the frames that need it: while it is open ②
+  /// stays lit, its segment reading 「② 去色罩 › 去漏光」.
+  enum Station: Int, CaseIterable {
+    case library, capture, demask, grade
+    var title: String {
+      switch self {
+      case .library: return "库"
+      case .capture: return "① 采集"
+      case .demask: return "② 去色罩"
+      case .grade: return "③ 调色"
+      }
+    }
+  }
+  var station: Station {
+    get {
+      switch page {
+      case .library: return .library
+      case .capture: return .capture
+      case .leak: return .demask
+      case .convert: return convertStep == .demask ? .demask : .grade
+      }
+    }
+    set {
+      switch newValue {
+      case .library: page = .library
+      case .capture: page = .capture
+      case .demask: convertStep = .demask; page = .convert
+      case .grade: convertStep = .grade; page = .convert
+      }
+    }
   }
   /// The page a window opens on: the library, to start a new project, open one or import; the
   /// modules wait for one (`hasProject`). The self-test starts its models on ②, whose conversion
@@ -380,6 +426,11 @@ final class AppModel: ObservableObject {
         return
       }
       if page == .capture, [CanvasTool.base, .neutral, .shadowNeutral, .region].contains(tool) { tool = .select }
+      // Once, after the steps were split: where things went.
+      if page == .convert, !preferences.stepsIntroduced {
+        preferences.stepsIntroduced = true
+        status = "② 和 ③ 分开了：② 去色罩把负片变成干净的正片（有漏光的照片在这里去漏光），③ 调色调色和导出（⌥⌘3）"
+      }
       // The library shows no picture: the canvas's look changes with the module it shows next,
       // against the one it showed last, so ① → 库 → ① renders nothing again.
       guard page != .library else { return }
@@ -640,6 +691,11 @@ final class AppModel: ObservableObject {
       ?? "去色罩区域跟随画面：去掉四边 5%，裁切里带着片边（片基、齿孔、边字）时只看片边以内"
   }
   func useTool(_ value: CanvasTool) {
+    // A tool of the other step takes the window there, rather than working in a step not its own.
+    if page == .convert, let step = value.step, step != convertStep {
+      convertStep = step
+      status = value.rawValue + (step == .grade ? "在 ③ 调色" : "在 ② 去色罩")
+    }
     let editing = editingSingle, willEdit = singleView && (value == .crop || value == .base)
     if editing != willEdit { viewWillChange?(.edit(entering: willEdit)) }
     if value != tool { editRegionLock = nil }
@@ -710,6 +766,8 @@ final class AppModel: ObservableObject {
     self.libraryURL = libraryURL
     self.scanner = scanner
     self.preferences = preferences
+    // ② or ③, as last worked in.
+    convertStep = ConvertStep(rawValue: preferences.lastStep ?? "") ?? .demask
     exportType = preferences.exportFormat.rawValue
     profiles = FilmProfile.builtins + preferences.customProfiles
     ImagePipeline.shared.films = profiles
@@ -1436,14 +1494,34 @@ final class AppModel: ObservableObject {
     change("恢复" + part.rawValue, separate: true) { $0 = Self.reset(part, of: $0, copyShot: copyShot) }
     status = "「\(part.rawValue)」已恢复默认 · ⌘Z 撤销"
   }
-  func resetAdjustments() {
+  /// 重置: the frame's settings of `scope` as a new picture's (the window's key: its step's alone).
+  func resetAdjustments(_ scope: SettingsScope = .all) {
     // The faders move back to their defaults, as the picture fades to it.
-    withAnimation(Liquid.settle) { resettingAdjustments() }
+    withAnimation(Liquid.settle) { resettingAdjustments(scope) }
     fadeInNextPicture()
   }
-  private func resettingAdjustments() {
-    if multiSelected { return changeSelection("重置所选的 \(selection.count) 张", Self.resetAll) }
-    change("重置调整", Self.resetAll)
+  private func resettingAdjustments(_ scope: SettingsScope) {
+    let reset = { (a: inout Adjustments) in
+      var fresh = a
+      Self.resetAll(&fresh)
+      a.take(scope, from: fresh)
+    }
+    let what = scope == .grading ? "调色" : scope == .demasking ? "去色罩" : "调整"
+    if multiSelected { return changeSelection("重置所选的 \(selection.count) 张的" + what, reset) }
+    change("重置" + what, reset)
+  }
+  /// The settings the window's 重置, 同步 and 粘贴 act on: the step's own.
+  var stepScope: SettingsScope {
+    guard page == .convert else { return .all }
+    return convertStep == .grade ? .grading : .demasking
+  }
+  /// What a scope's settings are called, as the keys say them.
+  static func scopeName(_ scope: SettingsScope) -> String {
+    switch scope {
+    case .all: return "调整"
+    case .grading: return "调色"
+    case .demasking: return "去色罩"
+    }
   }
   /// The same change to every frame chosen, as one edit; the roll's measured base kept, as `change`
   /// keeps it.
@@ -1479,6 +1557,8 @@ final class AppModel: ObservableObject {
     a.colourNoise = kept.colourNoise
     // The roll's print is the roll's, not this frame's.
     (a.sharedBalance, a.sharedLevels, a.rollPrint) = (kept.sharedBalance, kept.sharedLevels, kept.rollPrint)
+    // A repair of this picture, done in 去漏光 and taken out there.
+    a.leakFix = kept.leakFix
   }
 
   // MARK: Undo
@@ -2065,13 +2145,14 @@ final class AppModel: ObservableObject {
   }
   /// 同步: the frame shown's settings to the frames chosen with it, when more than one is, else to
   /// the roll.
-  func syncSettings() { multiSelected ? applyToRoll(only: selectionIDs) : applyToRoll() }
+  func syncSettings() { multiSelected ? applyToRoll(only: selectionIDs, scope: stepScope) : applyToRoll(scope: stepScope) }
   /// The frame shown's settings to every frame of the roll, or only to `only`, each keeping how it
   /// faces, its crop's region and what was read off its own picture.
-  func applyToRoll(only: Set<UUID>? = nil) {
+  func applyToRoll(only: Set<UUID>? = nil, scope: SettingsScope = .all) {
     guard let s = selected else { return }
-    give(s, to: only, edit: only == nil ? "同步到本卷" : "同步到所选")
-    status = only.map { "已同步调色参数到所选的 \($0.count) 张" } ?? "已同步调色参数到本卷"
+    let what = Self.scopeName(scope)
+    give(s, to: only, edit: (only == nil ? "同步" + what + "到本卷" : "同步" + what + "到所选"), scope: scope)
+    status = only.map { "已同步\(what)到所选的 \($0.count) 张" } ?? "已同步\(what)到本卷"
   }
   /// 拷贝调整 and 粘贴调整, as Lightroom's: the frame shown's settings kept, to be given later to the
   /// frames chosen then (or the frame shown), from this roll or another opened since.
@@ -2083,20 +2164,21 @@ final class AppModel: ObservableObject {
   }
   /// Where 粘贴调整 goes: the frames chosen, or the frame shown.
   var pasteTargets: Set<UUID> { multiSelected ? selectionIDs : Set(selectedID.map { [$0] } ?? []) }
-  func pasteSettings() {
+  func pasteSettings(_ scope: SettingsScope = .all) {
     guard let copied = copiedSettings, !isWorking else { return }
     let ids = pasteTargets
     guard !ids.isEmpty else { return }
-    give(copied, to: ids, edit: "粘贴调整")
-    status = "已把第 \(copied.name) 张的调整粘贴到 \(ids.count) 张 · ⌘Z 撤销"
+    let what = Self.scopeName(scope)
+    give(copied, to: ids, edit: "粘贴" + what, scope: scope)
+    status = "已把第 \(copied.name) 张的\(what)粘贴到 \(ids.count) 张 · ⌘Z 撤销"
   }
   /// `s`'s settings to every frame of the roll, or only to `only`, as one edit, each frame keeping
   /// how it faces, its crop's region and what was read off its own picture.
-  private func give(_ s: FilmFrame, to only: Set<UUID>?, edit: String) {
+  private func give(_ s: FilmFrame, to only: Set<UUID>?, edit: String, scope: SettingsScope = .all) {
     recordEdit(edit)
     for i in frames.indices where only?.contains(frames[i].id) ?? true {
       let own = frames[i].adjustments
-      frames[i].adjustments = s.adjustments
+      frames[i].adjustments.take(scope, from: s.adjustments)
       frames[i].adjustments.rotation = own.rotation
       frames[i].adjustments.angle = own.angle
       frames[i].adjustments.rollBase = own.rollBase
@@ -2110,6 +2192,8 @@ final class AppModel: ObservableObject {
       }
       // Where each frame's de-masking reads lies on its own picture, as its crop does.
       frames[i].adjustments.analysisRegion = own.analysisRegion
+      // A light-leak repair belongs to its own picture.
+      frames[i].adjustments.leakFix = own.leakFix
     }
     refresh()
     updateThumbnails()
@@ -3666,11 +3750,12 @@ final class AppModel: ObservableObject {
       setFilmBase(color, at: at)
     } else if tool == .shadowNeutral {
       guard singleView else { return }
-      setShadowNeutral(color)
+      setShadowNeutral(repairedReading(color, at: pt, frame: frames[i]))
     } else if tool == .neutral {
-      // Where in the picture: the grey is picked on the frame as cropped.
+      // Where in the picture: the grey is picked on the frame as cropped; as repaired, the picture
+      // ③ grades.
       let crop = frames[i].rect
-      setNeutral(color, at: singleView
+      setNeutral(singleView ? repairedReading(color, at: pt, frame: frames[i]) : color, at: singleView
         ? NormalRect(x: crop.x + (pt.x - Double(radius) / Double(r.width)) * crop.width, y: crop.y + (pt.y - Double(radius) / Double(r.height)) * crop.height,
           width: Double(2 * radius + 1) / Double(r.width) * crop.width, height: Double(2 * radius + 1) / Double(r.height) * crop.height)
         : nil)
@@ -3679,6 +3764,22 @@ final class AppModel: ObservableObject {
     fadeInNextPicture()
     tool = .select
     refresh()
+  }
+  /// A reading of the negative as the frame's light-leak repair leaves it at `pt` (0–1 of the
+  /// picture as the conversion reads it): what ③'s grey pickers take, so a grey picked where a leak
+  /// was repaired is grey in the repaired picture. The reading as it is without a repair.
+  func repairedReading(_ color: RGB, at pt: CGPoint, frame f: FilmFrame) -> RGB {
+    let s = f.adjustments
+    guard s.inputIsNegative, let fix = s.leakFix, let field = LeakFixStore.shared.field(fix), let analysis = toneAnalysis else { return color }
+    let slopes = ImagePipeline.slopes(s, conversionProfile).slopes.values, toe = ImagePipeline.toe(s, conversionProfile).values
+    let fine = s.baseFine ?? .zero
+    let at = field.sample(Double(pt.x), Double(pt.y))
+    return RGB((0..<3).map { c in
+      let base = max(0.0001, analysis.base.values[c] * pow(2, fine.values[c]))
+      let d = log10(base / max(0.000001, color.values[c])) * s.inputGamma
+      let e = FilmToe.exposure(d / slopes[c], width: toe[c])
+      return base / pow(10, FilmToe.density(at.a[c] * e + at.d[c], width: toe[c]) * slopes[c] / s.inputGamma)
+    })
   }
   /// The film base from a reading of unexposed film; the white balance is left as picked, not
   /// recalculated. One edit to undo, whether picked on the canvas or by an assistant.
@@ -4342,6 +4443,20 @@ final class AppModel: ObservableObject {
   }
   /// The frames exported and changed since, in the roll's order.
   var changedSinceExport: [FilmFrame] { frames.filter { exportMark($0) == .changed } }
+  /// Where and when `f` was last exported, for its mark's tooltip.
+  func exportNote(_ f: FilmFrame) -> String? {
+    guard let stamp = exportStamps[f.id] else { return nil }
+    let when = WhenSaid.ago(stamp.at)
+    return URL(fileURLWithPath: stamp.file).lastPathComponent + " · " + when
+  }
+  /// The file `f` was last exported to, selected in Finder, while it is there.
+  func revealExport(_ f: FilmFrame) {
+    guard let file = exportStamps[f.id]?.file, FileManager.default.fileExists(atPath: file) else {
+      status = "第 \(f.name) 张导出的文件不在原处了"
+      return
+    }
+    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: file)])
+  }
   func export(items: [FilmFrame], to directory: URL, completion: (() -> Void)? = nil) {
     let stop = beginExport(items.map(\.id))
     status = "正在导出 \(items.count) 张到 \(directory.lastPathComponent)…"
@@ -4723,6 +4838,11 @@ final class AppModel: ObservableObject {
       var f = saved
       f.scanPath = f.scanPath.map { ProjectFiles.resolve($0, relative: f.scanFile, in: folder) }
       f.sourcePath = f.sourcePath.map { ProjectFiles.resolve($0, relative: f.sourceFile, in: folder) }
+      // A light-leak repair is kept in the roll's Repairs folder: found there when the roll moved.
+      if let fix = f.adjustments.leakFix, !FileManager.default.fileExists(atPath: fix.file) {
+        let here = folder.appendingPathComponent("Repairs").appendingPathComponent(URL(fileURLWithPath: fix.file).lastPathComponent)
+        if FileManager.default.fileExists(atPath: here.path) { f.adjustments.leakFix?.file = here.path }
+      }
       (f.scanFile, f.sourceFile) = (nil, nil)
       if f.sensorRead == nil, let path = f.sourcePath, f.adjustments.inputGamma == 1 { f.sensorRead = Self.readFromSensor(path) }
       // Copy shots read from the sensor have their colour noise smoothed, as new ones come in.
@@ -4748,7 +4868,10 @@ final class AppModel: ObservableObject {
     // A frame's blank-frame flat field, kept once with the roll, read back as the frame reads; a
     // frame that kept its own grid keeps it. One whose flat is not in the roll is left unflattened.
     rollFlats = p.flats ?? []
-    exportStamps = Dictionary((p.exports ?? [:]).compactMap { key, stamp in UUID(uuidString: key).map { ($0, stamp) } }, uniquingKeysWith: { a, _ in a })
+    // An export whose file is gone (deleted, or moved away in Finder) no longer marks its frame.
+    exportStamps = Dictionary((p.exports ?? [:]).compactMap { key, stamp in
+      FileManager.default.fileExists(atPath: stamp.file) ? UUID(uuidString: key).map { ($0, stamp) } : nil
+    }, uniquingKeysWith: { a, _ in a })
     // A blank frame shown as it was read, not de-masked: the light and how it falls off (rolls
     // before 0.19.6 converted it as a negative).
     let blanks = blankFrameIDs

@@ -217,7 +217,7 @@ struct LibraryPage: View {
       ScrollView {
         // The way in: the modules wait for a project.
         if !m.hasProject {
-          Label("先在这里新建工程、双击打开一卷，或导入照片；之后 ① 采集、② 去色罩、③ 去漏光 才能用。", systemImage: "info.circle")
+          Label("先在这里新建工程、双击打开一卷，或导入照片；之后 ① 采集、② 去色罩、③ 调色 才能用。", systemImage: "info.circle")
             .font(.system(size: 12)).foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 28).padding(.top, 18)
         }
