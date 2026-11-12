@@ -255,6 +255,7 @@ final class LeakLab: ObservableObject {
   }
   private func show(_ j: LeakJob, base: LeakImage, guide: LeakImage?, persisted: Bool) {
     save()
+    regradeNote = nil
     job = j
     params = j.params
     self.base = base
@@ -419,12 +420,15 @@ final class LeakLab: ObservableObject {
   /// fitted on the old conversion is fitted again on the new one, from the same reference, free.
   func reload(origin: LeakJob.Origin) {
     guard var j = job, j.origin?.frame == origin.frame, busy == nil else { return }
-    let refit = params.referenceModel != nil && hasReference
+    // A job of the graded picture taken onto ②'s: its reference, a clean version of the graded
+    // picture, is taken there too (`LeakGradeMap`), or the repair would bring the old grade along.
+    let regrade = j.origin?.neutral != true && origin.neutral == true && hasReference
     j.origin = origin
     var next = params
     next.referenceModel = nil
-    // The framing is the same, so the landmarks still match.
-    rebuild(j, next, pairs: j.pairs, name: "按当前调色重新载入") { if refit { self.fit() } }
+    // The framing is the same, so the landmarks still match. With a reference, the new base is
+    // fitted to it as it is placed.
+    rebuild(j, next, pairs: j.pairs, name: "按当前调色重新载入", regrade: regrade)
   }
   /// Whether the job open is `origin`'s frame, converted otherwise than it is now.
   func stale(for origin: LeakJob.Origin) -> Bool {
@@ -436,7 +440,7 @@ final class LeakLab: ObservableObject {
   private static let rebuildLabel = "重建正片预览"
   private var rebuilding: Bool { busy == Self.rebuildLabel }
   private func rebuild(_ j: LeakJob, _ next: LeakParams, pairs: [LeakPair]? = nil, name: String = "旋转 / 裁切", notice told: String? = nil,
-                       then: (() -> Void)? = nil) {
+                       regrade: Bool = false, then: (() -> Void)? = nil) {
     run(Self.rebuildLabel) {
       let full = try self.original(j)
       let base = Self.base(full, next)
@@ -446,21 +450,52 @@ final class LeakLab: ObservableObject {
       j.base = "base-\(Self.stamp()).tif"
       j.meta = .init(width: full.width, height: full.height, previewWidth: base.width, previewHeight: base.height)
       // Written before the job names it: a job never points at a base that is not there.
-      if let folder = self.onMain({ self.persisted ? self.folder : nil }) {
-        try base.saveTIFF(to: folder.appendingPathComponent(j.base!))
+      let folder = self.onMain { self.persisted ? self.folder : nil }
+      if let folder { try base.saveTIFF(to: folder.appendingPathComponent(j.base!)) }
+      var guide: LeakImage?
+      var said: String?
+      if regrade, let folder, let file = j.guide, let old = self.onMain({ self.base }) {
+        (guide, said) = try Self.regraded(file, in: folder, from: old, to: base, job: &j)
       }
       return {
-        self.place(j, base: base, params: next, name: name)
+        self.place(j, base: base, params: next, name: name, guide: guide)
+        self.regradeNote = said
         if !self.hasReference { self.notice = told ?? "方向 / 裁切已更新。点击「开始去漏光」。" }
         then?()
       }
     }
   }
+  /// What a reload from ②'s result says of the reference, after the repair's own notice.
+  private var regradeNote: String?
+  /// The reference `file` taken from the picture `old` to `new` (the graded positive to ②'s
+  /// result, both the job's framing) by the colour map between them, kept beside the old one as
+  /// the job's reference; or left as it is, with why. The reference as `fit` reads it, and what to
+  /// tell.
+  private static func regraded(_ file: String, in folder: URL, from old: LeakImage, to new: LeakImage, job j: inout LeakJob) throws
+    -> (LeakImage?, String)
+  {
+    let map = LeakGradeMap.fit(from: old, to: new)
+    let apart = map.apart * 255, missed = map.error * 255
+    switch map.verdict {
+    case .use: break
+    case .slight: return (nil, String(format: "以前的调色和 ② 的结果只差 %.1f / 255，参考图照旧用。", apart))
+    case .mismatch:
+      return (nil, String(format: "参考图是在以前调好色的照片上做的，但那张和 ② 的结果对不上（换算以后还差 %.1f / 255，可能改过画面范围），参考图没有换：修复可能带上以前的调色，可以在 ③ 里调轻，或重新做参考图。", missed))
+    }
+    let mapped = map.apply(try LeakImage(contentsOf: folder.appendingPathComponent(file)))
+    let name = "guide-regraded-\(stamp()).tif"
+    try mapped.saveTIFF(to: folder.appendingPathComponent(name))
+    j.guide = name
+    return (LeakEngine.resized(mapped, width: 640), String(
+      format: "参考图是在以前调好色的照片上做的：已按以前的调色和 ② 的结果之间的颜色差（%.1f / 255）把它换到 ② 的颜色，换完差 %.1f / 255，所以修复不带以前的调色；原来的参考图留在任务文件夹里。", apart, missed))
+  }
   /// A base put in place with its job and parameters, as one undo step whose undo puts the one
   /// before back as it was, fitted or not, without rebuilding anything.
-  private func place(_ j: LeakJob, base: LeakImage, params next: LeakParams, name: String) {
+  private func place(_ j: LeakJob, base: LeakImage, params next: LeakParams, name: String, guide newGuide: LeakImage? = nil) {
     if let undoManager, let oldJob = job, let oldBase = self.base {
       let oldParams = params
+      // A reference taken to ②'s colours goes back with the base.
+      let oldGuide = newGuide == nil ? nil : self.guide
       let grouping = !undoManager.groupsByEvent && !undoManager.isUndoing && !undoManager.isRedoing
       if grouping { undoManager.beginUndoGrouping() }
       undoManager.registerUndo(withTarget: self) { lab in
@@ -468,7 +503,7 @@ final class LeakLab: ObservableObject {
           lab.notice = "正在处理，这一步撤销没有生效，请稍候再试。"
           return
         }
-        lab.place(oldJob, base: oldBase, params: oldParams, name: name)
+        lab.place(oldJob, base: oldBase, params: oldParams, name: name, guide: oldGuide)
       }
       undoManager.setActionName(name)
       if grouping { undoManager.endUndoGrouping() }
@@ -476,6 +511,10 @@ final class LeakLab: ObservableObject {
     lastChange = nil
     job = j
     self.base = base
+    if let newGuide {
+      guide = newGuide
+      reference = j.guide.flatMap { try? ImagePipeline.shared.load(root.appendingPathComponent(j.id).appendingPathComponent($0), maxDimension: 1800) }
+    }
     before = base.cgImage()
     // The old repair belongs to the old base; nothing is shown as repaired until this one is.
     after = nil
@@ -776,6 +815,8 @@ final class LeakLab: ObservableObject {
         self.notice = "去漏光已应用：自动减除漏光亮雾，单独保护自然亮部和局部灯光，不锁定全图明暗。复用已有参考图，本次没有调用 API。"
           + ((a?.rotation ?? 0) != 0 ? "已自动匹配 \(a!.rotation)° 参考方向。" : "")
           + (a?.reliable == false ? "自动对齐不确定，请检查参考图与原片是否同一构图。" : "请检查灯光红晕和真实红色物体。")
+          + (self.regradeNote ?? "")
+        self.regradeNote = nil
       }
     }
   }
