@@ -2,6 +2,12 @@
 
 最新的在最前。各版本开头「打开 `Epson-Scan-plus-v0.4.x/…`」指作者本机的发布目录；0.3.1 及以前的名称是 Film Desk。
 
+## 下一版
+
+- **③ 顶上的「预设」「快照」挪到标题下面单独一行**：0.21.2 里它们和「调色」「重置调色」挤在一行，标题折成两行、「重置调色」显示不全。
+- **AI 助手能用调色预设和快照**：新工具 list_grading_presets、apply_grading_preset（按名称套用，多选时套用到所选的每一张）、take_snapshot、restore_snapshot（不给名称时列出这张的快照），和 App 里的一样，都能撤销。
+- 自检增加 1 项。
+
 ## 0.21.2 快照；导出写上作者和版权
 
 - **导出写上作者和版权**：「输出」页「文件名」下面多了「作者」「版权」两栏，填了以后每个导出的文件都带着（TIFF 的 Artist / Copyright、IPTC 的 By-line / Copyright Notice、PNG 的 Author / Copyright），Lightroom、照片 App 和访达的「显示简介」都读得到，像 Lightroom 导出时的元数据。空着就不写；填一次，以后都记着。

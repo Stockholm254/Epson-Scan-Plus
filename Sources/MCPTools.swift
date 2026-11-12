@@ -78,6 +78,16 @@ enum MCPTools {
     ]) { a, _ in a }, required: ["x", "y", "mode"]),
     Tool(name: "choose_preset", description: "选用胶片预设（按名称，部分匹配，如 \"Portra 160\"）。", properties: ["name": ["type": "string"]], required: ["name"]),
     Tool(name: "apply_to_roll", description: "把选中画面的调整同步到本卷所有画面（保留各张的方向和裁切）。", properties: [:]),
+    Tool(name: "list_grading_presets", description: "列出用户的调色预设（App 里 ③ 调色顶上的「预设」）：名称、记着哪几项调色、什么时候存的。只读。", properties: [:]),
+    Tool(name: "apply_grading_preset", description: "把一个调色预设套用到选中的画面（App 里多选了几张时套用到所选的每一张），只改预设里记着的那几项调色，② 去色罩的设置不动；name 按名称，部分匹配。可用 undo 撤销。", properties: [
+      "name": ["type": "string", "description": "预设名称"],
+    ], required: ["name"]),
+    Tool(name: "take_snapshot", description: "把选中画面现在的调色存成快照（App 里 ③ 调色顶上的「快照」），跟着这一卷存；换个调法以后能用 restore_snapshot 回来。name 省略时用「快照」加时间；同名的替换。", properties: [
+      "name": ["type": "string", "description": "快照名称，可省略"],
+    ]),
+    Tool(name: "restore_snapshot", description: "把选中画面的调色恢复成它的一个快照，只改调色，② 去色罩的设置不动；name 按名称，部分匹配。name 省略时只列出这张的快照。可用 undo 撤销。", properties: [
+      "name": ["type": "string", "description": "快照名称"],
+    ]),
     Tool(name: "reset_adjustments", description: "把选中画面的调整恢复默认（保留输入 Gamma、方向和全卷斜率估计）。", properties: [:]),
     Tool(name: "undo", description: "撤销 App 里的上一步编辑，和 ⌘Z 一样。", properties: [:]),
     Tool(name: "calibration_add_points", description: "预设标定：在选中画面上把这些位置加为中性点（本来就是中性灰或白的东西）。返回每个点高于片基的密度、目前所有点的拟合（各通道斜率、残差）和每个点偏离拟合多少。", properties: [
@@ -705,6 +715,42 @@ enum MCPTools {
       _ = try selected(model)
       onMain { model.applyToRoll() }
       return [["type": "text", "text": "已把这张的调整同步到本卷。"]]
+    case "list_grading_presets":
+      let presets = onMain { model.preferences.gradingPresets }
+      return text(presets.map { p -> [String: Any] in
+        ["name": p.name, "groups": p.settingsGroups.map(\.name), "made": ISO8601DateFormatter().string(from: p.made)]
+      })
+    case "apply_grading_preset":
+      _ = try selected(model)
+      guard let wanted = (arguments["name"] as? String)?.lowercased(), !wanted.isEmpty else { throw DeskError.message("需要预设名称 name。") }
+      let said: String = try onMain {
+        let presets = model.preferences.gradingPresets
+        guard let p = presets.first(where: { $0.name.lowercased() == wanted }) ?? presets.first(where: { $0.name.lowercased().contains(wanted) })
+        else { throw DeskError.message("没有名为 \(wanted) 的调色预设。可用 list_grading_presets 查看。") }
+        model.applyGradingPreset(p)
+        return model.status
+      }
+      return [["type": "text", "text": said]]
+    case "take_snapshot":
+      _ = try selected(model)
+      let said: String = onMain {
+        model.takeSnapshot(named: arguments["name"] as? String ?? "")
+        return model.status
+      }
+      return [["type": "text", "text": said]]
+    case "restore_snapshot":
+      let (frame, _) = try selected(model)
+      let shots = onMain { model.shownSnapshots }
+      guard let wanted = (arguments["name"] as? String)?.lowercased(), !wanted.isEmpty else {
+        return text(["frame": frame.name, "snapshots": shots.map { ["name": $0.name, "made": ISO8601DateFormatter().string(from: $0.made)] }])
+      }
+      guard let s = shots.first(where: { $0.name.lowercased() == wanted }) ?? shots.first(where: { $0.name.lowercased().contains(wanted) })
+      else { throw DeskError.message("第 \(frame.name) 张没有名为 \(wanted) 的快照。不给 name 调用 restore_snapshot 可列出它的快照。") }
+      let said: String = onMain {
+        model.restoreSnapshot(s)
+        return model.status
+      }
+      return [["type": "text", "text": said]]
     case "reset_adjustments":
       _ = try selected(model)
       onMain { model.resetAdjustments() }

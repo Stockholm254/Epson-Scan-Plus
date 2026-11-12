@@ -170,6 +170,24 @@ enum StepTests {
       && given.warmth == 0.15 && given.saturation == 1.3 && given.exposure == 0.7 && given.neutralSample == nil && model.status.contains("暖一点"),
       "a 调色预设 keeps the ticked grading without the grey picked on its picture, and gives just that to another frame")
     edits.undo()
+    // And by the assistant's tools: listed, given by name (in part), a frame's snapshot taken and
+    // gone back to.
+    func reply(_ name: String, _ arguments: [String: Any] = [:]) -> String {
+      (MCPTools.call(name, arguments, model: model).content.first?["text"] as? String) ?? ""
+    }
+    let listed = reply("list_grading_presets")
+    let applied = reply("apply_grading_preset", ["name": "暖"])
+    let warmed = model.frames[1].adjustments.warmth == 0.15
+    edits.undo()
+    _ = reply("take_snapshot", ["name": "试一下"])
+    model.frames[1].adjustments.saturation = 0.5
+    let back = reply("restore_snapshot", ["name": "试"])
+    let shots = reply("restore_snapshot")
+    try check(listed.contains("暖一点") && listed.contains("白平衡") && applied.contains("暖一点") && warmed
+      && back.contains("试一下") && model.frames[1].adjustments.saturation == Adjustments().saturation && shots.contains("试一下"),
+      "the assistant lists the presets, applies one by name, takes a snapshot of the frame's grading and goes back to it")
+    edits.undo()
+    model.gradeSnapshots = [:]
     model.saveGradingPreset(named: "暖一点", groups: [.exposure])
     let replaced = model.preferences.gradingPresets
     model.deleteGradingPreset(replaced[0])
