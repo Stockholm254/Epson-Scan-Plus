@@ -89,12 +89,22 @@ enum PresetTableTests {
       "deleting the preset in use takes it off the list; the open roll and the other keep their copies, as the warning says")
     model.keepProfile(kept!.profile)
     try check(row(copy.id, model.presetRows(rolls))?.kind == .copy, "a roll's copy is put back in the list")
-    let unused = model.presetRows(rolls).filter { $0.deletable && $0.rolls.isEmpty && !$0.current }
+    // A data sheet's preset can't be deleted, built in or imported; a calibration can.
+    let importedRow = row(imported.id, model.presetRows(rolls))
+    try check(importedRow.map { $0.kind == .imported && !$0.deletable } == true
+      && model.presetRows(rolls).filter { $0.profile.offsets == nil }.allSatisfy { !$0.deletable },
+      "data sheet presets, built in or imported, cannot be deleted")
+    // Clearing the calibrations no roll uses: the unused V850 calibration goes; the imported data
+    // sheet preset, unused too, stays with its channel slopes, and every built-in data sheet with it.
+    let sheetsBefore = model.profiles.filter { $0.offsets == nil }.map { ($0.id, $0.slopes) }
+    let unused = PresetManagerSheet.unusedCalibrations(model.presetRows(rolls))
     let gonePresets = PresetManagerSheet.consequence(unused)
     model.deleteCustomProfiles(Set(unused.map(\.id)))
-    try check(Set(unused.map(\.id)) == [scanner.id, imported.id] && model.preferences.customProfiles.map(\.id) == [copy.id]
+    let sheetsAfter = model.profiles.filter { $0.offsets == nil }.map { ($0.id, $0.slopes) }
+    try check(Set(unused.map(\.id)) == [scanner.id] && model.preferences.customProfiles.map(\.id) == [imported.id, copy.id]
+      && sheetsAfter.count == sheetsBefore.count && zip(sheetsBefore, sheetsAfter).allSatisfy { $0.0 == $1.0 && $0.1 == $1.1 }
       && gonePresets.contains("删除后就没有了"),
-      "clearing those no roll uses deletes the two unused ones and says they are gone for good")
+      "clearing the calibrations no roll uses deletes only those calibrated here; every data sheet's preset, built in or imported, keeps its channel slopes")
 
     // What MCP reads.
     func call(_ name: String) -> Any? {

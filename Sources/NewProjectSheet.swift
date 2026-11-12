@@ -261,30 +261,17 @@ struct NewProjectSheet: View {
   @ViewBuilder private var calibrationList: some View {
     let own = Self.calibrations(of: choice, m: m)
     if !own.isEmpty {
-      VStack(alignment: .leading, spacing: 2) {
-        Text("已有的标定").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).padding(.top, 4)
-        calibrationRow(nil, title: "不用标定", detail: Self.withoutCalibration(choice))
-        ForEach(own, id: \.id) { p in
-          calibrationRow(p.id, title: Self.calibration(p).map { $0.hasPrefix("翻拍") ? "翻拍标定" + $0.dropFirst(2) : $0 + " 标定" } ?? p.name,
-            detail: p.publication.isEmpty ? "本机" : p.publication)
-        }
-      }
+      // As a table, however many there are: newest first, scrolling past six, searchable past eight.
+      CalibrationTable(rows: Self.calibrationRows(own), without: Self.withoutCalibration(choice),
+        selection: Binding(get: { calibrationID }, set: { id in withAnimation(.easeOut(duration: 0.12)) { calibrationID = id } }))
     }
   }
-  private func calibrationRow(_ id: String?, title: String, detail: String) -> some View {
-    let on = calibrationID == id
-    return Button {
-      withAnimation(.easeOut(duration: 0.12)) { calibrationID = id }
-    } label: {
-      HStack(spacing: 6) {
-        Image(systemName: on ? "largecircle.fill.circle" : "circle").foregroundStyle(on ? Hardware.accent : Color.secondary)
-        Text(title).font(.system(size: 11.5, weight: on ? .semibold : .regular))
-          .foregroundStyle(on ? AnyShapeStyle(Hardware.amberText) : AnyShapeStyle(.primary))
-        Text(detail).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
-      }.contentShape(Rectangle())
-    }
-    .buttonStyle(.plain)
-    .accessibilityAddTraits(on ? .isSelected : [])
+  /// A film's calibrations as the table lists them.
+  static func calibrationRows(_ own: [FilmProfile]) -> [CalibrationRow] {
+    CalibrationRow.sorted(own.map { p in
+      CalibrationRow(id: p.id, title: calibration(p).map { $0.hasPrefix("翻拍") ? "翻拍标定" + $0.dropFirst(2) : $0 + " 标定" } ?? p.name,
+        publication: p.publication.isEmpty ? "本机标定" : p.publication)
+    })
   }
   /// What a film converts with when none of its calibrations is taken.
   static func withoutCalibration(_ item: Choice) -> String {
