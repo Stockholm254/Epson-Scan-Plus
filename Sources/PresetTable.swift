@@ -11,8 +11,9 @@ struct PresetRow: Identifiable, Equatable {
   /// The roll open converts with it.
   let current: Bool
   var id: String { profile.id }
-  /// Only presets made or imported here leave the list; a roll's own copy stays with the roll.
-  var deletable: Bool { kind != .builtin && kind != .rollOnly }
+  /// Only presets calibrated here (or imported calibrations) leave the list. A data sheet's preset,
+  /// built in or imported, stays with its channel slopes; a roll's own copy stays with the roll.
+  var deletable: Bool { kind != .builtin && kind != .rollOnly && profile.offsets != nil }
 }
 
 enum PresetTable {
@@ -89,8 +90,9 @@ extension AppModel {
     PresetTable.rows(builtins: FilmProfile.builtins, custom: preferences.customProfiles, rolls: rolls,
       open: frames.isEmpty && sessionURL == nil ? nil : (sessionURL, profile))
   }
+  /// Deletes calibrations made here; a data sheet's preset among `ids` is kept, whatever asks.
   func deleteCustomProfiles(_ ids: Set<String>) {
-    preferences.customProfiles.removeAll { ids.contains($0.id) }
+    preferences.customProfiles.removeAll { ids.contains($0.id) && $0.offsets != nil }
     profiles = FilmProfile.builtins + preferences.customProfiles
   }
 }
@@ -112,7 +114,7 @@ struct PresetManagerSheet: View {
     let rows = showing.map { o in all.filter { PresetTable.origin($0.profile) == o } } ?? all
     let chosen = rows.filter { selection.contains($0.id) }
     let single = chosen.count == 1 ? chosen[0] : nil
-    let unused = rows.filter { $0.deletable && $0.rolls.isEmpty && !$0.current }
+    let unused = Self.unusedCalibrations(rows)
     VStack(alignment: .leading, spacing: 10) {
       HStack(alignment: .firstTextBaseline) {
         Text("预设").font(.system(size: 15, weight: .semibold))
@@ -182,8 +184,8 @@ struct PresetManagerSheet: View {
           .help("把卷里保留的这份预设放回列表，别的卷也能选它")
         Button("导入 JSON…") { m.importProfile() }
         Spacer()
-        Button("清除没有卷在用的…") { deleting = unused }.disabled(!loaded || unused.isEmpty)
-          .help("删除本机标定或导入、图库里没有卷在用、这一卷也没在用的预设")
+        Button("清除没有卷在用的标定…") { deleting = unused }.disabled(!loaded || unused.isEmpty)
+          .help("删除本机标定（V850 或翻拍）中图库里没有卷在用、这一卷也没在用的；数据表预设不能删除，它们的通道斜率不动")
         Button("删除…") { deleting = chosen.filter(\.deletable) }.disabled(!chosen.contains(where: \.deletable))
         Button("完成") { dismiss() }.keyboardShortcut(.defaultAction)
       }
@@ -205,6 +207,12 @@ struct PresetManagerSheet: View {
     } message: {
       Text(deleting.map(Self.consequence) ?? "")
     }
+  }
+  /// What 「清除没有卷在用的标定」 deletes: presets calibrated on this Mac (V850 or the copy stand)
+  /// that no roll in the library uses and the open roll does not either. Data sheets' presets, the
+  /// built-in ones and those imported, keep their channel slopes: they are never cleared with them.
+  static func unusedCalibrations(_ rows: [PresetRow]) -> [PresetRow] {
+    rows.filter { $0.deletable && $0.profile.offsets != nil && $0.rolls.isEmpty && !$0.current }
   }
   /// What deleting `rows` does to the rolls using them.
   static func consequence(_ rows: [PresetRow]) -> String {
@@ -234,7 +242,7 @@ struct PresetManagerSheet: View {
             + (row.rolls.count > 8 ? " 等 \(row.rolls.count) 卷" : "")).font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)
         }
       } else {
-        Text("选一行看它的说明、标定用的中性点和在用的卷；⌘ 点选可以多选。标定出来的预设可以「接着标定」：把中性点取回到左栏的预设标定里，加点后重新生成。内置预设不能删除；删除本机预设时，在用它的卷各自保留一份。")
+        Text("选一行看它的说明、标定用的中性点和在用的卷；⌘ 点选可以多选。标定出来的预设可以「接着标定」：把中性点取回到左栏的预设标定里，加点后重新生成。数据表预设（内置的和导入的）不能删除；删除本机标定时，在用它的卷各自保留一份。")
           .font(.system(size: 11)).foregroundStyle(.secondary)
       }
     }.frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading)
