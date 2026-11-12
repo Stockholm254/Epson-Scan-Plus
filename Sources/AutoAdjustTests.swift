@@ -40,7 +40,7 @@ enum AutoAdjustTests {
     // What it takes back and what it keeps.
     var edited = plain
     (edited.exposure, edited.warmth, edited.tint, edited.saturation, edited.contrast) = (0.4, 0.3, -0.1, 1.3, 1.1)
-    (edited.shadowWarmth, edited.pressHighlights, edited.midtone, edited.black) = (0.2, 0.5, 1.1, 0.02)
+    (edited.shadowWarmth, edited.whites, edited.midtone, edited.black) = (0.2, -0.5, 1.1, 0.02)
     edited.shadowTint = -0.3
     edited.manualBalance = RGB(r: 0.01, g: 0, b: -0.01)
     edited.autoLevels = false
@@ -56,7 +56,7 @@ enum AutoAdjustTests {
         && cleared.black == 0 && cleared.manualBalance == nil && cleared.autoLevels && cleared.autoWhiteBalance,
       "自动调整 sets the white balance and levels automatic again: warmth, tint, a balance set by hand, the shadow tint, the ends and the midtone, with exposure and shadow warmth read anew")
     try check(
-      cleared.saturation == 1.3 && cleared.contrast == 1.1 && cleared.pressHighlights == 0.5
+      cleared.saturation == 1.3 && cleared.contrast == 1.1 && cleared.whites == -0.5
         && cleared.neutralSample == edited.neutralSample && cleared.base == base && cleared.curves == edited.curves
         && cleared.colourNoise == 0.6 && cleared.rotation == 1 && cleared.analysisRegion == edited.analysisRegion
         && cleared.sharedBalance == true,

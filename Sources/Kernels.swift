@@ -15,17 +15,19 @@ enum Kernels {
   /// dyes before the paper's curve: a bright colour it takes past white rolls off into the shoulder
   /// with every channel graded, a bright blue sky keeping its gradation, instead of a channel
   /// being cut. In between the ends, with the midtone at 1 and shadows and highlights at 0, it is
-  /// the same either way.
+  /// the same either way. `lit` is the frame's local lightness (`ImagePipeline.lightBase`): with
+  /// fade.w the shoulder takes the pixel's lightness less its fine detail, the detail added back
+  /// after it (`ended`); without, it is not read.
   static let negative = color("negative", conversion + """
-    [[stitchable]] float4 negative(coreimage::sample_t p, NEGATIVE_ARGS) {
-      return float4(clamp(graded(p, true, float3(1.0), float3(0.0), NEGATIVE_PASS), float3(0.0), float3(1.0)), 1.0);
+    [[stitchable]] float4 negative(coreimage::sample_t p, coreimage::sample_t lit, NEGATIVE_ARGS) {
+      return float4(clamp(graded(p, true, float3(1.0), float3(0.0), lit.r, NEGATIVE_PASS), float3(0.0), float3(1.0)), 1.0);
     }
     """)
   /// The tones first and the saturation after them, without the final clip: colours the saturation
   /// control pushes past sRGB stay, for exports into a wider colour space.
   static let negativeUnclipped = color("negativeUnclipped", conversion + """
-    [[stitchable]] float4 negativeUnclipped(coreimage::sample_t p, NEGATIVE_ARGS) {
-      return float4(saturated(graded(p, false, float3(1.0), float3(0.0), NEGATIVE_PASS), tone, ends), 1.0);
+    [[stitchable]] float4 negativeUnclipped(coreimage::sample_t p, coreimage::sample_t lit, NEGATIVE_ARGS) {
+      return float4(saturated(graded(p, false, float3(1.0), float3(0.0), lit.r, NEGATIVE_PASS), tone, ends), 1.0);
     }
     """)
   /// What `negative` takes into its ends, unclipped: each channel on the print's straight line,
@@ -40,13 +42,13 @@ enum Kernels {
   /// `a` times it plus `d`, from two pictures of the correction as large as the frame's. Everything
   /// after it, the whole of ③ 调色, works on the repaired picture as on any other.
   static let negativeFixed = color("negativeFixed", conversion + """
-    [[stitchable]] float4 negativeFixed(coreimage::sample_t p, coreimage::sample_t a, coreimage::sample_t d, NEGATIVE_ARGS) {
-      return float4(clamp(graded(p, true, a.rgb, d.rgb, NEGATIVE_PASS), float3(0.0), float3(1.0)), 1.0);
+    [[stitchable]] float4 negativeFixed(coreimage::sample_t p, coreimage::sample_t a, coreimage::sample_t d, coreimage::sample_t lit, NEGATIVE_ARGS) {
+      return float4(clamp(graded(p, true, a.rgb, d.rgb, lit.r, NEGATIVE_PASS), float3(0.0), float3(1.0)), 1.0);
     }
     """)
   static let negativeUnclippedFixed = color("negativeUnclippedFixed", conversion + """
-    [[stitchable]] float4 negativeUnclippedFixed(coreimage::sample_t p, coreimage::sample_t a, coreimage::sample_t d, NEGATIVE_ARGS) {
-      return float4(saturated(graded(p, false, a.rgb, d.rgb, NEGATIVE_PASS), tone, ends), 1.0);
+    [[stitchable]] float4 negativeUnclippedFixed(coreimage::sample_t p, coreimage::sample_t a, coreimage::sample_t d, coreimage::sample_t lit, NEGATIVE_ARGS) {
+      return float4(saturated(graded(p, false, a.rgb, d.rgb, lit.r, NEGATIVE_PASS), tone, ends), 1.0);
     }
     """)
   static let negativeRangeFixed = color("negativeRangeFixed", conversion + """
@@ -62,6 +64,30 @@ enum Kernels {
       float faded;
       float3 s = straight(p, float3(1.0), float3(0.0), faded, NEGATIVE_PASS);
       return float4(clamp(printed(s, NEGATIVE_PASS), float3(0.0), float3(1.0)), 1.0);
+    }
+    """)
+  /// A guided filter on a picture's own lightness (He, Sun and Tang), in three steps between
+  /// Gaussian blurs (`ImagePipeline.guided`): the lightness and its square; from their local means, how
+  /// much of each pixel's own value its smoothed value keeps (a, where the variance is large against
+  /// `eps`, at an edge, nearly all) and the local mean for the rest (b); and, with those averaged,
+  /// a times the pixel plus b. Core Image's own CIGuidedFilter leaves a picture guided by itself as
+  /// it was.
+  static let guideSquare = color("guideSquare", """
+    [[stitchable]] float4 guideSquare(coreimage::sample_t p) {
+      return float4(p.r, p.r * p.r, 0.0, 1.0);
+    }
+    """)
+  static let guideCoefficients = color("guideCoefficients", """
+    [[stitchable]] float4 guideCoefficients(coreimage::sample_t m, float eps) {
+      float a = max(m.g - m.r * m.r, 0.0);
+      a = a / (a + eps);
+      return float4(a, (1.0 - a) * m.r, 0.0, 1.0);
+    }
+    """)
+  static let guideApply = color("guideApply", """
+    [[stitchable]] float4 guideApply(coreimage::sample_t p, coreimage::sample_t ab) {
+      float v = ab.r * p.r + ab.g;
+      return float4(v, v, v, 1.0);
     }
     """)
   /// Each pixel's colour apart from its lightness (luma), and the two put back together.
@@ -104,8 +130,8 @@ enum Kernels {
   /// The conversion the `negative` kernels share, up to its final clip: the tones (`graded`) and the
   /// saturation, in one order or the other.
   private static let conversion = """
-    #define NEGATIVE_ARGS float3 base, float3 slope, float3 toe, float3 gain, float3 balance, float4 levels, float4 tone, float4 color, float4 ends, float inverted, float4 fade, float4 lights, float4 shoulder, float encode
-    #define NEGATIVE_PASS base, slope, toe, gain, balance, levels, tone, color, ends, inverted, fade, lights, shoulder, encode
+    #define NEGATIVE_ARGS float3 base, float3 slope, float3 toe, float3 gain, float3 balance, float4 levels, float4 tone, float4 color, float4 ends, float inverted, float4 fade, float4 lights, float4 shoulder, float encode, float4 local
+    #define NEGATIVE_PASS base, slope, toe, gain, balance, levels, tone, color, ends, inverted, fade, lights, shoulder, encode, local
 
     // Saturation (tone.w) about each pixel's lightness, more in the shadows (ends.z).
     static float3 saturated(float3 q, float4 tone, float4 ends) {
@@ -191,51 +217,83 @@ enum Kernels {
       }
       return rolled;
     }
-    // The ends, the clip, shadows and highlights, and the midtone.
-    static float3 ended(float3 q, NEGATIVE_ARGS) {
+    // The shoulder over `q`: rolled off each by itself, a bright colour's channels close up towards
+    // white: a white lit by the sky and one lit by the sun come out one white, and a blue sky past
+    // white in its blue alone turns cyan. With ends.w the brightest channel takes the shoulder and
+    // the others keep their distance below it, so the colour and its hue stay as the shoulder brings
+    // it down; a sky that far past white comes out a deeper blue. Past the frame's brightest (a
+    // little past white without the longer shoulder) everything closes up, as a print's highlights
+    // wash out.
+    static float3 rolledOff(float3 q, float4 ends, float4 shoulder, float4 local) {
+      float3 each = shouldered(q, ends, shoulder);
+      float m = max(q.r, max(q.g, q.b));
+      float top = shouldered(float3(m), ends, shoulder).x;
+      float3 kept = q + (top - m);
+      // Every channel brought down as far as the brightest, a colour well past white comes out
+      // darker than rolled off each by itself. local.x (0-1) lifts it that far back towards the
+      // lightness it would have had, the others' distances below the brightest made smaller
+      // together, so the hue stays, the colour a little paler.
+      if (local.x > 0.0) {
+        float3 luma = float3(0.2126, 0.7152, 0.0722);
+        float now = dot(kept, luma);
+        float aim = now + local.x * max(dot(each, luma) - now, 0.0);
+        kept = float3(top) - (float3(top) - kept) * clamp((top - aim) / max(top - now, 0.00001), 0.0, 1.0);
+      }
+      float far = shoulder.w > 0.0 ? shoulder.x + shoulder.y : 1.1;
+      return mix(each, kept, ends.w * (1.0 - smoothstep(far, far + 0.3, m)));
+    }
+    // The ends, the clip and the midtone. `detail` is how far the pixel's
+    // brightest channel lies above or below its surroundings' (`graded`): the shoulder takes the
+    // pixel without it and it goes back on after, so a white sign or a lit metal keeps its texture
+    // and shading at full contrast while the light around them still rolls off towards white.
+    // Under the shoulder's knee taking it off and putting it back is nothing.
+    static float3 ended(float3 q, float detail, NEGATIVE_ARGS) {
       // Each side's curve only works out its own side, so a far value (the holder, opaque) does not
       // overflow the other's exp into infinity and come out as nothing.
       if (ends.x > 0.0) { float3 t = float3(ends.x); q = mix(t * exp(min(q, t) / t - float3(1.0)), q, step(t, q)); }
       if (ends.y < 1.0) {
-        // Rolled off each by itself, a bright colour's channels close up towards white: a white lit
-        // by the sky and one lit by the sun come out one white, and a blue sky past white in its
-        // blue alone turns cyan. With ends.w the brightest channel takes the shoulder and the others
-        // keep their distance below it, so the colour and its hue stay as the shoulder brings it
-        // down; a sky that far past white comes out a deeper blue. Past the frame's brightest (a
-        // little past white without the longer shoulder) everything closes up, as a print's
-        // highlights wash out.
-        float3 each = shouldered(q, ends, shoulder);
-        float m = max(q.r, max(q.g, q.b));
-        float top = shouldered(float3(m), ends, shoulder).x;
-        float3 kept = q + (top - m);
-        // Every channel brought down as far as the brightest, a colour well past white comes out
-        // darker than rolled off each by itself. lights.w (0-1) lifts it that far back towards the
-        // lightness it would have had, the others' distances below the brightest made smaller
-        // together, so the hue stays, the colour a little paler.
-        if (lights.w > 0.0) {
-          float3 luma = float3(0.2126, 0.7152, 0.0722);
-          float now = dot(kept, luma);
-          float aim = now + lights.w * max(dot(each, luma) - now, 0.0);
-          kept = float3(top) - (float3(top) - kept) * clamp((top - aim) / max(top - now, 0.00001), 0.0, 1.0);
-        }
-        float far = shoulder.w > 0.0 ? shoulder.x + shoulder.y : 1.1;
-        q = mix(each, kept, ends.w * (1.0 - smoothstep(far, far + 0.3, m)));
+        float3 below = rolledOff(q - float3(detail), ends, shoulder, local);
+        // Detail above its surroundings goes back whole up to half the room left under white, and
+        // past that eases towards three quarters of it, so a texture near white is kept and nothing
+        // reaches white; in the midtones, with room to spare, and below its surroundings, as it was.
+        float room = max(1.0 - max(below.r, max(below.g, below.b)), 0.0001), whole = 0.5 * room;
+        float added = detail > whole ? whole + 0.5 * whole * (1.0 - exp(-(detail - whole) / (0.5 * whole))) : detail;
+        float3 kept = below + float3(added);
+        // A bright line or rim, more above its surroundings than fits under white, would have its
+        // gradation pressed into the last of the room: it comes out as the shoulder alone made it,
+        // as far as its detail did not fit.
+        if (detail > 0.0) { kept = mix(rolledOff(q, ends, shoulder, local), kept, added / detail); }
+        q = kept;
       }
       q = clamp(q, float3(0.0), float3(1.0));
-      // Highlights pressed down (lights.z, 0–1): every channel lowered by the same, up to 0.15, so
-      // the colour stays; how much goes by lightness, so a blue sky or a red, bright in one channel
-      // but not light, is left as it is. Nothing under 0.45, white at 0.85 at 1, and the gradation
-      // at the top kept, the lowering levelling off there.
-      if (lights.z > 0.0) { q -= float3(lights.z * 0.15 * smoothstep(0.45, 1.0, dot(q, float3(0.2126, 0.7152, 0.0722)))); }
-      // Shadows and highlights: the dark tones (most at a third) and the light ones (most at two
-      // thirds) moved by up to 0.12, black and white held, every tone still in order.
-      float3 r = float3(1.0) - q;
-      q += lights.x * 0.81 * q * r * r + lights.y * 0.81 * q * q * r;
       return pow(q, float3(1.0 / max(tone.y, 0.1)));
     }
-    // The tones, and with `first` the saturation ahead of the ends.
-    static float3 graded(float4 p, bool first, float3 fa, float3 fd, NEGATIVE_ARGS) {
-      return ended(toned(p, first, fa, fd, NEGATIVE_PASS), NEGATIVE_PASS);
+    // The tones, and with `first` the saturation ahead of the ends. With fade.w, the pixel's fine
+    // detail for the shoulder (`ended`): its brightest channel, saturated as `lit` was measured,
+    // less `lit`, no further than fade.w either way, so a sharp edge's step stays in the light
+    // the shoulder rolls off and leaves no bright rim beside it.
+    //
+    // Then highlights, shadows, whites and blacks (lights.y, .x, .z, .w, −1 to 1, brighter up), as
+    // Lightroom has them, before the ends and the clip, so pulling them down brings back what lay
+    // past white or under black. Each moves every channel by the same, up to 0.15: on this scale
+    // that is the same exposure for the three, so the colour stays. How much goes by lightness:
+    // highlights and shadows by the light round the pixel (`lit`, with local.y), so a bright cloud
+    // or a white sign comes down whole with its texture, and a dark shade lifts with its own;
+    // whites and blacks by the pixel's own brightest and darkest channel, the ends of the range.
+    // Highlights: full from 0.85 up (past white too), none under 0.45. Shadows: most about 0.25-0.3,
+    // none at black or over 0.65, so the black stays. Whites: full at white and past it, none under
+    // 0.5. Blacks: full at black and under it, none over 0.5. Every tone stays in order.
+    static float3 graded(float4 p, bool first, float3 fa, float3 fd, float lit, NEGATIVE_ARGS) {
+      float3 q = toned(p, first, fa, fd, NEGATIVE_PASS);
+      float3 s = first ? q : saturated(q, tone, ends);
+      float m = max(s.r, max(s.g, s.b)), n = min(s.r, min(s.g, s.b));
+      float detail = fade.w > 0.0 ? clamp(m - lit, -fade.w, fade.w) : 0.0;
+      float around = local.y > 0.5 ? lit : m;
+      float shift = lights.y * 0.15 * smoothstep(0.45, 0.85, around)
+        + lights.x * 0.12 * smoothstep(0.0, 0.25, around) * (1.0 - smoothstep(0.3, 0.65, around))
+        + lights.z * 0.15 * smoothstep(0.5, 1.0, m)
+        + lights.w * 0.15 * (1.0 - smoothstep(0.0, 0.5, n));
+      return ended(q + float3(shift), detail, NEGATIVE_PASS);
     }
 
     """

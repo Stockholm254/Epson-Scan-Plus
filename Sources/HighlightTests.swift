@@ -3,7 +3,8 @@ import CoreGraphics
 import Foundation
 
 /// Highlights past the white keep their gradation on screen: the shoulder reaches as far as the
-/// frame's brightest, the midtones as they were, a frame with nothing past white as before;
+/// frame's brightest, the midtones as they were, a frame with nothing past white as before; the
+/// shoulder rolls off the light and leaves the detail in it, with no rim at a sharp edge;
 /// highlights −1 takes it further; a bright colour the saturation takes past white eases into it
 /// instead of losing a channel; and a roll printed as one reaches as far as its brightest frame.
 enum HighlightTests {
@@ -44,9 +45,9 @@ enum HighlightTests {
     }
     /// As before the shoulder reached: held at the white.
     func short<T>(_ body: () throws -> T) rethrows -> T {
-      let kept = (ImagePipeline.reachStops, ImagePipeline.highlightsReach)
-      (ImagePipeline.reachStops, ImagePipeline.highlightsReach) = (0, 0)
-      defer { (ImagePipeline.reachStops, ImagePipeline.highlightsReach) = kept }
+      let kept = ImagePipeline.reachStops
+      ImagePipeline.reachStops = 0
+      defer { ImagePipeline.reachStops = kept }
       return try body()
     }
     func strip(_ r: Raster) -> [Double] { (stripStart..<stripStart + stripLength).map { r.pixel($0, stripRow).g * 255 } }
@@ -56,7 +57,9 @@ enum HighlightTests {
     // From one stop past white (half way along the band) to two.
     let half = stripLength / 2
     let graded = now.last! - now[half], flat = before.last! - before[half]
-    try check(graded > 6 && flat < 3 && now.last! < 254.5 && rising(now),
+    // A band two pixels deep is partly its own surroundings' detail, which the shoulder keeps only
+    // as far as it fits under white: its last stop a little tighter than the shoulder alone gives it.
+    try check(graded > 4 && flat < 3 && now.last! < 254.5 && rising(now),
       String(format: "highlights two stops past white keep their gradation: the second stop spans %.0f levels (%.0f…%.0f), where a shoulder held at white gave it %.0f",
         graded, now[half], now.last!, flat))
     // The ramp's tones up to about three quarters as they were; past white the gradation comes
@@ -71,17 +74,93 @@ enum HighlightTests {
     try check(unchanged && ImagePipeline.shoulder(Adjustments(), a).w == 0,
       "a frame with nothing past its white comes out exactly as before")
 
-    // Highlights −1 reaches two stops further: the white itself comes in, the band still graded.
+    // Highlights −1 brings the bright areas down before the ends: the white itself comes in; the
+    // band, the frame's brightest, still graded and short of white, the shoulder taking it from
+    // where it now lies.
     var lower = Adjustments()
     lower.highlights = -1
     let top = alone.pixel(w - 20, 10).g * 255, pulled = try render(plain, lower).pixel(w - 20, 10).g * 255
     let lowered = strip(try render(bright, lower))
-    try check(pulled < top - 15 && lowered.last! < now.last! && rising(lowered) && lowered.last! - lowered[half] > 4,
-      String(format: "highlights −1 brings the white in (%.0f → %.0f) and the band down with it, still graded (%.0f…%.0f)",
+    try check(pulled < top - 15 && lowered.last! < 254.5 && rising(lowered) && lowered.last! - lowered[half] > 4,
+      String(format: "highlights −1 brings the white in (%.0f → %.0f), the band still graded and short of white (%.0f…%.0f)",
         top, pulled, lowered[half], lowered.last!))
     var cut = lower
     cut.softEnds = false
     try check(ImagePipeline.shoulder(cut, a).w == 0, "cut straight at the ends, the shoulder never reaches past white")
+
+    // The shoulder rolls off the light, not the detail in it. A sunlit white (a sign, a lit metal
+    // pole) at the frame's white, its texture 0.03 log exposure either way, beside a ramp from the
+    // shadows up: with the detail kept the texture shows as on the straight line, where the
+    // shoulder alone flattened it; the patch as a whole as light as the shoulder alone made it.
+    func scene(_ exposure: (Int, Int) -> Double) -> CGImage {
+      var samples = [UInt16](repeating: 65535, count: w * h * 4)
+      for y in 0..<h {
+        for x in 0..<w {
+          let e = exposure(x, y)
+          for c in 0..<3 { samples[(y * w + x) * 4 + c] = UInt16(base.values[c] * pow(10, -portra.slopes.values[c] * e / 2.2) * 65535) }
+        }
+      }
+      return CGImage(
+        width: w, height: h, bitsPerComponent: 16, bitsPerPixel: 64, bytesPerRow: w * 8,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!,
+        bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder16Little.rawValue),
+        provider: CGDataProvider(data: Data(bytes: samples, count: samples.count * 2) as CFData)!, decode: nil,
+        shouldInterpolate: false, intent: .defaultIntent)!
+    }
+    // The local lightness smooths a texture to its mean and keeps a step as it is: a guided filter
+    // on itself (Core Image's own CIGuidedFilter leaves a picture guided by itself unsmoothed).
+    do {
+      let gw = 80, gh = 20
+      var px = [Float](repeating: 1, count: gw * gh * 4)
+      for y in 0..<gh { for x in 0..<gw {
+        let v = Float((x < 40 ? 0.3 : 0.95) + 0.03 * sin(Double(x) * 1.3) * cos(Double(y) * 1.1))
+        for c in 0..<3 { px[(y * gw + x) * 4 + c] = v }
+      } }
+      let light = CIImage(bitmapData: Data(bytes: px, count: px.count * 4), bytesPerRow: gw * 16, size: CGSize(width: gw, height: gh), format: .RGBAf, colorSpace: nil)
+      guard let smooth = ImagePipeline.guided(light, radius: 3, eps: ImagePipeline.detailEdge) else { throw DeskError.message("FAIL: the guided filter runs") }
+      var out = [Float](repeating: 0, count: gw * gh * 4)
+      out.withUnsafeMutableBytes { pipe.context.render(smooth, toBitmap: $0.baseAddress!, rowBytes: gw * 16, bounds: light.extent, format: .RGBAf, colorSpace: nil) }
+      // A row where the texture runs at nearly its full ±0.03 (cos 6.6 ≈ 0.95).
+      func at(_ a: [Float], _ x: Int) -> Double { Double(a[(6 * gw + x) * 4]) }
+      let flat = (8..<32).map { abs(at(out, $0) - 0.3) }.max()! , flatBright = (48..<72).map { abs(at(out, $0) - 0.95) }.max()!
+      let texture = (8..<32).map { abs(at(px, $0) - 0.3) }.max()!
+      let edge = [38, 39, 40, 41].map { abs(at(out, $0) - at(px, $0)) }.max()!
+      try check(texture > 0.02 && flat < texture * 0.4 && flatBright < texture * 0.4 && edge < 0.12,
+        String(format: "the local lightness smooths a texture of ±%.3f to within %.3f of its mean and keeps a step of 0.65 to within %.3f", texture, max(flat, flatBright), edge))
+    }
+    func withoutDetail<T>(_ body: () throws -> T) rethrows -> T {
+      let kept = ImagePipeline.detailReach
+      ImagePipeline.detailReach = 0
+      defer { ImagePipeline.detailReach = kept }
+      return try body()
+    }
+    let textured = scene { x, y in
+      x < 180 ? 0.15 + 1.1 * Double(x) / 179 : 1.32 + 0.03 * sin(Double(x) * .pi / 4) * sin(Double(y) * .pi / 4)
+    }
+    func patch(_ r: Raster) -> (mean: Double, spread: Double) {
+      var v = [Double]()
+      for y in 30..<90 { for x in 195..<275 { let p = r.pixel(x, y); v.append((0.2126 * p.r + 0.7152 * p.g + 0.0722 * p.b) * 255) } }
+      let mean = v.reduce(0, +) / Double(v.count)
+      return (mean, (v.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(v.count)).squareRoot())
+    }
+    var cutAtEnds = Adjustments()
+    cutAtEnds.softEnds = false
+    let kept = patch(try render(textured)), rolled = try withoutDetail { patch(try render(textured)) }
+    let line = patch(try render(textured, cutAtEnds))
+    try check(kept.spread > line.spread * 0.85 && kept.spread > rolled.spread * 1.1 && abs(kept.mean - rolled.mean) < 3,
+      String(format: "a sunlit white at the frame's white keeps its texture under the shoulder: spread %.1f levels, %.1f on the straight line, %.1f with the shoulder alone; as light as that (%.0f, %.0f)",
+        kept.spread, line.spread, rolled.spread, kept.mean, rolled.mean))
+    // A smooth ramp has no detail to keep: as the shoulder alone has it.
+    let rampKept = try render(bright), rampRolled = try withoutDetail { try render(bright) }
+    let rampMoved = (0..<w).map { abs(rampKept.pixel($0, 10).g - rampRolled.pixel($0, 10).g) * 255 }.max() ?? 99
+    try check(rampMoved <= 1, String(format: "a smooth ramp comes out as with the shoulder alone (at most %.1f level apart)", rampMoved))
+    // A sharp step from dark leaves into the white: no bright rim beside it, the white's inside as before.
+    let step = scene { x, _ in x < 150 ? 0.4 : 1.4 }
+    let stepKept = try render(step), stepRolled = try withoutDetail { try render(step) }
+    let inside = stepKept.pixel(230, 60).g * 255
+    let rim = (151..<170).map { stepKept.pixel($0, 60).g * 255 }.max() ?? 0
+    try check(rim - inside < 2.5 && abs(inside - stepRolled.pixel(230, 60).g * 255) < 0.5,
+      String(format: "a sharp edge into the white leaves no bright rim (%.1f beside it, %.1f inside) and the white as the shoulder alone made it", rim, inside))
 
     // A bright, saturated blue, as a positive ramp at saturation 1.6 under the soft shoulder.
     let n = 32
@@ -94,9 +173,9 @@ enum HighlightTests {
     func out(_ kernel: CIColorKernel?, _ image: CIImage) -> [Float] {
       let one = CIVector(x: 1, y: 1, z: 1), none = CIVector(x: 0, y: 0, z: 0)
       let args: [Any] = [
-        image, one, one, none, one, none, CIVector(x: 0, y: 1, z: 0, w: 1), CIVector(x: 0, y: 1, z: 1, w: 1.6),
+        image, image, one, one, none, one, none, CIVector(x: 0, y: 1, z: 0, w: 1), CIVector(x: 0, y: 1, z: 1, w: 1.6),
         CIVector(x: 0, y: 0, z: 0, w: 1), CIVector(x: 0, y: 0.9, z: 0, w: 0), 0.0, CIVector(x: 0, y: 1, z: 0, w: 0), CIVector(x: 0, y: 0, z: 0, w: 0),
-        CIVector(x: 0, y: 0, z: 0, w: 0), 1.0,
+        CIVector(x: 0, y: 0, z: 0, w: 0), 1.0, CIVector(x: 0, y: 0, z: 0, w: 0),
       ]
       guard let result = kernel?.apply(extent: image.extent, arguments: args) else { return [] }
       var px = [Float](repeating: 0, count: n * 4)

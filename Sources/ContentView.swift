@@ -1250,7 +1250,7 @@ struct ContentView: View {
   }
   /// Exposure and the tones, over the frame's histogram against what a screen shows.
   var toneSection: some View {
-    PanelSection("影调", key: "tone", info: "曝光像放大时的印放曝光一样调整密度，在裁切前生效；−EV 可以找回高光。\n\n高光、阴影只动亮部或暗部：阴影往右提亮暗部、往左压暗；高光往左压暗亮部、找回层次，往右提亮。黑和白两端不动，明暗顺序也不会颠倒。\n\n压高光只把亮部往下压，白也跟着下来，到 1 时白在 0.85，像 C1 那样不顶满；亮度 0.45 以下不动，三个通道压一样多，颜色不变，最亮处的层次也留着。", reset: resetKey(.tone)) {
+    PanelSection("影调", key: "tone", info: "曝光像放大时的印放曝光一样调整密度，在裁切前生效；−EV 可以找回高光。\n\n高光、阴影、白色、黑色和 Lightroom 的四个滑杆一样，都在剪切之前起作用：往回拉时，白点以上、黑以下的东西能拉回来。每个都给三个通道加减同样多（相当于那一处的曝光），颜色不变，明暗顺序也不会颠倒。\n\n高光、阴影看的是每处周围有多亮：大块的亮处（云、白墙、路牌）或暗处整块变暗、变亮，里面的纹理按原来的反差留着；明显的边上不出光晕。高光往左压暗亮处、找回层次，0.45 以下不动；阴影往右提亮暗处，黑本身不动。\n\n白色、黑色管两端，按每个像素自己最亮、最暗的通道：白色往左把最亮的一端整体拉下来（超出白的拉回来），往右推更多到白；黑色往左压深最暗的一端，往右提起来。\n\n以前的「压高光」已经并进白色：旧工程里压高光 p 读成白色 −p。", reset: resetKey(.tone)) {
       VStack(alignment: .leading, spacing: 10) {
         // In the single view, the frame's tones against what an ordinary screen shows of them.
         if let range = m.toneRange {
@@ -1264,8 +1264,9 @@ struct ContentView: View {
         slider("曝光 · EV", key: \.exposure, range: -2...2, format: "%+.2f")
         slider("对比度", key: \.contrast, range: 0.5...1.6)
         slider("高光", key: \.highlightsAmount, range: -1...1, format: "%+.2f")
-        slider("压高光", key: \.pressHighlightsAmount, range: 0...1)
         slider("阴影", key: \.shadowsAmount, range: -1...1, format: "%+.2f")
+        slider("白色", key: \.whitesAmount, range: -1...1, format: "%+.2f")
+        slider("黑色", key: \.blacksAmount, range: -1...1, format: "%+.2f")
       }
     }
   }
@@ -1296,7 +1297,7 @@ struct ContentView: View {
     }
   }
   var colourSection: some View {
-    PanelSection("色彩", key: "colour", info: "色彩降噪只平滑颜色、不动明度：传感器和去串色带来的彩色噪点（尤其是蓝黄）会去掉，胶片颗粒的明暗结构保留。翻拍的照片默认 1。\n\n柔和的暗部和高光：最暗的地方不硬切成纯黑，而是平滑地压下去，暗部的颜色和层次因此保留下来，并略微补一点暗部的饱和度；最亮的地方用柔和的肩部收向白，不硬顶到白。高光超出白点较多的画面，肩部按这张最亮的 0.1% 伸长（最多两档），阳光下的白边、亮云在普通屏幕上也留着层次；亮颜色收下来时颜色不变：最亮的通道走肩部，另外两个保持原来的距离，所以朝天空和朝太阳的两面白墙仍分得出冷暖，也不截掉一个通道；只有比这张最亮的 0.1% 还亮的地方才褪成白。「高光」往负调时肩部伸得更远。像相纸那样，中间段不变。", reset: resetKey(.colour)) {
+    PanelSection("色彩", key: "colour", info: "色彩降噪只平滑颜色、不动明度：传感器和去串色带来的彩色噪点（尤其是蓝黄）会去掉，胶片颗粒的明暗结构保留。翻拍的照片默认 1。\n\n柔和的暗部和高光：最暗的地方不硬切成纯黑，而是平滑地压下去，暗部的颜色和层次因此保留下来，并略微补一点暗部的饱和度；最亮的地方用柔和的肩部收向白，不硬顶到白。高光超出白点较多的画面，肩部按这张最亮的 0.1% 伸长（最多两档），阳光下的白边、亮云在普通屏幕上也留着层次；亮颜色收下来时颜色不变：最亮的通道走肩部，另外两个保持原来的距离，所以朝天空和朝太阳的两面白墙仍分得出冷暖，也不截掉一个通道；只有比这张最亮的 0.1% 还亮的地方才褪成白。「高光」往负调时肩部伸得更远。肩部只收大块的明暗：白里的纹理和明暗过渡（路牌的白底、受光的金属杆）按原来的反差加回去，亮处不发平；暗的树叶到白路牌这种明显的边不算细节，边上不会出亮边。像相纸那样，中间段不变。", reset: resetKey(.colour)) {
       VStack(alignment: .leading, spacing: 10) {
         slider("饱和度", key: \.saturation, range: 0...1.8)
         slider("色彩降噪", key: \.colourNoiseAmount, range: 0...2)

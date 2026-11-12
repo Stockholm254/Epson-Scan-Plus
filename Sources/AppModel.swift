@@ -1611,6 +1611,7 @@ final class AppModel: ObservableObject {
       (r.neutralSample, r.neutralPicked, r.manualBalance) = (nil, nil, nil)
     case .tone:
       (r.exposure, r.contrast, r.highlights, r.pressHighlights, r.shadows) = (fresh.exposure, fresh.contrast, nil, nil, nil)
+      (r.whites, r.blacks) = (nil, nil)
     case .levels:
       (r.autoLevels, r.black, r.white, r.midtone) = (fresh.autoLevels, fresh.black, fresh.white, fresh.midtone)
     case .colour:
@@ -3526,6 +3527,7 @@ final class AppModel: ObservableObject {
       var s = f.adjustments
       (s.exposure, s.contrast, s.warmth, s.tint, s.shadowWarmth, s.shadowTint, s.black, s.white, s.midtone) = (0, 1, 0, 0, nil, nil, 0, 1, 1)
       (s.shadows, s.highlights, s.pressHighlights, s.colourNoise, s.sharpening, s.curves) = (nil, nil, nil, nil, nil, nil)
+      (s.whites, s.blacks) = (nil, nil)
       (s.rotation, s.flipHorizontal, s.angle) = (0, nil, nil)
       f.adjustments = s
     }

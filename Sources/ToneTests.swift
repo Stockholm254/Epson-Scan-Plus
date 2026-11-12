@@ -111,8 +111,8 @@ enum ToneTests {
     brighter.exposure = 1
     let mid = matching.pixel(w / 2, 4).g * 255, lifted = try render(brighter, portra).pixel(w / 2, 4).g * 255
     try check(lifted > mid + 20, String(format: "+1 EV brightens the midtones: %.0f → %.0f", mid, lifted))
-    // Shadows and highlights move their own tones along the neutral ramp, black and white held,
-    // the ramp still rising.
+    // Shadows and highlights move their own tones along the neutral ramp, the black held, the ramp
+    // still rising.
     func ramp(_ s: Adjustments) throws -> [Double] {
       let r = try render(s, portra)
       return (0..<w).map { r.pixel($0, 4).g * 255 }
@@ -133,8 +133,8 @@ enum ToneTests {
     func rising(_ v: [Double]) -> Bool { zip(v, v.dropFirst()).allSatisfy { $1 >= $0 - 1 } }
     try check(at(up, dark) > at(plain, dark) + 8 && abs(at(up, light) - at(plain, light)) < (at(up, dark) - at(plain, dark)) / 2
       && at(down, light) < at(plain, light) - 8 && abs(at(down, dark) - at(plain, dark)) < (at(plain, light) - at(down, light)) / 2
-      && abs(up[0] - plain[0]) < 2 && plain[0] < 1 && highlights(try render(held, portra)).last! > 254.5 && rising(up) && rising(down) && rising(crossed),
-      String(format: "shadows +1 lifts the dark tones (%.0f → %.0f) more than the light, highlights −1 lowers the light (%.0f → %.0f) more than the dark; black and white stay, and the ramp keeps rising",
+      && abs(up[0] - plain[0]) < 2 && plain[0] < 1 && rising(up) && rising(down) && rising(crossed),
+      String(format: "shadows +1 lifts the dark tones (%.0f → %.0f) more than the light, highlights −1 lowers the light (%.0f → %.0f) more than the dark; black stays, and the ramp keeps rising",
         at(plain, dark), at(up, dark), at(plain, light), at(down, light)))
     // Shadow warmth warms the dark greys and leaves the light ones and black: red over blue on the
     // neutral ramp where it is a quarter of the way up, nothing where it is three quarters or black.
@@ -194,17 +194,38 @@ enum ToneTests {
     try check(solved?.reached == true && castSpread > 10 && balancedSpread < 3 && tooLight == nil,
       String(format: "the shadow neutral picker takes a cast dark grey (%.0f levels apart) back to grey (%.1f) with shadow warmth %+.2f and tint %+.2f, and leaves a light grey alone",
         castSpread, balancedSpread, solved?.warmth ?? .nan, solved?.tint ?? .nan))
-    // Pressing the highlights lowers the light greys and white with them, leaves the dark ones, and
-    // keeps a bright red as far from green as it was.
+    // Whites −1 lowers the top end, the light greys and white with them, leaves the dark ones, and
+    // keeps a bright red at least as far from green (brought down out of the shoulder, it is less
+    // rolled off); 压高光 saved before is read as it.
     var pressed = defaults
-    pressed.pressHighlights = 1
+    pressed.whites = -1
+    var old = Adjustments()
+    old.pressHighlights = 0.6
+    let oldDecoded = try JSONDecoder().decode(Adjustments.self, from: JSONEncoder().encode(old))
+    try check(old.whitesAmount == -0.6 && oldDecoded.whitesAmount == -0.6,
+      "压高光 0.6 saved before whites is read as whites −0.6")
+    var reset = old
+    reset.whitesAmount = 0
+    try check(reset.whites == nil && reset.pressHighlights == nil && reset.whitesAmount == 0, "setting whites clears the old 压高光")
     let press = try render(pressed, portra)
     let pressedLight = matching.pixel(Int(Double(w - 1) * light), 4).g * 255 - press.pixel(Int(Double(w - 1) * light), 4).g * 255
     let pressedDark = matching.pixel(Int(Double(w - 1) * dark), 4).g * 255 - press.pixel(Int(Double(w - 1) * dark), 4).g * 255
     let pressedWhite = (0..<w).map { press.pixel($0, 4).g * 255 }.max()!
-    try check(pressedLight > 8 && abs(pressedDark) < 1 && pressedWhite < 0.87 * 255 && abs(redOverGreen(press) - redOverGreen(matching)) < 2,
-      String(format: "pressing the highlights lowers the light greys by %.0f levels and white to %.0f, the dark greys by %.1f, and a bright red keeps its colour (red over green %.0f, was %.0f)",
+    try check(pressedLight > 8 && abs(pressedDark) < 1 && pressedWhite < 0.87 * 255 && redOverGreen(press) > redOverGreen(matching) - 2,
+      String(format: "whites −1 lowers the light greys by %.0f levels and white to %.0f, the dark greys by %.1f, and a bright red keeps its colour, no closer to green (red over green %.0f, was %.0f)",
         pressedLight, pressedWhite, pressedDark, redOverGreen(press), redOverGreen(matching)))
+    // Blacks: +1 lifts the bottom end, black with it, −1 takes more of it to black; the light greys stay.
+    var lifted3 = defaults
+    lifted3.blacks = 1
+    var deeper = defaults
+    deeper.blacks = -1
+    let liftedRamp = try render(lifted3, portra), deeperRamp = try render(deeper, portra)
+    func atBlack(_ r: Raster) -> Int { (0..<w).filter { r.pixel($0, 4).g * 255 < 0.5 }.count }
+    let blackLifted = liftedRamp.pixel(0, 4).g * 255 - matching.pixel(0, 4).g * 255
+    let lightKept = abs(liftedRamp.pixel(Int(Double(w - 1) * light), 4).g - matching.pixel(Int(Double(w - 1) * light), 4).g) * 255
+    try check(blackLifted > 15 && atBlack(deeperRamp) > atBlack(matching) + 3 && lightKept < 1,
+      String(format: "blacks +1 lifts black by %.0f levels, −1 takes %d more steps to black (%d before), and the light greys stay (%.1f)",
+        blackLifted, atBlack(deeperRamp) - atBlack(matching), atBlack(matching), lightKept))
     // Positive input scales the linear value: one stop at input gamma 2.2 multiplies by 2^(1/2.2).
     let grey = CGImage(
       width: 8, height: 8, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: 32,

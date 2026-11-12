@@ -378,25 +378,34 @@ struct Adjustments: Codable, Equatable {
     get { softEnds != false }
     set { softEnds = newValue ? nil : false }
   }
-  /// The dark tones and the light tones made lighter (positive) or darker, black and white held
-  /// and every tone kept in order: −1 to 1, nil as it is.
+  /// Highlights, shadows, whites and blacks, as Lightroom has them (`Kernels.graded`): the bright
+  /// areas, the dark areas (both by the light round each pixel, their texture kept), the top end and
+  /// the bottom end made lighter (positive) or darker, before the clip, so pulling them in brings
+  /// back what lay past white or under black: −1 to 1, nil as it is.
   var shadows: Double? = nil
   var shadowsAmount: Double {
     get { shadows ?? 0 }
     set { shadows = newValue == 0 ? nil : newValue }
-  }
-  /// The light tones pressed down, white with them, the darker half and the colours as they are:
-  /// 0 to 1, nil none.
-  var pressHighlights: Double? = nil
-  var pressHighlightsAmount: Double {
-    get { pressHighlights ?? 0 }
-    set { pressHighlights = newValue == 0 ? nil : newValue }
   }
   var highlights: Double? = nil
   var highlightsAmount: Double {
     get { highlights ?? 0 }
     set { highlights = newValue == 0 ? nil : newValue }
   }
+  var whites: Double? = nil
+  var whitesAmount: Double {
+    // 压高光, saved before whites were, brought the white down by 0.15 at 1: whites −1 does.
+    get { whites ?? -(pressHighlights ?? 0) }
+    set { (whites, pressHighlights) = (newValue == 0 ? nil : newValue, nil) }
+  }
+  var blacks: Double? = nil
+  var blacksAmount: Double {
+    get { blacks ?? 0 }
+    set { blacks = newValue == 0 ? nil : newValue }
+  }
+  /// 压高光, saved before whites took its place (0 to 1, the white brought down by 0.15 at 1): read
+  /// as whites at minus it (`whitesAmount`), never set.
+  var pressHighlights: Double? = nil
   /// Colour noise smoothed away, the grain's lightness left as it is: 0 (or nil) off, 1 as a copy
   /// shot comes in with.
   var colourNoise: Double? = nil
@@ -637,6 +646,7 @@ extension Adjustments {
     (warmth, tint, shadowWarmth, shadowTint) = (o.warmth, o.tint, o.shadowWarmth, o.shadowTint)
     (sharedBalance, sharedLevels, rollPrint) = (o.sharedBalance, o.sharedLevels, o.rollPrint)
     (exposure, contrast, highlights, pressHighlights, shadows) = (o.exposure, o.contrast, o.highlights, o.pressHighlights, o.shadows)
+    (whites, blacks) = (o.whites, o.blacks)
     (autoLevels, black, white, midtone) = (o.autoLevels, o.black, o.white, o.midtone)
     (saturation, colourNoise, softEnds) = (o.saturation, o.colourNoise, o.softEnds)
     (curves, sharpening) = (o.curves, o.sharpening)

@@ -78,23 +78,34 @@ final class ImagePipeline {
   /// That shoulder holds what lies up to about half a stop past white; a frame's highlights often
   /// run further, and the negative still has them. So the shoulder reaches as far as the frame's
   /// brightest 0.1% (`ToneAnalysis.reach`), up to `reachStops` past its white, as a print's paper
-  /// eases its highlights into white (`shoulder`); highlights −1 takes it `highlightsReach` further.
+  /// eases its highlights into white (`shoulder`); highlights and whites pulled down bring the top
+  /// in before it (`Kernels.graded`), so the shoulder starts from there.
   /// That brightest 0.1% is counted with the frame `reachDimension` pixels across (`pixelReach`),
   /// not on the analysis' 300-pixel samples, which average a white sign or a lit edge away with
   /// what lies round it; 0 counts it on those samples only.
-  static var reachStops = 2.0, highlightsReach = 2.0, reachDimension = 1500
+  static var reachStops = 2.0, reachDimension = 1500
+  /// The shoulder rolls off the light, not the detail in it (`lightBase`, `Kernels.ended`): each
+  /// pixel's fine detail, its brightest channel's distance from its surroundings', up to
+  /// `detailReach` either way, goes on again after the shoulder at full contrast. The surroundings
+  /// are smoothed over `detailRadius` of the frame's longer side, but not across a step of more than
+  /// about the square root of `detailEdge`, 0.2 (a guided filter on the lightness itself), so a sign
+  /// against dark leaves keeps its texture and the shading of a lit metal pole, and the step from
+  /// one to the other is rolled off whole. 0 for `detailReach` leaves the shoulder as it was.
+  static var detailReach = 0.15, detailRadius = 0.005, detailEdge = 0.04
   /// The longer shoulder for `s` and `a`, as the kernel takes it: from `x` up along a log curve
   /// that leaves the straight line at slope 1 and brings `x + y` to 0.98, `z` its bend, then out
   /// to white; `w` how far it replaces the short one, nothing for highlights within its reach.
   static func shoulder(_ s: Adjustments, _ a: ToneAnalysis) -> CIVector {
     guard s.softEndsOn && s.inputIsNegative else { return CIVector(x: 0, y: 0, z: 0, w: 0) }
     let stop = log10(2.0)
-    let top = min(max(a.reach ?? a.high, a.high), a.high + reachStops * stop) + max(0, -s.highlightsAmount) * highlightsReach * stop
+    let top = min(max(a.reach ?? a.high, a.high), a.high + reachStops * stop)
     // Where the kernel's levels, colour and contrast put it, in its warmest or coolest channel.
     var q = (top + s.exposure * stop - a.low) / max(a.high - a.low, 0.001)
     q = (q - s.black) / max(s.white - s.black, 0.01)
     q += max(s.warmth * 0.12 + s.tint * 0.05, -s.tint * 0.10, -s.warmth * 0.12 + s.tint * 0.05)
     q = (q - 0.5) * s.contrast + 0.5
+    // The highlights and whites move the top before the ends (`Kernels.graded`), all of each there.
+    q += 0.15 * (s.highlightsAmount + s.whitesAmount)
     // The short shoulder brings 1.1 within 0.015 of white; from there to 1.25 the longer takes over.
     let t = min(1, max(0, (q - 1.1) / 0.15))
     guard t > 0 else { return CIVector(x: 0, y: 0, z: 0, w: 0) }
@@ -787,6 +798,14 @@ final class ImagePipeline {
   /// over it when it has one (`LeakFix`), else exactly as without.
   func converted(_ kind: Conversion, _ ci: CIImage, _ s: Adjustments, _ profile: FilmProfile, _ a: ToneAnalysis) -> CIImage? {
     var args = Self.arguments(ci, s, profile, a)
+    // The picture's local lightness, for the shoulder's detail (`lightBase`) and the highlights
+    // and shadows; the range has neither.
+    if kind != .range {
+      let needed = s.softEndsOn && s.inputIsNegative && Self.detailReach > 0 || s.highlightsAmount != 0 || s.shadowsAmount != 0
+      guard let lit = needed ? lightBase(ci, s, profile, a) : ci else { return nil }
+      if needed { args[args.count - 1] = CIVector(x: Self.highlightLightness, y: 1, z: 0, w: 0) }
+      args.insert(lit, at: 1)
+    }
     if let fix = s.leakFix, let planes = LeakFixStore.shared.planes(fix, over: ci.extent) {
       let fixed: CIColorKernel? = switch kind {
       case .clipped: Kernels.negativeFixed
@@ -802,6 +821,32 @@ final class ImagePipeline {
     case .range: Kernels.negativeRange
     }
     return plain?.apply(extent: ci.extent, arguments: args)
+  }
+  /// The frame's local lightness, which the shoulder leaves the detail above or below alone
+  /// (`detailReach`) and the highlights and shadows go by: each pixel's brightest channel on the
+  /// print's straight line, as `negative` takes it into its ends, smoothed over `detailRadius` of
+  /// the frame's longer side by a guided filter on itself (`Kernels.guideSquare`), which keeps steps
+  /// of more than about √`detailEdge` as they are. Worked out over the whole frame however little of
+  /// it is rendered, so a zoomed part matches the whole.
+  func lightBase(_ ci: CIImage, _ s: Adjustments, _ profile: FilmProfile, _ a: ToneAnalysis) -> CIImage? {
+    guard let tones = converted(.range, ci, s, profile, a) else { return nil }
+    let radius = max(2, Self.detailRadius * Double(max(ci.extent.width, ci.extent.height)))
+    return Self.guided(tones.applyingFilter("CIMaximumComponent"), radius: radius, eps: Self.detailEdge)
+  }
+  /// `light` (its red) smoothed by a guided filter on itself over `radius` pixels: within `eps` of
+  /// variance, the local mean; across a step larger than that, the step kept. The local means are
+  /// Gaussian, σ half the radius: CIBoxBlur leaves a picture as it was at a radius of 2 or less and
+  /// gives one result from 2.5 to 4.
+  static func guided(_ light: CIImage, radius: Double, eps: Double) -> CIImage? {
+    let extent = light.extent
+    func box(_ image: CIImage) -> CIImage {
+      image.clampedToExtent().applyingGaussianBlur(sigma: radius / 2).cropped(to: extent)
+    }
+    guard let square = Kernels.guideSquare, let coefficients = Kernels.guideCoefficients, let apply = Kernels.guideApply,
+      let paired = square.apply(extent: extent, arguments: [light]),
+      let ab = coefficients.apply(extent: extent, arguments: [box(paired), eps])
+    else { return nil }
+    return apply.apply(extent: extent, arguments: [light, box(ab)])
   }
   /// 去漏光's picture of a frame (`Kernels.negativeNeutral`): taken off its mask and put on the
   /// print's scale with none of ③'s grading, straightened, turned and mirrored as the frame shows,
@@ -840,10 +885,13 @@ final class ImagePipeline {
       s.softEndsOn && s.inputIsNegative
         ? CIVector(x: Self.softToe, y: Self.softShoulder, z: Self.shadowColour, w: Self.highlightColour) : CIVector(x: 0, y: 2, z: 0, w: 0),
       s.inputIsNegative ? 1.0 : 0.0,
-      CIVector(x: a.fade, y: a.fadeAtGrey, z: s.shadowTintAmount, w: 0),
-      CIVector(x: s.shadowsAmount, y: s.highlightsAmount, z: s.pressHighlightsAmount, w: Self.highlightLightness),
+      CIVector(x: a.fade, y: a.fadeAtGrey, z: s.shadowTintAmount, w: s.softEndsOn && s.inputIsNegative ? Self.detailReach : 0),
+      CIVector(x: s.shadowsAmount, y: s.highlightsAmount, z: s.whitesAmount, w: s.blacksAmount),
       Self.shoulder(s, a),
       s.inputIsNegative ? 1.0 : 1 / (s.isSlide ? Self.slideEncoding : max(s.inputGamma, 0.1)),
+      // The lift of a colour past white (`highlightLightness`); 1 in y once `converted` puts the
+      // frame's local lightness in as `lit`, 0 for highlights and shadows to go by the pixel's own.
+      CIVector(x: Self.highlightLightness, y: 0, z: 0, w: 0),
     ]
   }
   /// The power a slide's linear light is encoded with for the screen: its picture as it lies on a
@@ -992,7 +1040,10 @@ final class ImagePipeline {
     flat[7] = CIVector(x: 0, y: s.midtone, z: 1, w: 1)
     flat[8] = CIVector(x: 0, y: 0, z: 0, w: 1)
     flat[10] = 0.0
+    flat[11] = CIVector(x: a.fade, y: a.fadeAtGrey, z: s.shadowTintAmount, w: 0)
     flat[14] = 1.0
+    // A ramp has no detail of its own: the shoulder as it takes the light.
+    flat.insert(line, at: 1)
     guard var shown = ended.apply(extent: line.extent, arguments: flat) else { return nil }
     if let curves = s.curves { shown = applyCurves(curves, to: shown) }
     var screen = [Float](repeating: 0, count: m * 4)
