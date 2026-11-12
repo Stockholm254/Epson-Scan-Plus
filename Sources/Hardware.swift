@@ -484,6 +484,14 @@ struct ValueField: View {
   @State private var editing = false
   @State private var draft = ""
   @FocusState private var focused: Bool
+  /// The value when the figure began to be dragged.
+  @State private var scrubbedFrom: Double?
+  /// `from` moved `by`, in steps of 1/1000 of the range (so a drag does not carry figures past what
+  /// the readout shows), kept in `range`.
+  static func scrubbed(from: Double, by moved: Double, in range: ClosedRange<Double>) -> Double {
+    let step = (range.upperBound - range.lowerBound) / 1000
+    return min(range.upperBound, max(range.lowerBound, from + (moved / step).rounded() * step))
+  }
   var body: some View {
     if editing {
       TextField(title, text: $draft)
@@ -502,7 +510,18 @@ struct ValueField: View {
           draft = Self.figure(text) ?? Self.plain(value * scale)
           editing = true
         }
-        .help(enabled ? "点一下输入数值" : "")
+        // Dragged sideways, the figure moves as Lightroom's and Capture One's do: the slider's
+        // whole range in 240 points, a tenth of that with ⌥ held.
+        .gesture(DragGesture(minimumDistance: 3).onChanged { drag in
+          guard enabled else { return }
+          let from = scrubbedFrom ?? value
+          if scrubbedFrom == nil { scrubbedFrom = value }
+          let fine = NSEvent.modifierFlags.contains(.option) ? 0.1 : 1
+          let moved = Double(drag.translation.width) / 240 * (range.upperBound - range.lowerBound) * fine
+          set(Self.scrubbed(from: from, by: moved, in: range))
+        }.onEnded { _ in scrubbedFrom = nil })
+        .pointerStyle(enabled ? .columnResize : .default)
+        .help(enabled ? "点一下输入数值；按住左右拖动微调，按住 ⌥ 更细" : "")
         .accessibilityLabel(title).accessibilityValue(text)
         .accessibilityAddTraits(enabled ? .isButton : [])
     }

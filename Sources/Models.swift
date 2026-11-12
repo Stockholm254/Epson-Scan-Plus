@@ -667,6 +667,117 @@ extension Adjustments {
   }
 }
 
+/// The settings 选择性粘贴 offers one by one, as Lightroom's 拷贝设置 lists them: ③'s by the
+/// panel's sections and sliders, ②'s that one frame gives another (how each faces, where its
+/// de-masking reads and its leak repair stay its own whatever is chosen).
+enum SettingsGroup: String, CaseIterable, Identifiable {
+  case whiteBalance, shadowColour, exposure, contrast, highlightsShadows, whitesBlacks, levels
+  case saturation, softEnds, colourNoise, curves, sharpening, rollShared
+  /// ③'s settings none of the others names: those a newer version adds before it is listed here.
+  case otherGrading
+  case base, baseFine, reading, edges
+  var id: String { rawValue }
+  var name: String {
+    switch self {
+    case .whiteBalance: return "白平衡"
+    case .shadowColour: return "阴影冷暖、阴影色调"
+    case .exposure: return "曝光"
+    case .contrast: return "对比度"
+    case .highlightsShadows: return "高光、阴影"
+    case .whitesBlacks: return "白色、黑色"
+    case .levels: return "色阶"
+    case .saturation: return "饱和度"
+    case .softEnds: return "柔和的暗部和高光"
+    case .colourNoise: return "色彩降噪"
+    case .curves: return "曲线"
+    case .sharpening: return "锐化"
+    case .rollShared: return "整卷同一白平衡、色阶"
+    case .otherGrading: return "其他调色"
+    case .base: return "片基"
+    case .baseFine: return "片基微调"
+    case .reading: return "负片 / 反转片、输入 Gamma"
+    case .edges: return "片边"
+    }
+  }
+  var scope: SettingsScope {
+    switch self {
+    case .base, .baseFine, .reading, .edges: return .demasking
+    default: return .grading
+    }
+  }
+  /// The groups pasting `scope` gives: ③'s, ②'s, or both.
+  static func of(_ scope: SettingsScope) -> [SettingsGroup] {
+    scope == .all ? allCases : allCases.filter { $0.scope == scope }
+  }
+  /// `o`'s settings of this group in place of `a`'s.
+  func take(_ a: inout Adjustments, from o: Adjustments) {
+    switch self {
+    case .whiteBalance:
+      (a.autoWhiteBalance, a.manualBalance, a.neutralSample, a.neutralPicked) = (o.autoWhiteBalance, o.manualBalance, o.neutralSample, o.neutralPicked)
+      (a.warmth, a.tint) = (o.warmth, o.tint)
+    case .shadowColour: (a.shadowWarmth, a.shadowTint) = (o.shadowWarmth, o.shadowTint)
+    case .exposure: a.exposure = o.exposure
+    case .contrast: a.contrast = o.contrast
+    case .highlightsShadows: (a.highlights, a.shadows) = (o.highlights, o.shadows)
+    case .whitesBlacks: (a.whites, a.blacks, a.pressHighlights) = (o.whites, o.blacks, o.pressHighlights)
+    case .levels: (a.autoLevels, a.black, a.white, a.midtone) = (o.autoLevels, o.black, o.white, o.midtone)
+    case .saturation: a.saturation = o.saturation
+    case .softEnds: a.softEnds = o.softEnds
+    case .colourNoise: a.colourNoise = o.colourNoise
+    case .curves: a.curves = o.curves
+    case .sharpening: a.sharpening = o.sharpening
+    case .rollShared: (a.sharedBalance, a.sharedLevels, a.rollPrint) = (o.sharedBalance, o.sharedLevels, o.rollPrint)
+    case .otherGrading:
+      // All of ③'s from `o`, then every named group back as it was.
+      let kept = a
+      a.takeGrading(from: o)
+      for g in Self.allCases where g.scope == .grading && g != .otherGrading { g.take(&a, from: kept) }
+    case .base: (a.base, a.basePicked) = (o.base, o.basePicked)
+    case .baseFine: a.baseFine = o.baseFine
+    case .reading: (a.inputGamma, a.inputIsNegative, a.reversal) = (o.inputGamma, o.inputIsNegative, o.reversal)
+    case .edges: a.filmEdges = o.filmEdges
+    }
+  }
+  /// Whether `a` has this group otherwise than `plain` (a new frame's).
+  func isSet(in a: Adjustments, plain: Adjustments = Adjustments()) -> Bool {
+    var b = plain
+    take(&b, from: a)
+    return b != plain
+  }
+  /// What `a` has of this group, in a few words, as the sheet lists it beside its name.
+  func summary(of a: Adjustments) -> String {
+    func signed(_ v: Double) -> String { (v > 0 ? "+" : v < 0 ? "−" : "") + String(format: "%.2f", abs(v)) }
+    func joined(_ parts: [String?], or none: String) -> String {
+      let said = parts.compactMap { $0 }
+      return said.isEmpty ? none : said.joined(separator: " · ")
+    }
+    switch self {
+    case .whiteBalance:
+      let how = a.neutralSample != nil ? "中性灰取样" : a.manualBalance != nil ? "手动" : a.autoWhiteBalance ? "自动" : "不自动"
+      return joined([how, a.warmth != 0 ? "冷暖 " + signed(a.warmth) : nil, a.tint != 0 ? "绿 / 洋红 " + signed(a.tint) : nil], or: how)
+    case .shadowColour: return joined([a.shadowWarmth.map { "冷暖 " + signed($0) }, a.shadowTint.map { "色调 " + signed($0) }], or: "0")
+    case .exposure: return signed(a.exposure) + " EV"
+    case .contrast: return String(format: "%.2f", a.contrast)
+    case .highlightsShadows: return joined([a.highlights.map { "高光 " + signed($0) }, a.shadows.map { "阴影 " + signed($0) }], or: "0")
+    case .whitesBlacks:
+      return joined([a.whites.map { "白色 " + signed($0) }, a.blacks.map { "黑色 " + signed($0) },
+        a.pressHighlights.map { "压高光 " + String(format: "%.2f", $0) }], or: "0")
+    case .levels: return a.autoLevels ? "自动" : String(format: "黑 %.3f · 中 %.2f · 白 %.3f", a.black, a.midtone, a.white)
+    case .saturation: return String(format: "%.2f", a.saturation)
+    case .softEnds: return a.softEndsOn ? "开" : "关"
+    case .colourNoise: return String(format: "%.2f", a.colourNoiseAmount)
+    case .curves: return a.curves.map { $0.isIdentity ? "直线" : "改过" } ?? "直线"
+    case .sharpening: return a.sharpening.map { String(format: "%.2f", $0) } ?? "默认"
+    case .rollShared: return joined([a.sharedBalance == true ? "白平衡" : nil, a.sharedLevels == true ? "色阶" : nil], or: "各张自己的")
+    case .otherGrading: return isSet(in: a) ? "改过" : "默认"
+    case .base: return a.basePicked != nil ? "取样" : a.base != nil ? "定过" : "自动"
+    case .baseFine: return a.baseFine.map { "R \(signed($0.r)) · G \(signed($0.g)) · B \(signed($0.b)) EV" } ?? "0"
+    case .reading: return (a.isSlide ? "反转片" : a.inputIsNegative ? "负片" : "正片") + String(format: " · Gamma %.2g", a.inputGamma)
+    case .edges: return (a.filmEdges ?? .auto).rawValue
+    }
+  }
+}
+
 struct DeskProject: Codable {
   var version = 1
   var overviewPath: String

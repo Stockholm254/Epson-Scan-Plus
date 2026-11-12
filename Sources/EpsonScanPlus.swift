@@ -149,6 +149,18 @@ struct EpsonScanPlusApp: App {
         }
           .keyboardShortcut("v", modifiers: [.command, .shift])
           .disabled(model.copiedSettings == nil || model.selected == nil || model.isWorking || model.page != .convert)
+        // Lightroom's 上一张: the settings of the frame shown before this one, nothing copied first.
+        Button(model.previousFrame.map { "粘贴上一张（第 \($0.name) 张）的\(AppModel.scopeName(model.stepScope))" } ?? "粘贴上一张的\(AppModel.scopeName(model.stepScope))") {
+          model.pastePrevious(model.stepScope)
+        }
+          .keyboardShortcut("v", modifiers: [.command, .option])
+          .disabled(model.previousFrame == nil || model.selected == nil || model.isWorking || model.page != .convert)
+        // Lightroom's: with several chosen, every edit of the frame shown goes to them all.
+        Toggle("自动同步所选的画面", isOn: $model.autoSync).disabled(model.page != .convert)
+        // Lightroom's 拷贝设置 dialog: the copied settings one by one, only those ticked pasted.
+        Button(model.multiSelected ? "选择性粘贴到所选的 \(model.selection.count) 张…" : "选择性粘贴…") { model.choosingPaste = true }
+          .keyboardShortcut("v", modifiers: [.command, .shift, .option])
+          .disabled(model.copiedSettings == nil || model.selected == nil || model.isWorking || model.page != .convert)
         Divider()
         // Which frames a batch scans and exports; on the light table's strip as well, by its menu.
         // ③ exports on its own, so its page ticks nothing.

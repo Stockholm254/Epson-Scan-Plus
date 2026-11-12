@@ -125,6 +125,9 @@ final class Preferences: ObservableObject {
   @Published var exportPresets: [ExportPreset] {
     didSet { defaults?.set(try? JSONEncoder().encode(exportPresets), forKey: "exportPresets") }
   }
+  /// The groups 选择性粘贴 last left unticked (`SettingsGroup`'s raw values): kept as those left out,
+  /// so a group a newer version adds is ticked.
+  @Published var pasteLeftOut: Set<String> { didSet { defaults?.set(Array(pasteLeftOut).sorted(), forKey: "pasteLeftOut") } }
   /// The exported picture's long edge in pixels; 0, the frame's own size (as Lightroom's 调整大小以适合).
   @Published var exportLongEdge: Int { didSet { defaults?.set(exportLongEdge, forKey: "exportLongEdge") } }
   /// The long edges offered, besides the frame's own size.
@@ -238,6 +241,7 @@ final class Preferences: ObservableObject {
     exportFormat = defaults?.string(forKey: "exportFormat").flatMap(ExportFormat.init(rawValue:)) ?? .tiff
     sheetFormat = defaults?.string(forKey: "sheetFormat").flatMap(ExportFormat.init(rawValue:)) ?? .jpeg
     exportLongEdge = max(0, defaults?.integer(forKey: "exportLongEdge") ?? 0)
+    pasteLeftOut = Set(defaults?.stringArray(forKey: "pasteLeftOut") ?? [])
     exportPresets = defaults?.data(forKey: "exportPresets").flatMap { try? JSONDecoder().decode([ExportPreset].self, from: $0) } ?? []
     exportColorSpace = defaults?.string(forKey: "exportColorSpace").flatMap(ExportColorSpace.init(rawValue:)) ?? .sRGB
     exportNameTemplate = defaults?.string(forKey: "exportNameTemplate") ?? ExportNaming.standard

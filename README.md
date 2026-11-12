@@ -90,7 +90,7 @@
 <td valign="top"><img src="doc/images/demo-neutral.gif" width="100%" alt="在栈桥的白栏杆上取中性灰"><br><b>取中性灰</b>：按 N，在应该是灰的地方点一下（这里是栈桥的白栏杆），照片淡到新的白平衡。</td>
 </tr>
 <tr>
-<td valign="top"><img src="doc/images/demo-multi-rotate.gif" width="100%" alt="灯箱上选三张一起旋转"><br><b>多选</b>：⌘ / ⇧ 点选几张后，旋转、镜像、勾选、删除、重置和同步都对所选的每一张起作用；灯箱上每张在自己的格子里转过去。</td>
+<td valign="top"><img src="doc/images/demo-multi-rotate.gif" width="100%" alt="灯箱上选三张一起旋转"><br><b>多选</b>：⌘ / ⇧ 点选几张后，旋转、镜像、勾选、删除、重置和同步都对所选的每一张起作用；灯箱上每张在自己的格子里转过去。打开「自动同步」，调显示的这张，所选的几张一起变；「选择性粘贴」（⌥⇧⌘V）一项项勾选要粘贴的设置。</td>
 <td valign="top"><img src="doc/images/demo-shelf.gif" width="100%" alt="新建工程时在胶片架上挑胶片"><br><b>胶片架</b>：新建工程时用 ↑ ↓ 挑胶片，下面跟着换成这一款的暗盒或 120 卷、厂家资料和数据表。</td>
 </tr>
 <tr>

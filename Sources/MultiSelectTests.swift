@@ -85,6 +85,38 @@ enum MultiSelectTests {
     model.pasteSettings()
     try check(model.frames[1].adjustments.exposure == 0.6 && model.frames[2].adjustments.exposure != 0.6,
       "with one frame chosen, it goes to the frame shown")
+    // 自动同步: with several chosen, what an edit of the frame shown changes goes to the others
+    // chosen, as it now is there; the rest of theirs, and frames not chosen, as they were.
+    let page = model.page
+    model.page = .convert
+    model.convertStep = .grade
+    model.selectedID = ids[0]
+    model.alsoSelected = [ids[1]]
+    model.frames[0].adjustments.exposure = 0.2
+    model.frames[1].adjustments.exposure = -0.4
+    model.frames[1].adjustments.saturation = 0.7
+    let third = model.frames[2].adjustments
+    model.change("饱和度") { $0.saturation = 1.1 }
+    try check(model.frames[1].adjustments.saturation == 0.7, "自动同步 off, an edit changes the frame shown alone")
+    model.autoSync = true
+    model.change("饱和度", separate: true) { $0.saturation = 1.25 }
+    model.change("白色") { $0.whitesAmount = -0.3 }
+    try check(model.frames[1].adjustments.saturation == 1.25 && model.frames[1].adjustments.whites == -0.3
+      && model.frames[1].adjustments.exposure == -0.4 && model.frames[2].adjustments == third,
+      "自动同步 on, each edit goes to the other frame chosen as it is on the frame shown, its exposure its own, a frame not chosen untouched")
+    edits.undo()
+    try check(model.frames[0].adjustments.whites == nil && model.frames[1].adjustments.whites == nil && model.frames[1].adjustments.saturation == 1.25,
+      "one ⌘Z takes the edit back from both")
+    let turned = model.frames[1].adjustments.rotation
+    model.change("旋转") { $0.rotation = ($0.rotation + 1) % 4 }
+    model.change("自动调整", syncing: false) { $0.exposure = 0.9 }
+    try check(model.frames[1].adjustments.rotation == turned && model.frames[1].adjustments.exposure == -0.4,
+      "how a frame faces stays its own, and the wand adjusts the frame shown alone")
+    edits.undo()
+    edits.undo()
+    model.autoSync = false
+    model.page = page
+
     // One frame chosen: as before.
     model.alsoSelected = []
     model.selectedID = ids[4]

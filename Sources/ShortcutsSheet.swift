@@ -56,6 +56,9 @@ enum Shortcuts {
     ]),
     Group(title: "调整和导出", keys: [
       Key(keys: "⇧⌘A", does: "自动调整这张"),
+      Key(keys: "⇧⌘C / ⇧⌘V", does: "拷贝调整 / 粘贴这一步的（③ 调色或 ② 去色罩）"),
+      Key(keys: "⌥⇧⌘V", does: "选择性粘贴：一项项选要粘贴的"),
+      Key(keys: "⌥⌘V", does: "粘贴上一张的（先前显示的那张，不用先拷贝）"),
       Key(keys: "⌘Z · ⇧⌘Z", does: "撤销 · 重做"),
       Key(keys: "双击滑块", does: "这一项恢复默认"),
       Key(keys: "⌘ 点选 · ⇧ 连选", does: "选几张一起导出"),

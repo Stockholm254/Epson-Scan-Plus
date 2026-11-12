@@ -220,6 +220,10 @@ enum RegressionTests {
       && ValueField.figure("+1.20°") == "+1.20" && ValueField.figure("97") == "97" && ValueField.figure("关") == nil
       && ValueField.plain(0.35 * 100) == "35",
       "a slider's typed figure is read past its units, in full-width figures, with a decimal comma")
+    // Its figure dragged: by steps of a thousandth of the range from where it was, within the range.
+    try check(abs(ValueField.scrubbed(from: 0.5, by: 0.0301, in: -3...3) - 0.53) < 1e-9
+      && ValueField.scrubbed(from: 2.9, by: 1, in: -3...3) == 3 && ValueField.scrubbed(from: 0.25, by: 0.0001, in: 0...1) == 0.25,
+      "a slider's figure dragged moves it by thousandths of its range from where it was, no further than its ends")
     let rawRect = NormalRect(x: 0.15, y: 0.22, width: 0.6, height: 0.51)
     let point = CGPoint(x: 0.19, y: 0.67)
     let orientationFixture = makeImage(80, 60) { x, y in

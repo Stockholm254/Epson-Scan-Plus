@@ -294,7 +294,7 @@ extension AppModel {
           }
           let kept = outcome.adjustments
           // The faders move to what was found, as the picture fades to it.
-          withAnimation(Liquid.settle) { self.change("自动调整") { $0 = kept } }
+          withAnimation(Liquid.settle) { self.change("自动调整", syncing: false) { $0 = kept } }
           self.fadeInNextPicture()
           self.status = "已自动调整第 \(frame.name) 张：" + line + " · ⌘Z 撤销"
           self.noteOnCanvas("自动调整 · " + line)

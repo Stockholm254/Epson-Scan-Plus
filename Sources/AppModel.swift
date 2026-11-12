@@ -18,6 +18,7 @@ final class AppModel: ObservableObject {
         if curveState.reading != nil { curveState.reading = nil }
         // Another frame selected lets go of the frames chosen with the last (Finder does the same).
         if !alsoSelected.isEmpty { alsoSelected = [] }
+        if let oldValue { previousID = oldValue }
       }
     }
   }
@@ -1567,8 +1568,9 @@ final class AppModel: ObservableObject {
   }
   /// `name` is the edit as the Edit menu shows it; steps of one control are undone together, unless
   /// `separate` (an assistant's calls, each one step however quickly they come).
-  func change(_ name: String = "调整", separate: Bool = false, _ mutation: (inout Adjustments) -> Void) {
+  func change(_ name: String = "调整", separate: Bool = false, syncing: Bool = true, _ mutation: (inout Adjustments) -> Void) {
     guard let i = selectedIndex else { return }
+    let before = frames[i].adjustments
     // Before anything is set, so the window's gate knows this step for one of a drag's.
     changedAt = (changedAt.last, CACurrentMediaTime())
     if separate { lastEdit = nil }
@@ -1582,9 +1584,59 @@ final class AppModel: ObservableObject {
     frames[i].adjustments.rollBase = rollBase
     frames[i].adjustments.rollSlopes = rollSlopes
     frames[i].adjustments.rollBasePicked = picked
+    if syncing, autoSync, multiSelected, page == .convert { syncChosen(from: i, before: before) }
     refresh()
     // A drag's steps saved once it stops: a copy roll's project is near a megabyte, some 17 ms a save.
     if adjustingContinuously { saveProjectAfterDrag() } else { saveProject() }
+  }
+  /// Lightroom's 自动同步: with several frames chosen, what an edit of the frame shown changes goes
+  /// to the others chosen too, setting for setting, as it now is on the frame shown (not by how far
+  /// it moved); the rest of theirs stays. On for the session, off when the app opens.
+  @Published var autoSync = false
+  /// Settings auto sync leaves each frame's own, as 同步 and 粘贴 do: the roll's measured base, how
+  /// the frame faces, where its de-masking reads and its leak repair.
+  static let ownSettings: Set<String> = ["rollBase", "rollSlopes", "rollBasePicked", "rollBaseFrom", "rotation", "angle",
+    "flipHorizontal", "analysisRegion", "leakFix"]
+  /// Readings of a picture, which mean the same on another only through the same flat field and unmixing.
+  static let pictureReadings: Set<String> = ["base", "basePicked", "neutralSample", "neutralPicked"]
+  /// The settings the edit of frame `i` changed, from `before`, given to the other frames chosen.
+  /// Compared by their saved names, so a setting a newer version adds is synced as well.
+  private func syncChosen(from i: Int, before: Adjustments) {
+    let after = frames[i].adjustments
+    guard after != before, let was = Self.fields(before), let now = Self.fields(after) else { return }
+    func same(_ a: Any?, _ b: Any?) -> Bool {
+      switch (a, b) {
+      case (nil, nil): return true
+      case let (x?, y?): return (x as? NSObject)?.isEqual(y) ?? false
+      default: return false
+      }
+    }
+    let changed = Set(was.keys).union(now.keys).filter { !Self.ownSettings.contains($0) && !same(was[$0], now[$0]) }
+    guard !changed.isEmpty else { return }
+    let shown = frames[i]
+    for j in frames.indices where j != i && selectionIDs.contains(frames[j].id) {
+      let keys = frames[j].flatID == shown.flatID && frames[j].crosstalk == shown.crosstalk ? changed : changed.subtracting(Self.pictureReadings)
+      guard !keys.isEmpty, var theirs = Self.fields(frames[j].adjustments) else { continue }
+      for k in keys { theirs[k] = now[k] }
+      if let synced = Self.adjustments(theirs), synced != frames[j].adjustments { frames[j].adjustments = synced }
+    }
+    // Their thumbnails once a drag stops: made on the render queue, they would hold up the picture's.
+    syncedThumbnails?.cancel()
+    if adjustingContinuously {
+      let later = DispatchWorkItem { [weak self] in self?.updateThumbnails() }
+      syncedThumbnails = later
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: later)
+    } else {
+      updateThumbnails()
+    }
+  }
+  private var syncedThumbnails: DispatchWorkItem?
+  /// A frame's settings by their saved names, and back.
+  static func fields(_ a: Adjustments) -> [String: Any]? {
+    (try? JSONEncoder().encode(a)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+  }
+  static func adjustments(_ fields: [String: Any]) -> Adjustments? {
+    (try? JSONSerialization.data(withJSONObject: fields)).flatMap { try? JSONDecoder().decode(Adjustments.self, from: $0) }
   }
   /// The save a slider's drag waits for: 0.4 s after its last step, unless something saves first.
   private var pendingSave: DispatchWorkItem?
@@ -2309,21 +2361,60 @@ final class AppModel: ObservableObject {
   }
   /// Where 粘贴调整 goes: the frames chosen, or the frame shown.
   var pasteTargets: Set<UUID> { multiSelected ? selectionIDs : Set(selectedID.map { [$0] } ?? []) }
-  func pasteSettings(_ scope: SettingsScope = .all) {
+  /// 粘贴: the copied frame's settings of `scope`, or, chosen in 选择性粘贴, only its `groups`.
+  func pasteSettings(_ scope: SettingsScope = .all, only groups: Set<SettingsGroup>? = nil) {
     guard let copied = copiedSettings, !isWorking else { return }
     let ids = pasteTargets
     guard !ids.isEmpty else { return }
     let what = Self.scopeName(scope)
+    if let groups {
+      let given = SettingsGroup.of(scope).filter(groups.contains)
+      guard !given.isEmpty else { return }
+      give(copied, to: ids, edit: "选择性粘贴" + what, scope: scope, groups: groups)
+      let named = given.count <= 3 ? given.map(\.name).joined(separator: "、") : "\(given.count) 项\(what)"
+      status = "已把第 \(copied.name) 张的\(named)粘贴到 \(ids.count) 张 · ⌘Z 撤销"
+      return
+    }
     give(copied, to: ids, edit: "粘贴" + what, scope: scope)
     status = "已把第 \(copied.name) 张的\(what)粘贴到 \(ids.count) 张 · ⌘Z 撤销"
   }
+  /// The frame shown before this one, for 粘贴上一张 (Lightroom's 上一张 / Previous).
+  private(set) var previousID: UUID?
+  var previousFrame: FilmFrame? { previousID.flatMap { id in frames.first { $0.id == id } } }
+  /// 粘贴上一张 (⌥⌘V): the frame shown before this one gives its settings of `scope`, as 粘贴 does,
+  /// to the frame shown or those chosen; nothing copied first.
+  func pastePrevious(_ scope: SettingsScope = .all) {
+    guard let from = previousFrame, !isWorking else { return }
+    let ids = pasteTargets.subtracting([from.id])
+    guard !ids.isEmpty else { return }
+    let what = Self.scopeName(scope)
+    give(from, to: ids, edit: "粘贴上一张的" + what, scope: scope)
+    status = "已把上一张（第 \(from.name) 张）的\(what)粘贴到" + (ids.count == 1 ? "这张" : "所选的 \(ids.count) 张") + " · ⌘Z 撤销"
+  }
+  /// 选择性粘贴's sheet is up.
+  @Published var choosingPaste = false
+  /// What 选择性粘贴 lists for `scope`: its groups, 其他调色 only when the copied frame has some.
+  func pasteGroups(_ scope: SettingsScope) -> [SettingsGroup] {
+    let copied = copiedSettings?.adjustments ?? Adjustments()
+    return SettingsGroup.of(scope).filter { $0 != .otherGrading || $0.isSet(in: copied) }
+  }
+  /// The groups ticked when the sheet opens: as last time, a group not seen before ticked.
+  var pasteChosen: Set<SettingsGroup> {
+    get { Set(SettingsGroup.allCases.filter { !preferences.pasteLeftOut.contains($0.rawValue) }) }
+    set { preferences.pasteLeftOut = Set(SettingsGroup.allCases.filter { !newValue.contains($0) }.map(\.rawValue)) }
+  }
   /// `s`'s settings to every frame of the roll, or only to `only`, as one edit, each frame keeping
-  /// how it faces, its crop's region and what was read off its own picture.
-  private func give(_ s: FilmFrame, to only: Set<UUID>?, edit: String, scope: SettingsScope = .all) {
+  /// how it faces, its crop's region and what was read off its own picture; of `scope`, and when
+  /// `groups` are given, only those of it.
+  private func give(_ s: FilmFrame, to only: Set<UUID>?, edit: String, scope: SettingsScope = .all, groups: Set<SettingsGroup>? = nil) {
     recordEdit(edit)
     for i in frames.indices where only?.contains(frames[i].id) ?? true {
       let own = frames[i].adjustments
       frames[i].adjustments.take(scope, from: s.adjustments)
+      // The groups left out, each as the frame had it.
+      if let groups {
+        for g in SettingsGroup.of(scope) where !groups.contains(g) { g.take(&frames[i].adjustments, from: own) }
+      }
       // How each faces is its own: turned, straightened and mirrored as it was.
       frames[i].adjustments.rotation = own.rotation
       frames[i].adjustments.angle = own.angle

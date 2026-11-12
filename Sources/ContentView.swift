@@ -157,6 +157,7 @@ struct ContentView: View {
     .sheet(isPresented: $m.showFlats) { FlatManagerSheet(m: m) }
     .sheet(isPresented: $m.showUpdates) { UpdateSheet(m: m, updater: m.updater) }
     .sheet(isPresented: $m.showShortcuts) { ShortcutsSheet() }
+    .sheet(isPresented: $m.choosingPaste) { PasteSheet(m: m) }
     .sheet(isPresented: $m.askingNewProject) { NewProjectSheet(m: m) }
     .sheet(isPresented: $m.changingFilm) { NewProjectSheet(m: m, purpose: .changeFilm) }
     .onChange(of: m.tool) { m.refresh() }
@@ -788,7 +789,17 @@ struct ContentView: View {
           .help((m.multiSelected ? "把这一张的\(AppModel.scopeName(m.stepScope))用到所选的每一张（⌘ 或 ⇧ 点胶片条选的）" : "把这一张的\(AppModel.scopeName(m.stepScope))用到本卷每一张；⌘ 或 ⇧ 点胶片条多选几张时，只用到所选的")
             + (m.convertStep == .grade ? "。只同步调色：各张的片基、画面范围和去漏光不动" : "。只同步去色罩：各张的调色不动，方向、画面范围和去漏光保留"))
           .disabled(frameControlsOff)
-          .padding(.horizontal, 18).padding(.vertical, 10)
+          .padding(.horizontal, 18).padding(.top, 10).padding(.bottom, m.multiSelected ? 4 : 10)
+        // Lightroom's 自动同步: while on, every edit of this one goes to the others chosen as well.
+        if m.multiSelected {
+          Toggle(isOn: $m.autoSync) {
+            Text(m.autoSync ? "自动同步：调这张，所选的 \(m.selection.count) 张一起变" : "自动同步").font(.system(size: 12))
+          }
+          .toggleStyle(.switch).controlSize(.mini)
+          .help("打开后，在这张上改的每一项（滑杆、曲线、中性灰……）同时设到所选的每一张，按这张现在的值；没改的那些各张保留自己的。各张的方向、去色罩区域和去漏光修复不动；自动调整（魔棒）仍然只调这张。关掉或只选一张时停止。")
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.horizontal, 18).padding(.bottom, 10)
+        }
       }.background(.bar)
     }
   }
@@ -1557,6 +1568,7 @@ struct ContentView: View {
                         systemImage: m.selectionEnabled ? "circle" : "checkmark.circle") { m.setSelectionEnabled(!m.selectionEnabled) }.disabled(m.isWorking)
                       if m.copiedSettings != nil {
                         Button("粘贴\(AppModel.scopeName(m.stepScope))到所选的 \(chosen.count) 张", systemImage: "doc.on.clipboard") { m.pasteSettings(m.stepScope) }.disabled(m.isWorking || m.page != .convert)
+                        Button("选择性粘贴到所选的 \(chosen.count) 张…", systemImage: "checklist") { m.choosingPaste = true }.disabled(m.isWorking || m.page != .convert)
                       }
                       Button("删除所选的 \(chosen.count) 张", systemImage: "trash", role: .destructive) { m.remove(m.selectionIDs) }.disabled(m.isWorking)
                     } else {
@@ -1588,6 +1600,10 @@ struct ContentView: View {
                           Button("把拷贝的\(AppModel.scopeName(m.stepScope))粘贴到这张", systemImage: "doc.on.clipboard") {
                             if f.id != m.selectedID { m.select(f.id) }
                             m.pasteSettings(m.stepScope)
+                          }.disabled(m.isWorking)
+                          Button("选择性粘贴到这张…", systemImage: "checklist") {
+                            if f.id != m.selectedID { m.select(f.id) }
+                            m.choosingPaste = true
                           }.disabled(m.isWorking)
                         }
                       }

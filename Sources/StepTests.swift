@@ -97,6 +97,58 @@ enum StepTests {
       && abs(portrait45.width - 1) < 1e-9 && abs(portrait45.height - 0.8) < 1e-9 && abs(portrait45.midY - 0.5) < 1e-9
       && AppModel.CropRatio.free.long == nil && AppModel.CropRatio.twoThree.long == 1.5,
       "a crop kept to a ratio is the largest box of it inside, about the middle: 1:1 in a 3:2 picture, 5:4 on a square one")
+    // 选择性粘贴: the groups together are the step's settings, and only those ticked are pasted.
+    var full = Adjustments()
+    (full.autoWhiteBalance, full.manualBalance, full.neutralSample) = (false, RGB(r: 1.1, g: 1, b: 0.9), RGB(r: 0.3, g: 0.4, b: 0.5))
+    (full.neutralPicked, full.warmth, full.tint) = (NormalRect(x: 0.4, y: 0.4, width: 0.01, height: 0.01), 0.1, -0.1)
+    (full.shadowWarmth, full.shadowTint, full.sharedBalance, full.sharedLevels) = (0.2, -0.2, true, true)
+    full.rollPrint = RollPrint(balance: RGB(r: 1, g: 1, b: 1), gain: RGB(r: 1, g: 1, b: 1), low: 0.1, high: 2)
+    (full.exposure, full.contrast, full.highlights, full.pressHighlights, full.shadows) = (0.5, 1.2, -0.3, 0.2, 0.3)
+    (full.whites, full.blacks, full.autoLevels, full.black, full.white, full.midtone) = (-0.1, 0.1, false, 0.02, 0.95, 1.1)
+    (full.saturation, full.colourNoise, full.softEnds, full.curves, full.sharpening) = (1.3, 0.5, true, ToneCurves(), 0.4)
+    (full.baseFine, full.base, full.inputGamma, full.filmEdges) = (RGB(r: 0.1, g: 0, b: 0), RGB(r: 0.5, g: 0.3, b: 0.2), 1.0, .rebate)
+    var grouped = Adjustments(), whole = Adjustments(), rest = Adjustments()
+    for g in SettingsGroup.of(.grading) { g.take(&grouped, from: full) }
+    whole.takeGrading(from: full)
+    SettingsGroup.otherGrading.take(&rest, from: full)
+    try check(grouped == whole && rest == Adjustments() && SettingsGroup.of(.grading).allSatisfy { $0 == .otherGrading || $0.isSet(in: full) }
+      && SettingsGroup.exposure.summary(of: full) == "+0.50 EV" && SettingsGroup.whitesBlacks.summary(of: full).hasPrefix("白色 −0.10"),
+      "选择性粘贴's groups together are ③'s settings, each grading setting in a named one (其他调色 empty), each told in a few words")
+    model.frames[1].adjustments = Adjustments()
+    model.frames[1].adjustments.saturation = 0.8
+    model.selectedID = ids[0]
+    model.convertStep = .grade
+    model.copySettings()
+    model.selectedID = ids[1]
+    model.pasteSettings(model.stepScope, only: [.exposure, .curves, .baseFine])
+    let picked = model.frames[1].adjustments
+    try check(picked.exposure == 0.5 && picked.curves != nil && picked.saturation == 0.8 && picked.baseFine == nil
+      && model.status.contains("曝光、曲线"),
+      "选择性粘贴 in ③ pastes the groups ticked of the grading alone, the frame's other settings kept")
+    edits.undo()
+    model.convertStep = .demask
+    model.pasteSettings(model.stepScope, only: [.baseFine, .exposure])
+    try check(model.frames[1].adjustments.baseFine == RGB(r: 0.1, g: 0, b: -0.1) && model.frames[1].adjustments.exposure == 0
+      && model.frames[1].adjustments.inputGamma == Adjustments().inputGamma && model.frames[1].adjustments.saturation == 0.8,
+      "and in ② the ticked of the de-masking: the base fine-tuning, not how the film is read, nor ③'s exposure")
+    edits.undo()
+    try check(model.frames[1].adjustments.baseFine == nil && model.frames[1].adjustments.saturation == 0.8, "one edit, undone with ⌘Z")
+    model.pasteChosen = [.exposure, .curves]
+    try check(model.preferences.pasteLeftOut.contains("whiteBalance") && !model.preferences.pasteLeftOut.contains("exposure")
+      && model.pasteChosen.contains(.exposure) && !model.pasteChosen.contains(.saturation) && !model.pasteGroups(.grading).contains(.otherGrading),
+      "the sheet remembers what was left unticked, so a group added later starts ticked; 其他调色 listed only when there is some")
+
+    // 粘贴上一张: the frame shown before gives its settings, nothing copied first.
+    model.convertStep = .grade
+    model.selectedID = ids[0]
+    model.selectedID = ids[2]
+    model.frames[2].adjustments = Adjustments()
+    model.pastePrevious(model.stepScope)
+    try check(model.previousFrame?.id == ids[0] && model.frames[2].adjustments.exposure == 0.5 && model.frames[2].adjustments.saturation == 1.3
+      && model.frames[2].adjustments.baseFine == nil && model.status.contains("上一张（第 01 张）"),
+      "粘贴上一张 gives the frame shown the grading of the frame shown before it, not its base")
+    edits.undo()
+
     // A tool of the other step takes the window there.
     model.convertStep = .demask
     model.useTool(.neutral)
