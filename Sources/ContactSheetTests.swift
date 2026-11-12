@@ -50,16 +50,19 @@ enum ContactSheetTests {
         "\(format.title) export writes \(format.type.identifier) at \(format.sixteenBit ? 16 : 8) bits")
     }
     // Exported to a long edge: made smaller (never larger), its shape and the dpi following.
+    let picture: CGImage = {
+      let c = CGContext(data: nil, width: 600, height: 400, bitsPerComponent: 8, bytesPerRow: 0,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+      c.setFillColor(red: 0.5, green: 0.4, blue: 0.3, alpha: 1)
+      c.fill(CGRect(x: 0, y: 0, width: 600, height: 400))
+      return c.makeImage()!
+    }()
     let smallURL = folder.appendingPathComponent("long-edge-test.jpg"), sameURL = folder.appendingPathComponent("long-edge-same.jpg")
-    try pipe.export(sample, settings: Adjustments(), profile: FilmProfile.builtins[0], url: smallURL, format: .jpeg, dpi: 300, longEdge: 100)
-    try pipe.export(sample, settings: Adjustments(), profile: FilmProfile.builtins[0], url: sameURL, format: .jpeg, dpi: 300,
-      longEdge: max(sample.width, sample.height) * 2)
+    try pipe.export(picture, settings: Adjustments(), profile: FilmProfile.builtins[0], url: smallURL, format: .jpeg, dpi: 300, longEdge: 150)
+    try pipe.export(picture, settings: Adjustments(), profile: FilmProfile.builtins[0], url: sameURL, format: .jpeg, dpi: 300, longEdge: 1200)
     let small = pipe.info(smallURL), same = pipe.info(sameURL)
-    let ratio = Double(sample.width) / Double(sample.height), shrunk = Double(small.width) / Double(max(1, small.height))
-    try check(max(small.width, small.height) == 100 && abs(shrunk - ratio) < 0.03
-      && Int(small.dpi) == Int((300.0 * 100 / Double(max(sample.width, sample.height))).rounded())
-      && same.width == sample.width && same.height == sample.height && Int(same.dpi) == 300,
-      "export to a long edge: \(sample.width) × \(sample.height) made \(small.width) × \(small.height) at \(Int(small.dpi)) dpi; a long edge past it leaves it as it is")
+    try check(small.width == 150 && small.height == 100 && Int(small.dpi) == 75 && same.width == 600 && same.height == 400 && Int(same.dpi) == 300,
+      "export to a long edge: 600 × 400 made \(small.width) × \(small.height) at \(Int(small.dpi)) dpi; a long edge past it leaves it as it is (\(same.width) × \(same.height))")
     // The roll's film in the heading, left of the title, the strips below both.
     var withFilm = ContactSheet.Layout()
     withFilm.showsFilm = true
