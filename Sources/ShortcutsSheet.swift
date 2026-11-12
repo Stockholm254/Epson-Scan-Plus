@@ -31,7 +31,7 @@ enum Shortcuts {
       Key(keys: "空格", does: "拍摄（① 翻拍的取景）"),
     ]),
     Group(title: "看画面", keys: [
-      Key(keys: "⌘1", does: "接触表 / 单张"),
+      Key(keys: "⌘1", does: "单张 / 接触表"),
       Key(keys: "← →", does: "上一张 / 下一张"),
       Key(keys: "\(AppModel.loupeShortcut.uppercased()) · ⌘L", does: "看片镜"),
       Key(keys: "⇧⌘D", does: "除尘标出"),

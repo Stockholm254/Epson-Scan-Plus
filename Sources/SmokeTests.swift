@@ -7,6 +7,8 @@ enum SmokeTests {
   static func run() {
     // The models made here start on ② 去色罩, whose conversion they look at; a test of ① goes there.
     AppModel.firstPage = .convert
+    // And open their rolls on the light table, as the app did before it opened them on 单张.
+    AppModel.opensRollsSingle = false
     // No test reads the OpenAI key saved in the Keychain (`LeakKeychain.defaultService`).
     LeakKeychain.defaultService = "local.epscan.test.\(UUID().uuidString)"
     do {

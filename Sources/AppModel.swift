@@ -472,6 +472,9 @@ final class AppModel: ObservableObject {
   /// modules wait for one (`hasProject`). The self-test starts its models on ②, whose conversion
   /// most of it looks at; ① shows the raw picture (`showsOriginal`).
   static var firstPage = opensOn
+  /// Whether a roll opened shows its first frame alone (单张): so in the app; the tests' models
+  /// open theirs on the light table, as they were written for.
+  static var opensRollsSingle = true
   /// Where the app opens, whatever a test starts its models on.
   static let opensOn = Page.library
   @Published var page = AppModel.firstPage {
@@ -5093,7 +5096,8 @@ final class AppModel: ObservableObject {
     overviewInputGamma = p.overviewInputGamma
     physicalMM = CGSize(width: p.physicalWidthMM, height: p.physicalHeightMM)
     selectedID = frames.first?.id
-    singleView = false
+    // A roll opens on its first frame alone; one with none yet, on the light table.
+    singleView = Self.opensRollsSingle && !frames.isEmpty
     showKeptPositives(folder)
     leakJobs = [:]
     findLeakJobs()

@@ -22,11 +22,11 @@ struct CaptureViewPicker: View {
         }
       })) {
       Text("取景").tag(Way.live)
-      Text("接触表").tag(Way.sheet)
       Text("单张").tag(Way.single)
+      Text("接触表").tag(Way.sheet)
     }.pickerStyle(.segmented).labelsHidden().frame(width: 200)
       .disabled(m.frames.isEmpty && !m.reviewingShots)
-      .help(m.frames.isEmpty ? "拍了照片以后，可以在接触表或单张里看拍好的照片" : "实时取景，或看拍好的照片：接触表 / 单张（⌘1 在两者间切换）")
+      .help(m.frames.isEmpty ? "拍了照片以后，可以在单张或接触表里看拍好的照片" : "实时取景，或看拍好的照片：单张 / 接触表（⌘1 在两者间切换）")
   }
 }
 

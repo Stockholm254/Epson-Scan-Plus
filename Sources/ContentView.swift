@@ -341,13 +341,14 @@ struct ContentView: View {
     if m.page == .capture && m.captureSource == .camera {
       CaptureViewPicker(m: m)
     } else {
+      // The single frame first: a roll opens on it.
       Picker("视图", selection: Binding(get: { m.singleView }, set: { m.showSingle($0) })) {
-        Text("接触表").tag(false)
         Text("单张").tag(true)
+        Text("接触表").tag(false)
       }.pickerStyle(.segmented).frame(width: 150)
         // A preview being read shows on the light table as it comes.
         .disabled(m.previewShowing)
-        .help(m.previewShowing ? "预览扫描中，画面在接触表上逐渐出现；扫完后才能看单张" : "接触表 / 单张（⌘1）")
+        .help(m.previewShowing ? "预览扫描中，画面在接触表上逐渐出现；扫完后才能看单张" : "单张 / 接触表（⌘1）")
     }
     }
         .onChange(of: m.singleView) {
