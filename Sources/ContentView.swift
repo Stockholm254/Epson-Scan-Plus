@@ -1429,7 +1429,8 @@ struct ContentView: View {
           ForEach(0..<3, id: \.self) { Text(ColourMixer.kinds[$0]).tag($0) }
         }.pickerStyle(.segmented).labelsHidden().controlSize(.small)
         ForEach(0..<ColourMixer.bands.count, id: \.self) { band in
-          slider("\(ColourMixer.bands[band].name) · \(ColourMixer.kinds[mixerKind])", key: \Adjustments.[mixer: band, kind: mixerKind], range: -1...1, format: "%+.2f")
+          slider("\(ColourMixer.bands[band].name) · \(ColourMixer.kinds[mixerKind])", key: \Adjustments.[mixer: band, kind: mixerKind], range: -1...1, format: "%+.2f",
+            gradient: ColourMixer.track(band: band, kind: mixerKind))
         }
       }
     }
@@ -1449,6 +1450,9 @@ struct ContentView: View {
                 amount: Binding(get: { m.settings[grading: keys[part].1] }, set: { v in m.change("色彩分级 · \(keys[part].2)") { $0[grading: keys[part].1] = v } }))
                 .frame(width: 66, height: 66)
               Text(keys[part].2).font(.system(size: 11)).foregroundStyle(.secondary)
+              // Its hue and amount in figures, as Lightroom's under the wheel; a dash at the middle.
+              Text(ColourGrading.readout(hue: m.settings[grading: keys[part].0], amount: m.settings[grading: keys[part].1]))
+                .font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary)
             }.frame(maxWidth: .infinity)
           }
         }
@@ -1632,6 +1636,34 @@ struct ContentView: View {
       }.font(.system(size: 11)).controlSize(.mini).buttonStyle(.bordered)
         .padding(.horizontal, 18).padding(.top, 7).padding(.bottom, 2)
   }
+  /// Lightroom's marks from the film strip's menu: on the frames chosen together (`nil`), or on
+  /// `frame` alone, shown first.
+  func marksMenu(_ frame: FilmFrame?) -> some View {
+    let show = { if let frame, frame.id != m.selectedID { m.select(frame.id) } }
+    let n = frame == nil ? m.selection.count : 1
+    return Menu(n > 1 ? "所选的 \(n) 张的星级、旗标和标签" : "星级、旗标和标签") {
+      ForEach(0...5, id: \.self) { stars in
+        Button(stars == 0 ? "无星级（0）" : String(repeating: "★", count: stars) + "（\(stars)）") { show(); m.setRating(stars) }
+      }
+      Divider()
+      Button("留用（P）") { show(); m.setFlag(1) }
+      Button("不要（X）") { show(); m.setFlag(-1) }
+      Button("取消旗标") { show(); m.setFlag(0) }
+      Divider()
+      ForEach(FrameLabel.allCases, id: \.self) { l in
+        Button(l.name + "色标签" + (l.rawValue < 4 ? "（\(l.rawValue + 6)）" : "")) { show(); m.setLabel(l) }
+      }
+      Button("取消颜色标签") { show(); m.setLabel(nil) }
+      Divider()
+      // The roll's frames of a mark, chosen together.
+      Menu("选择画面") {
+        ForEach(AppModel.MarkChoice.groups.indices, id: \.self) { g in
+          if g > 0 { Divider() }
+          ForEach(AppModel.MarkChoice.groups[g], id: \.self) { choice in Button(choice.name) { m.selectMarked(choice) } }
+        }
+      }
+    }.disabled(m.isWorking)
+  }
   var stripScroller: some View {
       ScrollViewReader { proxy in
         ScrollView(.horizontal) {
@@ -1651,7 +1683,8 @@ struct ContentView: View {
                       Text(f.name).font(.system(size: 22, design: .monospaced)).foregroundStyle(
                         Color.white.opacity(0.55))
                     }
-                  }.opacity(f.enabled ? 1 : 0.35)
+                  // Rejected (X), as Lightroom greys it, less than one not ticked.
+                  }.opacity(f.enabled ? f.flag == -1 ? 0.5 : 1 : 0.35)
                 }.frame(width: 84, height: 60)
                 // Exported as it is now, changed since, or on its way out: in ②, where frames are exported.
                 // Exporting is ③'s: its marks there, not over ②'s work.
@@ -1713,6 +1746,7 @@ struct ContentView: View {
                         Button("粘贴\(AppModel.scopeName(m.stepScope))到所选的 \(chosen.count) 张", systemImage: "doc.on.clipboard") { m.pasteSettings(m.stepScope) }.disabled(m.isWorking || m.page != .convert)
                         Button("选择性粘贴到所选的 \(chosen.count) 张…", systemImage: "checklist") { m.choosingPaste = true }.disabled(m.isWorking || m.page != .convert)
                       }
+                      marksMenu(nil)
                       Button("删除所选的 \(chosen.count) 张", systemImage: "trash", role: .destructive) { m.remove(m.selectionIDs) }.disabled(m.isWorking)
                     } else {
                       Button("导出这张…", systemImage: "square.and.arrow.up") {
@@ -1725,20 +1759,7 @@ struct ContentView: View {
                       Button(f.enabled ? "取消勾选" : "勾选", systemImage: f.enabled ? "circle" : "checkmark.circle") {
                         m.setEnabled(f.id, enabled: !f.enabled)
                       }.disabled(m.isWorking)
-                      Menu("星级、旗标和标签") {
-                        ForEach(0...5, id: \.self) { n in
-                          Button(n == 0 ? "无星级（0）" : String(repeating: "★", count: n) + "（\(n)）") { if f.id != m.selectedID { m.select(f.id) }; m.setRating(n) }
-                        }
-                        Divider()
-                        Button("留用（P）") { if f.id != m.selectedID { m.select(f.id) }; m.setFlag(1) }
-                        Button("不要（X）") { if f.id != m.selectedID { m.select(f.id) }; m.setFlag(-1) }
-                        Button("取消旗标") { if f.id != m.selectedID { m.select(f.id) }; m.setFlag(0) }
-                        Divider()
-                        ForEach(FrameLabel.allCases, id: \.self) { l in
-                          Button(l.name + "色标签" + (l.rawValue < 4 ? "（\(l.rawValue + 6)）" : "")) { if f.id != m.selectedID { m.select(f.id) }; m.setLabel(l) }
-                        }
-                        Button("取消颜色标签") { if f.id != m.selectedID { m.select(f.id) }; m.setLabel(nil) }
-                      }.disabled(m.isWorking)
+                      marksMenu(f)
                       // 去漏光 as far as this frame has gone: its repair in ③, a job not taken there yet, or none.
                       if f.adjustments.leakFix != nil {
                         Button("在去漏光里改修复", systemImage: "wand.and.rays") { m.openInLeak(f.id) }.disabled(m.isWorking)
@@ -1852,7 +1873,7 @@ struct ContentView: View {
   }
   func slider(
     _ title: String, key: WritableKeyPath<Adjustments, Double>, range: ClosedRange<Double>,
-    format: String = "%.2f"
+    format: String = "%.2f", gradient: [Color]? = nil
   ) -> some View {
     VStack(spacing: 3) {
       HStack {
@@ -1866,7 +1887,7 @@ struct ContentView: View {
         title: title,
         value: Binding(
           get: { m.settings[keyPath: key] }, set: { v in m.change(title) { $0[keyPath: key] = v } }),
-        range: range, detent: Adjustments()[keyPath: key])
+        range: range, detent: Adjustments()[keyPath: key], gradient: gradient)
     }
   }
 }

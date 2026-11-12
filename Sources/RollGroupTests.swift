@@ -140,6 +140,58 @@ enum RollGroupTests {
       && reopenedMarks.frames[1].rating == 3 && reopenedMarks.frames[1].label == FrameLabel.green.rawValue
       && AppModel.markWords(model.frames[1]) == "★★★ · 留用 · 绿色标签",
       "stars, a flag and a colour label go on the frames chosen, the same flag again takes it off, undo puts it back, and the project keeps them")
+    // Chosen by their marks, as Lightroom's 按旗标 / 按星级 / 按颜色标签选择; ⌘A all of them, ⌘D the
+    // one shown alone. Frame 1 is 留用 · 绿色, frame 2 ★★★ · 留用 · 绿色, the others unmarked.
+    model.select(model.frames[2].id)
+    model.selectMarked(.picked)
+    let pickedChosen = model.selectionIDs == Set(model.frames.prefix(2).map(\.id)) && model.selectedID == model.frames[0].id
+    model.selectMarked(.stars(3))
+    let starsChosen = model.selectionIDs == [model.frames[1].id] && model.selectedID == model.frames[1].id
+    model.selectMarked(.rejected)
+    let noneLeaves = model.selectionIDs == [model.frames[1].id] && model.status == "这一卷没有不要的画面"
+    model.selectMarked(.label(.green))
+    let greens = model.selectionIDs == Set(model.frames.prefix(2).map(\.id)) && model.selectedID == model.frames[1].id
+    model.selectMarked(.unflagged)
+    let unflagged = model.selection.count == model.frames.count - 2 && model.selectedID == model.frames[2].id
+    model.selectAllFrames()
+    let all = model.selection.count == model.frames.count && model.selectedID == model.frames[2].id
+    model.selectOnlyShown()
+    try check(pickedChosen && starsChosen && noneLeaves && greens && unflagged && all && model.selection.count == 1,
+      "frames are chosen by a flag, by stars or by a colour label, the one shown kept when it is one of them; ⌘A chooses all, ⌘D the one shown")
+    // And by the assistant's tools: marks set outright on frames named, read back in list_frames,
+    // frames chosen by them.
+    func reply(_ name: String, _ arguments: [String: Any] = [:]) -> (text: String, error: Bool) {
+      let r = MCPTools.call(name, arguments, model: model)
+      return ((r.content.first?["text"] as? String) ?? "", r.isError)
+    }
+    let (first, third) = (model.frames[0].name, model.frames[2].name)
+    let set = reply("set_marks", ["frames": [first, third], "stars": 4, "flag": "rejected", "label": "blue"])
+    let setRight = model.frames[0].rating == 4 && model.frames[0].flag == -1 && model.frames[0].label == FrameLabel.blue.rawValue
+      && model.frames[2].rating == 4 && model.frames[1].rating == 3 && model.frames[1].flag == 1
+    let chosen = reply("select_by_marks", ["by": "stars", "stars": 4])
+    let listedMarks = reply("list_frames").text
+    let cleared = reply("set_marks", ["flag": "none", "label": "none"])
+    let clearedRight = model.frames[0].flag == nil && model.frames[0].label == nil && model.frames[0].rating == 4 && model.frames[2].flag == nil
+    let wrong = reply("set_marks", ["frames": ["不存在"], "stars": 1])
+    undo.undo()
+    try check(!set.error && setRight && chosen.text.hasSuffix("所选：\(first)、\(third)") && listedMarks.contains("\"stars\" : 4") && listedMarks.contains("\"rejected\"")
+      && listedMarks.contains("\"chosen\" : true") && !cleared.error && clearedRight && wrong.error && model.frames[0].flag == -1,
+      "the assistant sets stars, a flag and a label on frames named or chosen, reads them in list_frames and chooses frames by them: \(set.text) / \(chosen.text) / \(cleared.text)")
+    // Culling fast: a flag on one frame and then, within the second, on the next are two steps.
+    model.select(model.frames[0].id)
+    model.setFlag(1)
+    model.select(model.frames[2].id)
+    model.setFlag(1)
+    let bothPicked = model.frames[0].flag == 1 && model.frames[2].flag == 1
+    undo.undo()
+    try check(bothPicked && model.frames[0].flag == 1 && model.frames[2].flag == -1,
+      "flagging one frame and then the next within a second are two steps: ⌘Z takes back only the last")
+    // The grading wheels' figures under them, and the mixer's tracks in each band's colours.
+    let red = ColourMixer.track(band: 0, kind: 0), blueSaturation = ColourMixer.track(band: 5, kind: 1)
+    try check(ColourGrading.readout(hue: 210, amount: 0.25) == "210° · 25" && ColourGrading.readout(hue: -30, amount: 0.004) == "—"
+      && ColourGrading.readout(hue: 359.6, amount: 1) == "0° · 100" && ColourGrading.readout(hue: -90, amount: 0.5) == "270° · 50"
+      && red.count == 3 && blueSaturation.count == 2 && (0..<8).allSatisfy { b in (0..<3).allSatisfy { ColourMixer.track(band: b, kind: $0).count >= 2 } },
+      "a grading wheel reads its hue and amount (a dash at the middle), and each of the mixer's sliders has its band's colours")
     // The single view's before (\\): in ③ the frame shows as ② leaves it; not in ②.
     model.page = .convert
     model.convertStep = .grade

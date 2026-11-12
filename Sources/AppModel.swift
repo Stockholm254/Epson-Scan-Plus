@@ -1589,11 +1589,78 @@ final class AppModel: ObservableObject {
   private func mark(_ name: String, _ change: (inout FilmFrame) -> Void) {
     let ids = Set(selection.map(\.id))
     guard !isWorking, !ids.isEmpty else { return }
-    recordEdit(name)
+    // Pressed again quickly on the same frames, one step (3 then 4 stars); on other frames, as when
+    // culling with P, →, P, a step of their own.
+    recordEdit(name, key: name + ids.map(\.uuidString).sorted().joined())
     for i in frames.indices where ids.contains(frames[i].id) { change(&frames[i]) }
     let f = frames.first { ids.contains($0.id) }
     status = (ids.count > 1 ? "所选的 \(ids.count) 张：" : "第 \(f?.name ?? "") 张：") + (f.map(Self.markWords) ?? "")
     saveProject()
+  }
+  /// Marks set outright on `ids`, as the assistant's set_marks asks, one edit a call: `stars` 0 and `flag`
+  /// 0 take theirs off (1 picked, −1 rejected), `label` −1 takes it off; nil leaves that mark.
+  func setMarks(_ ids: Set<UUID>, stars: Int? = nil, flag: Int? = nil, label: Int? = nil) {
+    guard !isWorking, !ids.isEmpty, stars != nil || flag != nil || label != nil else { return }
+    // Each call its own step, not run together with the one just before as a slider's are.
+    recordEdit("星级、旗标和标签", key: "星级、旗标和标签-\(UUID())")
+    for i in frames.indices where ids.contains(frames[i].id) {
+      if let stars { frames[i].rating = stars == 0 ? nil : min(5, max(1, stars)) }
+      if let flag { frames[i].flag = flag == 0 ? nil : flag > 0 ? 1 : -1 }
+      if let label { frames[i].label = FrameLabel(rawValue: label)?.rawValue }
+    }
+    let f = frames.first { ids.contains($0.id) }
+    status = (ids.count > 1 ? "\(ids.count) 张：" : "第 \(f?.name ?? "") 张：") + (f.map(Self.markWords) ?? "")
+    saveProject()
+  }
+  /// Lightroom's 按旗标 / 按星级 / 按颜色标签选择: the frames a choice by their marks takes.
+  enum MarkChoice: Hashable {
+    case picked, unflagged, rejected, stars(Int), label(FrameLabel)
+    func takes(_ f: FilmFrame) -> Bool {
+      switch self {
+      case .picked: return f.flag == 1
+      case .unflagged: return f.flag == nil
+      case .rejected: return f.flag == -1
+      case .stars(let n): return (f.rating ?? 0) >= n
+      case .label(let l): return f.label == l.rawValue
+      }
+    }
+    var name: String {
+      switch self {
+      case .picked: return "留用的"
+      case .unflagged: return "没有旗标的"
+      case .rejected: return "不要的"
+      case .stars(let n): return String(repeating: "★", count: n) + (n < 5 ? " 及以上的" : "的")
+      case .label(let l): return l.name + "色标签的"
+      }
+    }
+    /// As the menus list them: the flags, the stars, the labels.
+    static let groups: [[MarkChoice]] = [[.picked, .unflagged, .rejected], (1...5).map { .stars($0) }, FrameLabel.allCases.map { .label($0) }]
+  }
+  /// The frames `choice` takes chosen together: the frame shown stays shown when it is one of them,
+  /// else the first of them is; with none, the selection stays and the status line says so.
+  func selectMarked(_ choice: MarkChoice) {
+    let found = frames.filter(choice.takes)
+    guard let first = found.first else {
+      status = "这一卷没有\(choice.name)画面"
+      return
+    }
+    choose(found, showing: found.contains { $0.id == selectedID } ? selectedID ?? first.id : first.id)
+    status = "选中了\(choice.name) \(found.count) 张" + (found.count > 1 ? " · ⌘E 导出所选的" : "")
+  }
+  /// Every frame of the roll chosen, the frame shown kept: ⌘A, as Lightroom's 全选.
+  func selectAllFrames() {
+    guard let shown = selectedID ?? frames.first?.id else { return }
+    choose(frames, showing: shown)
+    status = "选中了全部 \(frames.count) 张"
+  }
+  /// Back to the frame shown alone: ⌘D, as Lightroom's 全不选.
+  func selectOnlyShown() {
+    if !alsoSelected.isEmpty { alsoSelected = [] }
+  }
+  private func choose(_ these: [FilmFrame], showing shown: UUID) {
+    // Selecting another frame lets go of those chosen with the last, so they are chosen after it.
+    if shown != selectedID { select(shown) }
+    alsoSelected = Set(these.map(\.id)).subtracting([shown])
   }
   /// A frame's marks in words: stars, flag, label.
   static func markWords(_ f: FilmFrame) -> String {

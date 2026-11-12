@@ -39,6 +39,8 @@ enum Shortcuts {
       Key(keys: "⌘R · ⇧⌘R", does: "顺时针 / 逆时针旋转"),
       Key(keys: "⌘ 滚动 · 捏合", does: "缩放单张"),
       Key(keys: "Esc", does: "回到选择，缩放回适合"),
+      Key(keys: "J", does: "显示溢出：纯白画成红、纯黑画成蓝"),
+      Key(keys: "\\", does: "调色前 / 后（③ 调色的单张）"),
     ]),
     Group(title: "画面上的工具", keys: [
       Key(keys: cap(.select), does: "选择"),
@@ -67,6 +69,15 @@ enum Shortcuts {
       Key(keys: "⌥⇧⌘E", does: "直接导出到「输出」里的位置，不弹窗口"),
       Key(keys: "⌥⌘L", does: "在去漏光里打开"),
     ]),
+    // Lightroom's marks and its 选择 by them, on the picture, the strip and the light table.
+    Group(title: "整理和选择", keys: [
+      Key(keys: "0 – 5", does: "星级（0 去掉）"),
+      Key(keys: "P · X", does: "留用 · 不要（再按一次取消）"),
+      Key(keys: "6 – 9", does: "红、黄、绿、蓝色标签"),
+      Key(keys: "⌘A", does: "选中全部画面"),
+      Key(keys: "⌘D", does: "只选当前这张"),
+      Key(keys: "⌥⌘A", does: "选中留用的；按星级、标签在「画面 › 选择画面」里"),
+    ]),
   ]
 }
 
@@ -79,9 +90,9 @@ struct ShortcutsSheet: View {
         Spacer()
         Text("画面上的单个字母键在点过画面以后才收得到").font(.system(size: 11)).foregroundStyle(.secondary)
       }
-      // Three columns of two groups, each group's keys right-aligned against what they do.
+      // Three columns of two or three groups, each group's keys right-aligned against what they do.
       HStack(alignment: .top, spacing: 26) {
-        column([Shortcuts.groups[0], Shortcuts.groups[1]])
+        column([Shortcuts.groups[0], Shortcuts.groups[1], Shortcuts.groups[6]])
         column([Shortcuts.groups[2], Shortcuts.groups[4]])
         column([Shortcuts.groups[3], Shortcuts.groups[5]])
       }

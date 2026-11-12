@@ -2,8 +2,8 @@ import SwiftUI
 
 /// The camera's settings as a camera's top-plate display shows them: a monochrome LCD sunk into
 /// the black body under a thick clear cover, its seven-segment figures leaning a little and
-/// standing off the pale grey-green reflector behind them, so each throws a faint shadow down and
-/// to the right. Every figure has its own cells, the unlit segments barely there, the digits
+/// standing off the pale grey-green reflector behind them, lit evenly from above the middle, so each
+/// throws a faint shadow straight down. Every figure has its own cells, the unlit segments barely there, the digits
 /// right-aligned in them as an LCD's are. Shutter and aperture large with the mode beside them;
 /// under a printed rule ISO in its box, the exposure scale where the panel is wide enough, the
 /// pictures taken in brackets and the battery's bars. Under it on the body, as on the camera, the
@@ -128,9 +128,9 @@ struct TopLCD: View {
   /// Unlit: the reflector a pale grey-green, as daylight shows it. Lit: the orange lamp behind it.
   static func colours(lit: Bool) -> Colours {
     lit
-      ? Colours(top: Color(red: 0.93, green: 0.62, blue: 0.27), bottom: Color(red: 0.78, green: 0.45, blue: 0.15),
+      ? Colours(top: Color(red: 0.91, green: 0.6, blue: 0.26), bottom: Color(red: 0.86, green: 0.54, blue: 0.21),
         ink: Color(red: 0.14, green: 0.06, blue: 0.02), shadow: Color(red: 0.35, green: 0.12, blue: 0).opacity(0.36), ghost: 0.03)
-      : Colours(top: Color(red: 0.80, green: 0.82, blue: 0.77), bottom: Color(red: 0.69, green: 0.72, blue: 0.67),
+      : Colours(top: Color(red: 0.78, green: 0.80, blue: 0.75), bottom: Color(red: 0.74, green: 0.765, blue: 0.715),
         ink: Color(red: 0.09, green: 0.10, blue: 0.09), shadow: Color.black.opacity(0.28), ghost: 0.022)
   }
 
@@ -151,7 +151,8 @@ struct TopLCD: View {
     }
     ctx.fill(grain, with: .color(.white.opacity(0.06)))
     ctx.stroke(Path(roundedRect: body.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 9.5), with: .linearGradient(
-      Gradient(colors: [.white.opacity(0.16), .white.opacity(0.02)]), startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height)), lineWidth: 1)
+      Gradient(colors: [.white.opacity(0.16), .white.opacity(0.02)]), startPoint: CGPoint(x: size.width / 2, y: 0),
+      endPoint: CGPoint(x: size.width / 2, y: size.height)), lineWidth: 1)
     // The window, sunk into it at the top: a dark well where the body turns down, then the LCD.
     let window = CGRect(x: 7, y: 7, width: size.width - 14, height: min(size.height, lcdHeight) - 14)
     ctx.fill(Path(roundedRect: window.insetBy(dx: -1.5, dy: -1.5), cornerRadius: 7), with: .color(.black.opacity(0.9)))
@@ -162,17 +163,17 @@ struct TopLCD: View {
       Gradient(colors: [Color(white: 0.08), Color(white: 0.26), Color(white: 0.56)]),
       startPoint: CGPoint(x: window.midX, y: window.minY), endPoint: CGPoint(x: window.midX, y: window.maxY)), lineWidth: 2.5)
     ctx.fill(Path(roundedRect: screen, cornerRadius: 4.5), with: .linearGradient(
-      Gradient(colors: [c.top, c.bottom]), startPoint: CGPoint(x: screen.minX, y: screen.minY), endPoint: CGPoint(x: screen.maxX, y: screen.maxY)))
+      Gradient(colors: [c.top, c.bottom]), startPoint: CGPoint(x: screen.midX, y: screen.minY), endPoint: CGPoint(x: screen.midX, y: screen.maxY)))
     if lit {
-      // The lamp is brighter in the middle than at the ends.
+      // The lamp a little brighter in the middle, evenly to either side.
       ctx.fill(Path(roundedRect: screen, cornerRadius: 4.5), with: .radialGradient(
-        Gradient(colors: [Color(red: 1, green: 0.8, blue: 0.45).opacity(0.45), .clear]),
-        center: CGPoint(x: screen.midX, y: screen.midY), startRadius: 0, endRadius: screen.width * 0.6))
+        Gradient(colors: [Color(red: 1, green: 0.8, blue: 0.45).opacity(0.22), .clear]),
+        center: CGPoint(x: screen.midX, y: screen.midY), startRadius: 0, endRadius: screen.width * 0.62))
     }
-    // The well's own shadow on the screen's top and left edges, under the cover.
+    // The well's own shadow along the screen's top edge, under the cover, the same all along it.
     ctx.stroke(Path(roundedRect: screen.insetBy(dx: 1.2, dy: 1.2), cornerRadius: 3.8), with: .linearGradient(
-      Gradient(colors: [.black.opacity(0.28), .clear]), startPoint: CGPoint(x: screen.minX, y: screen.minY),
-      endPoint: CGPoint(x: screen.minX + 14, y: screen.minY + 10)), lineWidth: 2.4)
+      Gradient(colors: [.black.opacity(0.24), .clear]), startPoint: CGPoint(x: screen.midX, y: screen.minY),
+      endPoint: CGPoint(x: screen.midX, y: screen.minY + 9)), lineWidth: 2.4)
 
     // Where the figures go.
     let pad: CGFloat = 9
@@ -258,7 +259,7 @@ struct TopLCD: View {
     // shadow on the reflector a little down and to the right of it, moving as the pointer does.
     ctx.fill(ghost, with: .color(c.ink.opacity(c.ghost)))
     var marks = ctx
-    marks.addFilter(.shadow(color: c.shadow, radius: 1, x: 1.7 + look.width * 1.6, y: 2.1 + look.height * 1.2))
+    marks.addFilter(.shadow(color: c.shadow, radius: 1, x: look.width * 1.6, y: 2.1 + look.height * 1.2))
     let ink = GraphicsContext.Shading.linearGradient(
       Gradient(colors: [c.ink.opacity(0.86), c.ink]), startPoint: CGPoint(x: 0, y: screen.minY), endPoint: CGPoint(x: 0, y: screen.maxY))
     marks.fill(segments, with: ink)
@@ -267,18 +268,19 @@ struct TopLCD: View {
       marks.draw(Text(text).font(.system(size: size, weight: .heavy, design: .rounded)).foregroundStyle(c.ink), at: at, anchor: anchor)
     }
 
-    // The cover over it, thick and clear: the room's light in it as a soft band across the upper
-    // left, its bevel bright along the top and dark at the bottom.
-    let sheenX = screen.minX + screen.width * (0.05 - look.width * 0.12)
+    // The cover over it, thick and clear: the room's light in it as a soft band along the top, the
+    // same from end to end (the pointer tips it a little), its bevel bright along the top and dark
+    // at the bottom.
+    let tilt = look.width * screen.height * 0.5
     ctx.fill(Path(roundedRect: screen, cornerRadius: 4.5), with: .linearGradient(
       Gradient(stops: [
-        .init(color: .white.opacity(lit ? 0.16 : 0.26), location: 0), .init(color: .white.opacity(0.06), location: 0.4),
-        .init(color: .clear, location: 0.58),
+        .init(color: .white.opacity(lit ? 0.12 : 0.18), location: 0), .init(color: .white.opacity(0.04), location: 0.45),
+        .init(color: .clear, location: 0.62),
       ]),
-      startPoint: CGPoint(x: sheenX, y: screen.minY), endPoint: CGPoint(x: sheenX + screen.width * 0.32, y: screen.maxY)))
+      startPoint: CGPoint(x: screen.midX - tilt, y: screen.minY), endPoint: CGPoint(x: screen.midX + tilt, y: screen.maxY)))
     ctx.stroke(Path(roundedRect: screen.insetBy(dx: 0.6, dy: 0.6), cornerRadius: 4), with: .linearGradient(
-      Gradient(colors: [.white.opacity(0.55), .white.opacity(0.1), .black.opacity(0.35)]),
-      startPoint: CGPoint(x: screen.minX, y: screen.minY), endPoint: CGPoint(x: screen.minX + screen.width * 0.3, y: screen.maxY)), lineWidth: 1.2)
+      Gradient(colors: [.white.opacity(0.5), .white.opacity(0.12), .black.opacity(0.32)]),
+      startPoint: CGPoint(x: screen.midX, y: screen.minY), endPoint: CGPoint(x: screen.midX, y: screen.maxY)), lineWidth: 1.2)
   }
 
   /// The battery as panels draw it: an outline with its terminal, up to three bars inside.

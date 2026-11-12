@@ -45,6 +45,12 @@ struct ColourGrading: Codable, Equatable {
   var highHue = 0.0, highAmount = 0.0
   var balance = 0.0, blending = 0.5
   var isIdentity: Bool { shadowAmount == 0 && midAmount == 0 && highAmount == 0 }
+  /// A wheel's setting in figures: its hue in degrees and its amount out of 100; a dash at the middle.
+  static func readout(hue: Double, amount: Double) -> String {
+    let a = Int((amount * 100).rounded())
+    guard a > 0 else { return "—" }
+    return "\(Int(((hue.truncatingRemainder(dividingBy: 360)) + 360).truncatingRemainder(dividingBy: 360).rounded()) % 360)° · \(a)"
+  }
   /// A hue's colour with its lightness taken out, scaled by `amount` to at most 0.12: what is added
   /// to every pixel of the part, so the lightness stays.
   static func tint(_ hue: Double, _ amount: Double) -> CIVector {

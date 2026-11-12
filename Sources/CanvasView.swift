@@ -435,6 +435,44 @@ final class FilmCanvasView: NSView {
       .filter { $0.1 < Self.edgeReach }.min { $0.1 < $1.1 }
     return (nil, near?.0)
   }
+  /// Lightroom's marks on a frame of the light table, as the film strip shows them: its colour label
+  /// as a dot, its stars, its flag (a green flag picked, a red cross rejected), on a dark pill in the
+  /// box's lower left; nothing when it has none, or when the box is too small to take them.
+  private func drawMarks(_ f: FilmFrame, in r: CGRect, opacity: CGFloat) {
+    guard f.rating != nil || f.flag != nil || f.label != nil, r.width > 48, r.height > 30 else { return }
+    let font = NSFont.systemFont(ofSize: 10, weight: .semibold), gap: CGFloat = 3, height: CGFloat = 15
+    let stars = f.rating.map { String(repeating: "★", count: $0) as NSString }
+    let starAttributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.systemYellow.withAlphaComponent(opacity)]
+    let starSize = stars?.size(withAttributes: starAttributes) ?? .zero
+    let flag = f.flag.flatMap { flag in
+      NSImage(systemSymbolName: flag > 0 ? "flag.fill" : "xmark", accessibilityDescription: nil)?.withSymbolConfiguration(
+        NSImage.SymbolConfiguration(pointSize: 9, weight: .bold).applying(.init(paletteColors: [flag > 0 ? .systemGreen : .systemRed])))
+    }
+    let label = f.label.flatMap(FrameLabel.init(rawValue:))
+    let widths = [label.map { _ in CGFloat(8) }, stars.map { _ in starSize.width }, flag.map { $0.size.width }].compactMap { $0 }
+    guard !widths.isEmpty else { return }
+    let width = widths.reduce(0, +) + gap * CGFloat(widths.count - 1) + 10
+    guard width < r.width - 8 else { return }
+    let pill = CGRect(x: r.minX + 4, y: r.maxY - 4 - height, width: width, height: height)
+    NSColor.black.withAlphaComponent(0.6 * opacity).setFill()
+    NSBezierPath(roundedRect: pill, xRadius: height / 2, yRadius: height / 2).fill()
+    var x = pill.minX + 5
+    if let label {
+      let c = label.colour
+      NSColor(calibratedRed: c.r, green: c.g, blue: c.b, alpha: opacity).setFill()
+      NSBezierPath(ovalIn: CGRect(x: x, y: pill.midY - 4, width: 8, height: 8)).fill()
+      x += 8 + gap
+    }
+    if let stars {
+      stars.draw(at: CGPoint(x: x, y: pill.midY - starSize.height / 2), withAttributes: starAttributes)
+      x += starSize.width + gap
+    }
+    if let flag {
+      let size = flag.size
+      flag.draw(in: CGRect(x: x, y: pill.midY - size.height / 2, width: size.width, height: size.height), from: .zero,
+        operation: .sourceOver, fraction: opacity, respectFlipped: true, hints: nil)
+    }
+  }
   /// A small label in `colour` by the canvas point `at`, kept on the picture.
   private func drawTag(_ text: String, at: CGPoint, colour: NSColor) {
     let r = imageRect, font = NSFont.systemFont(ofSize: 11, weight: .medium)
@@ -813,6 +851,12 @@ final class FilmCanvasView: NSView {
           : chosen ? NSColor(calibratedRed: 0.95, green: 0.71, blue: 0.38, alpha: 0.6)
           : NSColor.white.withAlphaComponent(f.enabled ? 0.85 : 0.3)
         let c = solid.withAlphaComponent(solid.alphaComponent * appear)
+        // Rejected (X), greyed as Lightroom's grid has it.
+        if f.flag == -1 {
+          NSColor.black.withAlphaComponent(0.5 * appear).setFill()
+          NSBezierPath(rect: r).fill()
+        }
+        drawMarks(f, in: r, opacity: appear)
         c.setStroke()
         let path = NSBezierPath(rect: r)
         path.lineWidth = selected || chosen ? 2 : f.enabled ? 1.5 : 1
@@ -1358,6 +1402,7 @@ final class FilmCanvasView: NSView {
       menu.addItem(ActionMenuItem(ticked ? "取消勾选所选的 \(n) 张" : "勾选所选的 \(n) 张", symbol: ticked ? "circle" : "checkmark.circle", enabled: free) {
         [weak model] in model?.setSelectionEnabled(!ticked)
       })
+      menu.addItem(Self.marksItem(model, frame: nil, enabled: free))
       menu.addItem(ActionMenuItem("删除所选的 \(n) 张", symbol: "trash", enabled: free) { [weak model] in
         guard let model else { return }
         model.remove(model.selectionIDs)
@@ -1374,10 +1419,50 @@ final class FilmCanvasView: NSView {
       menu.addItem(ActionMenuItem(frame.enabled ? "取消勾选" : "勾选", symbol: frame.enabled ? "circle" : "checkmark.circle", enabled: free) { [weak model] in
         model?.setEnabled(frame.id, enabled: !frame.enabled)
       })
+      menu.addItem(Self.marksItem(model, frame: frame, enabled: free))
       menu.addItem(ActionMenuItem("删除这张", symbol: "trash", enabled: free) { [weak model] in model?.remove(frame.id) })
     }
     return menu
   }
+  /// Lightroom's marks from the picture's menu: on the frames chosen together (`frame` nil), or on
+  /// `frame` alone, shown first; and the roll's frames of a mark chosen together.
+  static func marksItem(_ model: AppModel, frame: FilmFrame?, enabled: Bool) -> NSMenuItem {
+    let n = frame == nil ? model.selection.count : 1
+    let item = NSMenuItem(title: n > 1 ? "所选的 \(n) 张的星级、旗标和标签" : "星级、旗标和标签", action: nil, keyEquivalent: "")
+    item.image = NSImage(systemSymbolName: "star", accessibilityDescription: nil)
+    item.isEnabled = enabled
+    let sub = NSMenu()
+    sub.autoenablesItems = false
+    func add(_ title: String, _ run: @escaping (AppModel) -> Void) {
+      sub.addItem(ActionMenuItem(title, enabled: enabled) { [weak model] in
+        guard let model else { return }
+        if let frame, frame.id != model.selectedID { model.select(frame.id) }
+        run(model)
+      })
+    }
+    for stars in 0...5 { add(stars == 0 ? "无星级（0）" : String(repeating: "★", count: stars) + "（\(stars)）") { $0.setRating(stars) } }
+    sub.addItem(.separator())
+    add("留用（P）") { $0.setFlag(1) }
+    add("不要（X）") { $0.setFlag(-1) }
+    add("取消旗标") { $0.setFlag(0) }
+    sub.addItem(.separator())
+    for l in FrameLabel.allCases { add(l.name + "色标签" + (l.rawValue < 4 ? "（\(l.rawValue + 6)）" : "")) { $0.setLabel(l) } }
+    add("取消颜色标签") { $0.setLabel(nil) }
+    sub.addItem(.separator())
+    let choose = NSMenuItem(title: "选择画面", action: nil, keyEquivalent: "")
+    let choices = NSMenu()
+    for (g, group) in AppModel.MarkChoice.groups.enumerated() {
+      if g > 0 { choices.addItem(.separator()) }
+      for choice in group { choices.addItem(ActionMenuItem(choice.name) { [weak model] in model?.selectMarked(choice) }) }
+    }
+    choose.submenu = choices
+    sub.addItem(choose)
+    item.submenu = sub
+    return item
+  }
+  /// 编辑 › 全选 (⌘A) with the picture or the light table first: every frame of the roll chosen, as
+  /// Lightroom's; text fields keep ⌘A for their text.
+  override func selectAll(_ sender: Any?) { model?.selectAllFrames() }
   override func mouseMoved(with event: NSEvent) {
     hover = convert(event.locationInWindow, from: nil)
     updateCropCursor(at: hover)
@@ -2686,6 +2771,13 @@ private extension NSBezierPath {
 
 /// What the canvas draws over its picture (`FilmCanvasView.drawOverlays`), a view of its own above
 /// the picture's layers. The canvas takes every press and every pointer.
+extension FilmCanvasView: NSMenuItemValidation {
+  func validateMenuItem(_ item: NSMenuItem) -> Bool {
+    if item.action == #selector(selectAll(_:)) { return (model?.frames.count ?? 0) > 1 && model?.onRollModule == true }
+    return true
+  }
+}
+
 final class CanvasOverlay: NSView {
   weak var canvas: FilmCanvasView?
   override var isFlipped: Bool { true }

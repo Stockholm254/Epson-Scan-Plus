@@ -168,6 +168,23 @@ struct EpsonScanPlusApp: App {
           .keyboardShortcut("v", modifiers: [.command, .shift, .option])
           .disabled(model.copiedSettings == nil || model.selected == nil || model.isWorking || model.page != .convert)
         Divider()
+        // Lightroom's 选择: every frame, the one shown alone, or those of a flag, stars or a label,
+        // to export, sync or paste to at once. ⌘A is 编辑 › 全选 on the picture or the light table.
+        Menu("选择画面") {
+          Button("全部画面（⌘A）") { model.selectAllFrames() }.disabled(model.frames.count < 2)
+          Button("只选当前这张") { model.selectOnlyShown() }.keyboardShortcut("d").disabled(!model.multiSelected)
+          ForEach(AppModel.MarkChoice.groups.indices, id: \.self) { g in
+            Divider()
+            ForEach(AppModel.MarkChoice.groups[g], id: \.self) { choice in
+              if choice == .picked {
+                Button(choice.name) { model.selectMarked(choice) }.keyboardShortcut("a", modifiers: [.command, .option])
+              } else {
+                Button(choice.name) { model.selectMarked(choice) }
+              }
+            }
+          }
+        }.disabled(model.frames.isEmpty || !model.onRollModule)
+        Divider()
         // Which frames a batch scans and exports; on the light table's strip as well, by its menu.
         // ③ exports on its own, so its page ticks nothing.
         // With several chosen (⌘ or ⇧ on the strip or the light table), all of them.

@@ -61,3 +61,20 @@ struct FrameMarks: View {
     }
   }
 }
+
+extension ColourMixer {
+  /// A slider's track for `band` and `kind`, as Lightroom colours its mixer: the hue turned from 30°
+  /// below the band's to 30° above (the way the slider turns it), grey to the band's colour, and
+  /// its colour from dark to light.
+  static func track(band: Int, kind: Int) -> [Color] {
+    let h = bands[band].hue
+    func colour(_ hue: Double, _ s: Double, _ b: Double) -> Color {
+      Color(hue: ((hue.truncatingRemainder(dividingBy: 360)) + 360).truncatingRemainder(dividingBy: 360) / 360, saturation: s, brightness: b)
+    }
+    switch kind {
+    case 0: return [colour(h - 30, 0.75, 0.9), colour(h, 0.75, 0.9), colour(h + 30, 0.75, 0.9)]
+    case 1: return [Color(white: 0.55), colour(h, 0.85, 0.92)]
+    default: return [colour(h, 0.7, 0.28), colour(h, 0.6, 0.62), colour(h, 0.35, 1)]
+    }
+  }
+}

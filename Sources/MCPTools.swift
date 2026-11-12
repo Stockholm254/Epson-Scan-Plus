@@ -30,10 +30,21 @@ enum MCPTools {
   static let tools: [Tool] = conversionTools + leakTools
   private static let conversionTools: [Tool] = [
     Tool(name: "get_state", description: "读取当前工程和选中画面的转换状态：胶片预设与各通道斜率、片基 RGB 及来源、全卷斜率估计（roll_estimate_slopes，开关在 roll.slope_estimate）、白平衡、色阶、影调、扫描与对齐信息，以及负片密度和正片各通道的百分位与溢出比例；sdr_range 给出进入两端之前（色阶黑点为 0、白点为 1）白点以上的比例、最亮 0.1% 的位置和高出白点几档、屏幕上从哪里起是纯白或纯黑，以及屏幕上纯白、纯黑的比例。还有：frame.light_leak 是这张的去漏光（applied：修复在转换里，③ 在修好的照片上调色；job_not_applied：去漏光页有任务、修复还没用到 ③；old_job_of_graded_picture：以前从调好色的正片做的任务，要在去漏光页从 ② 的结果重新载入才能用到 ③）；画面的裁切、拉直、来源文件、是否从传感器读出和去串色、手动取过哪些点；预设的类型和说明（适用条件写在里面），这一卷关了「用标定」时 preset 是转换实际用的胶片，roll_preset 是这一卷选的标定预设；frame.flat_field 是这张除的平场（来自哪张空白帧或光源标定、名字、最暗处的比例）；slopes_in_use 是转换实际用的斜率和它来自哪里（标定预设、全卷斜率估计或预设）；analysis 是自动分析实际定出的片基、白平衡、色阶两端（对数曝光）和高光伸到多远；tone 里的高光、阴影、去色噪；curves 是现有的色调曲线（有改动的通道和它们的控制点，空表示没有曲线）；roll 是整卷同一白平衡 / 色阶、去串色和标定点数。调整前先调用。", properties: [:]),
-    Tool(name: "list_frames", description: "列出本卷所有画面：编号、是否勾选、是否已正式扫描及 dpi、方向、镜像、拉直、裁切、来源文件，和手动取过的片基、中性灰、高光；light_leak 是去漏光的状态（applied / job_not_applied / old_job_of_graded_picture，没有就不列）。", properties: [:]),
+    Tool(name: "list_frames", description: "列出本卷所有画面：编号、是否勾选、是否显示（selected）、是否和它一起选中（chosen）、是否已正式扫描及 dpi、方向、镜像、拉直、裁切、来源文件，和手动取过的片基、中性灰、高光；stars、flag（picked / rejected）、label（red…purple）是 Lightroom 式的标记，没有就不列；light_leak 是去漏光的状态（applied / job_not_applied / old_job_of_graded_picture，没有就不列）。", properties: [:]),
     Tool(name: "list_presets", description: "列出所有胶片预设：名称、类型（内置 / V850 标定 / 翻拍标定 / 导入 / 只在卷里）、通道斜率、来源和说明，这一卷是否在用，图库里有几卷在用及是哪几卷，能否删除。「只在卷里」是已从列表删除、只有卷里还留着的预设。只读，删除和恢复在 App 的「预设…」表格里做。", properties: [:]),
     Tool(name: "list_rolls", description: "列出图库里的卷（只读）：标题、文件夹、开始时间、来源（扫描 / 翻拍 / 导入）、胶片、用的预设、画面数、全分辨率张数、已导出的文件数、备注，以及哪一卷是打开的。", properties: [:]),
     Tool(name: "select_frame", description: "选中某张画面（按编号，如 \"09\"）。", properties: ["name": ["type": "string", "description": "画面编号"]], required: ["name"]),
+    Tool(name: "set_marks", description: "给画面打星级、旗标和颜色标签，像 Lightroom（App 里的 0–5、P、X、6–9）：stars 0–5（0 去掉），flag 为 picked（留用）、rejected（不要）或 none，label 为 red、yellow、green、blue、purple 或 none；没给的那一项不动。frames 是画面编号；省略时作用于 App 里选中的几张（只选了一张就是那一张）。存在工程里，可用 undo 撤销。list_frames 读得到每张的标记。", properties: [
+      "frames": ["type": "array", "items": ["type": "string"], "description": "画面编号，如 [\"01\", \"04\"]；省略时为所选的"],
+      "stars": ["type": "integer", "minimum": 0, "maximum": 5],
+      "flag": ["type": "string", "enum": ["picked", "rejected", "none"]],
+      "label": ["type": "string", "enum": ["red", "yellow", "green", "blue", "purple", "none"]],
+    ]),
+    Tool(name: "select_by_marks", description: "按标记一起选中几张，像 Lightroom 的「按旗标 / 星级 / 颜色标签选择」（App 里「画面 › 选择画面」）：by 为 picked（留用的）、unflagged（没有旗标的）、rejected（不要的）、stars（stars 星及以上的）、label（某个颜色标签的）、all（全部）或 only_shown（只留显示的这张）。显示的那张在其中时不换，否则换到第一张；之后 apply_grading_preset、set_marks 等作用于所选的每一张。一张都没有时选中的不变。返回选中了哪几张。", properties: [
+      "by": ["type": "string", "enum": ["picked", "unflagged", "rejected", "stars", "label", "all", "only_shown"]],
+      "stars": ["type": "integer", "minimum": 1, "maximum": 5, "description": "by 为 stars 时，几星及以上"],
+      "label": ["type": "string", "enum": ["red", "yellow", "green", "blue", "purple"], "description": "by 为 label 时"],
+    ], required: ["by"]),
     Tool(name: "preview", description: "取得选中画面的 JPEG：positive 为当前设置转换出的正片，negative 为未反相的负片（线性数据，看起来很暗）。", properties: [
       "kind": ["type": "string", "enum": ["positive", "negative"], "description": "默认 positive"],
       "max_size": ["type": "integer", "minimum": 256, "maximum": 1600, "description": "长边像素，默认 768"],
@@ -119,6 +130,7 @@ enum MCPTools {
     - 翻拍预设的斜率属于那台相机和那组灯，灯的配比变了也照样成立；它记下的中性却是标定那次的灯光。套用以后整体偏色、而白色或灰色的东西彼此一致时，在它们上面 pick_neutral 重新配平就好，不必重做标定。
     - 画面的方向和镜像这里改不了，要请用户在 App 里转。
     - 要看图库里别的卷，或某个预设有哪些卷在用、适用条件（说明里写着去串色要开还是关），用 list_rolls 和 list_presets，都只读。
+    - 星级、旗标和颜色标签：list_frames 读，set_marks 设；select_by_marks 按标记一起选中几张，之后 apply_grading_preset、set_marks 作用于所选的每一张。
     预设标定（calibration_*）定的是这种胶片在这台设备上各通道的反差（斜率），让灰从暗到亮都是灰；它还记下中性落在哪里，用这个预设时白平衡按它配平（开着自动也一样），所以取点时那种光下的灰是灰。它不套色卡，胶片的风格保留。
     原理：中性的东西三个通道反射得一样多。除掉片基以后，它每个通道高于片基的密度 = 这个通道的斜率 ×（同一个曝光量 + 这个通道的偏移），偏移里是光的颜色。所以同一种光下的中性点，从亮到暗落在一条直线上（红对绿、蓝对绿），斜率就是要标定的。挑点和去点都只按这一条，不和别的软件或别的渲染比颜色。
     用户说「帮这卷做翻拍标定」时：
@@ -183,6 +195,8 @@ enum MCPTools {
     return g
   }
   /// The selected frame and what converting it needs, read on the main thread.
+  /// The colour labels by the names the tools use, in `FrameLabel`'s order.
+  static let labelNames = ["red", "yellow", "green", "blue", "purple"]
   private static func selected(_ model: AppModel) throws -> (FilmFrame, FilmProfile) {
     try onMain {
       guard let frame = model.selected else { throw DeskError.message("没有选中的画面。先在 App 里预览或打开工程，或用 select_frame。") }
@@ -449,6 +463,10 @@ enum MCPTools {
           if let dpi = f.scanDPI, AppModel.readsScan(f) { item["scan_dpi"] = dpi }
           item.merge(geometry(f)) { a, _ in a }
           if let leak = Self.leakState(f, job: model.leakJobs[f.id]) { item["light_leak"] = leak["state"] }
+          if model.alsoSelected.contains(f.id) { item["chosen"] = true }
+          if let stars = f.rating { item["stars"] = stars }
+          if let flag = f.flag { item["flag"] = flag > 0 ? "picked" : "rejected" }
+          if let label = f.label, label >= 0, label < Self.labelNames.count { item["label"] = Self.labelNames[label] }
           return item
         }
       })
@@ -480,6 +498,50 @@ enum MCPTools {
         model.select(f.id)
       }
       return [["type": "text", "text": "已选中第 \(wanted) 张。"]]
+    case "set_marks":
+      let names = arguments["frames"] as? [String]
+      let stars = (arguments["stars"] as? NSNumber)?.intValue
+      let flag = (arguments["flag"] as? String).map { $0 == "picked" ? 1 : $0 == "rejected" ? -1 : 0 }
+      let label = (arguments["label"] as? String).map { Self.labelNames.firstIndex(of: $0) ?? -1 }
+      guard stars != nil || flag != nil || label != nil else { throw DeskError.message("给出 stars、flag 或 label 中的至少一项。") }
+      let said: String = try onMain {
+        let ids: Set<UUID>
+        if let names {
+          let missing = names.filter { n in !model.frames.contains { $0.name == n } }
+          guard missing.isEmpty else { throw DeskError.message("没有编号为 \(missing.joined(separator: "、")) 的画面。可用 list_frames 查看。") }
+          ids = Set(model.frames.filter { names.contains($0.name) }.map(\.id))
+        } else {
+          ids = model.selectionIDs
+        }
+        guard !ids.isEmpty else { throw DeskError.message("没有选中的画面。给出 frames，或先用 select_frame。") }
+        model.setMarks(ids, stars: stars, flag: flag, label: label)
+        return model.status
+      }
+      return [["type": "text", "text": said]]
+    case "select_by_marks":
+      let by = arguments["by"] as? String ?? ""
+      let said: String = try onMain {
+        guard !model.frames.isEmpty else { throw DeskError.message("这一卷没有画面。") }
+        switch by {
+        case "all": model.selectAllFrames()
+        case "only_shown":
+          model.selectOnlyShown()
+          model.status = "只选第 \(model.selected?.name ?? "") 张"
+        case "picked": model.selectMarked(.picked)
+        case "unflagged": model.selectMarked(.unflagged)
+        case "rejected": model.selectMarked(.rejected)
+        case "stars":
+          guard let n = (arguments["stars"] as? NSNumber)?.intValue, (1...5).contains(n) else { throw DeskError.message("by 为 stars 时要给 stars（1–5）。") }
+          model.selectMarked(.stars(n))
+        case "label":
+          guard let l = (arguments["label"] as? String).flatMap({ Self.labelNames.firstIndex(of: $0) }).flatMap(FrameLabel.init(rawValue:))
+          else { throw DeskError.message("by 为 label 时要给 label（red、yellow、green、blue、purple）。") }
+          model.selectMarked(.label(l))
+        default: throw DeskError.message("by 只能是 picked、unflagged、rejected、stars、label、all 或 only_shown。")
+        }
+        return model.status + "；所选：" + model.selection.map(\.name).joined(separator: "、")
+      }
+      return [["type": "text", "text": said]]
     case "preview":
       let (frame, profile) = try selected(model)
       let size = min(1600, max(256, (arguments["max_size"] as? NSNumber)?.intValue ?? 768))
