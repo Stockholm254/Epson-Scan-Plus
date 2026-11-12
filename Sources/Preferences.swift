@@ -129,6 +129,8 @@ final class Preferences: ObservableObject {
   /// The frame's dust ringed on ②'s single view: the toolbar's 除尘标出 and the 除尘 section's
   /// 标出 are this one switch, kept from launch to launch.
   @Published var showDustMarks: Bool { didSet { defaults?.set(showDustMarks, forKey: "dustMarksShown") } }
+  /// The curves' picker's mode, 取曲线点 or 取中性点: the one last chosen from its menu.
+  @Published var curvePick: CurvePick { didSet { defaults?.set(curvePick.rawValue, forKey: "curvePick") } }
   /// ① shows a camera's raw picture in daylight white balance (`AppModel.rawGains`), else as read:
   /// in daylight by default, where a base the light has made grey in daylight looks grey, as in
   /// the camera's live view and Capture One.
@@ -228,6 +230,7 @@ final class Preferences: ObservableObject {
     previewDPI = Self.previewResolutions.contains(dpi) ? dpi : 600
     showLoupe = defaults?.object(forKey: "loupeShown") as? Bool ?? false
     showDustMarks = defaults?.object(forKey: "dustMarksShown") as? Bool ?? true
+    curvePick = defaults?.string(forKey: "curvePick").flatMap(CurvePick.init(rawValue:)) ?? .point
     balanceRawView = defaults?.object(forKey: "balanceRawView") as? Bool ?? true
     loupeStyle = defaults?.string(forKey: "loupeStyle").flatMap(LoupeStyle.init(rawValue:)) ?? .pentax
     loupeField = defaults?.string(forKey: "loupeField").flatMap(LoupeField.init(rawValue:)) ?? .large

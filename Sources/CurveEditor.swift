@@ -38,6 +38,10 @@ struct CurveEditor: View {
   var targeting: Binding<Bool>? = nil
   /// The curves left off the picture for a while, to see it without them; nil leaves the key out.
   var bypassed: Binding<Bool>? = nil
+  /// The picker under the curve, the canvas's tool (`CanvasTool.curvePick`), and its mode; nil
+  /// leaves its key out.
+  var picking: Binding<Bool>? = nil
+  var pickMode: Binding<CurvePick>? = nil
   /// A change made at once (a preset, 重置): the picture's next render fades in.
   var settled: (() -> Void)? = nil
   @State private var dragging: Int?
@@ -50,6 +54,24 @@ struct CurveEditor: View {
   @State private var splitDragged: Int?
   private var channel: Int { state.channel }
   static let names = ["RGB", "R", "G", "B"]
+  /// The curves section's ⓘ.
+  static let info = """
+    和 Lightroom 的曲线一样分两种，先参数曲线、再点曲线，各通道的点曲线接在 RGB 之后。
+
+    参数：阴影、暗部、亮部、高光四段影调各一个滑块，也可以在曲线上按住上下拖那一段；拖下方的三角移动分界。
+
+    点曲线（RGB、R、G、B）：拖动控制点调整；点空白处添加，双击或拖出框外删除；两端还能横向拖，截掉黑或白。「预设」里有线性、中对比、强对比。单个通道的底色上方是它加的颜色，下方是相反的颜色（红对青、绿对洋红、蓝对黄）。
+
+    背后是正片的红、绿、蓝直方图，按曲线之前的值统计，和横轴一致。光标停在单张照片上时，曲线上标出那里的颜色：每个通道一条竖线、曲线上一个点，左上角是曲线前后的值（0–255）；曲线下面是它在当前这条曲线上的输入和输出（拖点时是那个点的）。光标离开照片后标记变暗留着，可以接着拖那一段曲线；换一张时清掉。
+
+    准星是目标调整：选中后在单张照片上按住要调的地方往上拖提亮、往下拖压暗，调的是当前这条曲线上它所在的那一段（参数曲线上是它所在的那一段影调）。眼睛暂时不加曲线看照片，只影响显示。
+
+    曲线下面右边是取点工具（U），和 Capture One 的一样有两种，点旁边的箭头选，记住上次选的那种。选中后在单张照片上点，可以接着点，Esc 退出。取的是曲线之前的正片值（转换以后、曲线查表之前），每点一次是一步，⌘Z 撤销。
+    · 取曲线点：按那一点的值在当前这条曲线上加一个控制点（RGB 曲线上按它的亮度；在参数页时加在 RGB 曲线上）。点落在曲线上，照片先不变，再拖它调那一段。
+    · 取中性点：点照片里本来应该是灰的地方，R、G、B 三条曲线各加一个点，让这一点三个通道输出一样。目标是它在曲线之后的亮度（0.2126 R + 0.7152 G + 0.0722 B），所以它变灰、明暗不变。两端不动，所以只在这个亮度附近去掉偏色，离得越远影响越小；在别的亮度上再点，就再加一组点（离已有的点很近时移动那个点）。
+
+    什么时候用哪个：整张偏同一种颜色，用「白平衡」里的「中性灰」，它动整张。阳光下的灰已经是灰、只有阴影偏蓝或偏紫，用「阴影中性」，它设阴影冷暖和阴影色调，亮处不变。这两样都对了，还剩某一段亮度偏色（比如高光发黄、中间调发绿），或暗部和亮部偏得不一样，才用取中性点，在每段亮度的灰上各点一次。
+    """
   static let colors = [
     Hardware.lcdText, Color(red: 1, green: 0.42, blue: 0.38), Color(red: 0.45, green: 0.9, blue: 0.5),
     Color(red: 0.45, green: 0.65, blue: 1),
@@ -87,6 +109,7 @@ struct CurveEditor: View {
       .help(state.parametric
         ? "参数曲线：在曲线上按住上下拖，调那一段影调；或用下面的滑块，拖下方的三角移动分界"
         : "拖动控制点调整；点空白处添加，双击或拖出框外删除；两端还能横向拖，截掉黑或白")
+      readout
       if state.parametric { parametricControls } else { pointControls }
     }
   }
@@ -124,6 +147,59 @@ struct CurveEditor: View {
       .buttonStyle(KeyStyle(latched: bypassed.wrappedValue))
       .help(bypassed.wrappedValue ? "照片暂不加曲线；再点一下加回来（只影响显示）" : "暂时不加曲线看照片，对比前后（只影响显示，不改设置）")
       .accessibilityLabel("暂不显示曲线")
+    }
+  }
+  /// Under the plot, as Capture One has it: the input and output on the curve taken where the
+  /// pointer lies over the single frame, or of the point dragged; the picker at its end.
+  private var readout: some View {
+    let points = curves[channel].points
+    let dragged = state.parametric ? nil : dragging.flatMap { $0 < points.count ? points[$0] : nil }
+    let shown: (input: Double, output: Double)? = dragged.map { ($0.x, $0.y) }
+      ?? state.reading.map { Self.inputOutput($0, curves: curves, channel: channel, parametric: state.parametric) }
+    return HStack(spacing: 10) {
+      Text("输入 " + (shown.map { Self.level($0.input) } ?? "--"))
+      Text("输出 " + (shown.map { Self.level($0.output) } ?? "--"))
+      Spacer(minLength: 0)
+      picker
+    }
+    .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.secondary)
+    .controlSize(.small)
+  }
+  static func level(_ v: Double) -> String { String(Int((v * 255).rounded())) }
+  /// Where a colour under the pointer, before the curves, lies on the curve taken, and what that
+  /// curve gives it: where 取曲线点 puts its point.
+  static func inputOutput(_ reading: CurveState.Reading, curves: ToneCurves, channel: Int, parametric: Bool) -> (input: Double, output: Double) {
+    let x = curves.target(reading.input, channel: channel, parametric: parametric)
+    return (x, parametric ? (curves.parametric ?? ParametricCurve()).curve.value(x) : curves[channel].value(x))
+  }
+  /// Capture One's picker: a key for the mode last chosen, and beside it the menu of both, which
+  /// takes the tool up in the mode chosen.
+  @ViewBuilder private var picker: some View {
+    if let picking, let pickMode {
+      let mode = pickMode.wrappedValue
+      HStack(spacing: 1) {
+        Button { picking.wrappedValue.toggle() } label: { Image(systemName: mode.symbol) }
+          .buttonStyle(KeyStyle(latched: picking.wrappedValue))
+          .help(mode == .point
+            ? "取曲线点：在单张照片上点一处，在 \(state.parametric ? "RGB" : pageName) 曲线上它所在的地方加一个控制点 · U · Esc 退出"
+            : "取中性点：点照片里本来应该是灰的地方，R、G、B 曲线各加一点让它在这个亮度上变灰，两端不动 · U · Esc 退出")
+          .accessibilityLabel("曲线取点 · " + mode.title)
+        Menu {
+          ForEach(CurvePick.allCases, id: \.self) { m in
+            Toggle(isOn: Binding(get: { pickMode.wrappedValue == m }, set: { _ in
+              pickMode.wrappedValue = m
+              picking.wrappedValue = true
+            })) {
+              Label(m.title, systemImage: m.symbol)
+            }
+          }
+        } label: {
+          Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .help("取点方式：取曲线点或取中性点")
+        .accessibilityLabel("曲线取点方式")
+      }
     }
   }
   private var pointControls: some View {
@@ -363,7 +439,7 @@ struct CurveEditor: View {
   /// In the corner the curves leave free: the point being dragged, input and output; else the
   /// values under the pointer, before and after the curve; 8-bit levels.
   private func figures(_ size: CGSize) -> some View {
-    func level(_ v: Double) -> String { String(Int((v * 255).rounded())) }
+    func level(_ v: Double) -> String { Self.level(v) }
     var text = "", lit = 1.0
     let points = curves[channel].points
     if !state.parametric, let i = dragging, i < points.count {

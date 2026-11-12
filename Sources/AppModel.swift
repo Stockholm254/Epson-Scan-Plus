@@ -304,7 +304,7 @@ final class AppModel: ObservableObject {
   /// like the zoom: the canvas is told (`zoomChanged`), and the window, updated for it, took 100 ms.
   private(set) var viewportRevision = 0
   @Published var canvasFocusRevision = 0
-  private var samplingInput: CGImage?
+  private(set) var samplingInput: CGImage?
   private var editRegionLock: NormalRect?
   var overviewURL: URL?
   private let overviewCache = OverviewCache()
@@ -379,7 +379,7 @@ final class AppModel: ObservableObject {
       // Each step's own tools on the picture: ②'s crops and base, ③'s grey pickers.
       guard convertStep != oldValue else { return }
       preferences.lastStep = convertStep.rawValue
-      if convertStep == .demask, [.neutral, .shadowNeutral, .curve].contains(tool) { tool = .select }
+      if convertStep == .demask, [.neutral, .shadowNeutral, .curve, .curvePick].contains(tool) { tool = .select }
       if convertStep == .grade, [.crop, .region, .base].contains(tool) { tool = .select }
       // ② shows the frames de-masked only, ③ graded: the picture, the table and the strip again.
       if page == .convert {
@@ -482,9 +482,9 @@ final class AppModel: ObservableObject {
         page = .library
         return
       }
-      // The base can be picked while capturing too (to set the lights by); the grey pickers and
-      // the de-masking region are ②'s and ③'s.
-      if page == .capture, [CanvasTool.neutral, .shadowNeutral, .region].contains(tool) { tool = .select }
+      // The base can be picked while capturing too (to set the lights by); the grey pickers, the
+      // curves' picker and the de-masking region are ②'s and ③'s.
+      if page == .capture, [CanvasTool.neutral, .shadowNeutral, .region, .curvePick].contains(tool) { tool = .select }
       // Once, after the steps were split: where things went.
       if page == .convert, !preferences.stepsIntroduced {
         preferences.stepsIntroduced = true
@@ -719,6 +719,11 @@ final class AppModel: ObservableObject {
       return singleView
         ? "在照片上按住要调的地方，往上拖提亮、往下拖压暗\(page) · Esc 退出"
         : "进入单张后在照片上按住要调的地方上下拖 · Esc 退出"
+    case .curvePick:
+      let page = curveState.parametric ? "RGB" : CurveEditor.names[curveState.channel]
+      return preferences.curvePick == .point
+        ? "点照片上的一处，在 \(page) 曲线上它所在的地方加一个控制点（照片不变），再到「曲线」里拖 · 可以接着点 · Esc 退出"
+        : "点照片里本来应该是灰的地方：R、G、B 曲线各加一个点，让它在这个亮度上变灰，两端不动 · 别的亮度可以再点 · Esc 退出"
     case .it8:
       let n = it8Marks.count, undo = n > 0 ? " · ⌫ 撤回上一点" : ""
       guard n < IT8Layout.marks.count else { return "6 个点已就位 · 检查色块位置后点「生成标定」" + undo + " · Esc 退出" }
@@ -779,7 +784,7 @@ final class AppModel: ObservableObject {
     if value != tool { editRegionLock = nil }
     if value != .crop { levelling = false }
     tool = value
-    if value == .neutral || value == .shadowNeutral || value == .calibrate || value == .it8 || value == .dust || value == .region { singleView = selected != nil }
+    if value == .neutral || value == .shadowNeutral || value == .calibrate || value == .it8 || value == .dust || value == .region || value == .curvePick { singleView = selected != nil }
     if value == .base || value == .crop { fitView() }
     focusCanvas()
     refresh()
@@ -3864,6 +3869,10 @@ final class AppModel: ObservableObject {
     guard let i = selectedIndex, !rendering else { return }
     if tool == .dust {
       if singleView { markDust(at: point) }
+      return
+    }
+    if tool == .curvePick {
+      if singleView { pickOnCurves(at: point) }
       return
     }
     if tool == .it8 {

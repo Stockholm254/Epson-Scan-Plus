@@ -46,6 +46,7 @@ enum Shortcuts {
       Key(keys: cap(.region), does: "去色罩区域（青色）"),
       Key(keys: cap(.base), does: "取片基"),
       Key(keys: cap(.neutral), does: "取中性灰"),
+      Key(keys: cap(.curvePick), does: "曲线取点（取曲线点 / 取中性点）"),
       Key(keys: "⌫", does: "删除画框；去色罩区域工具时跟随画面"),
     ]),
     Group(title: "裁切时", keys: [

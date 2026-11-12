@@ -249,7 +249,7 @@ enum CanvasTests {
     model.page = .capture
     model.singleView = false
     key("c", code: 8)
-    try check(model.tool == .crop && CanvasTool.allCases.compactMap(\.shortcut).count == 5 && CanvasTool.base.help.hasSuffix("· B"),
+    try check(model.tool == .crop && CanvasTool.allCases.compactMap(\.shortcut).count == 6 && CanvasTool.base.help.hasSuffix("· B"),
       "C too, each named in its button's tooltip")
     let loupeShown = model.preferences.showLoupe
     key("z", code: 6)

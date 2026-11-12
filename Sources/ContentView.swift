@@ -1295,7 +1295,7 @@ struct ContentView: View {
   /// The curves, over the picture's histograms channel by channel; folded until wanted, and marked
   /// when they change the picture.
   var curvesSection: some View {
-    PanelSection("曲线", key: "curves", open: false, info: "和 Lightroom 的曲线一样分两种，先参数曲线、再点曲线，各通道的点曲线接在 RGB 之后。\n\n参数：阴影、暗部、亮部、高光四段影调各一个滑块，也可以在曲线上按住上下拖那一段；拖下方的三角移动分界。\n\n点曲线（RGB、R、G、B）：拖动控制点调整；点空白处添加，双击或拖出框外删除；两端还能横向拖，截掉黑或白。「预设」里有线性、中对比、强对比。单个通道的底色上方是它加的颜色，下方是相反的颜色（红对青、绿对洋红、蓝对黄）。\n\n背后是正片的红、绿、蓝直方图，按曲线之前的值统计，和横轴一致。光标停在单张照片上时，曲线上标出那里的颜色：每个通道一条竖线、曲线上一个点，左上角是曲线前后的值（0–255）；光标离开照片后标记变暗留着，可以接着拖那一段曲线；换一张时清掉。\n\n准星是目标调整：选中后在单张照片上按住要调的地方往上拖提亮、往下拖压暗，调的是当前这条曲线上它所在的那一段（参数曲线上是它所在的那一段影调）。眼睛暂时不加曲线看照片，只影响显示。") {
+    PanelSection("曲线", key: "curves", open: false, info: CurveEditor.info) {
       if m.curvesBypassed {
         Text("暂不显示").font(.system(size: 11)).foregroundStyle(Hardware.amberText)
       } else if m.settings.curves != nil {
@@ -1312,6 +1312,11 @@ struct ContentView: View {
         histogram: m.histogram, channels: m.channelHistograms, state: m.curveState,
         targeting: Binding(get: { m.tool == .curve }, set: { m.tool = $0 ? .curve : .select }),
         bypassed: Binding(get: { m.curvesBypassed }, set: { m.curvesBypassed = $0 }),
+        picking: Binding(get: { m.tool == .curvePick }, set: { m.useTool($0 ? .curvePick : .select) }),
+        pickMode: Binding(get: { m.preferences.curvePick }, set: {
+          m.preferences.curvePick = $0
+          m.objectWillChange.send()
+        }),
         settled: { m.fadeInNextPicture() })
     }
   }
