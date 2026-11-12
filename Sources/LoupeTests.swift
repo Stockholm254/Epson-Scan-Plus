@@ -225,6 +225,9 @@ enum LoupeTests {
     try JSONEncoder().encode(project).write(to: projectURL)
     let model = AppModel(libraryURL: roll)
     model.loadProject(projectURL)
+    // A roll opens on its first frame alone; these checks start on the light table.
+    model.singleView = false
+    model.refresh()
     func settle(_ seconds: Double = 0.3) { RunLoop.current.run(until: Date().addingTimeInterval(seconds)) }
     for _ in 0..<40 where model.rendering { settle(0.1) }
     let canvas = FilmCanvasView(frame: NSRect(x: 0, y: 0, width: 900, height: 600))

@@ -200,6 +200,9 @@ enum RenderTests {
     // Graded, in ③: a change of exposure is ③'s (② shows the frames de-masked only).
     table.convertStep = .grade
     table.loadProject(stripProject)
+    // A roll opens on its first frame alone: the light table, as these checks look at it.
+    table.singleView = false
+    table.refresh()
     for _ in 0..<100 where table.rendering || table.thumbnails.count < 3 { settle(0.1) }
     settle(0.5)
     let ids = table.frames.map(\.id)

@@ -104,9 +104,14 @@ enum ProjectFormatTests {
     try JSONSerialization.data(withJSONObject: oldest, options: [.prettyPrinted]).write(to: oldFile)
     let reader = AppModel(libraryURL: library)
     reader.readOnly = true
+    // Opened as the app opens a roll: on 单张.
+    AppModel.opensRollsSingle = true
     reader.loadProject(oldFile)
+    AppModel.opensRollsSingle = false
     try check(reader.errorText == nil && reader.frames.count == 1 && reader.frames.first?.id == model.frames.first?.id && reader.filmName == model.filmName,
       "a project with only the keys the first versions wrote opens, its frame and film as saved")
+    try check(reader.singleView && reader.selectedID == reader.frames.first?.id,
+      "a roll with frames opens on its first frame alone (单张), not on the light table")
     // A version from the future is refused, plainly, not misread.
     var future = json
     future["version"] = 3

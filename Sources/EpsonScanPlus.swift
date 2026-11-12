@@ -107,7 +107,7 @@ struct EpsonScanPlusApp: App {
         Button("管理预设…") { model.showPresets = true }
       }
       CommandMenu("画面") {
-        Button("接触表 / 单张") {
+        Button("单张 / 接触表") {
           // From the live view, to the pictures taken as they were last looked at.
           if model.liveViewShown { model.reviewingShots = true } else { model.showSingle(!model.singleView) }
         }.keyboardShortcut("1").disabled(model.previewShowing && !model.singleView || !model.onRollModule)
