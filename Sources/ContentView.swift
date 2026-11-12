@@ -158,6 +158,7 @@ struct ContentView: View {
     .sheet(isPresented: $m.showUpdates) { UpdateSheet(m: m, updater: m.updater) }
     .sheet(isPresented: $m.showShortcuts) { ShortcutsSheet() }
     .sheet(isPresented: $m.choosingPaste) { PasteSheet(m: m) }
+    .sheet(isPresented: $m.choosingSync) { PasteSheet(m: m, syncing: true) }
     .sheet(isPresented: $m.askingNewProject) { NewProjectSheet(m: m) }
     .sheet(isPresented: $m.changingFilm) { NewProjectSheet(m: m, purpose: .changeFilm) }
     .onChange(of: m.tool) { m.refresh() }
@@ -780,16 +781,24 @@ struct ContentView: View {
     .safeAreaInset(edge: .bottom, spacing: 0) {
       VStack(spacing: 0) {
         Divider()
-        Button {
-          m.syncSettings()
-        } label: {
-          let what = AppModel.scopeName(m.stepScope)
-          Label(m.multiSelected ? "同步\(what)到所选的 \(m.selection.count) 张" : "同步\(what)到本卷", systemImage: "square.on.square").frame(maxWidth: .infinity)
-        }.buttonStyle(.bordered).controlSize(.regular)
-          .help((m.multiSelected ? "把这一张的\(AppModel.scopeName(m.stepScope))用到所选的每一张（⌘ 或 ⇧ 点胶片条选的）" : "把这一张的\(AppModel.scopeName(m.stepScope))用到本卷每一张；⌘ 或 ⇧ 点胶片条多选几张时，只用到所选的")
-            + (m.convertStep == .grade ? "。只同步调色：各张的片基、画面范围和去漏光不动" : "。只同步去色罩：各张的调色不动，方向、画面范围和去漏光保留"))
-          .disabled(frameControlsOff)
-          .padding(.horizontal, 18).padding(.top, 10).padding(.bottom, m.multiSelected ? 4 : 10)
+        HStack(spacing: 6) {
+          Button {
+            m.syncSettings()
+          } label: {
+            let what = AppModel.scopeName(m.stepScope)
+            Label(m.multiSelected ? "同步\(what)到所选的 \(m.selection.count) 张" : "同步\(what)到本卷", systemImage: "square.on.square").frame(maxWidth: .infinity)
+          }.buttonStyle(.bordered).controlSize(.regular)
+            .help((m.multiSelected ? "把这一张的\(AppModel.scopeName(m.stepScope))用到所选的每一张（⌘ 或 ⇧ 点胶片条选的）" : "把这一张的\(AppModel.scopeName(m.stepScope))用到本卷每一张；⌘ 或 ⇧ 点胶片条多选几张时，只用到所选的")
+              + (m.convertStep == .grade ? "。只同步调色：各张的片基、画面范围和去漏光不动" : "。只同步去色罩：各张的调色不动，方向、画面范围和去漏光保留"))
+            .disabled(frameControlsOff)
+          // Lightroom's 同步设置 dialog: the settings to sync ticked one by one.
+          Button { m.choosingSync = true } label: { Image(systemName: "checklist").frame(height: 16) }
+            .buttonStyle(.bordered).controlSize(.regular)
+            .help("选择性同步：把这张的设置一项项列出，只同步勾上的")
+            .accessibilityLabel("选择性同步")
+            .disabled(frameControlsOff || m.frames.count < 2)
+        }
+        .padding(.horizontal, 18).padding(.top, 10).padding(.bottom, m.multiSelected ? 4 : 10)
         // Lightroom's 自动同步: while on, every edit of this one goes to the others chosen as well.
         if m.multiSelected {
           Toggle(isOn: $m.autoSync) {

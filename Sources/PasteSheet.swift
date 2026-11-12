@@ -2,24 +2,28 @@ import SwiftUI
 
 /// 选择性粘贴 (⌥⇧⌘V), as Lightroom's 拷贝设置 dialog: the copied frame's settings listed one by one
 /// with what each is on it, ticked as last time; only those ticked are pasted, as one edit.
+/// `syncing`, 选择性同步, as its 同步设置: the frame shown's, to the frames chosen with it or the roll.
 struct PasteSheet: View {
   @ObservedObject var m: AppModel
+  var syncing = false
   @Environment(\.dismiss) private var dismiss
   @State private var chosen = Set<SettingsGroup>()
   /// The step the sheet was opened in: its settings are the ones listed.
   @State private var scope = SettingsScope.all
 
   var body: some View {
-    let copied = m.copiedSettings
+    let copied = syncing ? m.selected : m.copiedSettings
     let a = copied?.adjustments ?? Adjustments()
-    let groups = m.pasteGroups(scope)
+    let groups = m.pasteGroups(scope, from: a)
     let ticked = groups.filter(chosen.contains)
-    let targets = m.pasteTargets.count
+    let targets = syncing ? (m.multiSelected ? m.selection.count - 1 : max(0, m.frames.count - 1)) : m.pasteTargets.count
+    let verb = syncing ? "同步" : "粘贴"
     VStack(alignment: .leading, spacing: 12) {
       HStack(alignment: .firstTextBaseline) {
-        Text("选择性粘贴").font(.system(size: 15, weight: .semibold))
+        Text("选择性" + verb).font(.system(size: 15, weight: .semibold))
         Spacer()
-        Text(copied.map { "从第 \($0.name) 张 · 到" + (m.multiSelected ? "所选的 \(targets) 张" : "这张") } ?? "没有拷贝的调整")
+        Text(copied.map { "从第 \($0.name) 张 · 到" + (syncing ? (m.multiSelected ? "所选的另外 \(targets) 张" : "本卷另外 \(targets) 张")
+          : m.multiSelected ? "所选的 \(targets) 张" : "这张") } ?? "没有拷贝的调整")
           .font(.system(size: 12)).foregroundStyle(.secondary)
       }
       ScrollView {
@@ -43,21 +47,21 @@ struct PasteSheet: View {
       }
       .frame(minHeight: 120, idealHeight: CGFloat(groups.count) * 25 + 34, maxHeight: 480)
       Text(scope == .demasking
-        ? "每张自己的方向、去色罩区域和去漏光修复不粘贴；翻拍画面按自己的平场和去串色读出的片基、中性灰取样留着自己的。"
-        : "灰色的是拷贝的那张没有改过的，粘贴就是把这一项设回默认。")
+        ? "每张自己的方向、去色罩区域和去漏光修复不\(verb)；翻拍画面按自己的平场和去串色读出的片基、中性灰取样留着自己的。"
+        : "灰色的是\(syncing ? "这张" : "拷贝的那张")没有改过的，\(verb)就是把这一项设回默认。")
         .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       HStack {
         Button("只选改过的") { chosen = chosen.subtracting(groups).union(groups.filter { $0.isSet(in: a, plain: plain(a)) }) }
-          .help("只勾拷贝的那张和新画面不一样的设置")
+          .help("只勾\(syncing ? "这张" : "拷贝的那张")和新画面不一样的设置")
         Spacer()
         Button("取消", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
-        Button(ticked.isEmpty ? "粘贴" : "粘贴 \(ticked.count) 项") {
+        Button(ticked.isEmpty ? verb : "\(verb) \(ticked.count) 项") {
           m.pasteChosen = chosen
-          m.pasteSettings(scope, only: chosen)
+          if syncing { m.syncSettings(only: chosen) } else { m.pasteSettings(scope, only: chosen) }
           dismiss()
         }
         .keyboardShortcut(.defaultAction)
-        .disabled(ticked.isEmpty || copied == nil || m.isWorking)
+        .disabled(ticked.isEmpty || copied == nil || targets == 0 || m.isWorking)
       }
     }
     .padding(18)
@@ -91,7 +95,7 @@ struct PasteSheet: View {
   private func plain(_ a: Adjustments) -> Adjustments {
     var p = Adjustments()
     if a.isSlide { p.setReversal(true) }
-    if m.copiedSettings?.sensorRead == true { p.colourNoise = 1 }
+    if (syncing ? m.selected : m.copiedSettings)?.sensorRead == true { p.colourNoise = 1 }
     p.inputGamma = a.inputGamma
     p.inputIsNegative = a.inputIsNegative
     return p

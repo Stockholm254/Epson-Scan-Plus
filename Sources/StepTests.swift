@@ -140,6 +140,16 @@ enum StepTests {
       && model.pasteChosen.contains(.exposure) && !model.pasteChosen.contains(.saturation) && !model.pasteGroups(.grading).contains(.otherGrading),
       "the sheet remembers what was left unticked, so a group added later starts ticked; 其他调色 listed only when there is some")
 
+    // 选择性同步: the frame shown's ticked settings alone, to the roll.
+    model.selectedID = ids[0]
+    model.convertStep = .grade
+    let exposure1 = model.frames[1].adjustments.exposure
+    model.syncSettings(only: [.saturation])
+    try check(model.frames[1].adjustments.saturation == 1.3 && model.frames[2].adjustments.saturation == 1.3
+      && model.frames[1].adjustments.exposure == exposure1 && model.status.contains("饱和度") && model.status.contains("本卷"),
+      "选择性同步 gives the roll the frame shown's ticked settings alone")
+    edits.undo()
+
     // 粘贴上一张: the frame shown before gives its settings, nothing copied first.
     model.convertStep = .grade
     model.selectedID = ids[0]

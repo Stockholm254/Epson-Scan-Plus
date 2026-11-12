@@ -155,6 +155,8 @@ struct EpsonScanPlusApp: App {
         }
           .keyboardShortcut("v", modifiers: [.command, .option])
           .disabled(model.previousFrame == nil || model.selected == nil || model.isWorking || model.page != .convert)
+        Button(model.multiSelected ? "选择性同步到所选的 \(model.selection.count) 张…" : "选择性同步到本卷…") { model.choosingSync = true }
+          .disabled(model.selected == nil || model.frames.count < 2 || model.isWorking || model.page != .convert)
         // Lightroom's: with several chosen, every edit of the frame shown goes to them all.
         Toggle("自动同步所选的画面", isOn: $model.autoSync).disabled(model.page != .convert)
         // Lightroom's 拷贝设置 dialog: the copied settings one by one, only those ticked pasted.

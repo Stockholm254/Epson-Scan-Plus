@@ -2351,6 +2351,20 @@ final class AppModel: ObservableObject {
     give(s, to: only, edit: (only == nil ? "同步" + what + "到本卷" : "同步" + what + "到所选"), scope: scope)
     status = only.map { "已同步\(what)到所选的 \($0.count) 张" } ?? "已同步\(what)到本卷"
   }
+  /// 选择性同步, Lightroom's 同步设置 dialog: the frame shown's `groups` of the step only, to the
+  /// frames chosen with it or, with one chosen, to the roll.
+  func syncSettings(only groups: Set<SettingsGroup>) {
+    guard let s = selected, !isWorking else { return }
+    let scope = stepScope
+    let given = SettingsGroup.of(scope).filter(groups.contains)
+    guard !given.isEmpty else { return }
+    let only: Set<UUID>? = multiSelected ? selectionIDs : nil
+    let what = given.count <= 3 ? given.map(\.name).joined(separator: "、") : "\(given.count) 项\(Self.scopeName(scope))"
+    give(s, to: only, edit: "选择性同步" + Self.scopeName(scope), scope: scope, groups: groups)
+    status = "已把第 \(s.name) 张的\(what)同步到" + (only.map { "所选的 \($0.count) 张" } ?? "本卷") + " · ⌘Z 撤销"
+  }
+  /// 选择性同步's sheet is up: the paste sheet, from the frame shown.
+  @Published var choosingSync = false
   /// 拷贝调整 and 粘贴调整, as Lightroom's: the frame shown's settings kept, to be given later to the
   /// frames chosen then (or the frame shown), from this roll or another opened since.
   @Published private(set) var copiedSettings: FilmFrame?
@@ -2393,9 +2407,9 @@ final class AppModel: ObservableObject {
   }
   /// 选择性粘贴's sheet is up.
   @Published var choosingPaste = false
-  /// What 选择性粘贴 lists for `scope`: its groups, 其他调色 only when the copied frame has some.
-  func pasteGroups(_ scope: SettingsScope) -> [SettingsGroup] {
-    let copied = copiedSettings?.adjustments ?? Adjustments()
+  /// What 选择性粘贴 lists for `scope`: its groups, 其他调色 only when `from` (the copied frame) has some.
+  func pasteGroups(_ scope: SettingsScope, from: Adjustments? = nil) -> [SettingsGroup] {
+    let copied = from ?? copiedSettings?.adjustments ?? Adjustments()
     return SettingsGroup.of(scope).filter { $0 != .otherGrading || $0.isSet(in: copied) }
   }
   /// The groups ticked when the sheet opens: as last time, a group not seen before ticked.
