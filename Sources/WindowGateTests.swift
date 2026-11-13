@@ -44,5 +44,24 @@ enum WindowGateTests {
     sent = gate.sent
     model.change { $0.exposure = 0 }
     try check(gate.sent > sent, "a change after the drag goes at once again")
+    // A curve's point dragged: the window waits for the whole drag and is updated once let go;
+    // a drag whose end never came lets go by itself.
+    pump(0.6)
+    sent = gate.sent
+    for k in 0..<45 {
+      gate.hold()
+      model.change { $0.exposure = Double(k) * 0.01 }
+      pump(1.0 / 60)
+    }
+    let whileHeld = gate.sent - sent
+    gate.release()
+    let onRelease = gate.sent - sent
+    pump(0.1)
+    sent = gate.sent
+    gate.hold()
+    model.change { $0.exposure = 0.3 }
+    pump(WindowGate.holdStep + 0.15)
+    try check(whileHeld == 0 && onRelease == 1 && gate.sent - sent == 1 && !gate.holding,
+      "a curve's point dragged holds the window until it is let go, then updates it once; an unfinished drag lets go by itself")
   }
 }

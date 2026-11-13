@@ -44,6 +44,9 @@ struct CurveEditor: View {
   var pickMode: Binding<CurvePick>? = nil
   /// A change made at once (a preset, 重置): the picture's next render fades in.
   var settled: (() -> Void)? = nil
+  /// A point, a zone or a split being dragged (true at each step), and let go (false): the window
+  /// can wait meanwhile, as the editor draws the curve itself (`WindowGate.hold`).
+  var holding: ((Bool) -> Void)? = nil
   @State private var dragging: Int?
   /// The point dragged off the plot and gone, for the rest of that drag.
   @State private var draggedOff = false
@@ -249,6 +252,7 @@ struct CurveEditor: View {
       .gesture(
         DragGesture(minimumDistance: 0)
           .onChanged { d in
+            holding?(true)
             var p = parametric
             let start = Double(d.startLocation.x / max(1, g.size.width))
             if splitDragged == nil { splitDragged = (0..<3).min { abs(p.splits[$0] - start) < abs(p.splits[$1] - start) } }
@@ -257,7 +261,10 @@ struct CurveEditor: View {
             p.splits[i] = min(high, max(low, Double(d.location.x / max(1, g.size.width))))
             curves.parametric = p
           }
-          .onEnded { _ in splitDragged = nil })
+          .onEnded { _ in
+            holding?(false)
+            splitDragged = nil
+          })
     }
     .frame(height: 10).padding(.horizontal, 4)
     .help("拖动三角移动阴影、暗部、亮部、高光之间的分界")
@@ -482,6 +489,7 @@ struct CurveEditor: View {
   private func drag(_ size: CGSize) -> some Gesture {
     DragGesture(minimumDistance: 0)
       .onChanged { drag in
+        holding?(true)
         if state.parametric {
           // Up or down over a zone moves its amount, as the targeted adjustment does on the picture.
           let start = dragStart ?? curves
@@ -533,6 +541,7 @@ struct CurveEditor: View {
         curves[channel] = curve
       }
       .onEnded { _ in
+        holding?(false)
         dragging = nil
         draggedOff = false
         if dragStart != nil {

@@ -1450,7 +1450,8 @@ struct ContentView: View {
           m.preferences.curvePick = $0
           m.objectWillChange.send()
         }),
-        settled: { m.fadeInNextPicture() })
+        settled: { m.fadeInNextPicture() },
+        holding: { on in on ? m.windowGate.hold() : m.windowGate.release() })
     }
   }
   /// Per-frame deconvolution strength: a scan's by the scanner's measured profile, once there is

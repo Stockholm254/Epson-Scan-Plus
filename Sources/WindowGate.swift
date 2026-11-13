@@ -30,8 +30,47 @@ final class WindowGate: ObservableObject {
       self?.changed(dragging: model?.adjustingContinuously == true)
     }
   }
+  /// Held while a curve's point is dragged (`hold`): the editor draws the curve itself
+  /// (`CurveState.edits`) and nothing else the window shows changes with it (the histograms behind
+  /// the curve are of the picture before it), so the window waits until it is let go. Each of its
+  /// twice-a-second updates, some 60–90 ms, stopped the point under the pointer.
+  private var holdUntil: CFTimeInterval = 0
+  private var heldWhileHolding = false
+  private var releaseQueued = false
+  /// Holds the window's updates for a moment, renewed by each step of a drag; `release` ends it.
+  /// A drag whose end never came lets go of it by itself.
+  func hold() {
+    holdUntil = CACurrentMediaTime() + Self.holdStep
+    queueRelease()
+  }
+  static let holdStep: CFTimeInterval = 0.4
+  /// The drag let go: the window updated once with all it held.
+  func release() {
+    holdUntil = 0
+    flushHeld()
+  }
+  var holding: Bool { CACurrentMediaTime() < holdUntil }
+  private func queueRelease() {
+    guard !releaseQueued else { return }
+    releaseQueued = true
+    DispatchQueue.main.asyncAfter(deadline: .now() + Self.holdStep + 0.02) { [weak self] in
+      guard let self else { return }
+      self.releaseQueued = false
+      if self.holding { self.queueRelease() } else { self.flushHeld() }
+    }
+  }
+  private func flushHeld() {
+    guard heldWhileHolding else { return }
+    heldWhileHolding = false
+    send(CACurrentMediaTime())
+  }
   private func changed(dragging: Bool) {
     let now = CACurrentMediaTime()
+    if now < holdUntil {
+      held += 1
+      heldWhileHolding = true
+      return
+    }
     if !dragging && !waiting { return send(now) }
     if !waiting && now - sentAt >= Self.interval { return send(now) }
     held += 1
