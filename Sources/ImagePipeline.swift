@@ -560,7 +560,16 @@ final class ImagePipeline {
   func exposures(_ density: [[Double]], settings: Adjustments, profile: FilmProfile) -> [[Double]] {
     let (slopes, _) = Self.slopes(settings, profile)
     let toe = Self.toe(settings, profile)
-    return (0..<3).map { c in density[c].map { FilmToe.exposure($0 / slopes.values[c], width: toe.values[c]) } }
+    return Self.perChannel { c in density[c].map { FilmToe.exposure($0 / slopes.values[c], width: toe.values[c]) } }
+  }
+  /// `work` for the three channels at once, each on a core of its own, in channel order: the
+  /// statistics' sorts and exposures of a frame, a third of its analysis each, side by side.
+  static func perChannel<T>(_ work: (Int) -> T) -> [T] {
+    var out = [T?](repeating: nil, count: 3)
+    out.withUnsafeMutableBufferPointer { kept in
+      DispatchQueue.concurrentPerform(iterations: 3) { c in kept[c] = work(c) }
+    }
+    return out.map { $0! }
   }
   /// How far highlights run: where the brightest 0.1% of `e` lie through `gain` and `balance`, in
   /// their brightest channel once saturated, as the kernel saturates them ahead of the shoulder.
@@ -684,7 +693,7 @@ final class ImagePipeline {
     // Independent robust endpoints correct color crossover, not just a single median offset.
     // They are scene statistics, not an ICC calibration; manual neutral/temperature remain available.
     // Each channel sorted once; every quantile of it below is read from that one sort.
-    let sorted = e.map { $0.sorted() }
+    let sorted = Self.perChannel { e[$0].sorted() }
     func at(_ v: [Double], _ p: Double) -> Double { v.isEmpty ? 0 : v[min(v.count - 1, Int(Double(v.count - 1) * p))] }
     let channelLow = sorted.map { at($0, 0.01) }
     let channelHigh = sorted.map { at($0, 0.99) }
@@ -732,13 +741,19 @@ final class ImagePipeline {
     var lows = [Double]()
     var highs = [Double]()
     var green: [Double]?
-    for c in 0..<3 {
-      if let weight {
+    // With the black faded in, each channel's ends from its own sort, the three at once.
+    let faded = weight.map { weight in
+      Self.perChannel { c -> (q: [Double], x: [Double]) in
         let x = (0..<e[c].count).map { e[c][$0] * gain.values[c] + balance.values[c] * weight[$0] }
-        let q = quantiles(x, [0.005, 0.995])
+        return (quantiles(x, [0.005, 0.995]), x)
+      }
+    }
+    for c in 0..<3 {
+      if let faded {
+        let q = faded[c].q
         lows.append(q[0])
         highs.append(q[1])
-        if wanted, c == 1 { green = x }
+        if wanted, c == 1 { green = faded[c].x }
       } else {
         if wanted, c == 1 { green = e[c].map { $0 * gain.values[c] + balance.values[c] } }
         let q = [at(sorted[c], 0.005), at(sorted[c], 0.995)].map { $0 * gain.values[c] + balance.values[c] }

@@ -76,7 +76,7 @@ enum Shortcuts {
       Key(keys: "6 – 9", does: "红、黄、绿、蓝色标签"),
       Key(keys: "⌘A", does: "选中全部画面"),
       Key(keys: "⌘D", does: "只选当前这张"),
-      Key(keys: "⌥⌘A", does: "选中留用的；按星级、标签在「画面 › 选择画面」里"),
+      Key(keys: "⌥⌘A", does: "选中留用的"),
     ]),
   ]
 }

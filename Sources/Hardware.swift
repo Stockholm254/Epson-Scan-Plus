@@ -523,7 +523,12 @@ final class LiveFigureView: NSView {
   override func hitTest(_ point: NSPoint) -> NSView? { nil }
   override func draw(_ dirtyRect: NSRect) {
     let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .medium)
-    let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.secondaryLabelColor]
+    // As SwiftUI's secondary style draws the readout beside it: the system's secondary label colour
+    // in the dark appearance; lighter than it in the light one (measured 140 against 117 on the
+    // inspector's 242), so the figure does not darken as it is dragged.
+    let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    let colour = dark ? NSColor.secondaryLabelColor : NSColor(white: 0, alpha: 0.43)
+    let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: colour]
     let size = (text as NSString).size(withAttributes: attributes)
     (text as NSString).draw(at: CGPoint(x: bounds.maxX - 3 - size.width, y: (bounds.height - size.height) / 2), withAttributes: attributes)
   }
