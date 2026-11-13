@@ -114,6 +114,9 @@ final class AppModel: ObservableObject {
       if !singleView, zoom != 1 { fitView() }
       if singleView != oldValue { announceAutoBase() }
       if !singleView, curveState.reading != nil { curveState.reading = nil }
+      // ③'s crop is the frame's own: back on the light table it ends, where the crop tool would
+      // draw new frames instead.
+      if !singleView, tool == .crop, page == .convert, convertStep == .grade { tool = .select }
     }
   }
   /// The scanner's preview shows on the light table as it is read.
@@ -859,8 +862,12 @@ final class AppModel: ObservableObject {
       convertStep = step
       status = value.rawValue + (step == .grade ? "在 ③ 调色" : "在 ② 去色罩")
     }
-    // ③'s crop opens the frame, as Lightroom's crop opens Develop: on the frame's own picture.
-    if value == .crop, page == .convert, convertStep == .grade, selected != nil { singleView = true }
+    // ③'s crop opens the frame, as Lightroom's crop opens Develop: on the frame's own picture; with
+    // no frame chosen there is none to crop (on the light table the tool would draw new frames).
+    if value == .crop, page == .convert, convertStep == .grade {
+      guard selected != nil else { return }
+      singleView = true
+    }
     let editing = editingSingle, willEdit = singleView && ((value == .crop && !(page == .convert && convertStep == .grade)) || value == .base)
     if editing != willEdit { viewWillChange?(.edit(entering: willEdit)) }
     if value != tool { editRegionLock = nil }

@@ -378,22 +378,28 @@ struct ContentView: View {
   }
   /// The canvas tools, and fitting the picture.
   @ViewBuilder var toolControls: some View {
-      // Capturing places the frames; ② takes the mask off (the crops and the base), ③ grades (the
-      // neutral grey).
+      // Capturing places the frames; ② takes the mask off (the crops and the base), ③ grades (its
+      // own crop and straightening, as Lightroom's R, and the neutral grey).
+      let grading = m.page == .convert && m.convertStep == .grade
       let tools: [CanvasTool] = m.page == .capture ? [.select, .crop, .base]
-        : m.convertStep == .demask ? [.select, .crop, .region, .base] : [.select, .neutral]
+        : m.convertStep == .demask ? [.select, .crop, .region, .base] : [.select, .crop, .neutral]
       ForEach(tools, id: \.self) { t in
+        // The crop key pressed again finishes cropping, as the panel's key, R and C do.
+        let latched = m.tool == t, ownCrop = grading && t == .crop
         Button {
-          m.useTool(t)
+          m.useTool(t == .crop && latched ? .select : t)
         } label: {
           HStack(spacing: 4) {
             // The two crops' keys in their colours on the picture: amber the picture, cyan the de-masking region.
             Image(systemName: t.symbol).frame(width: 16, height: 14)
-              .foregroundStyle(t.colour.map { Color(red: $0.red, green: $0.green, blue: $0.blue) } ?? Color.primary)
-            if let label = t.label { Text(label).font(.system(size: 11)) }
+              .foregroundStyle(t.keyTint ?? Color.primary)
+            if let label = ownCrop ? "裁切" : t.label { Text(label).font(.system(size: 11)) }
           }
-        }.buttonStyle(KeyStyle(latched: m.tool == t)).controlSize(.small).help(t.help)
-          .accessibilityLabel(t.rawValue)
+        }.buttonStyle(KeyStyle(latched: latched)).controlSize(.small)
+          .disabled(ownCrop && m.selected == nil)
+          .help(!ownCrop ? t.help : latched ? "完成裁切 · R 或回车"
+            : "裁切与拉直（琥珀色）：画面在自己的范围里转着显示，拖四角和边裁切，框里拖动移动，框外拖动旋转，按住 ⌥ 拖一条线拉直；只管构图，颜色不变。比例和叠加线在右边的「裁切与拉直」里 · R")
+          .accessibilityLabel(ownCrop ? "裁切与拉直" : t.rawValue)
       }
       // ②'s last, optional part: the frame shown into 去漏光, and back with its repair into ③.
       if m.page == .convert && m.convertStep == .demask {
@@ -614,7 +620,7 @@ struct ContentView: View {
           if let region = f.adjustments.analysisRegion ?? m.toneAnalysis?.followed {
             HStack(spacing: 5) {
               Image(systemName: CanvasTool.region.symbol)
-                .foregroundStyle(CanvasTool.region.colour.map { Color(red: $0.red, green: $0.green, blue: $0.blue) } ?? .primary)
+                .foregroundStyle(CanvasTool.region.keyTint ?? .primary)
               Text(String(format: f.adjustments.analysisRegion == nil ? "去色罩区域 %.0f%%（避开片边）" : "去色罩区域 %.0f%%", region.width * region.height * 100))
             }
           }
@@ -1228,7 +1234,7 @@ struct ContentView: View {
   /// The de-masking region, under the picture's crop: what it is, its key, and back to following
   /// the picture.
   var regionRow: some View {
-    let region = m.settings.analysisRegion, cyan = CanvasTool.region.colour.map { Color(red: $0.red, green: $0.green, blue: $0.blue) }
+    let region = m.settings.analysisRegion, cyan = CanvasTool.region.keyTint
     return VStack(alignment: .leading, spacing: 4) {
       Divider()
       // Its name on one line: in the narrowest sidebar it wrapped beside its keys, the keys
@@ -1262,7 +1268,7 @@ struct ContentView: View {
   var compositionSection: some View {
     let composing = m.composing
     return PanelSection("裁切与拉直", key: "composition", open: false,
-      info: "像 Lightroom 修改照片里的裁切（R）：按「裁切」或 R 后，画面在它自己的范围里转着显示，琥珀色的框保持正的。拖四角和边改大小，框里拖动移动，框外拖动旋转画面，框始终留在画面上，转出的空角不会进来；按住 ⇧ 拖角保持现在的比例，⌥ 拖一条线按它拉直，X 横竖互换，O 换叠加线（三分、网格、黄金分割、对角线），方向键移动一点，回车或再按 R 完成。\n\n这里只管构图：在 ② 定的画面范围里裁，去色罩的片基、白平衡和色阶照旧读 ② 的范围，裁切、旋转都不会让颜色变。要把片边或更大的扫描范围放进来，在 ② 的「画面范围」里改。拉直和 ② 的是同一个角度，最多 ±45°。「还原」回到整幅画面、不拉直。",
+      info: "像 Lightroom 修改照片里的裁切（R）：按这里或画面上方工具条里的「裁切」，或按 R，画面在它自己的范围里转着显示，琥珀色的框保持正的。拖四角和边改大小，框里拖动移动，框外拖动旋转画面，框始终留在画面上，转出的空角不会进来；按住 ⇧ 拖角保持现在的比例，⌥ 拖一条线按它拉直，X 横竖互换，O 换叠加线（三分、网格、黄金分割、对角线），方向键移动一点，回车或再按 R 完成。\n\n这里只管构图：在 ② 定的画面范围里裁，去色罩的片基、白平衡和色阶照旧读 ② 的范围，裁切、旋转都不会让颜色变。要把片边或更大的扫描范围放进来，在 ② 的「画面范围」里改。拉直和 ② 的是同一个角度，最多 ±45°。「还原」回到整幅画面、不拉直。",
       forced: composing
     ) {
       Button {
@@ -1271,7 +1277,7 @@ struct ContentView: View {
         Label {
           Text(composing ? "完成" : "裁切")
         } icon: {
-          Image(systemName: CanvasTool.crop.symbol).foregroundStyle(CanvasTool.crop.colour.map { Color(red: $0.red, green: $0.green, blue: $0.blue) } ?? .primary)
+          Image(systemName: CanvasTool.crop.symbol).foregroundStyle(CanvasTool.crop.keyTint ?? .primary)
         }.lineLimit(1).fixedSize()
       }
       .buttonStyle(KeyStyle(latched: composing)).font(.system(size: 11)).disabled(m.selected == nil)
@@ -1330,7 +1336,7 @@ struct ContentView: View {
       Label {
         Text("裁切")
       } icon: {
-        Image(systemName: CanvasTool.crop.symbol).foregroundStyle(CanvasTool.crop.colour.map { Color(red: $0.red, green: $0.green, blue: $0.blue) } ?? .primary)
+        Image(systemName: CanvasTool.crop.symbol).foregroundStyle(CanvasTool.crop.keyTint ?? .primary)
       }.lineLimit(1).fixedSize()
     }
     .buttonStyle(KeyStyle(latched: m.tool == .crop)).font(.system(size: 11)).disabled(m.selected == nil)
@@ -1991,5 +1997,16 @@ struct AssistantKey<Panel: View>: View {
     .help((connected ? "已连接" : on ? "等待连接" : "关闭") + " · " + m.mcpStatus)
     .popover(isPresented: $open, arrowEdge: .bottom) { panel.padding(16).frame(width: 320) }
     .accessibilityLabel("AI 助手").accessibilityValue(m.mcpStatus)
+  }
+}
+
+extension CanvasTool {
+  /// The tool's colour on its keys and labels: as drawn on the picture in the dark appearance, a
+  /// deeper shade of it in the light one, where the pale amber and cyan were faint on a light key.
+  var keyTint: Color? {
+    guard let c = colour else { return nil }
+    let dark = NSColor(red: c.red, green: c.green, blue: c.blue, alpha: 1)
+    let light = NSColor(red: c.red * 0.78, green: c.green * 0.7, blue: c.blue * 0.62, alpha: 1)
+    return Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light })
   }
 }

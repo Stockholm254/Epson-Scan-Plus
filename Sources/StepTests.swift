@@ -279,6 +279,18 @@ enum StepTests {
     try check(swapped.map { s in turned.map { t in (s.width * aspect > s.height) != (t.width * aspect > t.height) } ?? false } == true
       && model.frames[1].adjustments.composition == nil && model.frames[1].adjustments.angle == nil,
       "X swaps the crop's long side and short; 还原 takes it and the straightening back")
+    // ③'s crop key on the picture's tool bar: back on the light table the crop ends (there the tool
+    // would draw new frames), and with no frame chosen there is none to crop.
+    model.useTool(.crop)
+    model.singleView = false
+    let endedOnTable = model.tool == .select
+    let chosen = model.selectedID
+    model.selectedID = nil
+    model.useTool(.crop)
+    try check(endedOnTable && model.tool == .select && !model.singleView,
+      "③'s crop ends on the light table, and with no frame chosen its key does nothing")
+    model.selectedID = chosen
+    model.useTool(.crop)
     // ②'s crop is the frame's extent on the film, as before.
     model.convertStep = .demask
     try check(model.tool == .select, "and a step's tool is put down when the window leaves it")
