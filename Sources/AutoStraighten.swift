@@ -57,6 +57,8 @@ extension AppModel {
       done?(selected == nil ? "没有选中的画面。" : "正在忙，稍后再自动拉直。")
       return
     }
+    // Several chosen (⌘ / ⇧): each by its own horizon, as one edit.
+    if multiSelected { return autoStraightenChosen(done: done) }
     guard let analysis = toneAnalysis else {
       status = "画面还在分析，稍后再自动拉直"
       done?(status)
@@ -96,6 +98,57 @@ extension AppModel {
           self.status = "已自动拉直第 \(frame.name) 张：\(line) · ⌘Z 撤销"
           self.noteOnCanvas("自动拉直 " + line)
         }
+      }
+    }
+  }
+  /// 自动拉直 the frames chosen (⌘ / ⇧), each by the horizon in its own picture, analysed as the
+  /// export analyses it; those found levelled as one edit, the others left as they are.
+  private func autoStraightenChosen(done: ((String) -> Void)?) {
+    let chosen = selection, profile = conversionProfile
+    let wanted = chosen.map { f -> (FilmFrame, Adjustments) in
+      var s = asShown(f).adjustments
+      (s.angle, s.composition) = (nil, nil)
+      return (f, s)
+    }
+    Self.straighteningFrame = selectedID
+    status = "正在找所选 \(chosen.count) 张的地平线…"
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      guard let self else { return }
+      let found = wanted.map { f, shown -> Double? in
+        autoreleasepool {
+          guard let src = try? self.source(for: f, maxDimension: 1200) else { return nil }
+          let analysis = ImagePipeline.shared.analyze(src, settings: f.adjustments, profile: profile)
+          return ImagePipeline.shared.render(src, settings: shown, profile: profile, analysis: analysis, negative: false)
+            .flatMap(AutoStraighten.degrees).flatMap { abs($0) <= 45 ? $0 : nil }
+        }
+      }
+      DispatchQueue.main.async {
+        Self.straighteningFrame = nil
+        // Those changed meanwhile are left as they now are.
+        let turns = zip(chosen, found).compactMap { f, d -> (Int, Double)? in
+          guard let d, let i = self.frames.firstIndex(where: { $0.id == f.id }), self.frames[i].adjustments == f.adjustments else { return nil }
+          return (i, d)
+        }
+        if !turns.isEmpty {
+          self.recordEdit("自动拉直", key: "自动拉直-\(UUID())")
+          for (i, d) in turns {
+            let a = (d * 100).rounded() / 100 * (self.frames[i].adjustments.flipHorizontal == true ? -1 : 1)
+            let aspect = self.frameAspect(self.frames[i])
+            self.frames[i].adjustments.angle = abs(a) < 0.005 ? nil : a
+            if let o = self.frames[i].adjustments.composition, let aspect {
+              self.frames[i].adjustments.composition = ImageGeometry.shrunk(o, degrees: a, aspect: aspect)
+            }
+          }
+          self.refresh()
+          self.saveProject()
+          self.updateThumbnails()
+        }
+        let missed = chosen.count - turns.count
+        self.status = turns.isEmpty
+          ? "所选 \(chosen.count) 张都没有找到清楚的地平线，没有改动"
+          : "已自动拉直所选的 \(turns.count) 张" + (missed > 0 ? "，\(missed) 张没有找到清楚的地平线、没有改动" : "") + " · ⌘Z 撤销"
+        self.noteOnCanvas(turns.isEmpty ? "没有找到清楚的地平线" : "自动拉直 \(turns.count) 张")
+        done?(self.status)
       }
     }
   }

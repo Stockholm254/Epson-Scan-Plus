@@ -1231,7 +1231,7 @@ struct ContentView: View {
             // Lightroom's 自动 under its straightening: the horizon found, on this Mac, and levelled.
             Button("自动") { m.autoStraighten() }
               .font(.system(size: 11)).disabled(m.selected == nil || m.isWorking)
-              .help("自动拉直：在画面里找地平线，按它放平，只在本机计算；画面里没有地平线时不改动，可以用「画线」· ⌘Z 撤销")
+              .help("自动拉直：在画面里找地平线，按它放平，只在本机计算；画面里没有地平线时不改动，可以用「画线」。⌘ / ⇧ 选了几张时每张按自己的地平线 · ⌘Z 撤销")
             Button("画线") {
               m.useTool(.crop)
               m.levelling = true
@@ -1336,7 +1336,7 @@ struct ContentView: View {
             // Lightroom's 自动 under its straightening: the horizon found, on this Mac, and levelled.
             Button("自动") { m.autoStraighten() }
               .font(.system(size: 11)).disabled(m.selected == nil || m.isWorking)
-              .help("自动拉直：在画面里找地平线，按它放平，只在本机计算；画面里没有地平线时不改动，可以用「画线」· ⌘Z 撤销")
+              .help("自动拉直：在画面里找地平线，按它放平，只在本机计算；画面里没有地平线时不改动，可以用「画线」。⌘ / ⇧ 选了几张时每张按自己的地平线 · ⌘Z 撤销")
             Button("画线") {
               m.useTool(.crop)
               m.levelling = true

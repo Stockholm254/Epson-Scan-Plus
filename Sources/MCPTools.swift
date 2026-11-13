@@ -73,7 +73,7 @@ enum MCPTools {
       "auto_whites_blacks": ["type": "boolean", "description": "自动白色、黑色（像 Lightroom 按住 Shift 双击）：设白色、黑色，让这张最亮的 0.1% 正好到白、最暗的 0.1% 正好到黑；在其他参数之后算，要单张视图里算过的影调"],
     ]),
     Tool(name: "pick_film_base", description: "在指定位置取片基（只应点在未曝光的橙色片基上，例如画面边缘的片间）；会关闭自动白平衡以保留取样。", properties: point, required: ["x", "y"]),
-    Tool(name: "auto_straighten", description: "自动拉直选中的这张，像 Lightroom 裁切里的「自动」：在画面里找地平线（在本机用 macOS 的视觉框架），按它放平，③ 的裁切留在画面上；找不到清楚的地平线时不改动，说明原因。地平线本来就该是斜的照片（有意的倾斜构图）不要用。可用 undo 撤销。", properties: [:]),
+    Tool(name: "auto_straighten", description: "自动拉直选中的这张，像 Lightroom 裁切里的「自动」：在画面里找地平线（在本机用 macOS 的视觉框架），按它放平，③ 的裁切留在画面上；找不到清楚的地平线时不改动，说明原因。用 select_by_marks 选了几张时，每张按自己的地平线。地平线本来就该是斜的照片（有意的倾斜构图）不要用。可用 undo 撤销。", properties: [:]),
     Tool(name: "auto_crop", description: "翻拍的照片自动裁切：按片框的四条边裁到画面以内，并按边拉直。默认只裁选中的这张；whole_roll 为 true 时整卷一起裁。和本卷其他张的画面大小对照，改正找错的边。可用 undo 撤销，原文件不改。", properties: [
       "whole_roll": ["type": "boolean", "description": "整卷一起裁，默认 false"],
     ]),
