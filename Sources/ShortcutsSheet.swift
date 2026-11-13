@@ -59,7 +59,7 @@ enum Shortcuts {
       Key(keys: "⌥ 拖", does: "沿地平线画一条线拉直"),
       Key(keys: "⇧ 拖角", does: "③ 里保持现在的比例"),
       Key(keys: "X · O", does: "③ 里横竖互换 · 换叠加线"),
-      Key(keys: "回车", does: "完成裁切或去色罩区域"),
+      Key(keys: "回车 · Esc", does: "完成裁切或去色罩区域 · ③ 里取消这一次的裁切"),
     ]),
     Group(title: "调整和导出", keys: [
       Key(keys: "⇧⌘A", does: "自动调整这张"),

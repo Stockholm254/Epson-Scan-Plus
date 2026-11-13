@@ -291,6 +291,17 @@ enum StepTests {
       "③'s crop ends on the light table, and with no frame chosen its key does nothing")
     model.selectedID = chosen
     model.useTool(.crop)
+    // Esc, as Lightroom's in its crop overlay: the crop and the turn back to before the crop began.
+    if let shown = model.selected {
+      let was = (shown.adjustments.angle, shown.adjustments.composition)
+      model.setComposition(NormalRect(x: 0.1, y: 0.1, width: 0.5, height: 0.5))
+      model.straighten(4)
+      let moved = model.selected?.adjustments.composition != nil && model.selected?.adjustments.angle != nil
+      model.cancelComposition()
+      let now = model.selected?.adjustments
+      try check(moved && now?.angle == was.0 && now?.composition == was.1 && model.tool == .crop,
+        "Esc in ③'s crop takes the crop and the turn back to before it began")
+    }
     // 自动拉直: a sea under a sky drawn, its horizon falling 5° to the right (turned clockwise on the
     // screen), is levelled by a turn of 5° the other way.
     do {

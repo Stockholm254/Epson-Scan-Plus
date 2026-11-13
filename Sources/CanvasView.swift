@@ -2839,6 +2839,8 @@ final class FilmCanvasView: NSView {
     } else if event.keyCode == 51 {
       model?.deletePressed()
     } else if event.keyCode == 53 {
+      // ③'s crop: as Lightroom's Esc, back to before it began (return keeps it).
+      model?.cancelComposition()
       model?.useTool(.select)
       model?.fitView()
       pan = .zero
