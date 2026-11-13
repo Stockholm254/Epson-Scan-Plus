@@ -3548,6 +3548,9 @@ final class AppModel: ObservableObject {
     var image: CGImage
     /// Its pixels to the frame's own: 1 at its own resolution, less when the screen needed fewer.
     var scale = 1.0
+    /// Matched to the window's screen on the render queue (`ScreenCopy`), for the zoomed view: left
+    /// to the window server, it was matched on the main thread at every new part.
+    var screen: CGImage? = nil
   }
   /// The selected frame at its own resolution, read once for all the parts zoomed into; only on
   /// the render queue.
@@ -3556,7 +3559,7 @@ final class AppModel: ObservableObject {
   /// `region` of the single frame at its own resolution, rendered with the whole frame's analysis
   /// (its base, white balance and levels) so it matches the picture around it; with `across`, no
   /// finer than the whole picture `across` pixels wide. Nil until the frame has been analysed.
-  func renderDetail(_ frame: FilmFrame, region: NormalRect, across: Double? = nil, completion: @escaping (Detail?) -> Void) {
+  func renderDetail(_ frame: FilmFrame, region: NormalRect, across: Double? = nil, forScreen: Bool = false, completion: @escaping (Detail?) -> Void) {
     // Never answered at once: an asker that asks again on an answer would never stop.
     let original = showsOriginal
     // The raw picture needs no analysis: nothing is taken off it.
@@ -3593,7 +3596,9 @@ final class AppModel: ObservableObject {
         let part = ImagePipeline.shared.render(full, region: region, across: across, settings: settings, profile: p,
           analysis: original ? nil : analysis, negative: negative, gains: gains)
       {
-        detail = Detail(key: key, region: part.region, image: clipping ? ImagePipeline.shared.markClipping(part.image) : part.image, scale: part.scale)
+        let image = clipping ? ImagePipeline.shared.markClipping(part.image) : part.image
+        detail = Detail(key: key, region: part.region, image: image, scale: part.scale,
+          screen: forScreen ? ImagePipeline.shared.screenReady(image, space: ScreenCopy.space) : nil)
       }
       DispatchQueue.main.async { completion(detail) }
     }
