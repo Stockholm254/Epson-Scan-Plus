@@ -686,6 +686,15 @@ final class FilmCanvasView: NSView {
     slide.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
     layer.add(slide, forKey: "page")
   }
+  /// The single view's neutral surround: near black in the dark appearance, a light grey in the
+  /// light one, as the window around it is.
+  static func surround(_ appearance: NSAppearance) -> NSColor {
+    appearance.bestMatch(from: [.darkAqua, .aqua]) == .aqua ? NSColor(calibratedWhite: 0.82, alpha: 1) : NSColor(calibratedWhite: 0.075, alpha: 1)
+  }
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    needsDisplay = true
+  }
   override func draw(_ dirtyRect: NSRect) {
     defer { tableDrawn() }
     // The picture's layers go with what is drawn: hidden unless placed below.
@@ -696,10 +705,10 @@ final class FilmCanvasView: NSView {
     NSGraphicsContext.saveGraphicsState()
     defer { NSGraphicsContext.restoreGraphicsState() }
     NSBezierPath(rect: bounds).addClip()
-    NSColor(calibratedWhite: 0.075, alpha: 1).setFill()
+    Self.surround(effectiveAppearance).setFill()
     bounds.fill()
-    // The contact sheet lies on a lit light table. Single view keeps a neutral dark
-    // surround, so the bright glass does not skew exposure and colour judgement.
+    // The contact sheet lies on a lit light table. Single view keeps a neutral surround, so the
+    // bright glass does not skew exposure and colour judgement.
     let lightTable = model?.singleView != true
     if lightTable { drawLightTable() }
     guard let model, let cg = shown else {

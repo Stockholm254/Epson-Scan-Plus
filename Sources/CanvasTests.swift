@@ -22,6 +22,11 @@ enum CanvasTests {
     func check(_ value: Bool, _ label: String) throws {
       guard value else { throw DeskError.message("FAIL: " + label) }; print("PASS: " + label)
     }
+    // The single view's surround follows the appearance: a light grey in the light one, not black.
+    let lightAround = FilmCanvasView.surround(NSAppearance(named: .aqua)!).usingColorSpace(.deviceGray)?.whiteComponent ?? 0
+    let darkAround = FilmCanvasView.surround(NSAppearance(named: .darkAqua)!).usingColorSpace(.deviceGray)?.whiteComponent ?? 1
+    try check(lightAround > 0.7 && darkAround < 0.15,
+      String(format: "the single view's surround is a light grey in the light appearance (%.2f), near black in the dark one (%.2f)", lightAround, darkAround))
     func settle(_ seconds: Double = 0.3) { RunLoop.current.run(until: Date().addingTimeInterval(seconds)) }
     let pipe = ImagePipeline.shared
 
