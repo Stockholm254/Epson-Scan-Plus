@@ -26,6 +26,14 @@ enum ContactSheet {
       get { film == true }
       set { film = newValue }
     }
+    /// In strips, each strip printed as the film's black rebate with its perforations, the frame
+    /// numbers and film code on it; off, the frames lie straight on the paper. Nil, as before this
+    /// setting, is on.
+    var sprockets: Bool?
+    var showsSprockets: Bool {
+      get { sprockets ?? true }
+      set { sprockets = newValue ? nil : false }
+    }
   }
   /// The film's picture's width over its height, as the shelf draws it.
   static let filmAspect: CGFloat = 0.76
@@ -81,8 +89,10 @@ enum ContactSheet {
     var g = Geometry(size: .zero, cells: [], strips: [], labels: [], edgePrints: [], title: nil)
     switch layout.style {
     case .strips:
-      // About 5.5 mm of rebate either side of the frame and 2 mm between frames.
-      let rebate = px(0.23), gap = px(0.085), pad = px(0.12), stripGap = px(0.25)
+      // About 5.5 mm of rebate either side of the frame and 2 mm between frames; without the
+      // rebate, room for the frame number under it.
+      let rebate = layout.showsSprockets ? px(0.23) : (layout.numbers ? px(0.11) : px(0.02))
+      let gap = px(0.085), pad = layout.showsSprockets ? px(0.12) : 0, stripGap = px(0.25)
       let stripHeight = cell.height + 2 * rebate
       func width(_ i: Int) -> CGFloat {
         guard let s = sizes?[i], s.width > 0, s.height > 0 else { return cell.width }
@@ -96,7 +106,7 @@ enum ContactSheet {
           let w = width(r * cols + c)
           let cellRect = CGRect(x: x, y: y + rebate, width: w, height: cell.height)
           g.cells.append(cellRect)
-          g.labels.append(CGRect(x: cellRect.minX, y: cellRect.maxY + px(0.012), width: w, height: px(0.07)))
+          g.labels.append(CGRect(x: cellRect.minX, y: cellRect.maxY + px(0.012), width: w, height: layout.showsSprockets ? px(0.07) : px(0.09)))
           g.edgePrints.append(CGRect(x: cellRect.minX, y: cellRect.minY - px(0.082), width: w, height: px(0.07)))
           x += w + gap
         }
@@ -189,7 +199,7 @@ enum ContactSheet {
     ctx.setFillColor(paper.cgColor)
     ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
     // Film rebate prints black on a contact sheet; perforations show faintly.
-    for s in g.strips {
+    for s in g.strips where layout.showsSprockets {
       ctx.setFillColor(NSColor(white: 0.05, alpha: 1).cgColor)
       ctx.fill(flip(s))
       ctx.setFillColor(NSColor(white: 0.12, alpha: 1).cgColor)
@@ -241,11 +251,12 @@ enum ContactSheet {
         ctx.draw(frame, in: flip(CGRect(x: (c.midX - w / 2).rounded(), y: (c.midY - h / 2).rounded(), width: w, height: h)))
       }
       if layout.numbers {
-        let strips = layout.style == .strips
-        text(strips ? "▸ \(t.name)" : t.name, in: g.labels[i], size: (strips ? 0.055 : 0.11) * u,
-          color: strips ? edgeInk : ink, mono: true)
+        // On the rebate as the film's edge print; on the paper in the paper's ink.
+        let onRebate = layout.style == .strips && layout.showsSprockets
+        text(onRebate ? "▸ \(t.name)" : t.name, in: g.labels[i], size: (onRebate ? 0.055 : layout.style == .strips ? 0.06 : 0.11) * u,
+          color: onRebate ? edgeInk : ink, mono: true)
       }
-      if layout.style == .strips, !filmCode.isEmpty {
+      if layout.style == .strips, layout.showsSprockets, !filmCode.isEmpty {
         text(filmCode, in: g.edgePrints[i], size: 0.055 * u, color: edgeInk, mono: true)
       }
     }

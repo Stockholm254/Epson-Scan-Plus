@@ -579,6 +579,10 @@ extension ContentView {
           Text("胶片方向").tag(false)
         }.labelsHidden()
       }
+      if m.preferences.sheet.style == .strips {
+        SwitchRow("齿条", isOn: sheet.showsSprockets)
+          .help("每条画成黑色的片边，带齿孔，片号和胶片名印在上面；关掉时照片直接排在相纸上")
+      }
       SwitchRow("片号", isOn: sheet.numbers)
       SwitchRow("标题", isOn: sheet.title)
       SwitchRow("胶片图", isOn: sheet.showsFilm)

@@ -106,16 +106,18 @@ struct SheetPreview: View {
             .frame(width: r.width * 0.45, height: max(1.5, r.height * 0.5))
             .position(x: r.minX + r.width * 0.225, y: r.midY)
         }
-        ForEach(Array(g.strips.enumerated()), id: \.offset) { _, s in
-          let r = place(s)
-          Rectangle().fill(Color(white: 0.05)).frame(width: r.width, height: r.height).position(x: r.midX, y: r.midY)
+        if layout.showsSprockets {
+          ForEach(Array(g.strips.enumerated()), id: \.offset) { _, s in
+            let r = place(s)
+            Rectangle().fill(Color(white: 0.05)).frame(width: r.width, height: r.height).position(x: r.midX, y: r.midY)
+          }
         }
         ForEach(Array(shown.enumerated()), id: \.element.id) { i, f in
           if i < g.cells.count {
             let r = place(g.cells[i])
             picture(f, fitting: r.size)
               .position(x: r.midX, y: r.midY)
-            if layout.numbers, i < g.labels.count, layout.style == .grid {
+            if layout.numbers, i < g.labels.count, layout.style == .grid || !layout.showsSprockets {
               let l = place(g.labels[i])
               Capsule().fill(ink.opacity(0.5)).frame(width: max(2, l.height * 0.9), height: max(1, l.height * 0.28))
                 .position(x: l.midX, y: l.midY)

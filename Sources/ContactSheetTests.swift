@@ -107,6 +107,36 @@ enum ContactSheetTests {
     }()
     try check(asked != nil && px[0] > 180 && px[1] < 80 && px[2] < 80,
       "the exported sheet has the film's picture where the heading puts it (\(px[0]), \(px[1]), \(px[2]))")
+    // 齿条: on (the default, and settings from before it), each strip is the film's black rebate;
+    // off, the frames lie straight on the white paper.
+    let grey: CGImage = {
+      let c = CGContext(data: nil, width: 150, height: 100, bitsPerComponent: 8, bytesPerRow: 0,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+      c.setFillColor(red: 0.5, green: 0.4, blue: 0.3, alpha: 1)
+      c.fill(CGRect(x: 0, y: 0, width: 150, height: 100))
+      return c.makeImage()!
+    }()
+    let greyTile = ContactSheet.Tile(name: "01", settings: Adjustments(), dpi: 300, source: { grey })
+    func rebateShade(_ layout: ContactSheet.Layout) throws -> Int {
+      let url = folder.appendingPathComponent("sheet-sprockets-\(layout.showsSprockets).png")
+      try ContactSheet.export([greyTile, greyTile], profile: FilmProfile.builtins[0], layout: layout, title: "test", filmCode: "TEST", to: url,
+        format: .png, quality: 0.9, dpi: 300)
+      let image = try pipe.load(url)
+      let size = CGSize(width: grey.width, height: grey.height)
+      let g = ContactSheet.geometry(count: 2, cell: ContactSheet.cell(for: [size, size]), layout: layout, sizes: [size, size])
+      let u = min(size.width, size.height), c = g.cells[0]
+      let at = CGPoint(x: c.maxX - 2, y: c.minY - 0.05 * u)
+      var out = [UInt8](repeating: 0, count: 4)
+      let ctx = CGContext(data: &out, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+      ctx.draw(image, in: CGRect(x: -at.x, y: at.y - CGFloat(image.height) + 1, width: CGFloat(image.width), height: CGFloat(image.height)))
+      return Int(out[0])
+    }
+    var bare = ContactSheet.Layout()
+    bare.showsSprockets = false
+    let withStrip = try rebateShade(ContactSheet.Layout()), without = try rebateShade(bare)
+    try check(ContactSheet.Layout().showsSprockets && withStrip < 60 && without > 200 && bare.sprockets == false,
+      "a contact sheet's strips are the film's black rebate unless 齿条 is off, then the frames lie on the paper (\(withStrip) → \(without))")
 
     // Settings persist in their suite, and an in-memory set never writes.
     let suite = "EpsonScanPlus.tests.\(UUID().uuidString)"
