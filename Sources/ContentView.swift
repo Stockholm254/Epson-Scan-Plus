@@ -73,8 +73,15 @@ struct ContentView: View {
   /// The roll open, as the library names it, else the app's name.
   var windowTitle: String {
     guard let url = m.sessionURL else { return "Epson Scan plus" }
-    if !m.rollName.isEmpty { return m.rollName }
-    return RollLibrary.started(url.lastPathComponent).map(RollLibrary.title) ?? url.lastPathComponent
+    if !m.rollName.isEmpty { return Self.shortTitle(m.rollName) }
+    return Self.shortTitle(RollLibrary.started(url.lastPathComponent).map(RollLibrary.title) ?? url.lastPathComponent)
+  }
+  /// A roll named by the day it was begun, this year's, without its year in the toolbar, as
+  /// Photos writes this year's dates: at 1120 points wide 「2026 年 11 月 7 日 13:21」 was cut to
+  /// 「2026 年 11 月 7 日 13:…」. The name itself, in the library and the roll's panel, is whole.
+  static func shortTitle(_ name: String, now: Date = Date()) -> String {
+    let year = "\(Calendar.current.component(.year, from: now)) 年 "
+    return name.hasPrefix(year) && name.count > year.count ? String(name.dropFirst(year.count)) : name
   }
   var windowSubtitle: String {
     guard m.sessionURL != nil || !m.frames.isEmpty else { return "" }
