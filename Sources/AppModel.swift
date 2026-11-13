@@ -694,10 +694,10 @@ final class AppModel: ObservableObject {
   /// Turns the selected frame about its middle to `degrees` clockwise on the screen, cut to the
   /// largest rectangle of its shape inside; ③'s crop, where there is one, kept on the picture as
   /// Lightroom keeps it, of its shape about its middle, smaller where it would reach past.
-  func straighten(_ degrees: Double) {
+  func straighten(_ degrees: Double, named name: String = "拉直") {
     let a = (clamp(degrees, -45, 45) * 100).rounded() / 100 * (settings.flipHorizontal == true ? -1 : 1)
     let aspect = selected.flatMap(frameAspect)
-    change("拉直") {
+    change(name) {
       $0.angle = abs(a) < 0.005 ? nil : a
       if let o = $0.composition, let aspect { $0.composition = ImageGeometry.shrunk(o, degrees: a, aspect: aspect) }
     }

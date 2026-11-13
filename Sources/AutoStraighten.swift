@@ -51,10 +51,15 @@ extension AppModel {
   /// 自动拉直 the selected frame: its picture as shown, unturned, read on a small copy off the main
   /// thread; the horizon found levelled as one edit (⌘Z), ③'s crop kept on the picture as
   /// `straighten` keeps it.
-  func autoStraighten() {
-    guard let frame = selected, !isWorking, Self.straighteningFrame == nil else { return }
+  /// `done`, where given, is told in a line what came of it (the assistant's tool waits for it).
+  func autoStraighten(done: ((String) -> Void)? = nil) {
+    guard let frame = selected, !isWorking, Self.straighteningFrame == nil else {
+      done?(selected == nil ? "没有选中的画面。" : "正在忙，稍后再自动拉直。")
+      return
+    }
     guard let analysis = toneAnalysis else {
       status = "画面还在分析，稍后再自动拉直"
+      done?(status)
       return
     }
     let profile = conversionProfile
@@ -70,14 +75,19 @@ extension AppModel {
       let found = picture.flatMap(AutoStraighten.degrees)
       DispatchQueue.main.async {
         Self.straighteningFrame = nil
-        guard self.selectedID == frame.id else { return }
+        guard self.selectedID == frame.id else {
+          done?("第 \(frame.name) 张在找地平线时换了画面，没有改动。")
+          return
+        }
+        defer { done?(self.status) }
         guard let d = found, abs(d) <= 45 else {
           self.status = "第 \(frame.name) 张没有找到清楚的地平线，没有改动；可以用「画线」沿一条应是水平或竖直的线拉直"
           self.noteOnCanvas("没有找到清楚的地平线")
           return
         }
         let was = self.screenAngle
-        self.straighten(d)
+        // Its own step in 编辑 › 撤销, apart from a drag of the slider just before.
+        self.straighten(d, named: "自动拉直")
         let line = String(format: "%+.2f°", self.screenAngle)
         if abs(self.screenAngle - was) < 0.005 {
           self.status = "第 \(frame.name) 张已经是平的（\(line)）"
