@@ -58,6 +58,10 @@ enum ContactSheet {
     var sharpener: Sharpener? = nil
     /// The size `source` gives, where it is known without reading the pixels.
     var size: (() -> CGSize?)? = nil
+    /// The frame's analysis as the window and its own export make it, on the copy shown: so its
+    /// cell has the black, white and shoulder of the frame exported alone (nil, worked out on the
+    /// source, until 0.22.6 always, from the full-resolution file's grain).
+    var analysis: (() -> ToneAnalysis?)? = nil
   }
 
   static func columns(count: Int, layout: Layout) -> Int {
@@ -233,7 +237,7 @@ enum ContactSheet {
       // Before each frame: the frame about to be drawn, and the chance to stop.
       try progress?(i)
       try autoreleasepool {
-        var ci = try pipe.output(try t.source(), settings: settings(t), profile: profile, sharpener: t.sharpener)
+        var ci = try pipe.output(try t.source(), settings: settings(t), profile: profile, analysis: t.analysis?(), sharpener: t.sharpener)
         let fit = min(cell.width / sizes[i].width, cell.height / sizes[i].height, 1)
         let scale = sheetDPI / max(1, t.dpi) * fit
         if abs(scale - 1) > 0.0005, let lanczos = CIFilter(name: "CILanczosScaleTransform") {

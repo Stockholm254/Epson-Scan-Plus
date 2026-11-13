@@ -290,6 +290,9 @@ int main(int argc, char **argv) {
       std::vector<uint8_t> data(bytes), buffer(65536);
       partial.begin(p);
       bool cancellationReported = false, timeoutReported = false;
+      // Progress four times a second, not after every 64 KB read: each report redraws the app's
+      // window, 40–60 ms a time, and a batch at 4800 dpi reads thousands of them.
+      auto lastProgress = std::chrono::steady_clock::now() - std::chrono::seconds(1);
       while (true) {
         if (cancelled && !cancellationReported) {
           // The head reads this frame to its end either way: it is kept, and nothing after it scanned.
@@ -307,7 +310,11 @@ int main(int argc, char **argv) {
         if (!timedOut) memcpy(data.data() + count, buffer.data(), n);
         if (n && !timedOut) alarm(stallSeconds);
         count += n;
-        if (n) emit(@{@"event":@"progress", @"value":@(0.98 * count / bytes)});
+        auto now = std::chrono::steady_clock::now();
+        if (n && (now - lastProgress >= std::chrono::milliseconds(250) || count == bytes)) {
+          emit(@{@"event":@"progress", @"value":@(0.98 * count / bytes)});
+          lastProgress = now;
+        }
         if (n && !timedOut) partial.show(data, p, count, status == SANE_STATUS_EOF);
         // The transfer is complete; writing the TIFF must not count as a stalled scanner.
         if (status == SANE_STATUS_EOF) { s.scanning = false; alarm(0); break; }

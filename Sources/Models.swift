@@ -643,6 +643,18 @@ struct FilmProfile: Codable, Identifiable, Equatable {
   var toe: RGB? = nil
   /// Calibrated presets only: where their neutral points were picked, so the frames can show them.
   var spots: [CalibrationSpot]? = nil
+  /// A copy preset's: whether its points were read with the copy light's crosstalk taken out, which
+  /// its slopes and neutral hold for (nil: not known, or both). Presets made before 0.22.6 said so
+  /// only in their notes (`readsUnmixed`).
+  var unmixed: Bool? = nil
+  /// Whether the preset's slopes hold for pictures read with the crosstalk taken out: its own
+  /// record, else what its notes say.
+  var readsUnmixed: Bool? {
+    if let unmixed { return unmixed }
+    if notes.contains("标定时去串色是开着的") { return true }
+    if notes.contains("标定时没有去串色") { return false }
+    return nil
+  }
   /// The toes of the Kodak data sheets' Status M curves, traced from their vector drawings (RMS
   /// under 0.03 D). Not applied as they are: on a V850 roll of Portra 160 the edges' channel ratios
   /// near the base did not follow them, and converting with them tinted the roll pink. Calibration

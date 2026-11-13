@@ -440,14 +440,20 @@ final class ImagePipeline {
   /// With a `toe`, density steps near the base are smaller than the exposure steps behind them, by a
   /// different amount per channel; a second pass weighs each edge by the toe's stretch there.
   func rollSlopes(_ frames: [(image: CGImage, settings: Adjustments)], greenSlope: Double, toe: RGB? = nil) -> RGB? {
-    guard let first = rollSlopes(frames, greenSlope: greenSlope, stretchedBy: nil) else { return nil }
+    rollSlopeEstimate(frames, greenSlope: greenSlope, toe: toe).slopes
+  }
+  /// The roll's slopes, or why there are none, as the 胶片 tab says it (until 0.22.6 every failure
+  /// was 「画面太少」).
+  func rollSlopeEstimate(_ frames: [(image: CGImage, settings: Adjustments)], greenSlope: Double, toe: RGB? = nil) -> (slopes: RGB?, why: String?) {
+    let first = rollSlopes(frames, greenSlope: greenSlope, stretchedBy: nil)
+    guard let found = first.slopes else { return first }
     guard let toe, toe.values.contains(where: { $0 > 0 }) else { return first }
-    return rollSlopes(frames, greenSlope: greenSlope, stretchedBy: (first, toe)) ?? first
+    return (rollSlopes(frames, greenSlope: greenSlope, stretchedBy: (found, toe)).slopes ?? found, nil)
   }
   private func rollSlopes(
     _ frames: [(image: CGImage, settings: Adjustments)], greenSlope: Double, stretchedBy toe: (slopes: RGB, widths: RGB)?
-  ) -> RGB? {
-    guard frames.count >= 2 else { return nil }
+  ) -> (slopes: RGB?, why: String?) {
+    guard frames.count >= 2 else { return (nil, "能用来估计的画面不到 2 张") }
     var ratios = [[Double](), [Double]()]
     for f in frames {
       let part = analysisPart(f.image, f.settings)
@@ -496,10 +502,14 @@ final class ImagePipeline {
         }
       }
     }
-    guard ratios[0].count >= 500 else { return nil }
+    guard ratios[0].count >= 500 else {
+      return (nil, "画面里的明暗过渡太少（\(ratios[0].count) 处，要 500 处以上），多半是平的天空、雾或空白")
+    }
     let k = ratios.map { quantile($0, 0.5) }
-    guard k.allSatisfy({ $0 > 0.5 && $0 < 2 }) else { return nil }
-    return RGB(r: greenSlope * k[0], g: greenSlope, b: greenSlope * k[1])
+    guard k.allSatisfy({ $0 > 0.5 && $0 < 2 }) else {
+      return (nil, String(format: "估出来的通道比例不合理（红是绿的 %.2f 倍、蓝 %.2f 倍，应在 0.5–2 之间）", k[0], k[1]))
+    }
+    return (RGB(r: greenSlope * k[0], g: greenSlope, b: greenSlope * k[1]), nil)
   }
 
   func analyze(_ image: CGImage, settings: Adjustments, profile: FilmProfile) -> ToneAnalysis {

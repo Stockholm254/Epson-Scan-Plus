@@ -173,7 +173,7 @@ enum Sharpening {
         .appendingPathComponent(url.deletingPathExtension().lastPathComponent, isDirectory: true)
       let raws = ((try? FileManager.default.contentsOfDirectory(atPath: group.path)) ?? [])
         .filter { AppModel.rawExtensions.contains(($0 as NSString).pathExtension.lowercased()) }.count
-      if raws >= 16 {
+      if raws >= 16, !FileManager.default.fileExists(atPath: squareMark(url).path) {
         shots = ImagePipeline.shared.info(url).width > 12000 ? .sixteenDouble : .sixteen
       } else if raws >= 4 {
         shots = .four
@@ -182,6 +182,9 @@ enum Sharpening {
     shotsRead[path] = shots
     return shots
   }
+  /// Beside a 16-shot group's picture made from its first square alone (no room for the 16): it is 4
+  /// shots' picture.
+  static func squareMark(_ picture: URL) -> URL { picture.appendingPathExtension("square") }
   /// How much a copy is sharpened by default, measured on the target at 0.39× and 0.96×
   /// (outputs/锐化研究-2026-11-10): enough to take most of what the camera's blur hides, no more
   /// noise in the shadows than a single shot unsharpened. One shot has the most noise and false

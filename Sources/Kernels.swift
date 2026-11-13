@@ -192,10 +192,13 @@ enum Kernels {
   static let curves = compiled("curves", """
     [[stitchable]] float4 curves(coreimage::sampler image, coreimage::sampler table, float n) {
       float4 p = image.sample(image.coord());
-      float3 at = clamp(p.rgb, float3(0.0), float3(1.0)) * (n - 1.0) + 0.5;
-      return float4(table.sample(table.transform(float2(at.r, 0.5))).r,
-                    table.sample(table.transform(float2(at.g, 0.5))).g,
-                    table.sample(table.transform(float2(at.b, 0.5))).b, p.a);
+      float3 inside = clamp(p.rgb, float3(0.0), float3(1.0));
+      float3 at = inside * (n - 1.0) + 0.5;
+      // What lies past 0 or 1 (a colour past sRGB, for a wider export) carried on as it was past
+      // the curve's ends, not cut off there (until 0.22.4 any curve clipped it).
+      return float4(float3(table.sample(table.transform(float2(at.r, 0.5))).r,
+                           table.sample(table.transform(float2(at.g, 0.5))).g,
+                           table.sample(table.transform(float2(at.b, 0.5))).b) + (p.rgb - inside), p.a);
     }
     """)
 

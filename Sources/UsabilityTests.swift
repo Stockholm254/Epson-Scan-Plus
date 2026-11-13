@@ -138,6 +138,11 @@ enum UsabilityTests {
     model.confirmNewRoll = { newRoll = $0; return false }
     model.requestPreview()
     try check(newRoll == 3 && !model.scanner.busy && model.frames.count == 3, "a preview asks before it starts a new roll in place of the one open")
+    // The helper's English said in Chinese, a lid left open no fault of the connection.
+    let lid = SaneScannerController.explained("start scan: Scanner cover is open")
+    let io = SaneScannerController.explained("read scan data: Error during device I/O")
+    try check(lid.ready && lid.text.contains("盖子") && !io.ready && io.text.contains("USB"),
+      "a scanner error is said in Chinese with what to do; an open lid leaves the scanner ready, a broken link does not")
     // The batch's line: the head positioning at a pass's start, and the time left.
     var batch = ScanBatchProgress(total: 4)
     (batch.startedAt, batch.plannedSeconds) = (Date(timeIntervalSinceNow: -60), 600)

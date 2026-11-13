@@ -39,6 +39,9 @@ class ScannerController: NSObject, ObservableObject {
   }
   func start() {}
   func reconnect() {}
+  /// Looked for again, quietly, where it is not ready and nothing runs: ① opened after the scanner
+  /// was switched on.
+  func recheck() {}
   func close() { ready = false }
   func preview() {}
   func scan(rect: NormalRect, dpi: Int, directory: URL, name: String) throws {

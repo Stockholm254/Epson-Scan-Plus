@@ -216,6 +216,6 @@ enum FilmCalibration {
         + (fit.toe.map {
           String(format: "中性点深入暗部，同时拟合了趾部宽度：R %.2f · G %.2f（数据表）· B %.2f，转换时据此还原暗部。", $0.r, $0.g, $0.b)
         } ?? ""),
-      offsets: fit.offsets, toe: fit.toe, spots: spots)
+      offsets: fit.offsets, toe: fit.toe, spots: spots, unmixed: unmixed)
   }
 }

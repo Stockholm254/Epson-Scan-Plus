@@ -154,6 +154,9 @@ extension AppModel {
           }
           guard free < needed, let composed = try SensorRaw.pixelShiftRGB(Array(group.prefix(square))) else { return nil }
           try ImagePipeline.shared.saveTIFF(composed.image, to: out, dpi: 300)
+          // Marked beside it: the folder still holds 16 shots, but this picture is 4's
+          // (`Sharpening.shots`), sharpened and labelled as 4 (until 0.22.6 as 16).
+          try? Data().write(to: Sharpening.squareMark(out))
           return Composed(greens: composed.greens, squareOnly: true)
         }
         guard let composed = try SensorRaw.pixelShiftRGB(group) else { return nil }

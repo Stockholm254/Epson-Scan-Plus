@@ -286,5 +286,20 @@ enum StepTests {
     try check(model.convertStep == .demask && model.tool == .crop && !model.composing && model.editingSingle,
       "the crop in ② crops the frame on the film, on its surroundings as they lie")
     model.useTool(.select)
+    // A base read on one linear copy, as it reads on another shot a stop more: twice as bright;
+    // with an exposure not known, as read.
+    var shotA = FilmFrame(name: "A", rect: .full, format: "120"), shotB = FilmFrame(name: "B", rect: .full, format: "120")
+    for (i, path) in ["/tmp/epscan-test-a.tif", "/tmp/epscan-test-b.tif"].enumerated() {
+      var f = i == 0 ? shotA : shotB
+      (f.sensorRead, f.sourcePath, f.adjustments.inputGamma) = (true, path, 1)
+      if i == 0 { shotA = f } else { shotB = f }
+    }
+    model.setCopyExposure("/tmp/epscan-test-a.tif", 1.0 / 60 * 100 / 64)
+    model.setCopyExposure("/tmp/epscan-test-b.tif", 1.0 / 30 * 100 / 64)
+    let read = RGB(r: 0.4, g: 0.3, b: 0.2), onB = model.base(read, readOn: shotA, as: shotB)
+    model.setCopyExposure("/tmp/epscan-test-b.tif", nil)
+    let unknown = model.base(read, readOn: shotA, as: shotB)
+    try check(abs(onB.r - 0.8) < 1e-9 && abs(onB.b - 0.4) < 1e-9 && unknown == read,
+      "a base borrowed by a copy shot a stop more reads twice as bright there; with its exposure unknown, as read")
   }
 }

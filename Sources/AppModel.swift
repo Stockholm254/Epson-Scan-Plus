@@ -489,6 +489,8 @@ final class AppModel: ObservableObject {
   static let opensOn = Page.library
   @Published var page = AppModel.firstPage {
     didSet {
+      // ① with the scanner: looked for again if it was not ready (switched on after the app).
+      if page == .capture, captureSource == .scanner { scanner.recheck() }
       // The pickers belong to taking the mask off.
       // The modules work on a project: until one is new, opened or imported, the library it is.
       if page != .library, !hasProject {
@@ -1980,21 +1982,47 @@ final class AppModel: ObservableObject {
     // a picture's edges show none, that of the nearest one in the roll whose do (shot under the
     // light as it was set then). A base picked for the roll, below, comes first.
     for i in frames.indices where frames[i].adjustments.rollBasePicked != true {
-      if let from = edgeBaseSource(i), let base = frames[from].edgeBase?.base { frames[i].adjustments.rollBase = base }
+      if let from = edgeBaseSource(i), let edge = frames[from].edgeBase?.base {
+        frames[i].adjustments.rollBase = base(edge, readOn: frames[from], as: frames[i])
+      } else if isSinglePicture(frames[i]), frames[i].edgeBase != nil {
+        // Its edges looked at, and neither they nor its roll's give one any more (the crosstalk
+        // taken out, say): none, not the last it had, which still read as measured (until 0.22.6).
+        frames[i].adjustments.rollBase = nil
+      }
     }
     // Shared only with the frames on the same flat field: another flat is another setup.
     for group in Self.rollGroups(frames, poolPictures: true) {
       for flat in Set(group.map { $0.flatID ?? "" }) {
         let alike = group.filter { ($0.flatID ?? "") == flat }
         guard let picked = alike.first(where: { $0.adjustments.rollBasePicked == true }), let shared = picked.adjustments.rollBase else { continue }
+        // As read where it was picked, at that picture's exposure.
+        let source = frames.first { $0.id == picked.adjustments.rollBaseFrom }
+        let reference = source?.adjustments.base ?? shared, readOn = source ?? picked
         let ids = Set(alike.map(\.id))
         for i in frames.indices where ids.contains(frames[i].id) && frames[i].adjustments.rollBasePicked != true {
-          frames[i].adjustments.rollBase = shared
+          frames[i].adjustments.rollBase = base(reference, readOn: readOn, as: frames[i])
           frames[i].adjustments.rollBasePicked = true
           frames[i].adjustments.rollBaseFrom = picked.adjustments.rollBaseFrom
         }
       }
     }
+  }
+  /// A linear copy's exposure (EXIF shutter × ISO / f-number², from its camera file); nil for a
+  /// scan, an encoded file, or one whose exposure is not known.
+  func linearExposure(_ f: FilmFrame) -> Double? {
+    guard f.sensorRead == true, abs(f.adjustments.inputGamma - 1) < 1e-6, let path = f.sourcePath else { return nil }
+    return copyExposure(PhotoInfo.file(for: f)?.path ?? path)
+  }
+  /// `base`, read on `from`, as it reads on `to`: a linear copy's every reading goes with its
+  /// exposure, so a stop more on `to` reads its unexposed film twice as bright. Until 0.22.6 a base
+  /// borrowed from another picture or shared from one was taken as read, and a picture shot a stop
+  /// apart was 0.3 D off on every channel: a red or blue cast a calibrated preset could not take out.
+  /// Either exposure unknown, as read.
+  func base(_ base: RGB, readOn from: FilmFrame, as to: FilmFrame) -> RGB {
+    guard from.id != to.id, let e0 = linearExposure(from), let e1 = linearExposure(to), e0 > 0, e1 > 0 else { return base }
+    let k = min(16, max(1.0 / 16, e1 / e0))
+    guard abs(k - 1) > 0.01 else { return base }
+    return RGB(base.values.map { min(1, $0 * k) })
   }
   /// Whether the frame is a picture a file each, as a camera or an import of single pictures gives.
   func isSinglePicture(_ f: FilmFrame) -> Bool {
@@ -2226,6 +2254,15 @@ final class AppModel: ObservableObject {
   /// taken out; and whether they have.
   var hasSensorPictures: Bool { frames.contains { $0.sensorRead == true } }
   var crosstalkRemoved: Bool { frames.contains { $0.sensorRead == true && $0.crosstalk != nil } }
+  /// The roll's 去串色 not as its calibrated preset was made with: its slopes and neutral then hold
+  /// for another reading of the same film, and the colour drifts with the brightness. What to do,
+  /// or nil when they agree, are not known, or the calibration is not in use.
+  var calibrationReadingMismatch: String? {
+    guard hasSensorPictures, useCalibration, profile.offsets != nil, let unmixed = profile.readsUnmixed, unmixed != crosstalkRemoved else { return nil }
+    return unmixed
+      ? "这个预设标定时去串色是开着的，这一卷关着：斜率和中性对不上，颜色会随亮度偏。打开去串色，或换用不去串色标定的预设。"
+      : "这个预设标定时没有去串色，这一卷开着：斜率和中性对不上，颜色会随亮度偏。关掉去串色，或换用去串色标定的预设。"
+  }
   /// The roll is reversal film, slides; with no frames yet, what the next preview is set to.
   var reversalRoll: Bool { frames.isEmpty ? (startsAsSlides ?? preferences.scanReversal) : frames.contains { $0.adjustments.isSlide } }
   /// What the new-project sheet said the roll is, negative or slide: its first copy or import
@@ -2395,7 +2432,7 @@ final class AppModel: ObservableObject {
       .filter { $0.flatID == f.flatID && $0.crosstalk == f.crosstalk }
     let ids = Set(group.map(\.id))
     for i in frames.indices where ids.contains(frames[i].id) {
-      frames[i].adjustments.rollBase = base
+      frames[i].adjustments.rollBase = self.base(base, readOn: f, as: frames[i])
       frames[i].adjustments.rollBasePicked = true
       frames[i].adjustments.rollBaseFrom = f.id
     }
@@ -2744,12 +2781,14 @@ final class AppModel: ObservableObject {
   }
   /// Estimates channel slopes across each roll (`rollGroups`) and shares them with its frames, with
   /// 全卷斜率估计 on; off, clears them. They come after a calibrated preset, before the data sheet.
+  /// Why the roll's slopes could not be estimated, by frame (`ImagePipeline.rollSlopeEstimate`).
+  @Published private(set) var rollSlopesWhy = [UUID: String]()
   func updateRollSlopes(completion: (() -> Void)? = nil) {
     let snapshot = frames, film = conversionProfile, green = film.slopes.g, toe = film.toe, on = estimatesSlopes, blanks = blankFrameIDs
     rollSlopesRevision += 1
     let token = rollSlopesRevision
     renderQueue.async {
-      var result = [UUID: RGB?]()
+      var result = [UUID: RGB?](), why = [UUID: String]()
       // Slides have no layers' contrast to estimate: their dyes are the picture.
       // Blank frames have no film on them: no layers' contrast to measure.
       let groups = Self.rollGroups(snapshot, poolPictures: true).map({ $0.filter { $0.adjustments.inputIsNegative && !blanks.contains($0.id) } })
@@ -2775,8 +2814,11 @@ final class AppModel: ObservableObject {
         }
         // The toe only bends from a measured film base, as in the conversion.
         let measured = inputs.allSatisfy { ($0.settings.base ?? $0.settings.rollBase) != nil }
-        let slopes = ImagePipeline.shared.rollSlopes(inputs, greenSlope: green, toe: measured ? toe : nil)
-        for f in members { result[f.id] = .some(slopes) }
+        let estimate = ImagePipeline.shared.rollSlopeEstimate(inputs, greenSlope: green, toe: measured ? toe : nil)
+        for f in members {
+          result[f.id] = .some(estimate.slopes)
+          if let reason = estimate.why { why[f.id] = reason }
+        }
       }
       let wasShown = shown
       DispatchQueue.main.async {
@@ -2786,6 +2828,7 @@ final class AppModel: ObservableObject {
           completion?()
           return
         }
+        self.rollSlopesWhy = why
         var changed = false
         for i in self.frames.indices {
           if let slopes = result[self.frames[i].id], self.frames[i].adjustments.rollSlopes != slopes {
@@ -3273,6 +3316,8 @@ final class AppModel: ObservableObject {
   private var copyExposures = [String: Double?]()
   private let copyExposureLock = NSLock()
   /// Also from the export's queue.
+  /// A copy's exposure as if read from its EXIF, for tests.
+  func setCopyExposure(_ path: String, _ value: Double?) { copyExposureLock.withLock { copyExposures[path] = value } }
   func copyExposure(_ path: String) -> Double? {
     if let known = copyExposureLock.withLock({ copyExposures[path] }) { return known }
     let read = PhotoInfo.exposure(URL(fileURLWithPath: path))
@@ -3516,12 +3561,18 @@ final class AppModel: ObservableObject {
     let clipping = showClipping && !original
     if original { (settings.base, settings.rollBase) = (nil, nil) }
     if curvesBypassed { settings.curves = nil }
+    // Sharpened as the export is, at the frame's own resolution, where the picture is graded: zoomed
+    // in is where sharpening is judged (until 0.22.6 the detail was not sharpened at all).
+    let graded = !original && !negative && !showsDemasked && !showsBefore
+    let sharpener = graded ? Sharpening.sharpener(preferences.sharpening, frame: sharpened(frame), maxDimension: nil) : nil
     renderQueue.async {
       let source = [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", frame.sourcePath ?? "", frame.dust?.signature ?? "", "\(original)",
-        frame.flatField.map { "flat\($0.width)x\($0.height)-\($0.values.reduce(0, +))" } ?? "-", frame.crosstalk.map { "\($0.m)" } ?? "-"].joined(separator: "|")
+        frame.flatField.map { "flat\($0.width)x\($0.height)-\($0.values.reduce(0, +))" } ?? "-", frame.crosstalk.map { "\($0.m)" } ?? "-",
+        sharpener.map { "sharp \($0.radius) \($0.gamma) \($0.kernel)" } ?? "-"].joined(separator: "|")
       if self.detailSource?.key != source {
         self.detailSource = nil
-        self.detailSource = (try? original ? self.dustFreeSource(for: frame, full: true) : self.source(for: frame, full: true)).map { (source, $0) }
+        let read = try? original ? self.dustFreeSource(for: frame, full: true) : self.source(for: frame, full: true)
+        self.detailSource = read.map { picture in (source, sharpener.flatMap { try? ImagePipeline.shared.sharpen(picture, with: $0) } ?? picture) }
       }
       var detail: Detail?
       // The whole frame as shown, straightened, turned and mirrored, of which only the part asked
@@ -3543,6 +3594,7 @@ final class AppModel: ObservableObject {
     encoder.outputFormatting = .sortedKeys
     let settings = (try? encoder.encode(frame.adjustments)).map { $0.base64EncodedString() } ?? ""
     let shown = (single ? "single " : "table ") + "\(!showNegative) \(showsOriginal)" + (single && curvesBypassed ? " no curves" : "")
+      + (single ? " sharpening \(preferences.sharpening.map { "\($0)" } ?? "-")" : "")
       + (single && showClipping ? " clipping" : "") + (single && showsBefore ? " before" : "") + (showsDemasked ? " demasked" : "")
       + (showsOriginal ? rawGains(frame).map { " gains \($0.values)" } ?? " as read" : "")
     return [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", shown, conversionProfile.id, settings, frame.dust?.signature ?? "",
@@ -4955,18 +5007,36 @@ final class AppModel: ObservableObject {
     }
     return true
   }
+  /// Frames among `items` with only their preview so far: asked about first. Return cancels (until
+  /// 0.22.4 it exported the previews); the scanner's can be ticked and scanned in ① instead.
+  /// True goes on to export.
+  private func previewsMayGo(_ items: [FilmFrame]) -> Bool {
+    let previews = items.filter { !$0.hasFullResolution }
+    guard !previews.isEmpty else { return true }
+    let scannable = previews.filter { $0.sourcePath == nil }
+    let alert = NSAlert()
+    alert.messageText = "包含 \(previews.count) 张还没正式扫描的画面"
+    alert.informativeText = "它们只有低清预览，导出不会多出细节。要成片，先在 ① 采集里扫描它们。"
+    alert.addButton(withTitle: "取消")
+    alert.addButton(withTitle: "仍然导出预览")
+    if !scannable.isEmpty { alert.addButton(withTitle: "勾选它们，去 ① 扫描") }
+    switch alert.runModal() {
+    case .alertSecondButtonReturn:
+      return true
+    case .alertThirdButtonReturn:
+      for f in scannable { setEnabled(f.id, enabled: true) }
+      page = .capture
+      captureSource = .scanner
+      status = "已勾选还没正式扫描的 \(scannable.count) 张：点「扫描勾选」扫描（已经扫过的会先问）"
+      return false
+    default:
+      return false
+    }
+  }
   /// Exports `items` into a folder chosen with the format, as 导出当前 does.
   func exportImages(_ items: [FilmFrame]) {
     guard !items.isEmpty, !isWorking else { return }
-    let previews = items.filter { !$0.hasFullResolution }.count
-    if previews > 0 {
-      let alert = NSAlert()
-      alert.messageText = "包含 \(previews) 张低清预览"
-      alert.informativeText = "这些画面尚未正式扫描。导出不会增加实际细节；如需成片，请先扫描。"
-      alert.addButton(withTitle: "仅导出预览 / 继续")
-      alert.addButton(withTitle: "取消")
-      guard alert.runModal() == .alertFirstButtonReturn else { return }
-    }
+    guard previewsMayGo(items) else { return }
     let panel = NSOpenPanel()
     panel.canChooseFiles = false
     panel.canChooseDirectories = true
@@ -5045,15 +5115,7 @@ final class AppModel: ObservableObject {
   /// question about frames not yet scanned.
   func exportHere(_ items: [FilmFrame]) {
     guard !items.isEmpty, !isWorking, let folder = exportFolder else { return }
-    let previews = items.filter { !$0.hasFullResolution }.count
-    if previews > 0 {
-      let alert = NSAlert()
-      alert.messageText = "包含 \(previews) 张低清预览"
-      alert.informativeText = "这些画面尚未正式扫描。导出不会增加实际细节；如需成片，请先扫描。"
-      alert.addButton(withTitle: "仅导出预览 / 继续")
-      alert.addButton(withTitle: "取消")
-      guard alert.runModal() == .alertFirstButtonReturn else { return }
-    }
+    guard previewsMayGo(items) else { return }
     export(items: items, to: folder)
   }
   /// The pixels `f` is written with: its crop of the full picture, straightened and turned. File
@@ -5398,7 +5460,8 @@ final class AppModel: ObservableObject {
         dpi: f.hasFullResolution ? Double(f.scanDPI ?? Int(previewDPI)) : previewDPI,
         source: { try self.source(for: f, full: true) },
         sharpener: Sharpening.sharpener(sharpening, frame: f, maxDimension: nil),
-        size: { self.fullSourceSize(for: f) })
+        size: { self.fullSourceSize(for: f) },
+        analysis: { (try? self.source(for: f)).map { ImagePipeline.shared.analyze($0, settings: f.adjustments, profile: p) } })
     }
     let sheetDPI = fromPreview ? Int(previewDPI) : ContactSheet.scanDPI
     // The roll's film for the heading, as the film shelf draws it.

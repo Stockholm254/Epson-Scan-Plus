@@ -54,6 +54,9 @@ enum RollCurveTests {
     try check(pipe.rollSlopes(Array(roll.prefix(1)), greenSlope: truth.g) == nil, "no roll estimate from a single frame")
     let flat = [neutral(0.8, 0.85), neutral(0.8, 0.85)].map { (image: $0, settings: linear) }
     try check(pipe.rollSlopes(flat, greenSlope: truth.g) == nil, "no roll estimate from frames without detail")
+    // Said as it is: too few frames, or too little light-to-dark change in them.
+    let alone = pipe.rollSlopeEstimate(Array(roll.prefix(1)), greenSlope: truth.g).why ?? "", featureless = pipe.rollSlopeEstimate(flat, greenSlope: truth.g).why ?? ""
+    try check(alone.contains("不到 2 张") && featureless.contains("明暗过渡太少"), "the reason the roll's slopes were not estimated is said: \(alone) / \(featureless)")
     // Scene colour that goes with brightness, as on a seaside roll: a bright blue sky over darker,
     // warmer ground, each with its own shading. Global statistics read the sky's blue as blue
     // contrast; local gradients do not.

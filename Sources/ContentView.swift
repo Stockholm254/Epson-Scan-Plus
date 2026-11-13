@@ -256,7 +256,8 @@ struct ContentView: View {
         Button {
           m.requestScanEnabled()
         } label: {
-          Label("扫描所选 \(m.enabledCount)", systemImage: "scanner")
+          // The ticked frames, as the menu's 扫描勾选画面 says: 所选 is ⌘ / ⇧'s chosen in ③.
+          Label("扫描勾选 \(m.enabledCount)", systemImage: "scanner")
         }.leadingAction().disabled(!m.scanner.ready || !m.hasScanTargets || m.isWorking)
       } else if m.page == .convert && m.convertStep == .grade {
         // Exporting, ③'s, with its settings behind it in the sidebar.
@@ -999,6 +1000,9 @@ struct ContentView: View {
           filmSwitch("去串色 · RGB 光源",
             isOn: Binding(get: { m.crosstalkRemoved }, set: { m.removeCrosstalk($0) }), info: Self.crosstalkInfo)
             .disabled(m.isWorking)
+          if let mismatch = m.calibrationReadingMismatch {
+            Text(mismatch).font(.system(size: 11)).foregroundStyle(Hardware.amberText).fixedSize(horizontal: false, vertical: true)
+          }
         }
         if m.hasLinearPictures { flatRow }
         if m.profile.offsets != nil {
@@ -1721,7 +1725,7 @@ struct ContentView: View {
                     Text("预览").font(.system(size: 9, weight: .semibold)).foregroundStyle(.white.opacity(0.9))
                       .padding(.horizontal, 4).padding(.vertical, 1)
                       .background(Capsule().fill(Color.black.opacity(0.62)))
-                      .padding(3).help("只有预览，还没正式扫描：勾上后「扫描所选」")
+                      .padding(3).help("只有预览，还没正式扫描：勾上后「扫描勾选」，或右键「扫描这一张」")
                   }
                 }
                 // Repaired in 去漏光: ③ grades the repaired picture.
@@ -1787,6 +1791,13 @@ struct ContentView: View {
                         Button("在 Finder 中显示导出的文件", systemImage: "folder") { m.revealExport(f) }
                       }
                       Divider()
+                      // A scanner roll's frame scanned, or scanned again, alone: from here, not only ⇧⌘S.
+                      if f.sourcePath == nil {
+                        Button(f.hasFullResolution ? "重扫这一张（\(m.dpi) dpi）" : "扫描这一张（\(m.dpi) dpi）", systemImage: "scanner") {
+                          m.select(f.id)
+                          m.requestScanSelected()
+                        }.disabled(m.isWorking || !m.scanner.ready)
+                      }
                       Button(f.enabled ? "取消勾选" : "勾选", systemImage: f.enabled ? "circle" : "checkmark.circle") {
                         m.setEnabled(f.id, enabled: !f.enabled)
                       }.disabled(m.isWorking)

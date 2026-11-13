@@ -384,6 +384,12 @@ enum CalibrationTests {
     let notes = [true, false, nil].map { FilmCalibration.profile(from: fit, basedOn: portra, points: 3, scanner: "A7R IV", copyStand: true, unmixed: $0).notes }
     try check(notes[0].contains("标定时去串色是开着的") && notes[1].contains("标定时没有去串色") && notes[2].contains("有的去了串色、有的没有"),
       "a copy-stand preset says how its points were read, crosstalk taken out or not, as its slopes hold for that")
+    // And keeps it, and reads it from an older preset's notes: the roll is warned when its 去串色 differs.
+    let readings = [true, false, nil].map { FilmCalibration.profile(from: fit, basedOn: portra, points: 3, scanner: "A7R IV", copyStand: true, unmixed: $0) }
+    var older = readings[1]
+    older.unmixed = nil
+    try check(readings[0].readsUnmixed == true && readings[1].readsUnmixed == false && readings[2].readsUnmixed == nil && older.readsUnmixed == false,
+      "a copy preset records whether its points were read with the crosstalk taken out (an older one, from its notes)")
     let old = try JSONDecoder().decode(FilmProfile.self, from: JSONEncoder().encode(portra))
     try check(old == portra && old.offsets == nil, "presets saved without offsets still load")
   }

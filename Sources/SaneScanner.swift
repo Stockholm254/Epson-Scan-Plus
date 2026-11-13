@@ -38,6 +38,25 @@ final class SaneScannerController: ScannerController {
     probe(quiet: true)
   }
   override func reconnect() { guard !busy else { return }; started = true; probe(quiet: false) }
+  override func recheck() { guard !busy, !ready, !closing else { return }; started = true; probe(quiet: true) }
+  /// A helper's message as the user reads it: SANE's and the helper's English said in Chinese with
+  /// what to do, and whether the scanner is still ready after it. A lid left open, a disk full or a
+  /// file in the way is no fault of the scanner's connection: it stays ready, so the next scan
+  /// needs no 重新连接 (until 0.22.4 every error set it not ready).
+  static func explained(_ message: String) -> (text: String, ready: Bool) {
+    let m = message.lowercased()
+    func has(_ s: String) -> Bool { m.contains(s.lowercased()) }
+    if has("cover is open") { return ("扫描仪的盖子开着：盖好再扫。", true) }
+    if has("lamp not ready") || has("warming") { return ("扫描仪的灯还在预热：等一会儿再扫。", true) }
+    if has("device busy") { return ("扫描仪正忙：关掉别的扫描程序（Epson Scan、图像捕捉等），稍等再试。", true) }
+    if has("tiff write failed") || has("no space") { return ("扫描文件写不下来：磁盘可能满了，或者工程文件夹不能写。腾出空间后再扫这一张。", true) }
+    if has("output already exists") || has("output must be a new") { return ("扫描文件的位置已经有同名的文件：再扫一次即可（会用新的文件名）。", true) }
+    if has("out of memory") { return ("内存不够：关掉别的程序，或者降低 dpi、逐张扫描。", true) }
+    if has("unsupported scan resolution") { return ("扫描仪不支持这个分辨率：换一个 dpi。", true) }
+    if has("error during device i/o") || has("i/o") { return ("和扫描仪的连接出错：检查 USB 线和电源，必要时把扫描仪关机再开，然后点「重新连接」。", false) }
+    if has("access to resource has been denied") { return ("扫描仪被别的程序占着：关掉别的扫描程序后点「重新连接」。", false) }
+    return (message, false)
+  }
   private func probe(quiet: Bool) {
     ready = false
     launch(arguments: ["--probe"], output: nil, preview: false, quiet: quiet)
@@ -184,9 +203,11 @@ final class SaneScannerController: ScannerController {
           return
         }
         if let error = returnedError ?? (p.terminationStatus == 0 ? nil : "48-bit 接口异常退出。请检查连接并重新连接。") {
-          self.ready = false; self.status = error; self.record(error)
+          // Kept as it came in the log; said in Chinese, with what to do.
+          let said = Self.explained(error)
+          self.ready = said.ready && self.ready; self.status = said.text; self.record(error)
           if !returnedDiagnostics.isEmpty { self.record(returnedDiagnostics) }
-          fail(error)
+          fail(said.text)
           return
         }
         guard let c = returnedCapability, c["bits"] as? Int == 16,
