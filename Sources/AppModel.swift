@@ -1343,8 +1343,10 @@ final class AppModel: ObservableObject {
     let format = format
     let importedPath = frames.first?.sourcePath
     let inputGamma = overviewInputGamma
+    // A black and white negative's film has no orange mask to be found by.
+    let monochrome = !reversal && FilmCatalog.stock(named: filmName)?.kind == .blackWhite
     renderQueue.async {
-      var found = FrameDetector.detect(overview, physicalMM: size, format: format, reversal: reversal)
+      var found = FrameDetector.detect(overview, physicalMM: size, format: format, reversal: reversal, monochrome: monochrome)
       if importedPath == nil, let inputGamma {
         for i in found.indices { found[i].adjustments.inputGamma = inputGamma }
       }

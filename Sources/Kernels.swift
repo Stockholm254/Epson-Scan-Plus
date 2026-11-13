@@ -126,7 +126,9 @@ enum Kernels {
       // A degree a step at the entries' middles; the 361st is the first again, so a red either
       // side of 0° reads its band in full (until 0.22.4 half of it near 0°).
       float4 m = table.sample(table.transform(float2(h * 360.0 + 0.5, 0.5)));
-      float s = d / max(mx, 0.00001), w = smoothstep(0.0, 0.25, s);
+      // Near black the grain's colour is noise, not the scene's: left as it is (an HSV saturation
+      // reads 0.03, 0.025, 0.02 as a third saturated, and until 0.22.8 moved it in full).
+      float s = d / max(mx, 0.00001), w = smoothstep(0.0, 0.25, s) * smoothstep(0.02, 0.08, mx);
       float h2 = fract(h + m.r * w + 1.0) * 6.0;
       float s2 = clamp(s * (1.0 + m.g * w), 0.0, 1.0);
       float f = h2 - floor(h2);
@@ -134,6 +136,10 @@ enum Kernels {
       int k = int(floor(h2)) % 6;
       float3 rgb = k == 0 ? float3(mx, tv, pv) : k == 1 ? float3(qv, mx, pv) : k == 2 ? float3(pv, mx, tv)
         : k == 3 ? float3(pv, qv, mx) : k == 4 ? float3(tv, pv, mx) : float3(mx, pv, qv);
+      // The lightness kept as it was, as Lightroom keeps it: HSV keeps the brightest channel, so a
+      // blue sky made grey came out near white (until 0.22.8); then the luminance moved on it.
+      float3 luma = float3(0.2126, 0.7152, 0.0722);
+      rgb *= dot(c, luma) / max(dot(rgb, luma), 0.00001);
       rgb *= max(0.0, 1.0 + 0.5 * m.b * w);
       return float4(rgb + (p.rgb - c), p.a);
     }

@@ -11,8 +11,11 @@ enum FrameDetector {
   // Detect illuminated apertures, then split strips using physical film dimensions
   // and low-texture inter-frame gaps. Manual rectangles always remain editable.
   // A negative's film is the orange mask, its gaps clear; reversal film (`reversal`) is the picture
-  // itself, of any colour, its gaps and rebate black: a frame is where light comes through.
-  static func detect(_ image: CGImage, physicalMM: CGSize, format: FilmFormat, reversal: Bool = false) -> [FilmFrame] {
+  // itself, of any colour, its gaps and rebate black: a frame is where light comes through. A black
+  // and white negative (`monochrome`) has no mask to tell its film by: its film is where light comes
+  // through short of bare light, as a slide's, and its gaps are clear as a colour negative's (until
+  // 0.22.8 a B&W strip was not found: the film was looked for by its orange).
+  static func detect(_ image: CGImage, physicalMM: CGSize, format: FilmFormat, reversal: Bool = false, monochrome: Bool = false) -> [FilmFrame] {
     // Tuned on 150 dpi previews. Finer ones are averaged down to that first: at 600 dpi, grain
     // in the narrow gaps between frames moved frame edges by up to 9 mm from one scan to the next.
     let longest = Double(max(physicalMM.width, physicalMM.height))
@@ -24,7 +27,7 @@ enum FrameDetector {
     for y in 0..<h {
       for x in 0..<w {
         let p = raster.pixel(x, y)
-        mask[y * w + x] = reversal ? slideLit(p) : p.r > 0.07 && p.r > p.b * 1.08 && p.g > 0.018 && p.r < 0.995
+        mask[y * w + x] = reversal || monochrome ? slideLit(p) : p.r > 0.07 && p.r > p.b * 1.08 && p.g > 0.018 && p.r < 0.995
       }
     }
     // The black round a slide's picture trimmed off: rows and columns at its edges that are mostly dark.
@@ -212,7 +215,9 @@ enum FrameDetector {
             coordinate: Int(vertical ? box.minY : box.minX) + t,
             from: Int(vertical ? box.minX : box.minY) + cross / 8,
             to: Int(vertical ? box.maxX : box.maxY) - cross / 8)
-          if line.deviation < 0.025, line.mean.r < 0.94, line.mean.r > line.mean.b * 1.15,
+          // The base between frames: orange, or on black and white film a clear grey.
+          if line.deviation < 0.025, line.mean.r < 0.94,
+            monochrome ? abs(line.mean.r - line.mean.b) < 0.04 : line.mean.r > line.mean.b * 1.15,
             best == nil || line.mean.g > best!.mean.g
           {
             best = line

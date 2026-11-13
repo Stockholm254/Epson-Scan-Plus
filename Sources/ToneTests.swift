@@ -326,6 +326,14 @@ enum ToneTests {
       let darkLuma = 0.2126 * dark[0] + 0.7152 * dark[1] + 0.0722 * dark[2], wasLuma = 0.2126 * darkWas[0] + 0.7152 * darkWas[1] + 0.0722 * darkWas[2]
       try check(dark[2] > dark[0] + 0.03 && abs(darkLuma - wasLuma) < 0.002 && spread(light) < 0.01,
         String(format: "grading the shadows blue turns a dark grey blue (red %.3f, blue %.3f), its lightness kept, and leaves a light grey grey", dark[0], dark[2]))
+      // Desaturated, a blue keeps its lightness (HSV made it near white); grain near black is left.
+      let blueBefore = c0[32 * 64 + 10], blueAfter = c1[32 * 64 + 10]
+      func luma(_ v: [Float]) -> Float { 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2] }
+      var grainy = Adjustments()
+      grainy[mixer: 0, kind: 1] = -1
+      let (grain, grained) = patch({ _, _ in (0.03, 0.025, 0.02) }, grainy)
+      try check(abs(luma(blueAfter) - luma(blueBefore)) < 0.01 && zip(values(grain)[32 * 64 + 32], values(grained)[32 * 64 + 32]).allSatisfy { abs($0 - $1) < 0.002 },
+        String(format: "the mixer keeps a blue's lightness as it greys it (%.3f → %.3f) and leaves the grain near black as it was", luma(blueBefore), luma(blueAfter)))
       // Black stays a neutral black under the shadows' wheel, as under 冷暖 (until 0.22.4 it went blue).
       let black = values(tinted)[32 * 64]
       try check(spread(black) < 1e-3 && black.max()! < 1e-3, String(format: "and black stays black: %.3f %.3f %.3f", black[0], black[1], black[2]))

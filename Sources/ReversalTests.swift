@@ -132,6 +132,24 @@ enum ReversalTests {
       "slides are found where light comes through: three mounted and three on a strip with black between, the empty slot's bare light passed over, each within 0.6 mm (\(found.count) found, off by \(off.map { String(format: "%.2f", $0) }) mm)")
     let asNegatives = FrameDetector.detect(overview, physicalMM: bed, format: .auto)
     try check(asNegatives.count != 6, "read as negatives the same holder is not found right (\(asNegatives.count) frames): the film matters")
+    // A black and white strip: grey film, no orange mask, clear base between its frames, the holder
+    // black round it. Found as B&W; looked for by its orange it is not.
+    // 135 in the holder: its window 26 mm across the strip (the rebate under it), a frame each 38 mm.
+    let bwFrames = [CGRect(x: 43.5, y: 10, width: 24, height: 36), CGRect(x: 43.5, y: 48, width: 24, height: 36), CGRect(x: 43.5, y: 86, width: 24, height: 36)]
+    let bwStrip = CGRect(x: 42.5, y: 8, width: 26, height: 116)
+    let silver = linear(pw, ph) { x, y in
+      let p = CGPoint(x: (Double(x) + 0.5) / mm, y: (Double(y) + 0.5) / mm)
+      guard bwStrip.contains(p) else { return RGB(r: 0.0005, g: 0.0005, b: 0.0005) }
+      guard let f = bwFrames.first(where: { $0.contains(p) }) else { return RGB(r: 0.72, g: 0.72, b: 0.72) }
+      let u = (p.y - f.minY) / f.height, v = (p.x - f.minX) / f.width
+      let d = u < 0.5 ? 0.12 + 0.1 * v : 0.35 + 0.2 * (1 - v)
+      return RGB(r: d, g: d, b: d)
+    }
+    let bw = FrameDetector.detect(silver, physicalMM: bed, format: .auto, monochrome: true)
+    let byOrange = FrameDetector.detect(silver, physicalMM: bed, format: .auto)
+    let bwOff = zip(bw.map { inMM($0.rect) }, bwFrames).map { a, b in [abs(a.minX - b.minX), abs(a.minY - b.minY), abs(a.maxX - b.maxX), abs(a.maxY - b.maxY)].max()! }
+    try check(bw.count == 3 && bwOff.allSatisfy { $0 < 1.5 } && byOrange.isEmpty,
+      "a black and white strip's frames are found without an orange mask (\(bw.count), off by \(bwOff.map { String(format: "%.2f", $0) }) mm); looked for by orange, none (\(byOrange.count))")
 
     // The scanner set to reversal film: the preview's frames found and read as slides; switched to
     // negatives before any is scanned, found again as negatives, and back.
