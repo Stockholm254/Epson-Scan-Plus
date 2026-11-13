@@ -1288,8 +1288,11 @@ struct ContentView: View {
       // Folded, what was done shows in its title row: the first to give way where it is narrow, so
       // the section's name stays whole (with a ⟲ beside it too, the name was cut to 「裁切…」).
       if !composing, let summary = compositionSummary {
-        Text(summary).font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
-          .layoutPriority(-1).help("这张" + summary + "；「还原」回到整幅画面、不拉直")
+        // Cropped, 「已裁」 (the angle too in its tooltip): beside the section's name and its key there
+        // is room for some two characters at the inspector's usual width; 「已裁切 +6.0°」 pushed the
+        // name to 「裁切与…」, and 「已裁切」 itself was cut to 「已…」.
+        Text(summary.short).font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
+          .layoutPriority(-1).help("这张" + summary.full + "；「还原」回到整幅画面、不拉直")
       }
       Button {
         m.useTool(m.tool == .crop ? .select : .crop)
@@ -1357,12 +1360,12 @@ struct ContentView: View {
     }
   }
   /// The frame's ③ crop and straightening in a few characters, for the section's title row.
-  var compositionSummary: String? {
+  var compositionSummary: (full: String, short: String)? {
     let turned = abs(m.settings.angle ?? 0) > 0.0001 ? String(format: "%+.1f°", m.screenAngle) : nil
     switch (m.settings.composition != nil, turned) {
-    case (true, let t?): return "已裁切 " + t
-    case (true, nil): return "已裁切"
-    case (false, let t?): return t
+    case (true, let t?): return ("已裁切 " + t, "已裁")
+    case (true, nil): return ("已裁切", "已裁")
+    case (false, let t?): return (t, t)
     default: return nil
     }
   }
