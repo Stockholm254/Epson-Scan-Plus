@@ -23,17 +23,14 @@ extension ContentView {
       }
       Divider()
     } else if let f = m.selected, let kept = m.leakJobs[f.id] {
-      // Worked on in 去漏光, its repair not in ③: a job of the graded picture (made before ② and
-      // ③ were apart), or one not taken into ③ yet.
+      // Worked on in 去漏光, its repair not taken into ③ yet.
       VStack(alignment: .leading, spacing: 8) {
         HStack {
           sectionTitle("去漏光", symbol: "wand.and.rays")
           Spacer()
           Text("没用到 ③").font(.system(size: 11)).foregroundStyle(.secondary)
         }
-        note(kept.neutral
-          ? "这张在去漏光里有任务（\(WhenSaid.ago(kept.modified))），修复还没用到 ③：这里调色、导出的是没修的照片。在去漏光里看好，再点「用到 ③ 调色」。"
-          : "这张以前在去漏光里修过（\(WhenSaid.ago(kept.modified))），那时从调好色的正片开始，③ 用不到：这里调色、导出的是没修的照片。打开后点「从 ② 的结果重新载入」（区域和参考图都留着），再点「用到 ③ 调色」。")
+        note("这张在去漏光里有任务（\(WhenSaid.ago(kept.modified))），修复还没用到 ③：这里调色、导出的是没修的照片。在去漏光里看好，再点「用到 ③ 调色」。")
         Button("在去漏光里打开") { m.openInLeak(f.id) }.disabled(m.isWorking)
           .font(.system(size: 11))
           .help("在去漏光页打开这一张的任务（⌥⌘L）")

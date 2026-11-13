@@ -302,7 +302,7 @@ struct LeakPanel: View {
 
   var photo: some View {
     VStack(alignment: .leading, spacing: 10) {
-      header("照片", symbol: "photo", info: "去漏光在 ② 去色罩和 ③ 调色之间，可选。本卷的照片按 ② 去色罩的结果（去掉色罩、配好白平衡和黑白场，不带 ③ 的调色）在本机转换为 Adobe RGB 16 位正片后处理，不用先导出再导入。修好以后点「用到 ③ 调色」，修复就放进这张照片的转换里，回到 ③ 接着调色和导出；原片不改，随时可以在 ③ 里去掉。也可以照旧在这一页「导出」修好的正片（不带 ③ 的调色）。以前建立的任务是从调好色的正片开始的，只能导出。\n\n也可以导入其他软件（如 Capture One）已去色罩、反相的正片：推荐带 ICC 的全分辨率 16 位 TIFF；PNG、JPEG 也可导入，但 8 位输入不会增加真实色阶。原文件不改动，任务保存在 App 的支持文件夹里，不写入照片库。")
+      header("照片", symbol: "photo", info: "去漏光在 ② 去色罩和 ③ 调色之间，可选。本卷的照片按 ② 去色罩的结果（去掉色罩、配好白平衡和黑白场，不带 ③ 的调色）在本机转换为 Adobe RGB 16 位正片后处理，不用先导出再导入。修好以后点「用到 ③ 调色」，修复就放进这张照片的转换里，回到 ③ 接着调色和导出；原片不改，随时可以在 ③ 里去掉。也可以照旧在这一页「导出」修好的正片（不带 ③ 的调色）。\n\n也可以导入其他软件（如 Capture One）已去色罩、反相的正片：推荐带 ICC 的全分辨率 16 位 TIFF；PNG、JPEG 也可导入，但 8 位输入不会增加真实色阶。原文件不改动，任务保存在 App 的支持文件夹里，不写入照片库。")
       if let j = lab.job {
         Text(j.sourceName).font(.system(size: 12, weight: .medium))
         if let meta = j.meta {
@@ -310,12 +310,7 @@ struct LeakPanel: View {
             .foregroundStyle(.secondary)
         }
         if let origin = j.origin {
-          if let f = frame, origin.neutral != true {
-            // A job from before: made of the graded picture, it can only export. Drawn again from ②,
-            // its regions, protections and reference stay, the reference fitted again here, free.
-            note("这个任务是以前从调好色的正片开始的，只能导出。从 ② 的结果重新载入以后就能用到 ③ 调色；区域、保护和参考图都留着，参考图在本机重新拟合，不调用 API。", color: Hardware.amberText)
-            Button("从 ② 的结果重新载入") { if let o = m.leakOrigin(f) { lab.reload(origin: o) } }.disabled(lab.busy != nil)
-          } else if let f = frame {
+          if let f = frame {
             // ② changed since is brought up to it on its own (`refresh`).
             if !f.hasFullResolution { note("这张尚未正式扫描，用的是预览像素。", color: Hardware.amberText) }
           } else {
