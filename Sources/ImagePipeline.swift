@@ -351,35 +351,50 @@ final class ImagePipeline {
   func densities(_ r: Samples, settings: Adjustments, margin: Double, base fallback: RGB? = nil,
     correct: ((Int, Int, [Double]) -> [Double])? = nil) -> (base: RGB, density: [[Double]])
   {
-    var pixels = [[Double]](), places = [(Int, Int)]()
+    // The samples kept three to a pixel in one array, not an array each: the same figures, in the
+    // same order and by the same sums, a sixth of a frame's analysis spent allocating them.
+    var pixels = [Double](), places = [(Int, Int)]()
     // Statistics are deliberately separate from the export crop. Never feed the expanded
     // crop/film-base editing context into these statistics.
     let marginX = margin > 0 ? max(1, Int(ceil(Double(r.width) * margin))) : 0
     let marginY = margin > 0 ? max(1, Int(ceil(Double(r.height) * margin))) : 0
+    pixels.reserveCapacity(max(0, r.width * r.height * 3))
     for y in marginY..<max(marginY + 1, r.height - marginY) {
       for x in marginX..<max(marginX + 1, r.width - marginX) {
-        let p = r.pixel(x, y).values
+        let p = r.pixel(x, y)
         // Clipped light (leaks, clear film) carries no density.
-        if p.min()! < 0.995 && p.max()! > 0 {
-          pixels.append(p.map { max(1e-6, $0) })
+        if min(p.r, p.g, p.b) < 0.995 && max(p.r, p.g, p.b) > 0 {
+          pixels.append(max(1e-6, p.r))
+          pixels.append(max(1e-6, p.g))
+          pixels.append(max(1e-6, p.b))
           places.append((x, y))
         }
       }
     }
+    let n = places.count
     // A picked base wins, then the roll's base from between the frames, then this frame's thinnest film.
     let base = settings.base ?? settings.rollBase ?? fallback
-      ?? RGB((0..<3).map { c in max(0.001, quantile(pixels.map { $0[c] }, 0.995)) })
+      ?? RGB((0..<3).map { c in max(0.001, quantile((0..<n).map { pixels[$0 * 3 + c] }, 0.995)) })
+    let b = (0..<3).map { max(0.0001, base.values[$0]) }, gamma = settings.inputGamma
     // Only near-opaque areas, over 3.0 D above the base in every channel (holder, frame lines),
     // are left out, so a linear scan's densest highlights stay in the statistics.
     var density = [[Double](), [Double](), [Double]()]
-    for (k, p) in pixels.enumerated() {
-      var d = (0..<3).map { log10(max(0.0001, base.values[$0]) / p[$0]) * settings.inputGamma }
-      guard d.contains(where: { $0 < 3 }) else { continue }
-      if let correct { d = correct(places[k].0, places[k].1, d) }
-      for c in 0..<3 { density[c].append(d[c]) }
+    for c in 0..<3 { density[c].reserveCapacity(n) }
+    for k in 0..<n {
+      let d0 = log10(b[0] / pixels[k * 3]) * gamma, d1 = log10(b[1] / pixels[k * 3 + 1]) * gamma
+      let d2 = log10(b[2] / pixels[k * 3 + 2]) * gamma
+      guard d0 < 3 || d1 < 3 || d2 < 3 else { continue }
+      if let correct {
+        let d = correct(places[k].0, places[k].1, [d0, d1, d2])
+        for c in 0..<3 { density[c].append(d[c]) }
+      } else {
+        density[0].append(d0)
+        density[1].append(d1)
+        density[2].append(d2)
+      }
     }
     if density[0].isEmpty {
-      density = (0..<3).map { c in pixels.map { log10(max(0.0001, base.values[c]) / $0[c]) * settings.inputGamma } }
+      density = (0..<3).map { c in (0..<n).map { log10(b[c] / pixels[$0 * 3 + c]) * gamma } }
     }
     return (base, density)
   }
