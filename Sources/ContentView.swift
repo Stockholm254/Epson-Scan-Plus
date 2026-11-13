@@ -697,6 +697,7 @@ struct ContentView: View {
         } compact: {
           glassToolRow.labelStyle(.iconOnly)
         }.lineLimit(1).padding(.horizontal, inset).padding(.top, inset)
+          .modifier(LitTableScheme(lit: !m.singleView))
         ZStack(alignment: .topTrailing) {
           Color.clear
           canvasOverlays
@@ -706,6 +707,7 @@ struct ContentView: View {
         } compact: {
           bottomBars(compact: true)
         }.lineLimit(1).buttonStyle(.bordered).controlSize(.small).padding(.horizontal, inset).padding(.bottom, inset)
+          .modifier(LitTableScheme(lit: !m.singleView))
           .animation(Liquid.flow, value: m.singleView)
           .animation(Liquid.flow, value: m.contactPages.count)
       }
@@ -981,8 +983,10 @@ struct ContentView: View {
           .help("这一卷用的预设：通道斜率和标定的中性。先列这种胶片的，分「数据表」和「本机标定」（这台扫描仪或翻拍时标定的）；选别的胶片的预设，这一卷也换成那种胶片")
         }
         // Where the preset in use comes from, at a glance: a data sheet, or calibrated here.
+        // On two lines where it must: cut in the middle, 「翻拍标定 · A7R I…-12 · 13 个中性点」 lost
+        // the camera and the day, the part that tells one calibration from another.
         Label(PresetTable.tag(m.profile), systemImage: PresetTable.symbol(m.profile))
-          .font(.system(size: 10.5, weight: .medium)).lineLimit(1).truncationMode(.middle)
+          .font(.system(size: 10.5, weight: .medium)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
           .foregroundStyle(m.profile.offsets != nil ? Hardware.amberText : Color.secondary)
           .help(m.profile.offsets != nil
             ? "本机标定的预设：用这台扫描仪或这次翻拍的中性点算出来的斜率和中性。\(m.profile.publication)"
@@ -2049,4 +2053,14 @@ extension CanvasTool {
     let light = NSColor(red: c.red * 0.78, green: c.green * 0.7, blue: c.blue * 0.62, alpha: 1)
     return Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light })
   }
+}
+
+/// The bars floating over the canvas, drawn for a light surface while the lit light table is
+/// under them, whatever the window's look: in the dark one they were dark glass on the white
+/// table, its white text hard to read. Over the single frame they follow the window. The same
+/// modifier either way, so the bars keep their identity as the view changes.
+struct LitTableScheme: ViewModifier {
+  let lit: Bool
+  @Environment(\.colorScheme) private var scheme
+  func body(content: Content) -> some View { content.environment(\.colorScheme, lit ? .light : scheme) }
 }

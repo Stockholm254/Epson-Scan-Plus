@@ -4031,8 +4031,12 @@ final class AppModel: ObservableObject {
         // A copy's dpi as the roll's format gives it.
         let copyDPI = frame.format == "翻拍" ? Self.formatDPI(crop: pixels, region: frame.adjustments.analysisRegion, format: rollFormat) : nil
         let fileDPI = copyDPI.map { Int($0.rounded()) } ?? frame.scanDPI
+        // As the picture shows it: a frame turned a quarter has its sides the other way round, as
+        // the export's size says (6321 × 6376 under the picture read 6376 × 6321 in 输出).
+        let turnedQuarter = ((frame.adjustments.rotation % 4) + 4) % 2 == 1
+        let (across, down) = turnedQuarter ? (pixels.height, pixels.width) : (pixels.width, pixels.height)
         let summary =
-          "\(Int(pixels.width)) × \(Int(pixels.height)) · \(frame.hasFullResolution ? (fileDPI.map{String($0)+" dpi"} ?? "源图") : r.previewDPI >= 600 ? "\(r.previewDPI) dpi 预览" : "低清预览")"
+          "\(Int(across)) × \(Int(down)) · \(frame.hasFullResolution ? (fileDPI.map{String($0)+" dpi"} ?? "源图") : r.previewDPI >= 600 ? "\(r.previewDPI) dpi 预览" : "低清预览")"
           + (Self.readsScan(frame) && frame.levels?.usable == true ? " · 已对齐预览" : "")
         DispatchQueue.main.async {
           // The newest asked for ends the render, shown or not.
