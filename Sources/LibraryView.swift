@@ -376,6 +376,12 @@ struct RollSleeve: View {
     if entry.exported > 0 { parts.append("已导出 \(entry.exported)") }
     return parts.joined(separator: " · ")
   }
+  /// The same, the film on its own line and the rest under it, as the label shows it.
+  static func detailsOnTwoLines(_ entry: RollEntry) -> String {
+    let all = details(entry), film = entry.film
+    guard !film.isEmpty, all.hasPrefix(film + " · ") else { return all }
+    return film + "\n" + all.dropFirst(film.count + 3)
+  }
   /// The roll's film as the film shelf draws it: its stock in the catalog, found by the roll's film
   /// or its preset's, as its cassette or (in a 120 format) its roll; else its own name on a plain
   /// can. Nil when the roll names no film.
@@ -410,9 +416,11 @@ struct RollSleeve: View {
             Text("正在打开…").font(.system(size: 10)).foregroundStyle(Self.ink.opacity(0.7)).lineLimit(1)
           }
         }
-        // A long film's name on a second line rather than cut, beside its film.
-        Text(details).font(.system(size: 10, design: .monospaced)).foregroundStyle(Self.ink.opacity(0.75)).lineLimit(2)
-          .fixedSize(horizontal: false, vertical: true)
+        // The film on a line of its own, its format, frames and what is done under it: every label
+        // as tall as the others in its row, none broken wherever the room ran out (a "·" left at a
+        // line's end) or cut.
+        Text(Self.detailsOnTwoLines(entry)).font(.system(size: 10, design: .monospaced)).foregroundStyle(Self.ink.opacity(0.75))
+          .lineLimit(2).truncationMode(.tail).fixedSize(horizontal: false, vertical: true)
         if entry.named || !entry.notes.isEmpty {
           Text(entry.named ? RollLibrary.title(entry.date) + (entry.notes.isEmpty ? "" : " · " + entry.notes) : entry.notes)
             .font(.system(size: 11)).foregroundStyle(Self.ink.opacity(0.6)).lineLimit(1)

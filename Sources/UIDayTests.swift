@@ -63,6 +63,8 @@ enum UIDayTests {
     var square = roll(frames: 12, full: 12)
     square.format = FilmFormat.six6.rawValue
     try check(RollSleeve.details(square) == "Kodak Portra 160 · 6×6 · 12 张", "a 6×6 roll's label names its frame, not 120 as well: \(RollSleeve.details(square))")
+    try check(RollSleeve.detailsOnTwoLines(square) == "Kodak Portra 160\n6×6 · 12 张",
+      "a roll's label puts the film on a line of its own and the rest under it")
     // Each roll in the library shows its own film, as the shelf draws it.
     let film35 = RollSleeve.film(roll(frames: 3, full: 3), model: model), film120 = RollSleeve.film(square, model: model)
     var own = roll(frames: 1, full: 1)
