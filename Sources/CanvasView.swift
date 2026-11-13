@@ -2873,7 +2873,8 @@ final class FilmCanvasView: NSView {
       // The pickers belong to taking the mask off; capturing has only the frame tools.
       model?.page != .capture || ![CanvasTool.base, .neutral, .shadowNeutral, .region, .curvePick].contains(tool)
     {
-      model?.useTool(tool)
+      // C again finishes the crop, as its key and R do.
+      model?.useTool(tool == .crop && model?.tool == .crop ? .select : tool)
     } else {
       super.keyDown(with: event)
     }
