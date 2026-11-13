@@ -306,7 +306,11 @@ struct LeakPanel: View {
       if let j = lab.job {
         Text(j.sourceName).font(.system(size: 12, weight: .medium))
         if let meta = j.meta {
-          Text("\(meta.width) × \(meta.height) · 预览 \(meta.previewWidth) × \(meta.previewHeight)").font(.system(size: 11, design: .monospaced))
+          // The preview's size only where it is not the picture's; figures as the rest of the window
+          // writes them, without thousands' commas (「1,594 × 1,579」 broke across two lines).
+          Text("\(String(meta.width)) × \(String(meta.height))"
+            + (meta.previewWidth == meta.width && meta.previewHeight == meta.height ? "" : " · 预览 \(String(meta.previewWidth)) × \(String(meta.previewHeight))"))
+            .font(.system(size: 11, design: .monospaced))
             .foregroundStyle(.secondary)
         }
         if let origin = j.origin {
