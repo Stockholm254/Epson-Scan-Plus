@@ -969,7 +969,13 @@ final class FilmCanvasView: NSView {
         drawBaseAreas(found.areas, frame: frame, aspect: model.shownAspect(frame))
       }
       if s.base != nil, let picked = s.basePicked {
-        drawBasePick(picked, settings: s, aspect: model.shownAspect(frame))
+        // Kept in the frame's whole picture (a camera's) or its crop (a scan's): placed in the part
+        // shown, its crop or, while picking, its surroundings. Drawn as if in the crop, a camera
+        // frame's base showed off where it was picked, a frame turned the more so.
+        var shownSettings = s
+        if model.editingSingle { shownSettings.angle = nil }
+        drawBasePick(AppModel.basePickShown(picked, frame: frame, shown: model.shownRegion(frame)), settings: shownSettings,
+          aspect: model.shownAspect(frame))
       }
     }
     // The de-masking region, cyan, over the picture as cropped, always in ② (③ grades the picture,
@@ -1306,10 +1312,13 @@ final class FilmCanvasView: NSView {
     NSGraphicsContext.saveGraphicsState()
     defer { NSGraphicsContext.restoreGraphicsState() }
     NSGraphicsContext.current?.cgContext.setAlpha(CGFloat(opacity))
-    let r = imageRect, crop = frame.rect
+    // In the part of the picture shown: its crop, or its surroundings while the base is picked.
+    let r = imageRect, crop = model?.shownRegion(frame) ?? frame.rect
+    var shownSettings = frame.adjustments
+    if model?.editingSingle == true { shownSettings.angle = nil }
     func onScreen(_ p: CGPoint) -> CGPoint {
       let q = CGPoint(x: (p.x - crop.x) / max(1e-6, crop.width), y: (p.y - crop.y) / max(1e-6, crop.height))
-      let d = ImageGeometry.display(q, settings: frame.adjustments, aspect: aspect)
+      let d = ImageGeometry.display(q, settings: shownSettings, aspect: aspect)
       return CGPoint(x: r.minX + d.x * r.width, y: r.minY + d.y * r.height)
     }
     let amber = NSColor(calibratedRed: 0.95, green: 0.71, blue: 0.38, alpha: 1)

@@ -186,6 +186,24 @@ enum RollGroupTests {
     undo.undo()
     try check(bothPicked && model.frames[0].flag == 1 && model.frames[2].flag == -1,
       "flagging one frame and then the next within a second are two steps: ⌘Z takes back only the last")
+    // A base picked by hand is drawn where it was picked: a camera frame's kept in its whole
+    // picture, placed in its crop when the crop is shown and in the whole while picking; a scan's
+    // kept in its crop, placed in its surroundings while picking.
+    var copyFrame = FilmFrame(name: "01", rect: NormalRect(x: 0.2, y: 0, width: 0.6, height: 1), format: "翻拍")
+    copyFrame.sourcePath = "/tmp/copy.tif"
+    let pickedWhole = NormalRect(x: 0.23, y: 0.3, width: 0.006, height: 0.01)
+    let inCrop = AppModel.basePickShown(pickedWhole, frame: copyFrame, shown: copyFrame.rect)
+    let inWhole = AppModel.basePickShown(pickedWhole, frame: copyFrame, shown: .full)
+    let scanFrame = FilmFrame(name: "02", rect: NormalRect(x: 0.1, y: 0.1, width: 0.4, height: 0.5), format: "135")
+    let around = scanFrame.rect.expanded(by: 0.14)
+    let pickedCrop = NormalRect(x: 0.5, y: 0.5, width: 0.01, height: 0.01)
+    let inAround = AppModel.basePickShown(pickedCrop, frame: scanFrame, shown: around)
+    // Picked in the surroundings and kept again, it comes back to the same place in the crop.
+    let kept = inAround.mapped(into: around).relative(to: AppModel.basePickSpace(scanFrame))
+    func near(_ a: Double, _ b: Double) -> Bool { abs(a - b) < 1e-9 }
+    try check(near(inCrop.x, 0.05) && near(inCrop.width, 0.01) && near(inCrop.y, 0.3) && inWhole == pickedWhole
+      && near(inAround.x, (0.1 + 0.5 * 0.4 - around.x) / around.width) && near(kept.x, 0.5) && near(kept.y, 0.5),
+      "a base picked by hand is drawn where it was picked, in the crop as in the surroundings shown while picking")
     // The grading wheels' figures under them, and the mixer's tracks in each band's colours.
     let red = ColourMixer.track(band: 0, kind: 0), blueSaturation = ColourMixer.track(band: 5, kind: 1)
     try check(ColourGrading.readout(hue: 210, amount: 0.25) == "210° · 25" && ColourGrading.readout(hue: -30, amount: 0.004) == "—"

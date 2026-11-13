@@ -2228,6 +2228,16 @@ final class AppModel: ObservableObject {
     return FlatField.moved(Crosstalk.moved(lit, from: from.0, to: to.0), at: inFile, from: nil, to: to.1)
   }
   static func centre(_ r: NormalRect) -> CGPoint { CGPoint(x: r.x + r.width / 2, y: r.y + r.height / 2) }
+  /// The space `basePicked` is kept in, within the frame's picture: a camera's or imported picture
+  /// whole (as `contextSource` shows it while the base is picked), a scan as cropped.
+  static func basePickSpace(_ f: FilmFrame) -> NormalRect { f.sourcePath != nil ? .full : f.rect }
+  /// `picked` (kept in `basePickSpace`) in the picture as shown, `shown` of the frame's picture.
+  static func basePickShown(_ picked: NormalRect, frame f: FilmFrame, shown: NormalRect) -> NormalRect {
+    picked.mapped(into: basePickSpace(f)).relative(to: shown)
+  }
+  /// The part of the frame's picture the single view shows, which its marks are placed by: its
+  /// surroundings while the crop or the base is edited (`canvasRegion`), else its crop.
+  func shownRegion(_ f: FilmFrame) -> NormalRect { canvasRegion ?? f.rect }
   /// The middle of the frame as cropped, in its picture.
   func cropMiddle(_ f: FilmFrame) -> CGPoint { Self.centre(f.rect) }
   /// Where frame `f`'s base was picked, in its picture: picking shows a camera's or imported
@@ -4225,9 +4235,12 @@ final class AppModel: ObservableObject {
       return
     }
     if tool == .base {
+      // Read in the picture shown (the frame's surroundings while the base is picked), kept as
+      // `basePicked` is read: a scan's was kept in its surroundings and read in its crop.
       let at = singleView
         ? NormalRect(x: pt.x - Double(radius) / Double(r.width), y: pt.y - Double(radius) / Double(r.height),
           width: Double(2 * radius + 1) / Double(r.width), height: Double(2 * radius + 1) / Double(r.height))
+          .mapped(into: shownRegion(frames[i])).relative(to: Self.basePickSpace(frames[i]))
         : nil
       setFilmBase(color, at: at)
     } else if tool == .shadowNeutral {
