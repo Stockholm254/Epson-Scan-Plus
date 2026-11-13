@@ -688,8 +688,11 @@ struct ContentView: View {
   static let barInset = LightTable.glassInset + 6
   var sheetWorkspace: some View {
     let inset = Self.barInset, bar = inset + 44
+    // Cropping, or framing the de-masking region, on the single frame: room kept under the picture
+    // for the tool's hint, so it lies below the box's lower handles rather than over them.
+    let hintRoom: CGFloat = m.singleView && (m.tool == .crop || m.tool == .region) && m.toolHint != nil ? inset + 10 : 0
     return ZStack {
-      ScanCanvas(model: m, reserved: NSEdgeInsets(top: bar, left: 0, bottom: bar, right: 0))
+      ScanCanvas(model: m, reserved: NSEdgeInsets(top: bar, left: 0, bottom: bar + hintRoom, right: 0))
         .frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
       VStack(spacing: 0) {
         WidthFit {
