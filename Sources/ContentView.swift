@@ -1223,7 +1223,10 @@ struct ContentView: View {
               m.levelling = true
             }
             .font(.system(size: 11)).help("沿地平线、墙边或建筑竖线拖一条线，按它拉直（裁切时也可以按住 ⌥ 拖）")
-            Button("归零") { m.straighten(0) }.font(.system(size: 11)).disabled(m.settings.angle == nil)
+            // As an icon, so the row keeps its figure on one line in a narrow inspector.
+            Button { m.straighten(0) } label: { Image(systemName: "arrow.counterclockwise").font(.system(size: 11, weight: .medium)) }
+              .buttonStyle(.plain).foregroundStyle(.secondary).disabled(m.settings.angle == nil)
+              .help("拉直归零（双击下面的滑块也可以）· ⌘Z 撤销").accessibilityLabel("拉直归零")
           }
           Fader(title: "拉直", value: Binding(get: { m.screenAngle }, set: { m.straighten($0) }), range: -45...45, detent: 0)
         }
@@ -1322,7 +1325,10 @@ struct ContentView: View {
               m.levelling = true
             }
             .font(.system(size: 11)).help("沿地平线、墙边或建筑竖线拖一条线，按它拉直（裁切时也可以按住 ⌥ 拖）")
-            Button("归零") { m.straighten(0) }.font(.system(size: 11)).disabled(m.settings.angle == nil)
+            // As an icon, so the row keeps its figure on one line in a narrow inspector.
+            Button { m.straighten(0) } label: { Image(systemName: "arrow.counterclockwise").font(.system(size: 11, weight: .medium)) }
+              .buttonStyle(.plain).foregroundStyle(.secondary).disabled(m.settings.angle == nil)
+              .help("拉直归零（双击下面的滑块也可以）· ⌘Z 撤销").accessibilityLabel("拉直归零")
           }
           Fader(title: "拉直", value: Binding(get: { m.screenAngle }, set: { m.straighten($0) }), range: -45...45, detent: 0)
         }

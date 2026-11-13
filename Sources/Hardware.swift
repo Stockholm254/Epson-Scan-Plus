@@ -603,7 +603,8 @@ struct ValueField: View {
         .onAppear { DispatchQueue.main.async { focused = true } }
         .accessibilityLabel(title)
     } else {
-      Text(text).readout()
+      // A figure on one line always: squeezed, 「+1.50°」 broke before its degree sign.
+      Text(text).readout().lineLimit(1).fixedSize(horizontal: true, vertical: false)
         .padding(.horizontal, 3).contentShape(Rectangle())
         .onTapGesture {
           guard enabled else { return }
