@@ -135,6 +135,9 @@ struct EpsonScanPlusApp: App {
           .keyboardShortcut("r", modifiers: [.command, .shift]).disabled(model.frames.isEmpty || !model.onRollModule)
         Button("水平镜像") { model.singleView ? model.toggleMirror() : model.mirrorRoll() }
           .disabled(model.frames.isEmpty || !model.onRollModule)
+        // As the 「自动」 under the straightening, in ② and ③: the frame shown, or each of those chosen.
+        Button("自动拉直") { model.autoStraighten() }
+          .disabled(model.selected == nil || model.page != .convert || model.isWorking)
         // The wand by the title: ③'s, the grading it sets is shown only there (② shows each frame
         // with its grading new).
         Button("自动调整") { model.autoAdjust() }.keyboardShortcut("a", modifiers: [.command, .shift])
