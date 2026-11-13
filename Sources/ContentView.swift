@@ -321,10 +321,12 @@ struct ContentView: View {
   /// The scanner's front-panel lamp with a short LCD status; the full status is in the tooltip.
   var scannerLamp: some View {
     let state = lampState
+    // Inset on its glass, so the toolbar gives it a capsule: as it was, a round key's, the lamp
+    // stood on the rim and 「绪」 touched the other side.
     return HStack(spacing: 5) {
       StatusLED(lamp: state.lamp, size: 8)
-      Text(state.text).lineLimit(1)
-    }.readout(10).help(m.scanner.status)
+      Text(state.text).lineLimit(1).fixedSize()
+    }.padding(.horizontal, 6).readout(10).help(m.scanner.status)
       .accessibilityElement(children: .combine).accessibilityLabel("扫描仪状态")
       .accessibilityValue(state.text)
   }

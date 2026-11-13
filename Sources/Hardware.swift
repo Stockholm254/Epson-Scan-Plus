@@ -460,9 +460,15 @@ final class GradientSliderCell: NSSliderCell {
     NSGraphicsContext.saveGraphicsState()
     if !isEnabled { NSGraphicsContext.current?.cgContext.setAlpha(0.4) }
     gradient.draw(in: path, angle: 0)
+    // In the light appearance a little darker all along: the white ends (白色, 高光, 曝光) were lost
+    // in the light panel, and the white knob on them.
+    let dark = controlView?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    if !dark {
+      NSColor(white: 0, alpha: 0.1).setFill()
+      path.fill()
+    }
     // An edge, so that the ends near the panel's own colour still show where the track is: the
     // system's separator was too faint for the dark tracks (阴影, 黑色, 阴影冷暖) on the dark panel.
-    let dark = controlView?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
     (dark ? NSColor(white: 1, alpha: 0.26) : NSColor(white: 0, alpha: 0.18)).setStroke()
     path.lineWidth = 0.5
     path.stroke()
