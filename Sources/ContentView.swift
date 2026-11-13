@@ -1214,6 +1214,10 @@ struct ContentView: View {
             ValueField(title: "拉直", text: sliderText("%+.2f°", m.screenAngle), value: m.screenAngle, range: -45...45) {
               m.straighten($0)
             }
+            // Lightroom's 自动 under its straightening: the horizon found, on this Mac, and levelled.
+            Button("自动") { m.autoStraighten() }
+              .font(.system(size: 11)).disabled(m.selected == nil || m.isWorking)
+              .help("自动拉直：在画面里找地平线，按它放平，只在本机计算；画面里没有地平线时不改动，可以用「画线」· ⌘Z 撤销")
             Button("画线") {
               m.useTool(.crop)
               m.levelling = true
@@ -1271,6 +1275,12 @@ struct ContentView: View {
       info: "像 Lightroom 修改照片里的裁切（R）：按这里或画面上方工具条里的「裁切」，或按 R，画面在它自己的范围里转着显示，琥珀色的框保持正的。拖四角和边改大小，框里拖动移动，框外拖动旋转画面，框始终留在画面上，转出的空角不会进来；按住 ⇧ 拖角保持现在的比例，⌥ 拖一条线按它拉直，X 横竖互换，O 换叠加线（三分、网格、黄金分割、对角线），方向键移动一点，回车或再按 R 完成。\n\n这里只管构图：在 ② 定的画面范围里裁，去色罩的片基、白平衡和色阶照旧读 ② 的范围，裁切、旋转都不会让颜色变。要把片边或更大的扫描范围放进来，在 ② 的「画面范围」里改。拉直和 ② 的是同一个角度，最多 ±45°。「还原」回到整幅画面、不拉直。",
       forced: composing
     ) {
+      // Folded, what was done shows in its title row: the first to give way where it is narrow, so
+      // the section's name stays whole (with a ⟲ beside it too, the name was cut to 「裁切…」).
+      if !composing, let summary = compositionSummary {
+        Text(summary).font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
+          .layoutPriority(-1).help("这张" + summary + "；「还原」回到整幅画面、不拉直")
+      }
       Button {
         m.useTool(m.tool == .crop ? .select : .crop)
       } label: {
@@ -1303,6 +1313,10 @@ struct ContentView: View {
             ValueField(title: "拉直", text: sliderText("%+.2f°", m.screenAngle), value: m.screenAngle, range: -45...45) {
               m.straighten($0)
             }
+            // Lightroom's 自动 under its straightening: the horizon found, on this Mac, and levelled.
+            Button("自动") { m.autoStraighten() }
+              .font(.system(size: 11)).disabled(m.selected == nil || m.isWorking)
+              .help("自动拉直：在画面里找地平线，按它放平，只在本机计算；画面里没有地平线时不改动，可以用「画线」· ⌘Z 撤销")
             Button("画线") {
               m.useTool(.crop)
               m.levelling = true
@@ -1327,6 +1341,16 @@ struct ContentView: View {
             .font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
         }
       }
+    }
+  }
+  /// The frame's ③ crop and straightening in a few characters, for the section's title row.
+  var compositionSummary: String? {
+    let turned = abs(m.settings.angle ?? 0) > 0.0001 ? String(format: "%+.1f°", m.screenAngle) : nil
+    switch (m.settings.composition != nil, turned) {
+    case (true, let t?): return "已裁切 " + t
+    case (true, nil): return "已裁切"
+    case (false, let t?): return t
+    default: return nil
     }
   }
   var cropKey: some View {

@@ -291,6 +291,28 @@ enum StepTests {
       "③'s crop ends on the light table, and with no frame chosen its key does nothing")
     model.selectedID = chosen
     model.useTool(.crop)
+    // 自动拉直: a sea under a sky drawn, its horizon falling 5° to the right (turned clockwise on the
+    // screen), is levelled by a turn of 5° the other way.
+    do {
+      let (w, h) = (1200, 800)
+      if let g = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+      {
+        g.setFillColor(CGColor(red: 0.55, green: 0.7, blue: 0.9, alpha: 1))
+        g.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        let t = tan(5 * Double.pi / 180) * Double(w) / 2
+        g.setFillColor(CGColor(red: 0.1, green: 0.2, blue: 0.35, alpha: 1))
+        g.move(to: .zero)
+        g.addLine(to: CGPoint(x: 0, y: Double(h) / 2 + t))
+        g.addLine(to: CGPoint(x: Double(w), y: Double(h) / 2 - t))
+        g.addLine(to: CGPoint(x: Double(w), y: 0))
+        g.closePath()
+        g.fillPath()
+        let turn = g.makeImage().flatMap(AutoStraighten.degrees)
+        try check(turn.map { abs($0 + 5) < 0.5 } == true,
+          "自动拉直 levels a horizon falling 5° to the right by turning it 5° back: \(turn.map { String(format: "%+.2f°", $0) } ?? "none found")")
+      }
+    }
     // ②'s crop is the frame's extent on the film, as before.
     model.convertStep = .demask
     try check(model.tool == .select, "and a step's tool is put down when the window leaves it")
