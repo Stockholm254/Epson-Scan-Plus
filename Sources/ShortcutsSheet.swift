@@ -44,7 +44,8 @@ enum Shortcuts {
     ]),
     Group(title: "画面上的工具", keys: [
       Key(keys: cap(.select), does: "选择"),
-      Key(keys: cap(.crop), does: "画面裁切（琥珀色）"),
+      Key(keys: cap(.crop), does: "画面裁切（琥珀色）：② 里裁胶片上的画面范围，③ 里同 R"),
+      Key(keys: "R", does: "③ 裁切与拉直，像 Lightroom：颜色不变"),
       Key(keys: cap(.region), does: "去色罩区域（青色）"),
       Key(keys: cap(.base), does: "取片基"),
       Key(keys: cap(.neutral), does: "取中性灰"),
@@ -54,6 +55,10 @@ enum Shortcuts {
     Group(title: "裁切时", keys: [
       Key(keys: "方向键 · ⇧", does: "移动裁切 1 像素 · 10 像素"),
       Key(keys: "[ ] · ⇧", does: "拉直 0.1° · 1°"),
+      Key(keys: "框外拖动", does: "③ 里旋转画面，框保持正的、留在画面上"),
+      Key(keys: "⌥ 拖", does: "沿地平线画一条线拉直"),
+      Key(keys: "⇧ 拖角", does: "③ 里保持现在的比例"),
+      Key(keys: "X · O", does: "③ 里横竖互换 · 换叠加线"),
       Key(keys: "回车", does: "完成裁切或去色罩区域"),
     ]),
     Group(title: "调整和导出", keys: [

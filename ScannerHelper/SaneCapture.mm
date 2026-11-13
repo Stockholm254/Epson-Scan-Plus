@@ -157,7 +157,7 @@ static void writeTIFF(NSString *output, const std::vector<uint8_t>& data, const 
   CGImageDestinationAddImage(dest, image, (__bridge CFDictionaryRef)properties);
   bool success = CGImageDestinationFinalize(dest);
   CFRelease(dest); CGImageRelease(image);
-  if (!success || stopping()) { unlink(temp.fileSystemRepresentation); throw std::runtime_error(stopping() ? stopMessage() : "TIFF write failed"); }
+  if (!success || timedOut) { unlink(temp.fileSystemRepresentation); throw std::runtime_error(timedOut ? stopMessage() : "TIFF write failed"); }
   // Same-directory link is atomic and fails if another writer created the final name.
   if (link(temp.fileSystemRepresentation, output.fileSystemRepresentation)) {
     unlink(temp.fileSystemRepresentation); throw std::runtime_error("Cannot publish TIFF without overwriting");
@@ -292,7 +292,8 @@ int main(int argc, char **argv) {
       bool cancellationReported = false, timeoutReported = false;
       while (true) {
         if (cancelled && !cancellationReported) {
-          emit(@{@"event":@"cancelling", @"message":@"等待当前扫描完成归位，不保存本张、不再扫描下一张"});
+          // The head reads this frame to its end either way: it is kept, and nothing after it scanned.
+          emit(@{@"event":@"cancelling", @"message":@"扫完这一张并保存，不再扫描下一张"});
           cancellationReported = true;
         }
         if (timedOut && !timeoutReported) {
@@ -301,16 +302,18 @@ int main(int argc, char **argv) {
         }
         SANE_Int n = 0; SANE_Status status = s.sane_read(s.handle, buffer.data(), (SANE_Int)buffer.size(), &n);
         require(n >= 0 && count + n <= bytes, "Scan buffer overflow");
-        if (!stopping()) memcpy(data.data() + count, buffer.data(), n);
+        // A user cancel still keeps the frame being read (the head drains it anyway); a scanner
+        // gone silent does not, its data stopped short.
+        if (!timedOut) memcpy(data.data() + count, buffer.data(), n);
         if (n && !timedOut) alarm(stallSeconds);
         count += n;
         if (n) emit(@{@"event":@"progress", @"value":@(0.98 * count / bytes)});
-        if (n && !stopping()) partial.show(data, p, count, status == SANE_STATUS_EOF);
+        if (n && !timedOut) partial.show(data, p, count, status == SANE_STATUS_EOF);
         // The transfer is complete; writing the TIFF must not count as a stalled scanner.
         if (status == SANE_STATUS_EOF) { s.scanning = false; alarm(0); break; }
         s.check(status, "read scan data");
       }
-      require(!stopping() && count == bytes && !s.scanning, stopping() ? stopMessage() : "Incomplete scan data");
+      require(!timedOut && count == bytes && !s.scanning, timedOut ? stopMessage() : "Incomplete scan data");
       writeTIFF(output, data, p, dpi);
       emit(@{@"event":@"file", @"path":output, @"bits":@16, @"width":@(p.pixels_per_line), @"height":@(p.lines), @"dpi":@(dpi),
         @"xMM":@(scanX), @"yMM":@(scanY), @"widthMM":@(p.pixels_per_line / pixelsPerMM), @"heightMM":@(p.lines / pixelsPerMM)});

@@ -123,7 +123,9 @@ enum Kernels {
       if (d < 0.00001) { return p; }
       float h = mx == c.r ? fmod((c.g - c.b) / d + 6.0, 6.0) : (mx == c.g ? (c.b - c.r) / d + 2.0 : (c.r - c.g) / d + 4.0);
       h /= 6.0;
-      float4 m = table.sample(table.transform(float2(h * 360.0, 0.5)));
+      // A degree a step at the entries' middles; the 361st is the first again, so a red either
+      // side of 0° reads its band in full (until 0.22.4 half of it near 0°).
+      float4 m = table.sample(table.transform(float2(h * 360.0 + 0.5, 0.5)));
       float s = d / max(mx, 0.00001), w = smoothstep(0.0, 0.25, s);
       float h2 = fract(h + m.r * w + 1.0) * 6.0;
       float s2 = clamp(s * (1.0 + m.g * w), 0.0, 1.0);
@@ -148,7 +150,10 @@ enum Kernels {
       float pivot = 0.5 + 0.25 * shape.x, width = 0.1 + 0.4 * clamp(shape.y, 0.0, 1.0);
       float ws = 1.0 - smoothstep(pivot - width, pivot, l), wh = smoothstep(pivot, pivot + width, l);
       float wm = max(0.0, 1.0 - ws - wh);
-      float3 q = p.rgb + shadows.xyz * ws + midtones.xyz * wm + highlights.xyz * wh;
+      // Black stays a neutral black, as 冷暖 and 阴影冷暖 leave it: the tints fade in over the
+      // darkest tenth (until 0.22.4 the shadows' wheel made black red, blue or green).
+      float black = smoothstep(0.0, 0.1, l);
+      float3 q = p.rgb + (shadows.xyz * ws + midtones.xyz * wm) * black + highlights.xyz * wh;
       q += float3(dot(p.rgb - q, luma));
       return float4(q, p.a);
     }

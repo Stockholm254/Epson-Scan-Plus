@@ -174,6 +174,33 @@ enum OriginalViewTests {
     let converted = model.displayed.map { pipe.raster($0) }?.pixel(5, 5)
     try check(model.exposureReading == nil && !model.showsNegative && converted.map { abs($0.r - srgb(0.5)) > 0.1 || abs($0.b - srgb(0.14)) > 0.1 } == true,
       "module ② shows its conversion, the exposure left to ①")
+    // ② shows the frame de-masked only, zoomed in and under the loupe too: ③'s grading is left out
+    // of the detail as of the picture around it (until 0.22.4, zoomed in in ② it showed graded).
+    model.convertStep = .demask
+    model.change("曝光") { $0.exposure = 1 }
+    settle { !model.rendering }
+    func shownZoom() -> RGB? {
+      guard let frame = model.selected else { return nil }
+      var detail: AppModel.Detail?, answered = false
+      model.renderDetail(frame, region: NormalRect(x: 0, y: 0, width: 0.2, height: 0.2)) { detail = $0; answered = true }
+      settle { answered }
+      return detail.map { pipe.raster($0.image) }?.pixel(2, 2)
+    }
+    func shownLoupe() -> RGB? {
+      guard let frame = model.selected else { return nil }
+      var detail: CGImage?
+      model.loupeDetail(for: frame, single: true) { detail = $0 }
+      settle { detail != nil }
+      return detail.map { pipe.raster($0) }?.pixel(5, 5)
+    }
+    let demaskShown = model.displayed.map { pipe.raster($0) }?.pixel(5, 5), demaskZoom = shownZoom(), demaskLoupe = shownLoupe()
+    model.convertStep = .grade
+    settle { !model.rendering }
+    let gradeShown = model.displayed.map { pipe.raster($0) }?.pixel(5, 5), gradeZoom = shownZoom(), gradeLoupe = shownLoupe()
+    func near(_ a: RGB?, _ b: RGB?) -> Bool { a.flatMap { a in b.map { b in zip(a.values, b.values).allSatisfy { abs($0 - $1) < 0.03 } } } ?? false }
+    try check(near(demaskZoom, demaskShown) && near(demaskLoupe, demaskShown) && near(gradeZoom, gradeShown) && near(gradeLoupe, gradeShown)
+      && (gradeShown?.g ?? 0) > (demaskShown?.g ?? 1) + 0.05,
+      "zoomed in and under the loupe, ② shows the frame de-masked as its picture (\(rgbText(demaskShown)) · zoomed \(rgbText(demaskZoom)) · loupe \(rgbText(demaskLoupe))), ③ graded (+1 EV: \(rgbText(gradeShown)) · zoomed \(rgbText(gradeZoom)) · loupe \(rgbText(gradeLoupe)))")
   }
 }
 

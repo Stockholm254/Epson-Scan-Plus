@@ -7,7 +7,7 @@ final class SaneScannerController: ScannerController {
   override var backendID: String { "epson2-linear-v1" }
   override var captureInputGamma: Double? { 1 }
   override var actualScanAreaMM: CGRect? { lastArea }
-  override var cancellationHint: String? { cancelled && busy ? "等待当前扫描结束后停止" : nil }
+  override var cancellationHint: String? { cancelled && busy ? "扫完这一张并保存，然后停止" : nil }
   override var finishesScanBeforeQuit: Bool { true }
   private var lastArea: CGRect?
   private var previewingDPI = 150
@@ -175,7 +175,10 @@ final class SaneScannerController: ScannerController {
         guard let self, self.job == id else { return }
         self.process = nil; self.busy = false; self.previewSoFar = nil
         guard !self.closing else { return }
-        if self.cancelled {
+        // Cancelled while a frame was read: the helper read it to its end and kept it, whole; it
+        // is taken in, and the batch stops after it (until 0.22.4 it was thrown away).
+        let keptAfterCancel = self.cancelled && !preview && output != nil && p.terminationStatus == 0 && returnedError == nil
+        if self.cancelled && !keptAfterCancel {
           self.status = "扫描已取消"
           if output != nil && !preview { self.onFinished?(DeskError.message(self.status)) }
           return
@@ -210,7 +213,7 @@ final class SaneScannerController: ScannerController {
           self.status = "48-bit 预览完成"
           self.onOverview?(image, self.lastArea!.size, Double(self.previewingDPI))
         } else if let output {
-          self.status = "48-bit 扫描完成"; self.record(output.lastPathComponent)
+          self.status = keptAfterCancel ? "已取消 · 这一张已扫完保存" : "48-bit 扫描完成"; self.record(output.lastPathComponent)
           self.onScan?(output); self.onFinished?(nil)
         } else { self.status = "透扫就绪 · 48-bit RGB · epson2" }
       }
@@ -218,7 +221,7 @@ final class SaneScannerController: ScannerController {
   }
   override func cancel() {
     guard busy else { return }
-    cancelled = true; status = "正在取消：等待当前扫描完成归位，不再扫描下一张…"
+    cancelled = true; status = "正在取消：扫完这一张并保存，不再扫描下一张…"
     if process?.isRunning == true { process?.interrupt() }
   }
   override func close() {

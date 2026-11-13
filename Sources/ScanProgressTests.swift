@@ -88,7 +88,7 @@ enum ScanProgressTests {
     scanner.progress = 0.42
     try check(
       model.scanBatch.total == 2 && model.scanBatch.current == 1
-        && scanner.requests.count == 1 && model.scanProgressLabel == "第 1 / 2 张 · 本张 42%"
+        && scanner.requests.count == 1 && model.scanProgressLabel.hasPrefix("第 1 / 2 张 · 本张 42% · ")
         && abs(model.scanProgressFraction - 0.21) < 0.00001,
       "scan queue freezes actual target count, excluding imported and unchecked images")
 
@@ -138,7 +138,7 @@ enum ScanProgressTests {
     waitForQueue()
     try check(
       model.scanBatch.current == 2 && model.scanBatch.completed == 1
-        && model.scanProgressLabel == "第 2 / 2 张 · 本张 0%",
+        && model.scanProgressLabel.hasPrefix("第 2 / 2 张 · 本张 定位、校准…"),
       "the next actual scan advances the numerator and resets current frame progress")
     scanner.complete(file: original)
     try check(

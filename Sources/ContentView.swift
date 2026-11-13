@@ -308,7 +308,7 @@ struct ContentView: View {
       .accessibilityLabel(m.scanBatch.isActive ? "整批扫描进度" : "预览进度")
       .accessibilityValue(m.scanBatch.isActive ? m.scanProgressLabel : m.scanner.status)
     }
-      .help((hint.map { $0 + "\n" } ?? "") + "整批进度按张数计算，包含当前这张的扫描进度；不是剩余时间估算")
+      .help((hint.map { $0 + "\n" } ?? "") + "整批进度按张数计算，包含当前这张的扫描进度。剩余时间开始按计划估计（本机实测的速度），扫过一部分以后按目前的速度。每张开头扫描头先定位、校准，要十几秒")
   }
   /// The scanner's front-panel lamp with a short LCD status; the full status is in the tooltip.
   var scannerLamp: some View {
@@ -756,6 +756,7 @@ struct ContentView: View {
             // order the user put them, else white balance, tone, levels, colour, curves and
             // sharpening (a scan's by the scanner's measured MTF, a copy's by its camera's).
             leakRepairSection
+            compositionSection
             ArrangedColumn(.grade, shown: SectionColumn.grade.defaults) { key in
               switch key {
               case "balance": balanceSection
@@ -1107,7 +1108,7 @@ struct ContentView: View {
   /// The film base: where it was read in a line, picking it or going back to the automatic one,
   /// and the fine adjustment folded under it.
   var baseSection: some View {
-    PanelSection("片基", key: "base", info: "「取片基」只点未曝光的橙色片基（片间或片边），不点景物或片夹；「自动」：扫描的卷按整卷片间的未曝光区；翻拍和一张一个文件导入的照片，按这一张片边的未曝光片基（片边看不到时用最近一张看得到的），都没有时按本张最薄处估计。打开「标出」在单张上看取的是哪里。片边也不准时，在片头或片边取一次片基，点「整卷共用这个片基」，整卷都用它。\n\n微调按 EV 逐通道改变片基，不会被自动白平衡抵消。") {
+    PanelSection("片基", key: "base", info: "「取片基」只点未曝光的橙色片基（片间或片边），不点景物或片夹；「自动」：扫描的卷按整卷片间的未曝光区；翻拍和一张一个文件导入的照片，按这一张片边的未曝光片基（片边看不到时用最近一张看得到的），都没有时按本张最薄处估计。打开「标出」在单张上看取的是哪里。片边也不准时，在片头或片边取一次片基，点「整卷共用这个片基」，整卷都用它。取片基不改白平衡：自动的照旧自动，取过的中性灰留着。") {
       HStack(spacing: 6) {
         Button {
           m.useTool(.base)
@@ -1200,7 +1201,7 @@ struct ContentView: View {
           HStack {
             Text("拉直").font(.system(size: 12)).foregroundStyle(.secondary)
             Spacer()
-            ValueField(title: "拉直", text: sliderText("%+.2f°", m.screenAngle), value: m.screenAngle, range: -15...15) {
+            ValueField(title: "拉直", text: sliderText("%+.2f°", m.screenAngle), value: m.screenAngle, range: -45...45) {
               m.straighten($0)
             }
             Button("画线") {
@@ -1210,7 +1211,7 @@ struct ContentView: View {
             .font(.system(size: 11)).help("沿地平线、墙边或建筑竖线拖一条线，按它拉直（裁切时也可以按住 ⌥ 拖）")
             Button("归零") { m.straighten(0) }.font(.system(size: 11)).disabled(m.settings.angle == nil)
           }
-          Fader(title: "拉直", value: Binding(get: { m.screenAngle }, set: { m.straighten($0) }), range: -15...15, detent: 0)
+          Fader(title: "拉直", value: Binding(get: { m.screenAngle }, set: { m.straighten($0) }), range: -45...45, detent: 0)
         }
         if m.tool == .crop, let crop = m.canvasCrop {
           ForEach(0..<4, id: \.self) { edge in cropStepper(edge, crop: crop) }
@@ -1252,6 +1253,72 @@ struct ContentView: View {
     }
   }
   /// The crop tool, as on the bar over the picture: latched while cropping, pressed again to finish.
+  /// ③'s crop and straightening, as Lightroom's crop overlay in Develop (R): the picture cropped
+  /// and turned inside the frame ② cut, the de-masking left reading ②'s, so the colours stay.
+  var compositionSection: some View {
+    let composing = m.composing
+    return PanelSection("裁切与拉直", key: "composition", open: false,
+      info: "像 Lightroom 修改照片里的裁切（R）：按「裁切」或 R 后，画面在它自己的范围里转着显示，琥珀色的框保持正的。拖四角和边改大小，框里拖动移动，框外拖动旋转画面，框始终留在画面上，转出的空角不会进来；按住 ⇧ 拖角保持现在的比例，⌥ 拖一条线按它拉直，X 横竖互换，O 换叠加线（三分、网格、黄金分割、对角线），方向键移动一点，回车或再按 R 完成。\n\n这里只管构图：在 ② 定的画面范围里裁，去色罩的片基、白平衡和色阶照旧读 ② 的范围，裁切、旋转都不会让颜色变。要把片边或更大的扫描范围放进来，在 ② 的「画面范围」里改。拉直和 ② 的是同一个角度，最多 ±45°。「还原」回到整幅画面、不拉直。",
+      forced: composing
+    ) {
+      Button {
+        m.useTool(m.tool == .crop ? .select : .crop)
+      } label: {
+        Label {
+          Text(composing ? "完成" : "裁切")
+        } icon: {
+          Image(systemName: CanvasTool.crop.symbol).foregroundStyle(CanvasTool.crop.colour.map { Color(red: $0.red, green: $0.green, blue: $0.blue) } ?? .primary)
+        }.lineLimit(1).fixedSize()
+      }
+      .buttonStyle(KeyStyle(latched: composing)).font(.system(size: 11)).disabled(m.selected == nil)
+      .help(composing ? "完成裁切 · R 或回车" : "裁切和旋转画面，颜色不变 · R")
+    } content: {
+      VStack(alignment: .leading, spacing: 8) {
+        HStack {
+          Text("比例").font(.system(size: 12)).foregroundStyle(.secondary)
+          Spacer()
+          Picker("", selection: Binding(get: { m.cropRatio }, set: { m.setCropRatio($0) })) {
+            ForEach(AppModel.CropRatio.allCases) { r in
+              Text(r == .twoThree ? "2:3（135）" : r == .square ? "1:1（6×6）" : r == .sixSeven ? "6:7（6×7）" : r == .threeFour ? "3:4（6×4.5）" : r.rawValue).tag(r)
+            }
+          }.labelsHidden().fixedSize()
+            .help("裁切的长宽比：选了以后框马上变成这个比例（在现在的框里取最大的一块，居中），拖角、拖边都保持它。自由不限，拖角时按住 ⇧ 保持现在的比例")
+          Button("横竖互换") { m.swapCompositionOrientation() }.font(.system(size: 11)).disabled(m.selected == nil)
+            .help("框的长边和短边互换，绕中心，放不下时缩小 · X")
+        }
+        VStack(spacing: 3) {
+          HStack {
+            Text("拉直").font(.system(size: 12)).foregroundStyle(.secondary)
+            Spacer()
+            ValueField(title: "拉直", text: sliderText("%+.2f°", m.screenAngle), value: m.screenAngle, range: -45...45) {
+              m.straighten($0)
+            }
+            Button("画线") {
+              m.useTool(.crop)
+              m.levelling = true
+            }
+            .font(.system(size: 11)).help("沿地平线、墙边或建筑竖线拖一条线，按它拉直（裁切时也可以按住 ⌥ 拖）")
+            Button("归零") { m.straighten(0) }.font(.system(size: 11)).disabled(m.settings.angle == nil)
+          }
+          Fader(title: "拉直", value: Binding(get: { m.screenAngle }, set: { m.straighten($0) }), range: -45...45, detent: 0)
+        }
+        HStack {
+          Text("叠加").font(.system(size: 12)).foregroundStyle(.secondary)
+          Spacer()
+          Picker("", selection: $m.cropOverlay) {
+            ForEach(AppModel.CropOverlay.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+          }.labelsHidden().fixedSize().help("裁切时框里画的线 · O 换下一种")
+          Button("还原") { m.resetComposition() }.font(.system(size: 11))
+            .disabled(m.settings.composition == nil && m.settings.angle == nil)
+            .help("回到整幅画面，不拉直 · ⌘Z 撤销")
+        }
+        if let f = m.selected, let px = m.exportPixels(f) {
+          Text(String(format: "导出 %.0f × %.0f 像素", px.width, px.height) + (m.settings.composition == nil ? "" : " · 已裁切"))
+            .font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
+        }
+      }
+    }
+  }
   var cropKey: some View {
     Button {
       m.useTool(m.tool == .crop ? .select : .crop)
@@ -1265,34 +1332,34 @@ struct ContentView: View {
     .buttonStyle(KeyStyle(latched: m.tool == .crop)).font(.system(size: 11)).disabled(m.selected == nil)
     .help(m.tool == .crop ? "结束裁切 · C" : "在画面上裁切：拖动边和角，边栏里可以逐边微调 · C")
   }
-  /// Whether the frame's white balance is the calibrated preset's neutral whatever 「自动」 says
-  /// (`ImagePipeline.analyze`): a negative converted with a preset that has one.
-  var balancesByCalibration: Bool { m.conversionProfile.offsets != nil && m.settings.inputIsNegative && !m.settings.isSlide }
+  /// Whether the frame's white balance is the calibrated preset's neutral (`AppModel.balancesByCalibration`).
+  var balancesByCalibration: Bool { m.balancesByCalibration }
   /// White balance: automatic or by hand, the roll as one, and the points picked on the frame.
   var balanceSection: some View {
-    PanelSection("白平衡", key: "balance", info: "自动白平衡按画面估计，忽略外缘 5%（不改变导出范围），裁切里带着片边（片基、齿孔、边字）时只看片边以内；在「画面范围」里框选了去色罩区域时，只按青色框里估计。用本机或翻拍标定的预设时不按画面估计，按标定时记下的中性配平，开不开「自动」都一样；这个中性是在标定时的光下定的（比如阳光），阴天、树荫、室内的照片会带上光的颜色，用「中性灰」或冷暖、绿 / 洋红调。\n\n「阴影冷暖」「阴影色调」只动暗部（亮度 0.2 最多，0.55 以上和纯黑不动），阳光下的灰不变：晴天的阴影由蓝天照亮，本来就偏蓝，阴影冷暖往右拨把它暖回来；远处的雾气、只有蓝层曝了光的阴影常常蓝里带紫，再把阴影色调往左（绿）拨；它只去掉相反的偏色，往绿只动偏紫的暗处，草和中性的沙不变。「阴影中性」用滴管点阴影里应为灰色的地方（背光的水泥、路面、石头），两个一起按它设定，之后还能拖滑块微调；点在树林这类本身有颜色的东西上会把它也变成灰。\n\n「中性灰」用滴管点画面中应为灰色的地方，按这一点自动白平衡（「自动」保持开着）；滴管也在画面上方的工具条里（N）。取过点以后旁边出现「清除取样」：放弃取样点，打开「自动」，按画面估计，标定预设回到标定的中性；冷暖、绿 / 洋红和片基不动。\n\n反转片：片子本来的颜色就是画面，默认不自动白平衡，透过片子最亮处的光就是白。打开「自动」时每个通道各自从最暗拉到最亮，适合褪色、偏色的片子。「中性灰」把那一点配成灰。「清除取样」放弃取样点，回到片子本来的颜色。", reset: resetKey(.balance)) {
-      Toggle(
-        "自动",
-        isOn: Binding(
-          get: { m.settings.autoWhiteBalance },
-          set: { v in
-            m.change("自动白平衡") {
-              $0.autoWhiteBalance = v
-              $0.neutralSample = nil
-              $0.neutralPicked = nil
-            }
-          })
-      ).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
-        // A calibrated preset balances by its own neutral, on or off: nothing for the switch to do.
-        .disabled(balancesByCalibration)
-        .help(balancesByCalibration ? "用标定预设时按标定记下的中性配平，开不开「自动」都一样；要改用「中性灰」或冷暖、绿 / 洋红" : "按画面自动白平衡")
+    PanelSection("白平衡", key: "balance", info: "自动白平衡按画面估计，忽略外缘 5%（不改变导出范围），裁切里带着片边（片基、齿孔、边字）时只看片边以内；在「画面范围」里框选了去色罩区域时，只按青色框里估计。用本机或翻拍标定的预设时不按画面估计，按标定时记下的中性配平；这个中性是在标定时的光下定的（比如阳光），阴天、树荫、室内的照片会带上光的颜色，用「中性灰」或冷暖、绿 / 洋红调。\n\n「阴影冷暖」「阴影色调」只动暗部（亮度 0.2 最多，0.55 以上和纯黑不动），阳光下的灰不变：晴天的阴影由蓝天照亮，本来就偏蓝，阴影冷暖往右拨把它暖回来；远处的雾气、只有蓝层曝了光的阴影常常蓝里带紫，再把阴影色调往左（绿）拨；它只去掉相反的偏色，往绿只动偏紫的暗处，草和中性的沙不变。「阴影中性」用滴管点阴影里应为灰色的地方（背光的水泥、路面、石头），两个一起按它设定，之后还能拖滑块微调；点在树林这类本身有颜色的东西上会把它也变成灰。\n\n右上角的选单和 Lightroom 的白平衡一样：「原片」是胶片转换本来的样子，不按画面配平（负片只除片基，用标定预设时是标定的中性，反转片是片子本来的颜色）；「自动」按画面估计；取中性灰、拖冷暖或绿 / 洋红就是「自定义」。选原片或自动时，放弃取的中性灰，冷暖、绿 / 洋红归零，阴影冷暖、阴影色调和片基不动；⌘Z 撤销。\n\n「中性灰」用滴管点画面中应为灰色的地方，按这一点白平衡（变成自定义）；滴管也在画面上方的工具条里（N）。取过点以后旁边出现「清除取样」：放弃取样点，回到按画面估计，标定预设回到标定的中性；冷暖、绿 / 洋红和片基不动。\n\n反转片：片子本来的颜色就是画面，默认不自动白平衡，透过片子最亮处的光就是白。选「自动」时每个通道各自从最暗拉到最亮，适合褪色、偏色的片子；选「原片」回到片子本来的颜色。「中性灰」把那一点配成灰。「清除取样」放弃取样点，回到片子本来的颜色。", reset: resetKey(.balance)) {
+      // As Lightroom's 白平衡 menu: 原片, 自动, 自定义; a grey picked or 冷暖 / 绿洋红 moved shows
+      // 自定义, and 原片 or 自动 chosen sets them back to 0.
+      // A narrow menu, as Lightroom's 「白平衡：原片 ▾」, so the section's name keeps its room.
+      Menu {
+        Button(m.balancesByCalibration ? "原片（标定的中性）" : "原片") { m.setBalanceMode(.asShot) }
+        if !m.balancesByCalibration { Button("自动") { m.setBalanceMode(.auto) } }
+        Button("自定义") { m.setBalanceMode(.custom) }
+      } label: {
+        Text(m.balanceMode == .asShot && m.balancesByCalibration ? "标定" : m.balanceMode.rawValue).font(.system(size: 11))
+      }
+      .menuStyle(.borderlessButton).fixedSize().disabled(m.selected == nil)
+      .help(m.balancesByCalibration
+        ? "原片：按标定预设记下的中性配平，放弃取的中性灰，冷暖、绿 / 洋红归零。自定义：取中性灰，或拖冷暖、绿 / 洋红。⌘Z 撤销"
+        : m.settings.isSlide
+          ? "原片：片子本来的颜色。自动：每个通道各自从最暗拉到最亮，适合褪色、偏色的片子。自定义：取中性灰，或拖冷暖、绿 / 洋红。选原片或自动时冷暖、绿 / 洋红归零。⌘Z 撤销"
+          : "原片：只除片基，不按画面配平。自动：按画面估计（对齐各通道的黑）。自定义：取中性灰，或拖冷暖、绿 / 洋红。选原片或自动时放弃取的中性灰，冷暖、绿 / 洋红归零；阴影冷暖、阴影色调不动。⌘Z 撤销")
     } content: {
       VStack(alignment: .leading, spacing: 10) {
         // A picture that is a file each has no roll to share with, and a calibrated preset balances
         // every frame by its one neutral already: shown then only to turn it off.
         if !m.settings.isSlide && ((m.selectedSharesRoll && !balancesByCalibration) || m.settings.sharedBalance == true) {
         SwitchRow("整卷同一白平衡", isOn: Binding(get: { m.settings.sharedBalance == true }, set: { m.setSharedBalance($0) }),
-          info: "像冲印店印一卷那样，整卷用同一个配光：白平衡按整卷所有画面一起统计，卷里每张的颜色一致，不再各自按自己的暗部去配平（比如阴影里的天光不会把一张整体拉偏）。每张的明暗照旧。\n\n只替换交给软件的部分：哪一张取了中性灰，或关了自动白平衡，那一张按你的来。用标定预设时，白平衡本来就按标定的中性，整卷一致。",
+          info: "像冲印店印一卷那样，整卷用同一个配光：白平衡按整卷所有画面一起统计，卷里每张的颜色一致，不再各自按自己的暗部去配平（比如阴影里的天光不会把一张整体拉偏）。每张的明暗照旧。\n\n只替换交给软件的部分：哪一张取了中性灰，那一张按你的来。用标定预设时，白平衡本来就按标定的中性，整卷一致。",
           off: m.selected == nil || m.isWorking)
         }
         slider("冷暖", key: \.warmth, range: -1...1)
@@ -1647,6 +1714,16 @@ struct ContentView: View {
                 }
                 // Lightroom's marks: the colour label, the stars, the flag.
                 .overlay(alignment: .bottomLeading) { FrameMarks(frame: f).padding(3) }
+                // A scanner roll's frame with only its preview so far: which are left to scan, at a
+                // glance, after a batch that stopped.
+                .overlay(alignment: .bottomTrailing) {
+                  if f.sourcePath == nil && !f.hasFullResolution {
+                    Text("预览").font(.system(size: 9, weight: .semibold)).foregroundStyle(.white.opacity(0.9))
+                      .padding(.horizontal, 4).padding(.vertical, 1)
+                      .background(Capsule().fill(Color.black.opacity(0.62)))
+                      .padding(3).help("只有预览，还没正式扫描：勾上后「扫描所选」")
+                  }
+                }
                 // Repaired in 去漏光: ③ grades the repaired picture.
                 .overlay(alignment: .topLeading) {
                   if m.page != .capture, f.adjustments.leakFix != nil { LeakRepairMark().padding(3) }

@@ -376,7 +376,8 @@ final class AppModel: ObservableObject {
       // Each step's own tools on the picture: ②'s crops and base, ③'s grey pickers.
       guard convertStep != oldValue else { return }
       preferences.lastStep = convertStep.rawValue
-      if convertStep == .demask, [.neutral, .shadowNeutral, .curve, .curvePick].contains(tool) { tool = .select }
+      if convertStep == .demask, [.neutral, .shadowNeutral, .curve, .curvePick, .crop].contains(tool) { tool = .select }
+      // The crop is each step's own: ②'s the frame's extent on the film, ③'s the picture's (`composing`).
       if convertStep == .grade, [.crop, .region, .base].contains(tool) { tool = .select }
       // ② shows the frames de-masked only, ③ graded: the picture, the table and the strip again.
       if page == .convert {
@@ -617,7 +618,19 @@ final class AppModel: ObservableObject {
   }
   var enabledCount: Int { frames.filter(\.enabled).count }
   var hasScanTargets: Bool { frames.contains { $0.enabled && $0.sourcePath == nil } }
-  var editingSingle: Bool { singleView && (tool == .crop || tool == .base) }
+  /// The frame's crop or base edited on its surroundings as they lie (②'s crop, either step's base).
+  var editingSingle: Bool { singleView && ((tool == .crop && !composing) || tool == .base) }
+  /// ③'s crop under way (`Adjustments.composition`), as Lightroom's in Develop: the picture shown
+  /// turned in its own box, the box kept upright over it; dragged outside it, the picture turns.
+  var composing: Bool { singleView && tool == .crop && page == .convert && convertStep == .grade && selected != nil }
+  /// What lies outside the box while ③'s crop is under way, as Lightroom's overlays (O).
+  enum CropOverlay: String, CaseIterable { case thirds = "三分", grid = "网格", golden = "黄金分割", diagonal = "对角线", none = "不显示" }
+  @Published var cropOverlay = CropOverlay.thirds
+  func nextCropOverlay() {
+    let all = CropOverlay.allCases
+    cropOverlay = all[(all.firstIndex(of: cropOverlay)! + 1) % all.count]
+    status = "裁切叠加：" + cropOverlay.rawValue + " · O 换下一种"
+  }
   /// Quarter turns clockwise the light table shows the overview with. Lying across only when the
   /// holder stands upright; turned the way most frames are turned to stand up, and clockwise when
   /// none are: as film lies in the V850's holder, a frame shot across then stands upright (every
@@ -661,7 +674,7 @@ final class AppModel: ObservableObject {
   /// single view shows it straightened: not while its crop or base is edited, when the picture is
   /// its surroundings as they lie, with the kept part outlined.
   func shownAspect(_ frame: FilmFrame) -> Double? {
-    guard abs(frame.adjustments.angle ?? 0) > 0.0001, !editingSingle else { return nil }
+    guard abs(frame.adjustments.angle ?? 0) > 0.0001 || frame.adjustments.composition != nil, !editingSingle else { return nil }
     return frameAspect(frame)
   }
   /// While the straightening is being changed, and a moment after: the canvas lays a grid over
@@ -670,12 +683,66 @@ final class AppModel: ObservableObject {
   private var straighteningToken = 0
   /// The selected frame's straightening as the screen shows it: clockwise positive, mirrored or not.
   var screenAngle: Double { (settings.angle ?? 0) * (settings.flipHorizontal == true ? -1 : 1) }
+  /// The selected frame's crop in ③ (`Adjustments.composition`) as the screen shows it, turned by
+  /// quarters and mirrored with the frame.
+  var screenComposition: NormalRect? { settings.composition.map { ImageGeometry.transform($0, settings: settings) } }
   /// Turns the selected frame about its middle to `degrees` clockwise on the screen, cut to the
-  /// largest rectangle of its shape inside.
+  /// largest rectangle of its shape inside; ③'s crop, where there is one, kept on the picture as
+  /// Lightroom keeps it, of its shape about its middle, smaller where it would reach past.
   func straighten(_ degrees: Double) {
     let a = (clamp(degrees, -45, 45) * 100).rounded() / 100 * (settings.flipHorizontal == true ? -1 : 1)
-    change("拉直") { $0.angle = abs(a) < 0.005 ? nil : a }
+    let aspect = selected.flatMap(frameAspect)
+    change("拉直") {
+      $0.angle = abs(a) < 0.005 ? nil : a
+      if let o = $0.composition, let aspect { $0.composition = ImageGeometry.shrunk(o, degrees: a, aspect: aspect) }
+    }
     showStraighteningGrid()
+  }
+  /// ③'s crop of the selected frame, an upright box of its turned picture (`Adjustments.composition`),
+  /// made to fit; the whole of the largest of the picture's shape is none.
+  func setComposition(_ box: NormalRect?) {
+    guard let frame = selected, let aspect = frameAspect(frame) else { return }
+    let degrees = frame.adjustments.angle ?? 0
+    var o = box.map { ImageGeometry.shrunk($0, degrees: degrees, aspect: aspect) }
+    // Of no size to speak of, a slip: the box as it was.
+    if let b = o, b.width < 0.02 || b.height < 0.02 { return }
+    // The largest of the picture's shape, as with none: none, so it follows the angle as before.
+    let kept = ImageGeometry.composed(nil, degrees: degrees, aspect: aspect) ?? .full
+    if let b = o, abs(b.x - kept.x) < 1e-4, abs(b.y - kept.y) < 1e-4, abs(b.width - kept.width) < 1e-4, abs(b.height - kept.height) < 1e-4 { o = nil }
+    guard o != frame.adjustments.composition else { return }
+    change("裁切") { $0.composition = o }
+    updateThumbnails()
+  }
+  /// ③'s crop and straightening back to none, as Lightroom's 复位 of its crop.
+  func resetComposition() {
+    guard settings.composition != nil || settings.angle != nil else { return }
+    change("还原裁切") { ($0.composition, $0.angle) = (nil, nil) }
+    updateThumbnails()
+    status = "裁切和拉直还原：整幅画面"
+  }
+  /// The box ③'s crop shows of the selected frame's turned picture: its own, else the largest of
+  /// the picture's shape. In the picture's own orientation, before the quarter turns and mirror.
+  var compositionBox: NormalRect {
+    guard let frame = selected, let aspect = frameAspect(frame) else { return .full }
+    let degrees = frame.adjustments.angle ?? 0
+    return ImageGeometry.composed(frame.adjustments.composition, degrees: degrees, aspect: aspect) ?? .full
+  }
+  /// The selected frame's exported size with `o` as its crop in ③.
+  func pixels(ofComposition o: NormalRect) -> CGSize? {
+    guard var f = selected else { return nil }
+    f.adjustments.composition = o
+    return exportPixels(f)
+  }
+  /// The crop's long side and short swapped about its middle (X, as in Lightroom), as large as fits.
+  func swapCompositionOrientation() {
+    guard let frame = selected, let aspect = frameAspect(frame) else { return }
+    let o = compositionBox
+    // In pixels its width is o.width × aspect to o.height; swapped, as tall as it was wide.
+    let w = o.height / aspect, h = o.width * aspect
+    let cx = o.x + o.width / 2, cy = o.y + o.height / 2
+    let swapped = NormalRect(x: cx - w / 2, y: cy - h / 2, width: w, height: h)
+    setComposition(ImageGeometry.shrunk(swapped, degrees: frame.adjustments.angle ?? 0, aspect: aspect))
+    status = "裁切横竖互换 · X"
   }
   /// The next drag over the crop draws a line along something that should be level or upright,
   /// a horizon or a wall, and the frame is straightened by it.
@@ -707,6 +774,10 @@ final class AppModel: ObservableObject {
     switch tool {
     case .select: return nil
     case .crop:
+      if composing {
+        if levelling { return "沿地平线、墙边或建筑竖线拖一条线，松手即按它拉直 · Esc 退出" }
+        return "拖动四角和边裁切 · 框外拖动旋转 · ⌥ 拖一条线拉直 · X 横竖互换 · O 换叠加 · 回车完成 · Esc 退出"
+      }
       if singleView && levelling { return "沿地平线、墙边或建筑竖线拖一条线，松手即按它拉直 · Esc 退出" }
       return singleView ? "拖动四角裁切 · 方向键微调 · [ ] 拉直 0.1°（⇧ 1°） · ⌥ 拖一条线拉直 · 回车完成 · Esc 退出" : "在接触表上拖出新的画框 · Esc 退出"
     case .region:
@@ -786,7 +857,9 @@ final class AppModel: ObservableObject {
       convertStep = step
       status = value.rawValue + (step == .grade ? "在 ③ 调色" : "在 ② 去色罩")
     }
-    let editing = editingSingle, willEdit = singleView && (value == .crop || value == .base)
+    // ③'s crop opens the frame, as Lightroom's crop opens Develop: on the frame's own picture.
+    if value == .crop, page == .convert, convertStep == .grade, selected != nil { singleView = true }
+    let editing = editingSingle, willEdit = singleView && ((value == .crop && !(page == .convert && convertStep == .grade)) || value == .base)
     if editing != willEdit { viewWillChange?(.edit(entering: willEdit)) }
     if value != tool { editRegionLock = nil }
     if value != .crop { levelling = false }
@@ -817,7 +890,12 @@ final class AppModel: ObservableObject {
   @Published var cropRatio = CropRatio.free
   /// The ratio the crop keeps to, long over short in the picture's pixels; nil, free.
   var cropLong: Double? {
-    if cropRatio == .original, let s = selected.flatMap(exportPixels) {
+    // The frame's own shape, not ③'s crop's.
+    if cropRatio == .original, let s = selected.flatMap({ f -> CGSize? in
+      var whole = f
+      whole.adjustments.composition = nil
+      return exportPixels(whole)
+    }) {
       return Double(max(s.width, s.height) / max(1, min(s.width, s.height)))
     }
     return cropRatio.long
@@ -837,6 +915,14 @@ final class AppModel: ObservableObject {
   /// A ratio chosen: the crop is that shape at once, the largest inside it as it is.
   func setCropRatio(_ ratio: CropRatio) {
     cropRatio = ratio
+    // ③'s crop: the largest of the shape inside the box, about its middle, kept on the picture.
+    if page == .convert, convertStep == .grade, let frame = selected, let aspect = frameAspect(frame) {
+      guard let long = cropLong else { return }
+      let o = compositionBox
+      let fit = Self.fitted(o.cg, long: long, aspect: aspect)
+      setComposition(ImageGeometry.shrunk(NormalRect(fit), degrees: frame.adjustments.angle ?? 0, aspect: aspect))
+      return
+    }
     guard let long = cropLong, let crop = canvasCrop, let aspect = cropAspect else { return }
     commitSingleCrop(NormalRect(Self.fitted(crop.cg, long: long, aspect: aspect)))
   }
@@ -1188,6 +1274,9 @@ final class AppModel: ObservableObject {
   }
   func requestPreview() {
     guard !isWorking else { return }
+    // A preview is a new roll: the one open, with its frames, asked about first (⇧⌘P works from
+    // ② and ③, a key away from ⇧⌘S). It stays in the library either way.
+    if !frames.isEmpty, !confirmNewRoll(frames.count) { return }
     cancelRequested = false
     // From the library (⇧⌘P), the preview comes in on ①'s light table.
     if page == .library { page = .capture }
@@ -1635,7 +1724,7 @@ final class AppModel: ObservableObject {
   @Published var autoSync = false
   /// Settings auto sync leaves each frame's own, as 同步 and 粘贴 do: the roll's measured base, how
   /// the frame faces, where its de-masking reads and its leak repair.
-  static let ownSettings: Set<String> = ["rollBase", "rollSlopes", "rollBasePicked", "rollBaseFrom", "rotation", "angle",
+  static let ownSettings: Set<String> = ["rollBase", "rollSlopes", "rollBasePicked", "rollBaseFrom", "rotation", "angle", "composition",
     "flipHorizontal", "analysisRegion", "leakFix"]
   /// Readings of a picture, which mean the same on another only through the same flat field and unmixing.
   static let pictureReadings: Set<String> = ["base", "basePicked", "neutralSample", "neutralPicked"]
@@ -2864,7 +2953,9 @@ final class AppModel: ObservableObject {
   /// apart): after each one picked on the picture or taken out, the picker kept.
   func calibrateAsPicked() {
     let greens = calibrationPoints.map { $0.density[1] }
-    guard calibrationPoints.count >= 2, (greens.max() ?? 0) - (greens.min() ?? 0) >= FilmCalibration.minimumSpan else { return }
+    // Three at least: two always lie on a line, so a point on something not neutral would make
+    // the preset wrong with nothing to show it (until 0.22.4 two made it).
+    guard calibrationPoints.count >= 3, (greens.max() ?? 0) - (greens.min() ?? 0) >= FilmCalibration.minimumSpan else { return }
     makeScannerPreset(keepPicking: true)
   }
   /// `keepPicking`: made as points are picked, the picker stays on for the next.
@@ -3073,7 +3164,7 @@ final class AppModel: ObservableObject {
       let result = try ScannerCalibration.measure(readings, reference: reference)
       // A copy of the target measures the copy stand, kept with the exposure it was taken at.
       if frame.sensorRead == true, frame.adjustments.inputGamma == 1, let path = frame.sourcePath {
-        let exposure = PhotoInfo.exposure(URL(fileURLWithPath: path))
+        let exposure = PhotoInfo.exposure(PhotoInfo.file(for: frame) ?? URL(fileURLWithPath: path))
         preferences.copyFlare = CopyFlare(calibration: result, exposure: exposure)
         it8Marks = []
         useTool(.select)
@@ -3174,7 +3265,9 @@ final class AppModel: ObservableObject {
     if frame.sourcePath == nil { return preferences.scannerCalibration?.offset }
     // A copy read from the sensor: the copy stand's, at the copy's own exposure.
     guard frame.sensorRead == true, let copy = preferences.copyFlare, let path = frame.sourcePath else { return nil }
-    return copy.offset(at: copyExposure(path))
+    // The camera's file has the exposure; the decoded TIFF beside it has no EXIF (until 0.22.4 the
+    // flare was never taken off for that).
+    return copy.offset(at: copyExposure(PhotoInfo.file(for: frame)?.path ?? path))
   }
   /// Each copy's exposure from its EXIF, read once.
   private var copyExposures = [String: Double?]()
@@ -3288,6 +3381,10 @@ final class AppModel: ObservableObject {
     // A page laid out from files of their own shows each positive as the film strip has it,
     // turned, mirrored and straightened; the holder's preview, as the frame lies under its box.
     let asLaidOut = onSheetPage && sheetPageFrames.contains { $0.id == frame.id }
+    // The positive as what lies under the lens shows it: in ② de-masked only, as its picture and
+    // the table's (until 0.22.4 the lens showed ③'s grading there); over the single frame in ③'s
+    // before (\) too.
+    let shown = (single ? asShown(frame) : showsDemasked ? Self.demasked(frame) : frame).adjustments
     renderQueue.async {
       var image = try? self.source(for: frame, full: single, maxDimension: single ? nil : pixels)
       if original {
@@ -3296,9 +3393,9 @@ final class AppModel: ObservableObject {
         image = (try? self.dustFreeSource(for: frame, full: single, maxDimension: single ? nil : pixels))
           .flatMap { ImagePipeline.shared.original($0, settings: frame.adjustments, oriented: single, gains: gains) }
       } else if single, let crop = image {
-        image = ImagePipeline.shared.render(crop, settings: frame.adjustments, profile: p, analysis: nil, negative: !positive)
+        image = ImagePipeline.shared.render(crop, settings: shown, profile: p, analysis: nil, negative: !positive)
       } else if positive, let crop = image {
-        var s = frame.adjustments
+        var s = shown
         if !asLaidOut {
           // Upright and as it lies, as in the contact print, so it lies under its frame box.
           s.rotation = 0
@@ -3413,7 +3510,9 @@ final class AppModel: ObservableObject {
     // The raw picture as `ImagePipeline.original` has it: as a negative, with no base to divide by,
     // in the white balance the frame around it is shown in (日光), not green as the sensor read it.
     let gains = original ? rawGains(frame) : nil
-    var settings = (showsBefore && !original ? Self.demasked(frame) : frame).adjustments
+    // As the picture around it: in ② de-masked only, in ③'s before (\) too. Until 0.22.4 it took
+    // only the before, and zoomed in in ② showed the frame graded.
+    var settings = (original ? frame : asShown(frame)).adjustments
     let clipping = showClipping && !original
     if original { (settings.base, settings.rollBase) = (nil, nil) }
     if curvesBypassed { settings.curves = nil }
@@ -3444,7 +3543,7 @@ final class AppModel: ObservableObject {
     encoder.outputFormatting = .sortedKeys
     let settings = (try? encoder.encode(frame.adjustments)).map { $0.base64EncodedString() } ?? ""
     let shown = (single ? "single " : "table ") + "\(!showNegative) \(showsOriginal)" + (single && curvesBypassed ? " no curves" : "")
-      + (single && showClipping ? " clipping" : "") + (single && showsBefore ? " before" : "")
+      + (single && showClipping ? " clipping" : "") + (single && showsBefore ? " before" : "") + (showsDemasked ? " demasked" : "")
       + (showsOriginal ? rawGains(frame).map { " gains \($0.values)" } ?? " as read" : "")
     return [frame.id.uuidString, "\(frame.rect)", frame.scanPath ?? "", shown, conversionProfile.id, settings, frame.dust?.signature ?? "",
       frame.flatField.map { "flat\($0.values.reduce(0, +))" } ?? "-", frame.crosstalk.map { "\($0.m)" } ?? "-"]
@@ -3615,7 +3714,7 @@ final class AppModel: ObservableObject {
       negative: showsNegative || tool == .base, original: showsOriginal,
       bypassed: curvesBypassed, sharpening: demasked ? nil : preferences.sharpening, previewDPI: Int(overviewDPI),
       analysisKey: analysisKey(asShown(frame)), overview: overview, demasked: demasked, sliding: sliding,
-      looseKey: analysisKey(asShown(frame), loose: true))
+      looseKey: analysisKey(asShown(frame), loose: true), composing: composing)
     wantedLock.lock()
     wantedSingle = request
     let queued = singleQueued
@@ -3638,6 +3737,8 @@ final class AppModel: ObservableObject {
     var sliding = false
     /// The analysis key without the saturation and vibrance (`analysisKey(loose:)`).
     var looseKey = ""
+    /// ③'s crop under way: the picture turned in its whole box (`composing`).
+    var composing = false
   }
   /// When a single render last measured its picture (histograms, range; render queue only), and
   /// how often it does while a slider is dragged.
@@ -3723,7 +3824,7 @@ final class AppModel: ObservableObject {
       // Vibrance is not one: it is in the conversion's saturation, whose reach the analysis measures.
       (s.texture, s.clarity, s.dehaze, s.mixer, s.grading) = (nil, nil, nil, nil, nil)
       if loose { (s.saturation, s.vibrance) = (1, nil) }
-      (s.rotation, s.flipHorizontal, s.angle) = (0, nil, nil)
+      (s.rotation, s.flipHorizontal, s.angle, s.composition) = (0, nil, nil, nil)
       f.adjustments = s
     }
     let encoder = JSONEncoder()
@@ -3782,7 +3883,9 @@ final class AppModel: ObservableObject {
         let input = context?.image ?? cropped
         // Its surroundings as they lie while the crop or base is edited, with the kept part outlined.
         var shownSettings = frame.adjustments
-        if edit { shownSettings.angle = nil }
+        if edit { (shownSettings.angle, shownSettings.composition) = (nil, nil) }
+        // ③'s crop under way: the picture turned in its whole box, for the canvas to lay the box on.
+        if r.composing { shownSettings.composition = .full }
         if bypassed { shownSettings.curves = nil }
         // The kernel follows the size the source was loaded at, as in source(for:) and contextSource(for:).
         let loaded = edit ? 3000 : (frame.sourcePath != nil ? 3000 : 2200)
@@ -3804,7 +3907,7 @@ final class AppModel: ObservableObject {
         if measured {
           let early = output
           DispatchQueue.main.async {
-            guard token > self.shownSingle, self.singleView, self.selectedID == frame.id, edit == self.editingSingle,
+            guard token > self.shownSingle, self.singleView, self.selectedID == frame.id, edit == self.editingSingle, r.composing == self.composing,
               negative == (self.showsNegative || self.tool == .base), !self.showsOriginal
             else { return }
             self.shownCurves = negative ? nil : shownSettings.curves
@@ -3867,7 +3970,7 @@ final class AppModel: ObservableObject {
           let newest = self.revision == token
           // Newer than the picture shown, and of what is still shown: the frame, alone, as it is
           // looked at (edited or not, negative or not).
-          guard token > self.shownSingle, self.singleView, self.selectedID == frame.id, edit == self.editingSingle,
+          guard token > self.shownSingle, self.singleView, self.selectedID == frame.id, edit == self.editingSingle, r.composing == self.composing,
             negative == (self.showsNegative || self.tool == .base), !self.showsOriginal
           else {
             if newest { self.rendering = false }
@@ -3923,7 +4026,7 @@ final class AppModel: ObservableObject {
       let raw = try dustFreeSource(for: frame, full: false)
       let context = edit ? try contextSource(for: frame) : nil
       var shown = frame.adjustments
-      if edit { shown.angle = nil }
+      if edit { (shown.angle, shown.composition) = (nil, nil) }
       let balance = baseBalance(of: frame, raw: raw)
       guard let output = ImagePipeline.shared.original(context?.image ?? raw, settings: shown, oriented: true, gains: rawGains(frame)) else {
         throw DeskError.message("无法生成预览")
@@ -3931,7 +4034,7 @@ final class AppModel: ObservableObject {
       let exposure = ImagePipeline.shared.exposure(raw)
       DispatchQueue.main.async {
         let newest = self.revision == token
-        guard token > self.shownSingle, self.singleView, self.selectedID == frame.id, edit == self.editingSingle, self.showsOriginal else {
+        guard token > self.shownSingle, self.singleView, self.selectedID == frame.id, edit == self.editingSingle, r.composing == self.composing, self.showsOriginal else {
           if newest { self.rendering = false }
           return
         }
@@ -4275,18 +4378,58 @@ final class AppModel: ObservableObject {
       return base / pow(10, FilmToe.density(at.a[c] * e + at.d[c], width: toe[c]) * slopes[c] / s.inputGamma)
     })
   }
-  /// The film base from a reading of unexposed film; the white balance is left as picked, not
-  /// recalculated. One edit to undo, whether picked on the canvas or by an assistant.
+  /// The film base from a reading of unexposed film. One edit to undo, whether picked on the
+  /// canvas or by an assistant. The white balance stays as it was: automatic follows the new base,
+  /// a grey picked is still that grey. (Until 0.22.4 picking the base turned 自动 off and let the
+  /// grey go, which left a negative balanced by nothing, green under sunlight, with no switch
+  /// left to show it once 自动 became a key.)
   func setFilmBase(_ color: RGB, at place: NormalRect? = nil) {
     change("取片基") {
       $0.base = color
       $0.basePicked = place
-      $0.neutralSample = nil
-      $0.neutralPicked = nil
-      $0.autoWhiteBalance = false
     }
-    status = "已取片基 · 自动白平衡已关闭以保留取样；要回到自动，打开「自动」"
+    status = "已取片基"
     updateThumbnails()
+  }
+  /// The white balance's three, as Lightroom's 白平衡 menu has them (原片 / 自动 / 自定义):
+  /// - 原片: the film as its conversion gives it, nothing taken from the scene: a negative by its
+  ///   base alone, with a calibrated preset its neutral; a slide its own colour.
+  /// - 自动: estimated from the picture (a negative's channels' blacks aligned; a slide's channels
+  ///   each stretched from its darkest to its brightest, for a faded or cast slide).
+  /// - 自定义: a grey picked, or 冷暖 / 绿洋红 moved off either.
+  /// 原片 and 自动 set 冷暖 and 绿 / 洋红 to 0 and let a grey go, as Lightroom's menu sets its
+  /// temperature and tint; 阴影冷暖 / 阴影色调 and the base stay.
+  enum BalanceMode: String, CaseIterable, Identifiable {
+    case asShot = "原片", auto = "自动", custom = "自定义"
+    var id: String { rawValue }
+  }
+  /// A negative converted with a preset that has a neutral of its own: its 原片 is that neutral,
+  /// and the scene's estimate is not used, so 原片 and 自动 come to the same.
+  var balancesByCalibration: Bool { conversionProfile.offsets != nil && settings.inputIsNegative && !settings.isSlide }
+  var balanceMode: BalanceMode {
+    let s = settings
+    if s.neutralSample != nil || s.warmth != 0 || s.tint != 0 { return .custom }
+    return s.autoWhiteBalance && !balancesByCalibration ? .auto : .asShot
+  }
+  func setBalanceMode(_ mode: BalanceMode) {
+    guard selected != nil else { return }
+    switch mode {
+    case .custom:
+      status = "自定义白平衡：取中性灰，或拖冷暖、绿 / 洋红"
+    case .asShot, .auto:
+      let auto = mode == .auto
+      let s = settings
+      guard s.autoWhiteBalance != auto || s.neutralSample != nil || s.warmth != 0 || s.tint != 0 else { return }
+      change("白平衡 · " + mode.rawValue) {
+        $0.autoWhiteBalance = auto
+        ($0.neutralSample, $0.neutralPicked) = (nil, nil)
+        ($0.warmth, $0.tint) = (0, 0)
+      }
+      status = balancesByCalibration ? "白平衡：标定预设记下的中性 · 冷暖、绿 / 洋红归零"
+        : auto ? "白平衡：自动 · 冷暖、绿 / 洋红归零"
+        : settings.isSlide ? "白平衡：原片，片子本来的颜色" : "白平衡：原片，只除片基，不按画面配平"
+      updateThumbnails()
+    }
   }
   /// Auto white balance on a reading of something that should be grey: the grey sets the
   /// balance, and auto stays on to fit each channel's contrast where the preset leaves that to it.
@@ -4327,11 +4470,22 @@ final class AppModel: ObservableObject {
   /// when the disk is too full for it.
   func requestScanEnabled() {
     guard !isWorking else { return }
-    let targets = frames.filter { $0.enabled && $0.sourcePath == nil }
+    var targets = frames.filter { $0.enabled && $0.sourcePath == nil }
     guard !targets.isEmpty else { return }
+    // A batch that stopped part way, run again: those already scanned at this resolution are
+    // asked about, not scanned again unasked (until 0.22.4 they were).
+    let scanned = targets.filter { $0.hasFullResolution && $0.scanDPI == dpi }
+    if !scanned.isEmpty {
+      switch askRescan(scanned.count, targets.count, dpi) {
+      case .none: return
+      case .all: break
+      case .rest: targets = targets.filter { f in !scanned.contains { $0.id == f.id } }
+      }
+      guard !targets.isEmpty else { return }
+    }
     let plan = scanPlan(targets)
     guard (targets.count == 1 && plan.fits) || confirmScan(plan, "扫描 \(plan.frames) 张 · \(plan.dpi) dpi？", "开始扫描") else { return }
-    scanEnabled()
+    startScanBatch(targets.map(\.id))
   }
   func requestScanSelected() {
     guard let selected, !isWorking else { return }
@@ -4340,6 +4494,39 @@ final class AppModel: ObservableObject {
       guard plan.fits || confirmScan(plan, "扫描第 \(selected.name) 张 · \(plan.dpi) dpi？", "开始扫描") else { return }
     }
     scanSelected()
+  }
+  /// Asks before a preview replaces the roll open (`count` frames) with a new one; true previews.
+  /// Tests answer for the user.
+  var confirmNewRoll: (Int) -> Bool = { count in
+    let alert = NSAlert()
+    alert.messageText = "预览会开始新的一卷"
+    alert.informativeText = "现在打开的这一卷（\(count) 张）和它的扫描、调色都留在库里，随时可以再打开。"
+    alert.addButton(withTitle: "预览新的一卷")
+    alert.addButton(withTitle: "取消")
+    return alert.runModal() == .alertFirstButtonReturn
+  }
+  /// Some of the frames ticked already scanned at this resolution: scan the rest, all again, or
+  /// none. Tests answer for the user.
+  enum RescanChoice { case rest, all, none }
+  var askRescan: (_ scanned: Int, _ ticked: Int, _ dpi: Int) -> RescanChoice = { scanned, ticked, dpi in
+    let alert = NSAlert()
+    if scanned == ticked {
+      alert.messageText = "勾选的 \(ticked) 张都已经按 \(dpi) dpi 扫过"
+      alert.informativeText = "再扫一遍会换掉它们的原图（旧的留在工程的 Originals 里）。"
+      alert.addButton(withTitle: "全部重扫")
+      alert.addButton(withTitle: "取消")
+      return alert.runModal() == .alertFirstButtonReturn ? .all : .none
+    }
+    alert.messageText = "勾选的 \(ticked) 张里有 \(scanned) 张已经按 \(dpi) dpi 扫过"
+    alert.informativeText = "只扫没扫过的 \(ticked - scanned) 张，或者全部重扫。"
+    alert.addButton(withTitle: "只扫没扫过的 \(ticked - scanned) 张")
+    alert.addButton(withTitle: "全部重扫")
+    alert.addButton(withTitle: "取消")
+    switch alert.runModal() {
+    case .alertFirstButtonReturn: return .rest
+    case .alertSecondButtonReturn: return .all
+    default: return .none
+    }
   }
   /// Asks before a scan, with the plan's summary; true starts it. Tests answer for the user.
   var confirmScan: (ScanPlan, String, String) -> Bool = { plan, title, button in
@@ -4399,6 +4586,8 @@ final class AppModel: ObservableObject {
     scanQueue = scanPasses(targets, dpi: batchDPI ?? dpi).map { $0.map(\.id) }
     scanBatchID = UUID()
     scanBatch = ScanBatchProgress(total: ids.count)
+    scanBatch.startedAt = Date()
+    scanBatch.plannedSeconds = scanPlan(targets, dpi: batchDPI ?? dpi).seconds
     cancelRequested = false
     errorText = nil
     nextScan()
@@ -4536,6 +4725,8 @@ final class AppModel: ObservableObject {
       }
     }
     currentScanReceivedFile = true
+    // Frames whose scan does not line up with the preview (`LevelRegistration`): the film moved.
+    var unmatched = [String]()
     for i in pass {
       guard let original = originals[frames[i].id] else { continue }
       frames[i].scanPath = original.path
@@ -4545,6 +4736,7 @@ final class AppModel: ObservableObject {
       frames[i].sourceBits = info.bits
       // Each scan on the preview's scale, whatever levels the scanner chose for its window.
       frames[i].levels = measureLevels(frames[i])
+      if let levels = frames[i].levels, !levels.usable { unmatched.append(frames[i].name) }
     }
     if let started = scanStarted {
       let predicted = ScanTiming.seconds(
@@ -4556,6 +4748,9 @@ final class AppModel: ObservableObject {
     let names = pass.map { frames[$0].name }
     status = (names.count == 1 ? "第 \(names[0]) 张" : "第 \(names.joined(separator: "、")) 张（一次扫完）") + "扫描完成 · \(info.bits*3)-bit 原始负片已存入 Originals"
       + (preferences.autoExport && pendingSheet == nil ? " · 整批扫完后正片导出到 Exports" : " · 正片在 ② 去色罩用「导出」导出")
+    if !unmatched.isEmpty {
+      errorText = "第 \(unmatched.joined(separator: "、")) 张的扫描和预览对不上：胶片可能在片夹里动过，裁切会偏、颜色不在这一卷的标尺上。最好重新预览，再扫这几张。"
+    }
     saveProject()
     if let selectedID, ids.contains(selectedID) { refresh() }
     updateThumbnails()
@@ -4597,7 +4792,7 @@ final class AppModel: ObservableObject {
     guard !quitAfterScan else { return true }
     quitAfterScan = true
     cancel()
-    scanner.status = "等待当前扫描完成归位后退出，请勿关闭扫描仪或打开其他扫描程序…"
+    scanner.status = "扫完这一张并保存后退出，请勿关闭扫描仪或打开其他扫描程序…"
     scanner.$busy.first { !$0 }.receive(on: DispatchQueue.main).sink { _ in quit() }
       .store(in: &cancellables)
     return true
@@ -4904,7 +5099,7 @@ final class AppModel: ObservableObject {
   func exportedPixels(_ f: FilmFrame) -> CGSize? {
     exportPixels(f).map { s in
       let k = ImagePipeline.exportScale(s, longEdge: preferences.exportLongEdge)
-      return k < 1 ? CGSize(width: (s.width * CGFloat(k)).rounded(), height: (s.height * CGFloat(k)).rounded()) : s
+      return k < 1 ? CGSize(width: (s.width * CGFloat(k)).rounded(.down), height: (s.height * CGFloat(k)).rounded(.down)) : s
     }
   }
   func exportPixels(_ f: FilmFrame) -> CGSize? {
@@ -4918,8 +5113,9 @@ final class AppModel: ObservableObject {
     } else { return nil }
     guard crop.width > 0, crop.height > 0 else { return nil }
     let degrees = f.adjustments.angle ?? 0
-    let keep = abs(degrees) > 0.0001 ? ImageGeometry.keep(degrees, aspect: Double(crop.width / crop.height)) : 1
-    let w = (crop.width * CGFloat(keep)).rounded(.down), h = (crop.height * CGFloat(keep)).rounded(.down)
+    // ③'s crop of the turned picture, else the largest of its shape inside (`ImageGeometry.composed`).
+    let box = ImageGeometry.composed(f.adjustments.composition, degrees: degrees, aspect: Double(crop.width / crop.height)) ?? .full
+    let w = (crop.width * CGFloat(box.width)).rounded(.down), h = (crop.height * CGFloat(box.height)).rounded(.down)
     return ((f.adjustments.rotation % 4) + 4) % 2 == 1 ? CGSize(width: h, height: w) : CGSize(width: w, height: h)
   }
   /// Whether a folder is a roll's or lies in one: it, or a folder above it, holds a project.
@@ -5026,13 +5222,18 @@ final class AppModel: ObservableObject {
     let filmID = film.id
     exportQueue.async {
       var written = [URL](), writtenIDs = Set<UUID>()
+      // Frames that could not be written (an original moved, a disk not mounted), with why: passed
+      // over, the rest still written. Until 0.22.4 the first stopped the whole export.
+      var failed = [(name: String, why: String)]()
       do {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         // Each frame's pictures let go before the next: a 60-megapixel frame holds half a gigabyte.
         for f in items {
           if stop.stopped { break }
           DispatchQueue.main.async { self.writing(f) }
-          let url = try autoreleasepool { () throws -> URL in
+          let url: URL
+          do {
+          url = try autoreleasepool { () throws -> URL in
           // Measured as the window measured it, on the copy it shows: the export is the picture
           // shown, and its 60 megapixels are not read through again for statistics.
           let analysis = (try? self.source(for: f)).map { ImagePipeline.shared.analyze($0, settings: f.adjustments, profile: film) }
@@ -5068,6 +5269,10 @@ final class AppModel: ObservableObject {
             to: url.appendingPathExtension("json"), options: .atomic)
           return url
           }
+          } catch {
+            failed.append((f.name, error.localizedDescription))
+            continue
+          }
           written.append(url)
           writtenIDs.insert(f.id)
           let stamp = ExportStamp(at: Date(), file: url.path, settings: own[f.id] ?? f.adjustments, film: filmID)
@@ -5079,7 +5284,12 @@ final class AppModel: ObservableObject {
           self.endExport(stop, left: left)
           self.status = left.isEmpty
             ? "已导出 \(items.count) 张到 \(directory.lastPathComponent)"
-            : "已停止导出：写出了 \(files.count) / \(items.count) 张到 \(directory.lastPathComponent)"
+            : failed.isEmpty
+              ? "已停止导出：写出了 \(files.count) / \(items.count) 张到 \(directory.lastPathComponent)"
+              : "导出了 \(files.count) / \(items.count) 张到 \(directory.lastPathComponent)，第 \(failed.map(\.name).joined(separator: "、")) 张没有导出"
+          if let first = failed.first {
+            self.errorText = "第 \(failed.map(\.name).joined(separator: "、")) 张没有导出（其余的照常导出了）：\(first.why)"
+          }
           self.exported = files.isEmpty ? nil : (self.status, files)
           self.exportsDone += 1
           self.saveProject()

@@ -535,9 +535,14 @@ final class ImagePipeline {
         a.reach = a.reach.map { $0 + shift }
       }
       if settings.sharedLevels == true, settings.autoLevels {
-        a.low = print.low
-        a.high = print.high
-        a.reach = print.reach ?? a.reach
+        // The roll's ends were measured in its own balance; a frame balanced its own way (its own
+        // automatic black, a grey picked, 原片) has them where its balance puts the same exposure,
+        // so a light scene's darkest is not pulled to black (until 0.22.4 they were taken as they
+        // were, the frame's black lifted or crushed by how far its balance lay from the roll's).
+        let shift = (0..<3).map { a.balance.values[$0] - print.balance.values[$0] }.reduce(0, +) / 3
+        a.low = print.low + shift
+        a.high = print.high + shift
+        a.reach = print.reach.map { $0 + shift } ?? a.reach
       }
     }
     return a
@@ -808,7 +813,7 @@ final class ImagePipeline {
     }
     result = looks(result, s)
     if let curves = s.curves { result = applyCurves(curves, to: result) }
-    result = Self.straightened(result, degrees: s.angle ?? 0)
+    result = Self.straightened(result, degrees: s.angle ?? 0, composition: s.composition)
     if s.rotation % 4 != 0 {
       let orientation: Int32 = [1, 6, 3, 8][((s.rotation % 4) + 4) % 4]
       result = result.oriented(forExifOrientation: orientation)
@@ -889,7 +894,7 @@ final class ImagePipeline {
     guard var result = kernel.apply(extent: ci.extent, arguments: Self.arguments(ci, plain, profile, a)) else {
       throw DeskError.message("图像处理失败。")
     }
-    result = Self.straightened(result, degrees: s.angle ?? 0)
+    result = Self.straightened(result, degrees: s.angle ?? 0, composition: s.composition)
     if s.rotation % 4 != 0 { result = result.oriented(forExifOrientation: [1, 6, 3, 8][((s.rotation % 4) + 4) % 4]) }
     if s.flipHorizontal == true { result = result.transformed(by: CGAffineTransform(scaleX: -1, y: 1)) }
     result = result.transformed(by: CGAffineTransform(translationX: -result.extent.minX, y: -result.extent.minY))
@@ -1149,17 +1154,29 @@ final class ImagePipeline {
     }
     return (0..<3).map { c in (0..<256).map { Double(out[$0 * 4 + c]) } }
   }
-  /// `image` turned clockwise on screen by `degrees` about its middle and cut to the largest
-  /// rectangle of its own shape inside, so no corner is left empty; as ImageGeometry maps it.
-  static func straightened(_ image: CIImage, degrees: Double) -> CIImage {
-    guard abs(degrees) > 0.0001 else { return image }
-    let e = image.extent, k = CGFloat(ImageGeometry.keep(degrees, aspect: Double(e.width / max(1, e.height))))
+  /// `image` turned clockwise on screen by `degrees` about its middle and cut to the box ③ keeps of
+  /// it (`ImageGeometry.composed`: its composition, made to fit; else the largest rectangle of its
+  /// own shape inside), so no corner is left empty; as ImageGeometry maps it. `composition` the
+  /// whole turned box (`NormalRect.full`) is the picture as ③'s crop shows it to be cropped: turned,
+  /// its corners outside it filled from its edges, for the canvas to cover.
+  static func straightened(_ image: CIImage, degrees: Double, composition: NormalRect? = nil) -> CIImage {
+    let e = image.extent, aspect = Double(e.width / max(1, e.height))
+    let o: NormalRect
+    if composition == .full {
+      o = .full
+    } else if let box = ImageGeometry.composed(composition, degrees: degrees, aspect: aspect) {
+      o = box
+    } else {
+      return image
+    }
     let c = CGPoint(x: e.midX, y: e.midY)
     // Core Image counts up: clockwise on screen is a negative angle here.
     let turn = CGAffineTransform(translationX: -c.x, y: -c.y)
       .concatenating(CGAffineTransform(rotationAngle: -CGFloat(degrees * .pi / 180)))
       .concatenating(CGAffineTransform(translationX: c.x, y: c.y))
-    let kept = CGRect(x: c.x - e.width * k / 2, y: c.y - e.height * k / 2, width: e.width * k, height: e.height * k)
+    // The box from the top left, in Core Image's coordinates from the bottom left.
+    let kept = CGRect(x: e.minX + CGFloat(o.x) * e.width, y: e.maxY - CGFloat(o.y + o.height) * e.height,
+      width: CGFloat(o.width) * e.width, height: CGFloat(o.height) * e.height)
     // Whole pixels inside the kept rectangle, so no edge pixel is one stretched from beyond the frame.
     let inside = CGRect(
       x: kept.minX.rounded(.up), y: kept.minY.rounded(.up),
@@ -1269,7 +1286,7 @@ final class ImagePipeline {
         ])
       }
       ci = Self.baseNeutral(raw, base: analysis?.base ?? settings.base ?? settings.rollBase, gamma: settings.inputGamma)
-      ci = Self.straightened(ci, degrees: settings.angle ?? 0)
+      ci = Self.straightened(ci, degrees: settings.angle ?? 0, composition: settings.composition)
       ci = ci.oriented(forExifOrientation: [1, 6, 3, 8][((settings.rotation % 4) + 4) % 4])
       if settings.flipHorizontal == true {
         ci = ci.transformed(by: CGAffineTransform(scaleX: -1, y: 1))
@@ -1296,8 +1313,12 @@ final class ImagePipeline {
     let k = Self.exportScale(ci.extent.size, longEdge: longEdge)
     var dpi = dpi
     if k < 1 {
-      ci = ci.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: k, kCIInputAspectRatioKey: 1])
-      ci = ci.cropped(to: ci.extent.integral)
+      // From its edges outward, and cut to the whole pixels inside: a size that is not whole (9504
+      // to 2048 is 1365.3 high) left a last row a third covered, written dark.
+      let e = ci.extent
+      ci = ci.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY)).clampedToExtent()
+        .applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: k, kCIInputAspectRatioKey: 1])
+        .cropped(to: CGRect(x: 0, y: 0, width: (e.width * CGFloat(k)).rounded(.down), height: (e.height * CGFloat(k)).rounded(.down)))
       dpi = max(1, Int((Double(dpi) * k).rounded()))
     }
     let cg: CGImage?

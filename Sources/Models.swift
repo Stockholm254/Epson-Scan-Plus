@@ -282,20 +282,91 @@ enum ImageGeometry {
     let t = abs(degrees) * .pi / 180, w = aspect
     return min(w / (w * cos(t) + sin(t)), 1 / (w * sin(t) + cos(t)))
   }
-  /// A point of the frame to where it shows straightened, or back: turned clockwise on screen by
-  /// `degrees` about the middle and spread by what is cut away.
-  static func straightened(_ p: CGPoint, degrees: Double, aspect: Double, inverse: Bool = false) -> CGPoint {
+  /// The box kept of a frame `aspect` wide to one high turned by `degrees`, in its turned box
+  /// (`Adjustments.composition`): the largest of its own shape, about the middle.
+  static func keptBox(_ degrees: Double, aspect: Double) -> NormalRect {
+    let k = abs(degrees) > 0.0001 ? keep(degrees, aspect: aspect) : 1
+    return NormalRect(x: 0.5 - k / 2, y: 0.5 - k / 2, width: k, height: k)
+  }
+  /// A point of the frame, unturned (0–1 from its top left), to where it lies in its box turned
+  /// clockwise on screen by `degrees` about the middle, or back.
+  static func turned(_ p: CGPoint, degrees: Double, aspect: Double, inverse: Bool = false) -> CGPoint {
     guard abs(degrees) > 0.0001, aspect > 0 else { return p }
-    let k = keep(degrees, aspect: aspect), t = degrees * .pi / 180, c = cos(t), s = sin(t)
-    if inverse {
-      let u = (Double(p.x) - 0.5) * k * aspect, v = (Double(p.y) - 0.5) * k
-      return CGPoint(x: (u * c + v * s) / aspect + 0.5, y: -u * s + v * c + 0.5)
-    }
+    let t = (inverse ? -degrees : degrees) * .pi / 180, c = cos(t), s = sin(t)
     let u = (Double(p.x) - 0.5) * aspect, v = Double(p.y) - 0.5
-    return CGPoint(x: (u * c - v * s) / (k * aspect) + 0.5, y: (u * s + v * c) / k + 0.5)
+    return CGPoint(x: (u * c - v * s) / aspect + 0.5, y: u * s + v * c + 0.5)
+  }
+  /// Whether a point of the turned box lies on the frame turned by `degrees` (within `slack`).
+  static func onPicture(_ p: CGPoint, degrees: Double, aspect: Double, slack: Double = 1e-6) -> Bool {
+    let q = turned(p, degrees: degrees, aspect: aspect, inverse: true)
+    return q.x >= -slack && q.x <= 1 + slack && q.y >= -slack && q.y <= 1 + slack
+  }
+  /// Whether a box of the turned frame (`Adjustments.composition`) lies wholly on the picture and
+  /// inside the box, so no corner of it is empty.
+  static func fits(_ o: NormalRect, degrees: Double, aspect: Double) -> Bool {
+    guard o.width > 0, o.height > 0, o.x >= -1e-6, o.y >= -1e-6, o.x + o.width <= 1 + 1e-6, o.y + o.height <= 1 + 1e-6 else { return false }
+    return [CGPoint(x: o.x, y: o.y), CGPoint(x: o.x + o.width, y: o.y), CGPoint(x: o.x, y: o.y + o.height),
+      CGPoint(x: o.x + o.width, y: o.y + o.height)].allSatisfy { onPicture($0, degrees: degrees, aspect: aspect) }
+  }
+  /// `o` made to fit as Lightroom keeps its crop on the picture as it turns: of its own shape,
+  /// about its middle, as large as fits; its middle first brought in towards the picture's where
+  /// even a small box there would not.
+  static func shrunk(_ o: NormalRect, degrees: Double, aspect: Double) -> NormalRect {
+    if fits(o, degrees: degrees, aspect: aspect) { return o }
+    func box(_ cx: Double, _ cy: Double, _ k: Double) -> NormalRect {
+      NormalRect(x: cx - o.width * k / 2, y: cy - o.height * k / 2, width: o.width * k, height: o.height * k)
+    }
+    var (cx, cy) = (o.x + o.width / 2, o.y + o.height / 2)
+    if !fits(box(cx, cy, 0.02), degrees: degrees, aspect: aspect) {
+      var (lo, hi) = (0.0, 1.0)
+      for _ in 0..<30 {
+        let m = (lo + hi) / 2
+        if fits(box(0.5 + (cx - 0.5) * m, 0.5 + (cy - 0.5) * m, 0.02), degrees: degrees, aspect: aspect) { lo = m } else { hi = m }
+      }
+      (cx, cy) = (0.5 + (cx - 0.5) * lo, 0.5 + (cy - 0.5) * lo)
+    }
+    var (lo, hi) = (0.0, 1.0)
+    for _ in 0..<30 {
+      let m = (lo + hi) / 2
+      if fits(box(cx, cy, m), degrees: degrees, aspect: aspect) { lo = m } else { hi = m }
+    }
+    return box(cx, cy, max(lo, 0.001))
+  }
+  /// The furthest of `to` along the way from `from` (which fits) that fits: a box dragged stops at
+  /// the picture's edge.
+  static func fitted(_ to: NormalRect, from: NormalRect, degrees: Double, aspect: Double) -> NormalRect {
+    if fits(to, degrees: degrees, aspect: aspect) { return to }
+    func mix(_ t: Double) -> NormalRect {
+      NormalRect(x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t,
+        width: from.width + (to.width - from.width) * t, height: from.height + (to.height - from.height) * t)
+    }
+    var (lo, hi) = (0.0, 1.0)
+    for _ in 0..<30 {
+      let m = (lo + hi) / 2
+      if fits(mix(m), degrees: degrees, aspect: aspect) { lo = m } else { hi = m }
+    }
+    return mix(lo)
+  }
+  /// The box a frame shows of its turned picture: its composition where it has one, made to fit;
+  /// else the largest of its own shape. Nil, the whole picture unturned.
+  static func composed(_ composition: NormalRect?, degrees: Double, aspect: Double) -> NormalRect? {
+    if let o = composition { return shrunk(o, degrees: degrees, aspect: aspect) }
+    return abs(degrees) > 0.0001 ? keptBox(degrees, aspect: aspect) : nil
+  }
+  /// A point of the frame to where it shows straightened and cropped by ③, or back: turned
+  /// clockwise on screen by `degrees` about the middle, then the box kept (`composed`) spread over
+  /// the picture shown.
+  static func straightened(_ p: CGPoint, degrees: Double, aspect: Double, inverse: Bool = false, composition: NormalRect? = nil) -> CGPoint {
+    guard aspect > 0, let o = composed(composition, degrees: degrees, aspect: aspect) else { return p }
+    if inverse {
+      let q = CGPoint(x: o.x + Double(p.x) * o.width, y: o.y + Double(p.y) * o.height)
+      return turned(q, degrees: degrees, aspect: aspect, inverse: true)
+    }
+    let q = turned(p, degrees: degrees, aspect: aspect)
+    return CGPoint(x: (Double(q.x) - o.x) / o.width, y: (Double(q.y) - o.y) / o.height)
   }
   static func display(_ p: CGPoint, settings: Adjustments, aspect: Double? = nil) -> CGPoint {
-    let p = aspect.map { straightened(p, degrees: settings.angle ?? 0, aspect: $0) } ?? p
+    let p = aspect.map { straightened(p, degrees: settings.angle ?? 0, aspect: $0, composition: settings.composition) } ?? p
     var q: CGPoint
     switch ((settings.rotation % 4) + 4) % 4 {
     case 1: q = CGPoint(x: 1 - p.y, y: p.x)
@@ -316,7 +387,7 @@ enum ImageGeometry {
     case 3: r = CGPoint(x: 1 - q.y, y: q.x)
     default: r = q
     }
-    return aspect.map { straightened(r, degrees: settings.angle ?? 0, aspect: $0, inverse: true) } ?? r
+    return aspect.map { straightened(r, degrees: settings.angle ?? 0, aspect: $0, inverse: true, composition: settings.composition) } ?? r
   }
   static func transform(_ rect: NormalRect, settings: Adjustments, inverse: Bool = false)
     -> NormalRect
@@ -520,6 +591,15 @@ struct Adjustments: Codable, Equatable {
   /// Straightening, in degrees clockwise on screen, before the quarter turns: the frame turned
   /// about its middle and cut to the largest rectangle of its own shape inside. Nil is level.
   var angle: Double? = nil
+  /// ③'s crop (裁切, as Lightroom's in its Develop module): the part of the straightened picture
+  /// kept, an upright box in the picture's own box turned by `angle` about its middle (before the
+  /// quarter turns and the mirror), 0–1 from its top left. Nil, the largest box of the picture's own
+  /// shape inside, centred, as straightening always kept. Kept inside the turned picture: one that
+  /// does not fit, after the frame's crop or angle changed, is taken as the largest of its shape
+  /// about its middle that does (`ImageGeometry.composed`). Nothing that de-masks reads it: ②'s base,
+  /// white balance and levels read the frame's crop (`FilmFrame.rect`), so a crop in ③ leaves the
+  /// colours as they are.
+  var composition: NormalRect? = nil
   /// A light-leak repair from 去漏光, applied in the conversion before ③'s grading (`LeakFix`);
   /// each frame's own, never synced, pasted or reset with the rest.
   var leakFix: LeakFix? = nil
@@ -922,7 +1002,8 @@ extension CanvasTool {
   /// dust, calibrating the film), ③ grades (the greys, the curves); nil for both, or neither.
   var step: AppModel.ConvertStep? {
     switch self {
-    case .crop, .region, .base, .dust, .calibrate, .it8: return .demask
+    // The crop is each step's: ②'s crops the frame on the film, ③'s the picture (`AppModel.composing`).
+    case .region, .base, .dust, .calibrate, .it8: return .demask
     case .neutral, .shadowNeutral, .curve, .curvePick: return .grade
     default: return nil
     }

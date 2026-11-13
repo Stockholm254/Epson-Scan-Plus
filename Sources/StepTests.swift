@@ -1,3 +1,4 @@
+import CoreImage
 import Foundation
 
 /// ② 去色罩 and ③ 调色 kept apart: each step's 重置, 同步 and 粘贴 act on its own settings only,
@@ -214,13 +215,76 @@ enum StepTests {
       "粘贴上一张 gives the frame shown the grading of the frame shown before it, not its base")
     edits.undo()
 
+    // White balance as Lightroom's menu: 原片, 自动, 自定义; a grey picked or 冷暖 moved is 自定义,
+    // and 原片 or 自动 chosen sets 冷暖 and 绿 / 洋红 back to 0 and lets the grey go.
+    model.selectedID = ids[1]
+    model.frames[1].adjustments = Adjustments()
+    let wasAuto = model.balanceMode
+    model.change("冷暖") { $0.warmth = 0.3 }
+    let movedIsCustom = model.balanceMode == .custom
+    model.setBalanceMode(.asShot)
+    let asShot = model.frames[1].adjustments
+    model.setNeutral(RGB(r: 0.4, g: 0.5, b: 0.6))
+    let pickedIsCustom = model.balanceMode == .custom
+    model.setBalanceMode(.auto)
+    let auto = model.frames[1].adjustments
+    model.setFilmBase(RGB(r: 0.8, g: 0.5, b: 0.3))
+    try check(wasAuto == .auto && movedIsCustom && !asShot.autoWhiteBalance && asShot.warmth == 0 && pickedIsCustom
+      && auto.autoWhiteBalance && auto.neutralSample == nil && auto.warmth == 0 && model.balanceMode == .auto,
+      "white balance as Lightroom's: 自动 by default, 冷暖 moved or a grey picked is 自定义, 原片 and 自动 set it back; picking the base leaves it 自动")
+    edits.undo()
+
     // A tool of the other step takes the window there.
     model.convertStep = .demask
     model.useTool(.neutral)
     try check(model.convertStep == .grade && model.tool == .neutral, "the grey picker in ② takes the window to ③, where it belongs")
+    // ③'s own crop, as Lightroom's in Develop: the picture cropped and turned inside the frame ②
+    // cut, the de-masking reading ②'s, so the colours stay.
+    model.selectedID = ids[1]
+    model.frames[1].adjustments = Adjustments()
     model.useTool(.crop)
-    try check(model.convertStep == .demask && model.tool == .crop, "the crop in ③ takes it back to ②")
-    model.convertStep = .grade
+    let composingThere = model.convertStep == .grade && model.tool == .crop && model.composing && !model.editingSingle && model.singleView
+    guard let aspect = model.selected.flatMap(model.frameAspect) else { throw DeskError.message("FAIL: no frame shape") }
+    let colours = model.analysisKey(model.frames[1])
+    // Wide, near the picture's edge: it does not fit once the picture turns.
+    let box = NormalRect(x: 0.02, y: 0.05, width: 0.9, height: 0.6)
+    model.setComposition(box)
+    try check(composingThere && model.frames[1].adjustments.composition == box && model.analysisKey(model.frames[1]) == colours,
+      "the crop in ③ stays in ③ and crops the picture there, the de-masking (its analysis) as it was")
+    // Turned, the box stays on the picture: of its shape about its middle, as large as fits.
+    model.straighten(10)
+    let turned = model.frames[1].adjustments.composition
+    let fitsTurned = turned.map { ImageGeometry.fits($0, degrees: 10, aspect: aspect) } == true
+    let sameShape = turned.map { abs($0.width / $0.height - box.width / box.height) < 1e-3 && $0.width < box.width } == true
+    try check(fitsTurned && sameShape && !ImageGeometry.fits(box, degrees: 10, aspect: aspect),
+      "turned 10°, ③'s crop is kept on the picture, of its shape about its middle: \(turned.map { "\($0)" } ?? "-")")
+    // The mapping both ways, and the picture's own box with none.
+    let p = CGPoint(x: 0.3, y: 0.6)
+    let there = ImageGeometry.straightened(p, degrees: 10, aspect: aspect, composition: turned)
+    let returned = ImageGeometry.straightened(there, degrees: 10, aspect: aspect, inverse: true, composition: turned)
+    let keptBox = ImageGeometry.composed(nil, degrees: 10, aspect: aspect)
+    let k = ImageGeometry.keep(10, aspect: aspect)
+    try check(hypot(returned.x - p.x, returned.y - p.y) < 1e-9 && keptBox.map { abs($0.width - k) < 1e-12 && abs($0.x - (0.5 - k / 2)) < 1e-12 } == true,
+      "a point maps through ③'s crop and back, and with none the largest box of the picture's shape is kept as before")
+    // The pipeline cuts the same box out of the turned picture.
+    let picture = CIImage(color: CIColor(red: 0.5, green: 0.5, blue: 0.5)).cropped(to: CGRect(x: 0, y: 0, width: 1200, height: 1200 / aspect))
+    let cut = ImagePipeline.straightened(picture, degrees: 10, composition: turned).extent
+    if let o = turned {
+      try check(abs(cut.width - CGFloat(o.width) * 1200) <= 2 && abs(cut.height - CGFloat(o.height) * 1200 / CGFloat(aspect)) <= 2,
+        "the picture is cut to ③'s crop: \(Int(cut.width)) × \(Int(cut.height))")
+    }
+    model.swapCompositionOrientation()
+    let swapped = model.frames[1].adjustments.composition
+    model.resetComposition()
+    try check(swapped.map { s in turned.map { t in (s.width * aspect > s.height) != (t.width * aspect > t.height) } ?? false } == true
+      && model.frames[1].adjustments.composition == nil && model.frames[1].adjustments.angle == nil,
+      "X swaps the crop's long side and short; 还原 takes it and the straightening back")
+    // ②'s crop is the frame's extent on the film, as before.
+    model.convertStep = .demask
     try check(model.tool == .select, "and a step's tool is put down when the window leaves it")
+    model.useTool(.crop)
+    try check(model.convertStep == .demask && model.tool == .crop && !model.composing && model.editingSingle,
+      "the crop in ② crops the frame on the film, on its surroundings as they lie")
+    model.useTool(.select)
   }
 }

@@ -264,6 +264,10 @@ final class FilmCanvasView: NSView {
   var clickedFrame: (id: UUID, at: CGPoint)?
   /// A line being drawn to straighten the frame by, on the canvas.
   var levelLine: (from: CGPoint, to: CGPoint)?
+  /// ③'s crop being dragged (`CanvasCompose`): what was taken hold of, where, and the box (as the
+  /// screen shows it) and angle it started from; and the box as it is dragged.
+  var composeDrag: (hold: ComposeHold, start: CGPoint, box: CGRect, angle: Double)?
+  var composeDraft: CGRect?
   /// Room at the edges taken by panels and bars floating over the canvas: the light table runs
   /// under them, the picture fits between.
   var reserved = NSEdgeInsets() {
@@ -521,6 +525,10 @@ final class FilmCanvasView: NSView {
   /// tool up drawn with corners, the rest of the picture dimmed and the picture's crop outlined in
   /// amber, each labelled. With no region set the tool shows what is read instead, dashed.
   private func drawAnalysisRegion(_ frame: FilmFrame) {
+    // On the picture shown only: with ③'s crop the frame's region can reach past it.
+    NSGraphicsContext.saveGraphicsState()
+    defer { NSGraphicsContext.restoreGraphicsState() }
+    NSBezierPath(rect: imageRect).addClip()
     guard let model else { return }
     let editing = model.tool == .region, set = regionDraft ?? frame.adjustments.analysisRegion?.cg
     let c = pictureCorners(set ?? model.followedRegion), whole = pictureCorners(CGRect(x: 0, y: 0, width: 1, height: 1))
@@ -561,7 +569,9 @@ final class FilmCanvasView: NSView {
   /// an edge, at the side of the box it is on the screen.
   private func updateCropCursor(at p: CGPoint?) {
     var cursor: NSCursor?
-    if let p, let model, model.singleView, model.tool == .crop, let crop = model.canvasCrop, !model.isWorking,
+    if let p, let model, model.composing, !model.isWorking, composeDrag == nil, levelLine == nil {
+      cursor = composeCursor(at: p)
+    } else if let p, let model, model.singleView, model.tool == .crop, let crop = model.canvasCrop, !model.isWorking,
       dragStart == nil, imageRect.contains(p)
     {
       let hold = cropHold(crop.cg, at: p), r = screen(crop.cg), c = corners(crop.cg)
@@ -795,6 +805,11 @@ final class FilmCanvasView: NSView {
     if interimFace() != nil { return }
     let rect = imageRect
     let sheet = model.onSheetPage
+    // ③'s crop under way: the box over the turned picture, nothing else on it.
+    if model.composing, let box = composeDraft ?? composeShown() {
+      drawComposing(box: box, turning: composeDrag?.hold == .turn || model.straightening)
+      return
+    }
     if model.singleView, model.canvasCrop == nil, model.straightening {
       drawGrid(in: [
         CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY),
@@ -805,10 +820,10 @@ final class FilmCanvasView: NSView {
       let r = screen(draft ?? crop.cg)
       // Straightened, the part kept: the crop turned about its middle, the largest rectangle of
       // its shape inside it, turned back onto the picture as it lies.
-      let degrees = model.screenAngle
-      let kept = abs(degrees) > 0.0001 && r.width > 0 && r.height > 0
+      let degrees = model.screenAngle, composition = model.screenComposition
+      let kept = (abs(degrees) > 0.0001 || composition != nil) && r.width > 0 && r.height > 0
         ? [CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 0), CGPoint(x: 1, y: 1), CGPoint(x: 0, y: 1)].map { c -> CGPoint in
-          let q = ImageGeometry.straightened(c, degrees: degrees, aspect: Double(r.width / r.height), inverse: true)
+          let q = ImageGeometry.straightened(c, degrees: degrees, aspect: Double(r.width / r.height), inverse: true, composition: composition)
           return CGPoint(x: r.minX + q.x * r.width, y: r.minY + q.y * r.height)
         } : nil
       let mask = NSBezierPath(rect: imageRect)
@@ -905,10 +920,11 @@ final class FilmCanvasView: NSView {
         if !f.enabled { path.setLineDash([4, 4], count: 2, phase: 0) }
         path.stroke()
         // Straightened, the part kept, turned on the film as it lies.
-        if !sheet, let degrees = f.adjustments.angle, abs(degrees) > 0.0001, let aspect = model.frameAspect(f) {
+        let degrees = f.adjustments.angle ?? 0
+        if !sheet, abs(degrees) > 0.0001 || f.adjustments.composition != nil, let aspect = model.frameAspect(f) {
           let box = f.rect.cg, b = imageRect
           let kept = [CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 0), CGPoint(x: 1, y: 1), CGPoint(x: 0, y: 1)].map { corner -> CGPoint in
-            let q = ImageGeometry.straightened(corner, degrees: degrees, aspect: aspect, inverse: true)
+            let q = ImageGeometry.straightened(corner, degrees: degrees, aspect: aspect, inverse: true, composition: f.adjustments.composition)
             let s = turn.shown(CGPoint(x: box.minX + q.x * box.width, y: box.minY + q.y * box.height))
             return CGPoint(x: b.minX + s.x * b.width, y: b.minY + s.y * b.height)
           }
@@ -2399,7 +2415,19 @@ final class FilmCanvasView: NSView {
     endZoomGlide()
     guard let model, model.displayed != nil, !model.rendering else { return }
     let p = convert(event.locationInWindow, from: nil)
-    guard bounds.contains(p), imageRect.contains(p) else { return }
+    // ③'s crop turns the picture from a press outside it too.
+    guard bounds.contains(p), imageRect.contains(p) || model.composing else { return }
+    if model.composing, !model.isWorking {
+      if model.levelling || event.modifierFlags.contains(.option) {
+        levelLine = (p, p)
+        return
+      }
+      guard let box = composeShown() else { return }
+      composeDrag = (composeHold(box, at: p), p, box, model.screenAngle)
+      composeDraft = box
+      if composeDrag?.hold == .move { NSCursor.closedHand.set() }
+      return
+    }
     if model.tool.picksPoint {
       sample(at: p)
       return
@@ -2483,6 +2511,17 @@ final class FilmCanvasView: NSView {
     }
     if let line = levelLine {
       levelLine = (line.from, p)
+      needsDisplay = true
+      return
+    }
+    if let drag = composeDrag, let model {
+      if drag.hold == .turn {
+        // The picture turns under the box, the box kept on it as it goes (`AppModel.straighten`).
+        model.straighten(composeTurn(drag, to: p))
+        composeDraft = nil
+      } else {
+        composeDraft = composeDragged(drag, to: p, shift: event.modifierFlags.contains(.shift))
+      }
       needsDisplay = true
       return
     }
@@ -2589,6 +2628,14 @@ final class FilmCanvasView: NSView {
       panStart = nil
       levelLine = nil
       needsDisplay = true
+    }
+    if let drag = composeDrag {
+      composeDrag = nil
+      // A box sized or moved is kept; a turn was set as it went.
+      if drag.hold != .turn, let box = composeDraft, box != drag.box, let o = composeStored(box) { model?.setComposition(o) }
+      composeDraft = nil
+      updateCropCursor(at: convert(event.locationInWindow, from: nil))
+      return
     }
     if regionDrag != nil {
       // A click, or a box too small to read, changes nothing.
@@ -2741,6 +2788,27 @@ final class FilmCanvasView: NSView {
   private var zoomSettle: DispatchWorkItem?
   var zooming: Bool { CACurrentMediaTime() < zoomingUntil }
   override func keyDown(with event: NSEvent) {
+    // ③'s crop, as Lightroom's: X swaps the box's long side and short, O the overlay, the arrows
+    // move the box a point (⇧ ten).
+    if let model, model.composing, event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
+      let key = event.charactersIgnoringModifiers?.lowercased()
+      if key == "x" { model.swapCompositionOrientation(); needsDisplay = true; return }
+      if key == "o" { model.nextCropOverlay(); needsDisplay = true; return }
+      if [123, 124, 125, 126].contains(event.keyCode), let box = composeShown() {
+        let step: CGFloat = event.modifierFlags.contains(.shift) ? 10 : 1, b = imageRect
+        let dx = (event.keyCode == 123 ? -step : event.keyCode == 124 ? step : 0) / max(1, b.width)
+        let dy = (event.keyCode == 126 ? -step : event.keyCode == 125 ? step : 0) / max(1, b.height)
+        if let o = composeStored(composeFitted(box.offsetBy(dx: dx, dy: dy), from: box)) { model.setComposition(o) }
+        return
+      }
+    }
+    // R, as Lightroom's crop key: ③'s crop on and off (in ② the crop is C).
+    if let model, model.page == .convert, model.convertStep == .grade, model.selected != nil,
+      event.modifierFlags.intersection([.command, .control, .option]).isEmpty, event.charactersIgnoringModifiers?.lowercased() == "r"
+    {
+      model.useTool(model.tool == .crop ? .select : .crop)
+      return
+    }
     if model?.singleView == true, model?.tool == .crop,
       [123, 124, 125, 126].contains(event.keyCode), let crop = model?.canvasCrop
     {

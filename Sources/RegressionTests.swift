@@ -354,8 +354,8 @@ enum RegressionTests {
     editor.sample(samplePoint)
     try awaitRender()
     try check(
-      editor.singleView && editor.settings.base != nil && editor.settings.autoWhiteBalance == false,
-      "base picker works in single view and preserves manual sample")
+      editor.singleView && editor.settings.base != nil && editor.settings.autoWhiteBalance,
+      "base picker works in single view and leaves the white balance automatic")
     let compatibility = try JSONDecoder().decode(
       DeskProject.self, from: JSONEncoder().encode(project))
     try check(

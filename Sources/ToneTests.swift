@@ -326,6 +326,17 @@ enum ToneTests {
       let darkLuma = 0.2126 * dark[0] + 0.7152 * dark[1] + 0.0722 * dark[2], wasLuma = 0.2126 * darkWas[0] + 0.7152 * darkWas[1] + 0.0722 * darkWas[2]
       try check(dark[2] > dark[0] + 0.03 && abs(darkLuma - wasLuma) < 0.002 && spread(light) < 0.01,
         String(format: "grading the shadows blue turns a dark grey blue (red %.3f, blue %.3f), its lightness kept, and leaves a light grey grey", dark[0], dark[2]))
+      // Black stays a neutral black under the shadows' wheel, as under 冷暖 (until 0.22.4 it went blue).
+      let black = values(tinted)[32 * 64]
+      try check(spread(black) < 1e-3 && black.max()! < 1e-3, String(format: "and black stays black: %.3f %.3f %.3f", black[0], black[1], black[2]))
+      // The mixer's red band either side of 0°, alike: the table read round the circle.
+      var reds = Adjustments()
+      reds[mixer: 0, kind: 1] = -1
+      let (twoReds, unredded) = patch({ x, _ in x < 32 ? (0.8, 0.2, 0.205) : (0.8, 0.205, 0.2) }, reds)
+      let r0 = values(twoReds), r1 = values(unredded)
+      let below = spread(r1[32 * 64 + 10]) / spread(r0[32 * 64 + 10]), above = spread(r1[32 * 64 + 50]) / spread(r0[32 * 64 + 50])
+      try check(abs(below - above) < 0.05 && below < 0.6,
+        String(format: "the mixer's red −1 takes a red at 359.5° and one at 0.5° alike towards grey (%.2f, %.2f of their spread)", below, above))
       var vivid = Adjustments()
       vivid.vibrance = 1
       let plainBands = try render(defaults, portra), vividBands = try render(vivid, portra)

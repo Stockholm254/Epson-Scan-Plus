@@ -424,7 +424,8 @@ enum MCPTools {
         roll["slope_estimate"] = model.estimatesSlopes
         return roll
       }
-      var balance: [String: Any] = ["auto": s.autoWhiteBalance, "warmth": s.warmth, "tint": s.tint, "shadow_warmth": s.shadowWarmthAmount, "shadow_tint": s.shadowTintAmount]
+      // 原片 / 自动 / 自定义, as the white balance menu shows it.
+      var balance: [String: Any] = ["mode": model.balanceMode.rawValue, "auto": s.autoWhiteBalance, "warmth": s.warmth, "tint": s.tint, "shadow_warmth": s.shadowWarmthAmount, "shadow_tint": s.shadowTintAmount]
       if let neutral = s.neutralSample { balance["neutral_sample"] = rgb(neutral) }
       state["white_balance"] = balance
       state["levels"] = ["auto": s.autoLevels]

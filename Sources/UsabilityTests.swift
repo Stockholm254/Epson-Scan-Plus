@@ -123,6 +123,28 @@ enum UsabilityTests {
     model.requestScanEnabled()
     try check(asked?.frames == 3 && asked?.dpi == 2400 && scanner.requests == 0 && !model.scanBatch.isActive,
       "scanning the ticked frames asks first, and cancelling starts nothing")
+    // Run again after a batch stopped: those already scanned at this resolution asked about, and
+    // only the rest planned (until 0.22.4 all of them were scanned again).
+    (model.frames[0].scanPath, model.frames[0].scanDPI) = (folder.appendingPathComponent("01.tiff").path, 2400)
+    var rescan: (scanned: Int, ticked: Int)?
+    model.askRescan = { scanned, ticked, _ in rescan = (scanned, ticked); return .rest }
+    asked = nil
+    model.requestScanEnabled()
+    try check(rescan?.scanned == 1 && rescan?.ticked == 3 && asked?.frames == 2,
+      "scanning again asks about the frame already scanned at 2400 dpi, and plans the two left")
+    (model.frames[0].scanPath, model.frames[0].scanDPI) = (nil, nil)
+    // A preview starts a new roll: asked first while one with frames is open.
+    var newRoll: Int?
+    model.confirmNewRoll = { newRoll = $0; return false }
+    model.requestPreview()
+    try check(newRoll == 3 && !model.scanner.busy && model.frames.count == 3, "a preview asks before it starts a new roll in place of the one open")
+    // The batch's line: the head positioning at a pass's start, and the time left.
+    var batch = ScanBatchProgress(total: 4)
+    (batch.startedAt, batch.plannedSeconds) = (Date(timeIntervalSinceNow: -60), 600)
+    batch.beginFrame()
+    let starting = batch.label(frameProgress: 0), going = batch.label(frameProgress: 0.5)
+    try check(starting.contains("定位、校准") && starting.contains("约剩 9 分钟") && going.contains("本张 50%") && going.contains("约剩"),
+      "a batch says when the head positions and calibrates, and the time left: \(starting) / \(going)")
     model.selectedID = model.frames[0].id
     asked = nil
     model.requestScanSelected()

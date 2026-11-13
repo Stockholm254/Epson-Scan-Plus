@@ -281,7 +281,9 @@ final class LeakLab: ObservableObject {
     let s = origin.adjustments
     // The positive is turned; straightening reads the unturned picture's shape.
     let turned = Double(meta.width) / Double(max(1, meta.height))
-    let aspect = (((s.rotation % 4) + 4) % 4) % 2 == 1 ? 1 / turned : turned
+    // Unturned; and the frame's own shape, not ③'s crop's, which the job's picture has.
+    let shown = (((s.rotation % 4) + 4) % 4) % 2 == 1 ? 1 / turned : turned
+    let aspect = s.composition.map { shown * $0.height / max(1e-6, $0.width) } ?? shown
     let corners = [(r.x, r.y), (r.x + r.width, r.y), (r.x, r.y + r.height), (r.x + r.width, r.y + r.height)].map { c -> (Double, Double) in
       let d = ImageGeometry.display(CGPoint(x: c.0, y: c.1), settings: s, aspect: aspect)
       var (u, v) = (Double(d.x), Double(d.y))
@@ -1221,9 +1223,11 @@ extension AppModel {
     let f = frames[i]
     let s = f.adjustments
     let aspect = exportPixels(f).map { size -> Double in
-      // The picture as the conversion reads it: before it is straightened and turned.
+      // The picture as the conversion reads it: before it is straightened and turned, and before
+      // ③'s crop (`Adjustments.composition`), whose box is the exported size's shape.
       let turned = ((s.rotation % 4) + 4) % 2 == 1
-      return turned ? Double(size.height / size.width) : Double(size.width / size.height)
+      let shown = turned ? Double(size.height / size.width) : Double(size.width / size.height)
+      return s.composition.map { shown * $0.height / max(1e-6, $0.width) } ?? shown
     } ?? 1.5
     let place = { (p: CGPoint) in ImageGeometry.display(p, settings: s, aspect: aspect) }
     leak.measureRepair(gridAspect: aspect, place: place) { [weak self] result in

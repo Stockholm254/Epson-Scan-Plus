@@ -1,7 +1,8 @@
 #!/bin/bash
 # Offline helper test against FakeSane.c; it never touches USB or a scanner.
 # Cancel, the no-data watchdog and a closed stdout must all drain the transfer
-# before closing, never call sane_cancel, and never publish a partial TIFF.
+# before closing, never call sane_cancel, and never publish a partial TIFF. A user
+# cancel keeps the frame being read, whole; the watchdog keeps nothing.
 # Usage: bash ScannerHelper/test-fake-backend.sh
 set -euo pipefail
 helper_dir="$(cd "$(dirname "$0")" && pwd)"
@@ -63,7 +64,7 @@ check "a scan longer than the window is saved while data keeps arriving" 0 yes '
 start_scan cancel
 wait_for parameters; kill -INT "$pid"
 code=0; wait "$pid" || code=$?
-check "user cancel is reported as cancel" 130 no '"event":"cancelling"' '"cancelled":true' '"timedOut":false'
+check "a user cancel finishes the frame being read and keeps it, whole" 0 yes '"event":"cancelling"' '"event":"file"'
 
 start_scan stall FAKE_SANE_STALL_SECONDS=4
 code=0; wait "$pid" || code=$?

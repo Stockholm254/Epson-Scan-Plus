@@ -26,12 +26,13 @@ struct ColourMixer: Codable, Equatable {
   /// The moves for `Kernels.mixer`, a degree a step: red the hue's turn in whole turns (30° at 1),
   /// green the saturation, blue the luminance.
   func table() -> CIImage? {
-    var px = [Float](repeating: 0, count: 360 * 4)
-    for d in 0..<360 {
-      let m = at(Double(d))
+    // 361 entries, the last 360° (0° again), so the kernel reads round the circle.
+    var px = [Float](repeating: 0, count: 361 * 4)
+    for d in 0...360 {
+      let m = at(Double(d % 360))
       (px[d * 4], px[d * 4 + 1], px[d * 4 + 2], px[d * 4 + 3]) = (Float(m.hue * 30 / 360), Float(m.saturation), Float(m.luminance), 1)
     }
-    return CIImage(bitmapData: Data(bytes: px, count: px.count * 4), bytesPerRow: 360 * 16, size: CGSize(width: 360, height: 1),
+    return CIImage(bitmapData: Data(bytes: px, count: px.count * 4), bytesPerRow: 361 * 16, size: CGSize(width: 361, height: 1),
       format: .RGBAf, colorSpace: nil)
   }
 }

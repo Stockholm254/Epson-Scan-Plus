@@ -200,7 +200,7 @@ extension ImagePipeline {
     }
     ci = Self.baseNeutral(ci, base: nil, gamma: s.inputGamma)
     if oriented {
-      ci = Self.straightened(ci, degrees: s.angle ?? 0)
+      ci = Self.straightened(ci, degrees: s.angle ?? 0, composition: s.composition)
       ci = ci.oriented(forExifOrientation: [1, 6, 3, 8][((s.rotation % 4) + 4) % 4])
       if s.flipHorizontal == true { ci = ci.transformed(by: CGAffineTransform(scaleX: -1, y: 1)) }
       ci = ci.transformed(by: CGAffineTransform(translationX: -ci.extent.minX, y: -ci.extent.minY))
