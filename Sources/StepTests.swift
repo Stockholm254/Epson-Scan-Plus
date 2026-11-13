@@ -311,6 +311,10 @@ enum StepTests {
         let turn = g.makeImage().flatMap(AutoStraighten.degrees)
         try check(turn.map { abs($0 + 5) < 0.5 } == true,
           "自动拉直 levels a horizon falling 5° to the right by turning it 5° back: \(turn.map { String(format: "%+.2f°", $0) } ?? "none found")")
+        // Readings agree two at least: all three, the middle; else the closest two; else none.
+        let pair = AutoStraighten.agreed([0.1, 2.0, 0.3]), all = AutoStraighten.agreed([0, 0.7, 0.5])
+        try check(pair.map { abs($0 - 0.2) < 1e-9 } == true && all == 0.5 && AutoStraighten.agreed([0, 1, 2]) == nil && AutoStraighten.agreed([0.2]) == nil,
+          "自动拉直 goes by two readings that agree where the third is off, and by none where none agree")
       }
     }
     // ②'s crop is the frame's extent on the film, as before.

@@ -11,15 +11,26 @@ enum AutoStraighten {
   /// Vision's horizon detection often finds none in a picture all but level, and in some tilted a
   /// few degrees, that it finds once turned a little more. So the picture is read as it is and
   /// turned 4° either way, each reading less the turn given it; two at least must agree within
-  /// 0.75° (a tree or a wall gave readings a degree and more apart), and the middle one is taken.
+  /// 0.75° (a tree or a wall gave readings a degree and more apart), `agreed`.
   static func degrees(in picture: CGImage) -> Double? {
     let tilts = [0.0, probe, -probe].compactMap { turn -> Double? in
       guard let image = turn == 0 ? picture : turned(picture, by: turn), let found = tilt(in: image) else { return nil }
       return found - turn
-    }.sorted()
-    guard tilts.count >= 2, let low = tilts.first, let high = tilts.last, high - low <= agreement else { return nil }
-    let tilt = tilts.count == 3 ? tilts[1] : (low + high) / 2
-    return -tilt
+    }
+    return agreed(tilts).map { -$0 }
+  }
+  /// What readings agree on: all three within `agreement`, their middle one; else the closest two
+  /// within it, between them; else nothing.
+  static func agreed(_ readings: [Double]) -> Double? {
+    let t = readings.sorted()
+    if t.count == 3, t[2] - t[0] <= agreement { return t[1] }
+    var best: (low: Double, high: Double)?
+    for i in t.indices {
+      for j in t.indices where j > i && t[j] - t[i] <= agreement {
+        if best.map({ t[j] - t[i] < $0.high - $0.low }) ?? true { best = (t[i], t[j]) }
+      }
+    }
+    return best.map { ($0.low + $0.high) / 2 }
   }
   static let probe = 4.0, agreement = 0.75
   /// How far the horizon Vision finds in `image` is turned clockwise on the screen, in degrees: as
@@ -48,106 +59,91 @@ extension AppModel {
   /// The frame whose horizon is being looked for, off the main thread.
   private static var straighteningFrame: UUID?
 
-  /// 自动拉直 the selected frame: its picture as shown, unturned, read on a small copy off the main
-  /// thread; the horizon found levelled as one edit (⌘Z), ③'s crop kept on the picture as
-  /// `straighten` keeps it.
-  /// `done`, where given, is told in a line what came of it (the assistant's tool waits for it).
+  /// 自动拉直: the frame shown, or each of those chosen (⌘ / ⇧), by the horizon in its own picture.
+  /// Each is analysed as the export analyses it, on a small copy off the main thread (from the light
+  /// table too, and right after another frame was shown, whose analysis was not this one's); those
+  /// found, and unchanged meanwhile, levelled as one edit (⌘Z), ③'s crop kept on the picture as
+  /// `straighten` keeps it. `done`, where given, is told in a line what came of it (the assistant's
+  /// tool waits for it).
   func autoStraighten(done: ((String) -> Void)? = nil) {
-    guard let frame = selected, !isWorking, Self.straighteningFrame == nil else {
+    guard let shown = selected, !isWorking, Self.straighteningFrame == nil else {
       done?(selected == nil ? "没有选中的画面。" : "正在忙，稍后再自动拉直。")
       return
     }
-    // Several chosen (⌘ / ⇧): each by its own horizon, as one edit.
-    if multiSelected { return autoStraightenChosen(done: done) }
-    guard let analysis = toneAnalysis else {
-      status = "画面还在分析，稍后再自动拉直"
-      done?(status)
-      return
-    }
-    let profile = conversionProfile
-    var settings = asShown(frame).adjustments
-    (settings.angle, settings.composition) = (nil, nil)
-    Self.straighteningFrame = frame.id
-    status = "正在找第 \(frame.name) 张的地平线…"
-    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      guard let self else { return }
-      let picture = (try? self.source(for: frame, maxDimension: 1200)).flatMap {
-        ImagePipeline.shared.render($0, settings: settings, profile: profile, analysis: analysis, negative: false)
-      }
-      let found = picture.flatMap(AutoStraighten.degrees)
-      DispatchQueue.main.async {
-        Self.straighteningFrame = nil
-        guard self.selectedID == frame.id else {
-          done?("第 \(frame.name) 张在找地平线时换了画面，没有改动。")
-          return
-        }
-        defer { done?(self.status) }
-        guard let d = found, abs(d) <= 45 else {
-          self.status = "第 \(frame.name) 张没有找到清楚的地平线，没有改动；可以用「画线」沿一条应是水平或竖直的线拉直"
-          self.noteOnCanvas("没有找到清楚的地平线")
-          return
-        }
-        let was = self.screenAngle
-        // Its own step in 编辑 › 撤销, apart from a drag of the slider just before.
-        self.straighten(d, named: "自动拉直")
-        let line = String(format: "%+.2f°", self.screenAngle)
-        if abs(self.screenAngle - was) < 0.005 {
-          self.status = "第 \(frame.name) 张已经是平的（\(line)）"
-          self.noteOnCanvas("已经是平的")
-        } else {
-          self.status = "已自动拉直第 \(frame.name) 张：\(line) · ⌘Z 撤销"
-          self.noteOnCanvas("自动拉直 " + line)
-        }
-      }
-    }
-  }
-  /// 自动拉直 the frames chosen (⌘ / ⇧), each by the horizon in its own picture, analysed as the
-  /// export analyses it; those found levelled as one edit, the others left as they are.
-  private func autoStraightenChosen(done: ((String) -> Void)?) {
-    let chosen = selection, profile = conversionProfile
+    let chosen = multiSelected ? selection : [shown], profile = conversionProfile
     let wanted = chosen.map { f -> (FilmFrame, Adjustments) in
       var s = asShown(f).adjustments
       (s.angle, s.composition) = (nil, nil)
       return (f, s)
     }
-    Self.straighteningFrame = selectedID
-    status = "正在找所选 \(chosen.count) 张的地平线…"
+    Self.straighteningFrame = shown.id
+    status = chosen.count == 1 ? "正在找第 \(shown.name) 张的地平线…" : "正在找所选 \(chosen.count) 张的地平线…"
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       guard let self else { return }
-      let found = wanted.map { f, shown -> Double? in
+      let found = wanted.map { f, unturned -> Double? in
         autoreleasepool {
           guard let src = try? self.source(for: f, maxDimension: 1200) else { return nil }
           let analysis = ImagePipeline.shared.analyze(src, settings: f.adjustments, profile: profile)
-          return ImagePipeline.shared.render(src, settings: shown, profile: profile, analysis: analysis, negative: false)
+          return ImagePipeline.shared.render(src, settings: unturned, profile: profile, analysis: analysis, negative: false)
             .flatMap(AutoStraighten.degrees).flatMap { abs($0) <= 45 ? $0 : nil }
         }
       }
       DispatchQueue.main.async {
         Self.straighteningFrame = nil
-        // Those changed meanwhile are left as they now are.
-        let turns = zip(chosen, found).compactMap { f, d -> (Int, Double)? in
-          guard let d, let i = self.frames.firstIndex(where: { $0.id == f.id }), self.frames[i].adjustments == f.adjustments else { return nil }
-          return (i, d)
+        var turns = [(index: Int, angle: Double)](), changed = 0, none = 0, level = [Double]()
+        for (f, d) in zip(chosen, found) {
+          // Changed meanwhile (a fader, a line drawn, turned or mirrored): left as it now is.
+          guard let i = self.frames.firstIndex(where: { $0.id == f.id }), self.frames[i].adjustments == f.adjustments else {
+            changed += 1
+            continue
+          }
+          guard let d else { none += 1; continue }
+          // Kept unmirrored, as `straighten` keeps it.
+          let mirror: Double = self.frames[i].adjustments.flipHorizontal == true ? -1 : 1
+          let a = (d * 100).rounded() / 100 * mirror
+          if abs(a - (self.frames[i].adjustments.angle ?? 0)) < 0.005 { level.append(d); continue }
+          turns.append((i, a))
         }
         if !turns.isEmpty {
           self.recordEdit("自动拉直", key: "自动拉直-\(UUID())")
-          for (i, d) in turns {
-            let a = (d * 100).rounded() / 100 * (self.frames[i].adjustments.flipHorizontal == true ? -1 : 1)
+          for (i, a) in turns {
             let aspect = self.frameAspect(self.frames[i])
             self.frames[i].adjustments.angle = abs(a) < 0.005 ? nil : a
             if let o = self.frames[i].adjustments.composition, let aspect {
               self.frames[i].adjustments.composition = ImageGeometry.shrunk(o, degrees: a, aspect: aspect)
             }
           }
+          if turns.contains(where: { self.frames[$0.index].id == self.selectedID }) { self.showStraighteningGrid() }
           self.refresh()
           self.saveProject()
           self.updateThumbnails()
         }
-        let missed = chosen.count - turns.count
-        self.status = turns.isEmpty
-          ? "所选 \(chosen.count) 张都没有找到清楚的地平线，没有改动"
-          : "已自动拉直所选的 \(turns.count) 张" + (missed > 0 ? "，\(missed) 张没有找到清楚的地平线、没有改动" : "") + " · ⌘Z 撤销"
-        self.noteOnCanvas(turns.isEmpty ? "没有找到清楚的地平线" : "自动拉直 \(turns.count) 张")
+        let note: String
+        if chosen.count == 1 {
+          let name = shown.name
+          if changed > 0 {
+            self.status = "第 \(name) 张在找地平线时改过，没有改动"
+            note = "改过，没有拉直"
+          } else if none > 0 {
+            self.status = "第 \(name) 张没有找到清楚的地平线，没有改动；可以用「画线」沿一条应是水平或竖直的线拉直"
+            note = "没有找到清楚的地平线"
+          } else if let d = level.first {
+            self.status = String(format: "第 %@ 张已经是平的（%+.2f°）", name, d)
+            note = "已经是平的"
+          } else {
+            let line = String(format: "%+.2f°", turns[0].angle * (self.frames[turns[0].index].adjustments.flipHorizontal == true ? -1 : 1))
+            self.status = "已自动拉直第 \(name) 张：\(line) · ⌘Z 撤销"
+            note = "自动拉直 " + line
+          }
+        } else {
+          var parts = [turns.isEmpty ? "所选 \(chosen.count) 张都没有拉直" : "已自动拉直所选的 \(turns.count) 张"]
+          if none > 0 { parts.append("\(none) 张没有找到清楚的地平线") }
+          if !level.isEmpty { parts.append("\(level.count) 张已经是平的") }
+          if changed > 0 { parts.append("\(changed) 张在找地平线时改过") }
+          self.status = parts.joined(separator: "，") + (turns.isEmpty ? "" : " · ⌘Z 撤销")
+          note = turns.isEmpty ? "没有拉直" : "自动拉直 \(turns.count) 张"
+        }
+        self.noteOnCanvas(note)
         done?(self.status)
       }
     }

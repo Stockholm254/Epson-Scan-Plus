@@ -756,13 +756,14 @@ enum MCPTools {
           finished.signal()
         }
       }
-      let end = Date().addingTimeInterval(60)
+      // A frame takes a second or so; a whole roll chosen, longer.
+      let end = Date().addingTimeInterval(240)
       if Thread.isMainThread {
         while said == nil && Date() < end { RunLoop.current.run(until: Date().addingTimeInterval(0.05)) }
       } else {
-        _ = finished.wait(timeout: .now() + 60)
+        _ = finished.wait(timeout: .now() + 240)
       }
-      guard let said else { throw DeskError.message("自动拉直超时。") }
+      guard let said else { throw DeskError.message("自动拉直还没做完，稍后用 get_state 看 straighten_degrees。") }
       return [["type": "text", "text": said]]
     case "auto_crop":
       _ = try selected(model)

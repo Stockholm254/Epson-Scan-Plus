@@ -116,7 +116,7 @@ final class AppModel: ObservableObject {
       if !singleView, curveState.reading != nil { curveState.reading = nil }
       // ③'s crop is the frame's own: back on the light table it ends, where the crop tool would
       // draw new frames instead.
-      if !singleView, tool == .crop, page == .convert, convertStep == .grade { tool = .select }
+      if !singleView, tool == .crop, page == .convert, convertStep == .grade { (tool, levelling) = (.select, false) }
     }
   }
   /// The scanner's preview shows on the light table as it is read.
@@ -3989,7 +3989,10 @@ final class AppModel: ObservableObject {
         // with what shows white or black counted on the picture itself where it is only the frame.
         func measure() -> (hist: ([Double], [[Double]]), thumbnail: CGImage?, range: ToneRange?) {
           let hist = Self.histograms(output, curves: negative ? nil : shownSettings.curves)
-          let thumbnail = !edit && !negative && !bypassed && !r.demasked ? ImagePipeline.shared.scaled(output, maxDimension: Self.thumbnailDimension) : nil
+          // Not while ③'s crop is under way: that picture is the whole turned frame, and kept for the
+          // strip it stayed there uncropped once the light table was gone back to.
+          let thumbnail = !edit && !negative && !bypassed && !r.demasked && !r.composing
+            ? ImagePipeline.shared.scaled(output, maxDimension: Self.thumbnailDimension) : nil
           var range = negative ? nil : ImagePipeline.shared.toneRange(cropped, settings: frame.adjustments, profile: p, analysis: analysis)
           if !edit, range != nil {
             (range!.atWhite, range!.atBlack) = ImagePipeline.shared.screenShares(output)
