@@ -44,6 +44,10 @@ struct ToneAnalysis: Equatable {
   /// lies inside the crop (`ImagePipeline.followedRegion`): in the picture as cropped, normalised
   /// from its top left, unturned. Nil where the crop is read less its outer 5%, or a region is set.
   var followed: NormalRect? = nil
+  /// The share of the picture read clearer than its base by more than 0.05 D in a channel: unexposed
+  /// film is the clearest there is, so a base denser than that was read off fogged rebate, edge
+  /// print or a darker edge (`AppModel.baseNotes`). Nil where it was not counted.
+  var clearerThanBase: Double? = nil
 }
 
 final class ImagePipeline {
@@ -529,6 +533,11 @@ final class ImagePipeline {
       correct: leakCorrection(settings, profile: profile, part: part, width: read.width, height: read.height))
     var a = analyze(base: base, density: density, settings: settings, profile: profile)
     a.followed = part.followed
+    if let n = density.first?.count, n > 0 {
+      var clearer = 0
+      for i in 0..<n where density[0][i] < -0.05 || density[1][i] < -0.05 || density[2][i] < -0.05 { clearer += 1 }
+      a.clearerThanBase = Double(clearer) / Double(n)
+    }
     if let sampled = a.reach, let counted = pixelReach(part.image, settings: settings, profile: profile, analysis: a) {
       a.reach = max(sampled, counted)
     }

@@ -2227,7 +2227,10 @@ final class AppModel: ObservableObject {
     func key(_ f: FilmFrame) -> String {
       guard let path = f.sourcePath else { return "scanned" }
       if perFile[path, default: 0] > 1 || !poolPictures { return "file " + path }
-      return "pictures γ\(f.adjustments.inputGamma) \(f.sourceBits ?? 0)-bit"
+      // Read alike: a camera RAW read off its sensor apart from one the system's RAW engine read (a
+      // compressed one: the camera's colour matrix in it), and with its crosstalk taken out apart
+      // from one without (until 0.22.6 they were pooled).
+      return "pictures γ\(f.adjustments.inputGamma) \(f.sourceBits ?? 0)-bit" + (f.sensorRead == true ? " sensor" : "") + (f.crosstalk != nil ? " unmixed" : "")
     }
     var order = [String](), groups = [String: [FilmFrame]]()
     for f in frames {

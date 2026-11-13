@@ -122,5 +122,15 @@ enum FilmBaseTests {
       && [16, 48].allSatisfy { x in zip(single.pixel(x, 8).values, table.pixel(x, 8).values).allSatisfy { abs($0 - $1) < 0.01 } },
       String(format: "a linear negative shows its base a light neutral grey (%.2f, was about 0.2) and film 1 D denser %.2f, the single frame (so 取片基) as the light table",
         onBase.g, denser.g))
+    // A base read denser than part of the picture, as off a fogged rebate: counted, for the 片基
+    // section to say so; one at the clearest film, nothing.
+    let dim = RGB(base.values.map { $0 * 0.7 })
+    let thinPicture = image16(64, 64) { x, y in x < 16 ? base : RGB(base.values.map { $0 * 0.3 }) }
+    var tooDense = Adjustments(), right = Adjustments()
+    (tooDense.base, right.base) = (dim, base)
+    let fogged = pipe.analyze(thinPicture, settings: tooDense, profile: portra).clearerThanBase ?? 0
+    let clean = pipe.analyze(thinPicture, settings: right, profile: portra).clearerThanBase ?? 1
+    try check(fogged > 0.05 && clean < 0.005,
+      String(format: "a base denser than the picture's clearest film is found: %.0f%% of it clearer (none with the right base)", fogged * 100))
   }
 }

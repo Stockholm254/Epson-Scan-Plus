@@ -29,6 +29,10 @@ extension AppModel {
     if let d = baseDrift(f), d.values.map(abs).max()! > Self.driftLimit {
       lines.append(String(format: "这张片边的片基比本卷其他张密 R %+.2f · G %+.2f · B %+.2f D：中途调过灯或曝光？这一张按自己的片边去色罩。", d.r, d.g, d.b))
     }
+    // The shown frame's picture clearer than its base in places: the base is too dense.
+    if f.id == selectedID, let clearer = toneAnalysis?.clearerThanBase, clearer > 0.005 {
+      lines.append(String(format: "画面里有 %.1f%% 比片基还透：没曝光的片基应该是最透的，这个片基可能取在了漏光、边字或暗角的片边上，暗部会被压黑、带色。换一处重新取片基，或检查平场。", clearer * 100))
+    }
     return lines.joined(separator: "\n")
   }
 }

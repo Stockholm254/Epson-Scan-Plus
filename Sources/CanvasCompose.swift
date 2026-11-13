@@ -15,10 +15,13 @@ extension FilmCanvasView {
     guard let model, model.composing, let frame = model.selected else { return nil }
     return ImageGeometry.transform(model.compositionBox, settings: frame.adjustments).cg
   }
-  /// A box as the screen shows it, in the frame's own orientation.
+  /// A box as the screen shows it, in the frame's own orientation. Not cut to the picture's box
+  /// (`NormalRect(_:)` cuts): a box dragged past it must read as not fitting, to stop at its edge
+  /// (cut, it read as fitting and came out smaller).
   func composeStored(_ r: CGRect) -> NormalRect? {
     guard let frame = model?.selected else { return nil }
-    return ImageGeometry.transform(NormalRect(r), settings: frame.adjustments, inverse: true)
+    let whole = NormalRect(x: Double(r.minX), y: Double(r.minY), width: Double(r.width), height: Double(r.height))
+    return ImageGeometry.transform(whole, settings: frame.adjustments, inverse: true)
   }
   func composeFits(_ r: CGRect) -> Bool {
     guard let model, let frame = model.selected, let aspect = model.frameAspect(frame), let o = composeStored(r) else { return false }
