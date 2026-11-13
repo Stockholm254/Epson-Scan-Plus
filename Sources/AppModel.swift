@@ -4390,6 +4390,11 @@ final class AppModel: ObservableObject {
         format: "已取 %d 个中性点 · 本点绿色密度 %.2f · 跨度 %.2f D", calibrationPoints.count, point.density[1],
         (span.max() ?? 0) - (span.min() ?? 0))
       calibrateAsPicked()
+      // A base only estimated from the frame's clearest film is denser than the film's own: the
+      // point's density, and the preset's slopes and neutral with it, lean by it.
+      if (frames[i].adjustments.base ?? frames[i].adjustments.rollBase) == nil {
+        status += " · 这张的片基只是按最透处估计的，标定会跟着偏：先在片边或片头取片基，或在片边看得到片基的画面上取点"
+      }
       return
     }
     if tool == .base {

@@ -711,7 +711,10 @@ enum MCPTools {
           at: CGPoint(x: crop.x + raw.x * crop.width, y: crop.y + raw.y * crop.height))
       }
       onMain { model.calibrationPoints += added }
-      return [["type": "text", "text": "已在第 \(frame.name) 张加了 \(added.count) 个中性点。\n" + calibrationReport(model)]]
+      // A base only estimated from the frame's clearest film leans the points by how much denser it is.
+      let estimated = (frame.adjustments.base ?? frame.adjustments.rollBase) == nil
+        ? "注意：这张的片基只是按最透处估计的，标定会跟着偏；先用 pick_film_base 在片边或片头取片基，或在片边看得到片基的画面上取点。\n" : ""
+      return [["type": "text", "text": "已在第 \(frame.name) 张加了 \(added.count) 个中性点。\n" + estimated + calibrationReport(model)]]
     case "calibration_state":
       return [["type": "text", "text": calibrationReport(model)]]
     case "calibration_remove_point":
