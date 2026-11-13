@@ -187,6 +187,11 @@ enum MCPTools {
       } ?? "follows the crop: its outer 5% left out, and where the crop takes in the film's edge (rebate, sprocket holes, edge print) only the part inside it read",
       "picked": ["film_base": s.base != nil, "neutral": s.neutralSample != nil]]
     if let angle = s.angle { g["straighten_degrees"] = angle }
+    // ③'s crop and straightening (裁切与拉直), within the crop above; colours do not follow it.
+    if let o = s.composition {
+      g["grade_crop"] = ["x": round(o.x), "y": round(o.y), "width": round(o.width), "height": round(o.height),
+        "note": "③'s crop, 0-1 of the straightened picture before quarter turns and mirror; set by the user in ③ 裁切与拉直, it changes only what is shown and exported"]
+    }
     if let path = f.sourcePath { g["file"] = URL(fileURLWithPath: path).lastPathComponent }
     return g
   }
