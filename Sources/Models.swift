@@ -627,6 +627,11 @@ struct Adjustments: Codable, Equatable {
   }
   /// What `o`'s 自动 neutral gives another frame: the kind, to be looked for in its own picture.
   static func carried(_ o: AutoNeutral?) -> AutoNeutral? { o == nil ? nil : .pending }
+  /// Whether the white balance leaves how light the frame prints as 自动 has it, a grey picked,
+  /// the gray pixels or 原片 changing its colour alone (`ImagePipeline.analyze`): frames of 0.23.3
+  /// on, and an older one once its white balance is set again. An older frame keeps the lightness
+  /// its balance gave it, graded as it was.
+  var balanceKeepsLightness: Bool { autoNeutral != nil }
   // The white picked as the densest highlight (`highlightSample`, Dmax) is gone (2026-11-07): it
   // fitted each channel's contrast to a point on the film's shoulder in place of the roll's or the
   // calibration's slopes. A project saved with one opens without it, the key not read.

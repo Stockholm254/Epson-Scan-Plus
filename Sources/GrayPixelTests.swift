@@ -167,5 +167,71 @@ enum GrayPixelTests {
     model.syncSettings()
     try check(model.frames[1].adjustments.autoNeutral == .pending && model.frames[0].adjustments.autoNeutral == .found(found.reading),
       "同步 gives an older frame chosen the new 自动, to look for its own gray pixels")
+
+    // The white balance sets the colour, not how light the frame prints: a grey picked, the gray
+    // pixels or 原片 print as light as 自动 (until 0.23.5 the ends moved with the channels).
+    func lightness(_ image: CGImage, _ s: Adjustments, _ p: FilmProfile) throws -> Double {
+      let out = try ImagePipeline.shared.preview(image, settings: s, profile: p)
+      let w = out.width, h = out.height
+      var px = [UInt8](repeating: 0, count: w * h * 4)
+      let ctx = CGContext(data: &px, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+      ctx.draw(out, in: CGRect(x: 0, y: 0, width: w, height: h))
+      var sum = 0.0
+      for i in 0..<(w * h) { sum += 0.2126 * Double(px[i * 4]) + 0.7152 * Double(px[i * 4 + 1]) + 0.0722 * Double(px[i * 4 + 2]) }
+      return sum / Double(w * h)
+    }
+    var onAuto = settings
+    onAuto.autoNeutral = Adjustments.AutoNeutral.none
+    var onPick = onAuto
+    onPick.neutralSample = RGB(r: found.reading.r * 1.08, g: found.reading.g, b: found.reading.b * 0.9)
+    var onGrays = onAuto
+    onGrays.autoNeutral = .found(found.reading)
+    var plainAuto = fixed
+    plainAuto.autoNeutral = Adjustments.AutoNeutral.none
+    var plainGrey = plainAuto
+    plainGrey.neutralSample = found.reading
+    var plainRaw = plainAuto
+    plainRaw.autoWhiteBalance = false
+    let lit = try [lightness(mixed, onAuto, calibrated), lightness(mixed, onPick, calibrated), lightness(mixed, onGrays, calibrated),
+      lightness(mixed, plainAuto, film), lightness(mixed, plainGrey, film), lightness(mixed, plainRaw, film)]
+    try check(abs(lit[1] - lit[0]) < 1.5 && abs(lit[2] - lit[0]) < 1.5 && abs(lit[4] - lit[3]) < 1.5 && abs(lit[5] - lit[3]) < 1.5,
+      String(format: "a grey picked, the gray pixels and 原片 print as light as 自动 (%.1f, %.1f against %.1f; %.1f, %.1f against %.1f /255)",
+        lit[1], lit[2], lit[0], lit[4], lit[5], lit[3]))
+    var oldPick = onPick
+    oldPick.autoNeutral = nil
+    var oldAuto = onAuto
+    oldAuto.autoNeutral = nil
+    let analysed = [oldPick, onPick, oldAuto, onAuto].map { ImagePipeline.shared.analyze(mixed, settings: $0, profile: calibrated) }
+    try check(analysed[0].balance == analysed[1].balance && (analysed[0].low != analysed[1].low || analysed[0].high != analysed[1].high)
+      && analysed[2] == analysed[3],
+      String(format: "a frame from before keeps the ends its grey gave it (%.3f–%.3f, now %.3f–%.3f); 自动 is as it was",
+        analysed[0].low, analysed[0].high, analysed[1].low, analysed[1].high))
+    // A slide: its grey picked prints as light as 自动 too.
+    let slideImage = image16 { x, y in
+      let bx = x / 24, by = y / 24
+      let v = 0.08 + Double((bx * 7 + by * 13) % 9) * 0.1
+      return RGB(r: v * 0.75, g: v, b: v * 1.15)
+    }
+    var slideAuto = Adjustments()
+    (slideAuto.inputIsNegative, slideAuto.reversal, slideAuto.inputGamma) = (false, true, 1)
+    var slidePick = slideAuto
+    slidePick.neutralSample = RGB(r: 0.48 * 0.75, g: 0.48, b: 0.48 * 1.15)
+    let slideLit = try [lightness(slideImage, slideAuto, film), lightness(slideImage, slidePick, film)]
+    var oldSlide = slidePick
+    oldSlide.autoNeutral = nil
+    let oldSlideLit = try lightness(slideImage, oldSlide, film)
+    try check(abs(slideLit[1] - slideLit[0]) < 1.5,
+      String(format: "a slide's grey picked prints as light as 自动 (%.1f against %.1f /255; from before, %.1f)", slideLit[1], slideLit[0], oldSlideLit))
+    // Set again on a frame from before, the white balance keeps it as light as 自动 from then on.
+    model.frames[2].adjustments.autoNeutral = nil
+    model.selectedID = model.frames[2].id
+    model.setNeutral(RGB(r: 0.3, g: 0.2, b: 0.15))
+    let pickedAgain = model.frames[2].adjustments.autoNeutral == .pending && model.frames[2].adjustments.balanceKeepsLightness
+    edits.undo()
+    let undone = model.frames[2].adjustments.autoNeutral == nil
+    model.setBalanceMode(.asShot)
+    try check(pickedAgain && undone && model.frames[2].adjustments.autoNeutral == .pending && !model.frames[2].adjustments.autoWhiteBalance,
+      "a grey picked or 原片 chosen on a frame from before keeps it as light as 自动 from then on, ⌘Z back as it was")
   }
 }

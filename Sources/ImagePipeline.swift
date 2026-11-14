@@ -715,8 +715,46 @@ final class ImagePipeline {
   ///
   /// Set by green, sample by sample (`matched`): where each lies between black and white without
   /// the calibration, it lies with it, as near as two ends can put it.
+  ///
+  /// The white balance sets the colour, not how light the frame prints: a grey picked, the gray
+  /// pixels' neutral or 原片 moves the channels apart from where 自动 puts them, and the ends, the
+  /// darkest and lightest of the three, moved with them, a frame printing from 17/255 darker to 62/255
+  /// lighter with a grey picked than on 自动 (20 of the author's frames with one, 17 apart in the
+  /// middle). So the ends are those that put how light each sample is (`lightness`) where 自动 puts
+  /// it (`matched`), the balance's colour about that.
   func analyze(
     base: RGB, density: [[Double]], settings: Adjustments, profile: FilmProfile, shortestEnds: Double = ImagePipeline.shortestEnds
+  ) -> ToneAnalysis {
+    var a = balanced(base: base, density: density, settings: settings, profile: profile, shortestEnds: shortestEnds)
+    guard settings.autoLevels, settings.balanceKeepsLightness, settings.balancingNeutral != nil || !settings.autoWhiteBalance
+    else { return a }
+    var auto = settings
+    (auto.neutralSample, auto.neutralPicked, auto.autoNeutral, auto.autoWhiteBalance) = (nil, nil, nil, true)
+    let reference = balanced(base: base, density: density, settings: auto, profile: profile, shortestEnds: shortestEnds)
+    let e = exposures(density, settings: settings, profile: profile)
+    if let ends = Self.matched(Self.lightness(e, a), to: Self.lightness(e, reference), low: reference.low, high: reference.high) {
+      (a.low, a.high) = ends
+    }
+    return a
+  }
+  /// Each sample's three channels through `a`'s gain and balance, the balance faded in as the
+  /// kernel fades it, weighted as the eye weighs them (`lightWeights`): how light it prints,
+  /// whatever its colour.
+  static func lightness(_ e: [[Double]], _ a: ToneAnalysis) -> [Double] {
+    let k = lightWeights, g = a.gain.values, bv = a.balance.values
+    let b = k[0] * bv[0] + k[1] * bv[1] + k[2] * bv[2]
+    return (0..<e[0].count).map { i in
+      let w = a.fade > 0 ? min(1, (1 - exp(-max(0, (e[0][i] + e[1][i] + e[2][i]) / 3) / a.fade)) / a.fadeAtGrey) : 1
+      return k[0] * e[0][i] * g[0] + k[1] * e[1][i] * g[1] + k[2] * e[2][i] * g[2] + b * w
+    }
+  }
+  /// Red, green and blue's shares of how light a colour looks (Rec. 709's luminance). Kept with
+  /// the channels' plain mean instead, a grey picked still moved a frame by 3/255 in the middle and
+  /// 12 at most, mostly by how much green it took out or put in; kept so, 1.3 and 7.
+  static let lightWeights = [0.2126, 0.7152, 0.0722]
+  /// `analyze` with the ends as the balance alone puts them.
+  private func balanced(
+    base: RGB, density: [[Double]], settings: Adjustments, profile: FilmProfile, shortestEnds: Double
   ) -> ToneAnalysis {
     let calibrated = settings.autoLevels && profile.offsets != nil
     var (a, green) = measure(base: base, density: density, settings: settings, profile: profile, shortestEnds: shortestEnds, green: calibrated)
@@ -1089,22 +1127,40 @@ final class ImagePipeline {
         for c in 0..<3 { light[c].append(linear(p[c], c)) }
       }
     }
-    var gain = [1.0, 1.0, 1.0], balance = [0.0, 0.0, 0.0]
     let grey = s.neutralSample.map { g in (0..<3).map { max(1e-6, linear(g.values[$0], $0)) } }
-    if let grey {
-      let mean = grey.reduce(0, +) / 3
-      gain = grey.map { mean / $0 }
-    } else if s.autoWhiteBalance, !light[0].isEmpty {
-      for c in 0..<3 {
-        let q = quantiles(light[c], [0.005, 0.995]), span = max(1e-4, q[1] - q[0])
-        (gain[c], balance[c]) = (1 / span, -q[0] / span)
+    // Each channel's gain and black: by the grey picked, else, on 自动, each stretched to its own
+    // ends; with the ends, the darkest and lightest of the three.
+    func balanced(grey: [Double]?, auto: Bool) -> (gain: [Double], balance: [Double], low: Double, high: Double) {
+      var gain = [1.0, 1.0, 1.0], balance = [0.0, 0.0, 0.0]
+      if let grey {
+        let mean = grey.reduce(0, +) / 3
+        gain = grey.map { mean / $0 }
+      } else if auto, !light[0].isEmpty {
+        for c in 0..<3 {
+          let q = quantiles(light[c], [0.005, 0.995]), span = max(1e-4, q[1] - q[0])
+          (gain[c], balance[c]) = (1 / span, -q[0] / span)
+        }
       }
+      var low = 0.0, high = 1.0
+      if s.autoLevels, !light[0].isEmpty {
+        let ends = (0..<3).map { c in quantiles(light[c].map { $0 * gain[c] + balance[c] }, [0.005, 0.995]) }
+        low = ends.map { $0[0] }.min()!
+        high = max(low + 0.01, ends.map { $0[1] }.max()!)
+      }
+      return (gain, balance, low, high)
     }
-    var low = 0.0, high = 1.0
-    if s.autoLevels, !light[0].isEmpty {
-      let ends = (0..<3).map { c in quantiles(light[c].map { $0 * gain[c] + balance[c] }, [0.005, 0.995]) }
-      low = ends.map { $0[0] }.min()!
-      high = max(low + 0.01, ends.map { $0[1] }.max()!)
+    var (gain, balance, low, high) = balanced(grey: grey, auto: s.autoWhiteBalance)
+    // A grey picked or 原片 prints as light as 自动 (`analyze`): the ends that put how light each
+    // sample is where 自动 puts it.
+    if s.autoLevels, s.balanceKeepsLightness, grey != nil || !s.autoWhiteBalance, !light[0].isEmpty {
+      let auto = balanced(grey: nil, auto: true)
+      let k = Self.lightWeights
+      func lightness(_ gain: [Double], _ balance: [Double]) -> [Double] {
+        (0..<light[0].count).map { i in (0..<3).map { k[$0] * (light[$0][i] * gain[$0] + balance[$0]) }.reduce(0, +) }
+      }
+      if let ends = Self.matched(lightness(gain, balance), to: lightness(auto.gain, auto.balance), low: auto.low, high: auto.high) {
+        (low, high) = ends
+      }
     }
     return ToneAnalysis(base: .one, balance: RGB(balance), low: low, high: high, gain: RGB(gain))
   }

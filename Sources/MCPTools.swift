@@ -649,6 +649,8 @@ enum MCPTools {
               a.neutralSample = nil
               if a.inputIsNegative && !a.isSlide && !a.isMonochrome { a.autoNeutral = .pending }
             }
+            // Set again on an older frame: as light as 自动 from then on.
+            if b != a.autoWhiteBalance, a.autoNeutral == nil { a.autoNeutral = .pending }
             a.autoWhiteBalance = b
           }
           if let b = arguments["auto_levels"] as? Bool { a.autoLevels = b }

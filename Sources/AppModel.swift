@@ -4663,13 +4663,15 @@ final class AppModel: ObservableObject {
       let s = settings
       // 自动 on a colour negative is the gray pixels': chosen on an older frame, it starts using them.
       let grays = auto && s.inputIsNegative && !s.isSlide && !s.isMonochrome
+      // Chosen on an older frame, either one also keeps the frame as light as 自动 from then on
+      // (`Adjustments.balanceKeepsLightness`).
       guard s.autoWhiteBalance != auto || s.neutralSample != nil || s.warmth != 0 || s.tint != 0 || s.slideContrast != nil
-        || (grays && s.autoNeutral == nil) else { return }
+        || s.autoNeutral == nil else { return }
       change("白平衡 · " + mode.rawValue) {
         $0.autoWhiteBalance = auto
         ($0.neutralSample, $0.neutralPicked) = (nil, nil)
         ($0.warmth, $0.tint, $0.slideContrast) = (0, 0, nil)
-        if grays { $0.autoNeutral = .pending }
+        if grays || $0.autoNeutral == nil { $0.autoNeutral = .pending }
       }
       status = grays ? "白平衡：自动，按画面里的灰像素 · 冷暖、绿 / 洋红归零"
         : balancesByCalibration ? "白平衡：标定预设记下的中性 · 冷暖、绿 / 洋红归零"
@@ -4685,6 +4687,8 @@ final class AppModel: ObservableObject {
       $0.neutralSample = color
       $0.neutralPicked = place
       $0.autoWhiteBalance = true
+      // Picked on an older frame: as light as 自动 from then on (`Adjustments.balanceKeepsLightness`).
+      if $0.autoNeutral == nil { $0.autoNeutral = .pending }
     }
     status = "已按中性点自动白平衡"
     updateThumbnails()
