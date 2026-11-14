@@ -20,7 +20,7 @@ Epson Scan plus 可以作为 [MCP](https://modelcontextprotocol.io) 服务器，
   - 取点用浮点读数，密的地方也不会因为 8 位量化而不准。
   - 看预览时，画面会发给助手所在的 AI 服务处理。
 
-助手启动的是 App 自己（`EpsonScanPlus --mcp`），它通过只有你的账户能访问的本机连接与正在运行的 App 通信，不经过网络。工具列表：`get_state`、`list_frames`、`list_presets`、`list_rolls`、`select_frame`、`preview`、`sample`、`adjust`、`pick_film_base`、`auto_film_base`、`pick_neutral`、`pick_shadow_neutral`、`set_curve`、`pick_curve_point`（曲线取点：point 在一条曲线上加点，neutral 让一点在它的亮度上变灰）、`choose_preset`、`apply_to_roll`、`reset_adjustments`、`undo`、`auto_crop`，调色预设和快照的 `list_grading_presets`、`apply_grading_preset`、`take_snapshot`、`restore_snapshot`，星级、旗标和颜色标签的 `set_marks`（给几张打星、留用 / 不要、颜色标签）和 `select_by_marks`（按标记一起选中几张，之后套用预设等作用于所选的每一张），以及预设标定的 `calibration_add_points`、`calibration_state`、`calibration_remove_point`、`calibration_clear`、`calibration_make_preset`。
+助手启动的是 App 自己（`EpsonScanPlus --mcp`），它通过只有你的账户能访问的本机连接与正在运行的 App 通信，不经过网络。工具列表：`get_state`、`list_frames`、`list_presets`、`list_rolls`、`select_frame`、`preview`、`sample`、`adjust`、`pick_film_base`、`auto_film_base`、`pick_neutral`、`pick_shadow_neutral`、`set_curve`、`pick_curve_point`（曲线取点：point 在一条曲线上加点，neutral 让一点在它的亮度上变灰）、`choose_preset`、`apply_to_roll`、`reset_adjustments`、`undo`、`auto_crop`，调色预设和快照的 `list_grading_presets`、`apply_grading_preset`、`take_snapshot`、`restore_snapshot`，星级、旗标和颜色标签的 `set_marks`（给几张打星、留用 / 不要、颜色标签）和 `select_by_marks`（按标记一起选中几张，之后套用预设等作用于所选的每一张），以及预设标定的 `calibration_add_points`、`calibration_state`、`calibration_remove_point`、`calibration_clear`、`calibration_make_preset`。`adjust` 和 `set_curve` 可以给 `frame`（画面编号）直接改那一张，不给时改选中的那张；回复里写着改的是哪一张。
 
 去漏光页也在同一个 MCP 服务器里。FilmLightLab 原来本机 HTTP 接口能做的，这里都能做，对照表见 [去漏光](light-leak.md#通过-mcp)：
 
