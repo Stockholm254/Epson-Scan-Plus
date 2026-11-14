@@ -4312,7 +4312,8 @@ final class AppModel: ObservableObject {
     renderQueue.async { [weak self] in
       guard let self else { return }
       let made = wanted.compactMap { f -> (UUID, String, CGImage)? in
-        guard let raw = try? self.dustFreeSource(for: f, full: false, maxDimension: 320),
+        // 480 pixels, as ②'s: sharp still in a strip dragged taller.
+        guard let raw = try? self.dustFreeSource(for: f, full: false, maxDimension: 480),
           let small = ImagePipeline.shared.original(raw, settings: f.adjustments, oriented: true, gains: self.rawGains(f))
         else { return nil }
         return (f.id, Self.rawThumbnailKey(f, balanced: balanced), small)

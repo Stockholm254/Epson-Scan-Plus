@@ -178,6 +178,9 @@ final class Preferences: ObservableObject {
   @Published var leftWidth: Double { didSet { defaults?.set(leftWidth, forKey: "leftWidth") } }
   @Published var rightWidth: Double { didSet { defaults?.set(rightWidth, forKey: "rightWidth") } }
   static let leftWidths = 210.0...380.0, rightWidths = 240.0...420.0
+  /// How tall the film strip's frames are, in points: its top edge dragged up or down, kept from
+  /// launch to launch (`StripSize`).
+  @Published var stripFrameHeight: Double { didSet { defaults?.set(stripFrameHeight, forKey: "stripFrameHeight") } }
   /// The camera keeps a copy of each picture on its memory card as well as sending it here.
   @Published var keepOnCard: Bool { didSet { defaults?.set(keepOnCard, forKey: "cameraKeepOnCard") } }
   /// How the camera is reached: over its own PTP (the default, which reaches the pixel shift
@@ -286,6 +289,8 @@ final class Preferences: ObservableObject {
     autoUpdate = defaults?.object(forKey: "autoUpdate") as? Bool ?? true
     updateFeed = defaults?.string(forKey: "updateFeed")
     rightWidth = right > 0 ? min(Self.rightWidths.upperBound, max(Self.rightWidths.lowerBound, right)) : 258
+    let strip = defaults?.double(forKey: "stripFrameHeight") ?? 0
+    stripFrameHeight = strip > 0 ? StripSize.clamped(strip) : StripSize.standard
   }
   var libraryURL: URL { libraryPath.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? Self.defaultLibraryURL }
 }

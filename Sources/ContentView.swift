@@ -1700,11 +1700,14 @@ struct ContentView: View {
     statusShown || m.exporting || m.scanBatch.isActive || m.scanner.busy || m.updater.release != nil
   }
   var filmstrip: some View {
-    VStack(spacing: 0) {
-      // Ticking frames for a batch belongs to capturing; elsewhere the strip's menu and the 画面
-      // menu tick them, and unticked frames lie dimmed.
-      if m.page == .capture { tickRow }
-      stripScroller
+    // Its top edge dragged up or down for larger or smaller frames (`StripResizer`).
+    StripResizer(preferences: m.preferences) { cell in
+      VStack(spacing: 0) {
+        // Ticking frames for a batch belongs to capturing; elsewhere the strip's menu and the 画面
+        // menu tick them, and unticked frames lie dimmed.
+        if m.page == .capture { tickRow }
+        stripScroller(cell)
+      }
     }
   }
   var tickRow: some View {
@@ -1768,7 +1771,8 @@ struct ContentView: View {
       }
     }.disabled(m.isWorking)
   }
-  var stripScroller: some View {
+  /// The roll's frames on the film, each `cell` points tall (`StripSize`).
+  func stripScroller(_ cell: CGFloat) -> some View {
       ScrollViewReader { proxy in
         ScrollView(.horizontal) {
           HStack(spacing: 12) {
@@ -1784,12 +1788,12 @@ struct ContentView: View {
                         .padding(2)
                     } else {
                       // On the film, which is dark in either look.
-                      Text(f.name).font(.system(size: 22, design: .monospaced)).foregroundStyle(
+                      Text(f.name).font(.system(size: min(44, max(14, 22 * cell / 60)), design: .monospaced)).foregroundStyle(
                         Color.white.opacity(0.55))
                     }
                   // Rejected (X), as Lightroom greys it, less than one not ticked.
                   }.opacity(f.enabled ? f.flag == -1 ? 0.5 : 1 : 0.35)
-                }.frame(width: 84, height: 60)
+                }.frame(width: StripSize.width(cell), height: cell)
                 // Exported as it is now, changed since, or on its way out: in ②, where frames are exported.
                 // Exporting is ③'s: its marks there, not over ②'s work.
                 .overlay(alignment: .topTrailing) {
@@ -1918,18 +1922,18 @@ struct ContentView: View {
                   Text("▸ \(f.name)")
                   Spacer()
                   Text(f.format)
-                }.font(.system(size: 9, weight: .semibold, design: .monospaced))
-                  .foregroundStyle(Hardware.edgePrint.opacity(0.85)).frame(width: 84)
+                }.font(.system(size: StripSize.edgePrint(cell), weight: .semibold, design: .monospaced))
+                  .foregroundStyle(Hardware.edgePrint.opacity(0.85)).frame(width: StripSize.width(cell))
               }.id(f.id)
             }
             if m.frames.isEmpty {
-              Text("画面列表").font(.system(size: 11)).foregroundStyle(Color.white.opacity(0.3)).frame(height: 73)
+              Text("画面列表").font(.system(size: 11)).foregroundStyle(Color.white.opacity(0.3)).frame(height: cell + 13)
                 .padding(.horizontal, 30)
             }
           }.padding(.horizontal, 14).padding(.vertical, 11)
             .background(FilmBase(look: m.stripLook))
             .padding(.horizontal, 4).padding(.top, 4)
-        }.frame(height: 114)
+        }.frame(height: StripSize.stripHeight(cell))
           // Its frames end where the strip does: scrolled past it they went on under the sidebar
           // and the inspector, whose glass showed them as a brown smear.
           .clipped()
@@ -1940,6 +1944,12 @@ struct ContentView: View {
             // horizontal strip where it was, in the change or out of it.
             guard let id else { return }
             proxy.scrollTo(id, anchor: .center)
+          }
+          // Made larger or smaller, the strip keeps the frame shown in its middle: once laid out
+          // at the new size, where the frame now lies.
+          .onChange(of: cell) {
+            guard let id = m.selectedID else { return }
+            DispatchQueue.main.async { proxy.scrollTo(id, anchor: .center) }
           }
       }
   }

@@ -101,7 +101,7 @@ struct ShotFailure: Error { let message: String }
     defaults.setPersistentDomain(UserDefaults.standard.persistentDomain(forName: "local.epscan.mac") ?? [:], forName: suite)
     defer { defaults.removePersistentDomain(forName: suite) }
     // The scanner set for colour negatives, as a new install has it, whatever the user scanned last.
-    for key in ["leftWidth", "rightWidth", "loupeStyle", "loupeField", "contactLandscape", "loupeShown", "scanReversal"] {
+    for key in ["leftWidth", "rightWidth", "stripFrameHeight", "loupeStyle", "loupeField", "contactLandscape", "loupeShown", "scanReversal"] {
       defaults.removeObject(forKey: key)
     }
     // The views' own switches live in this tool's standard defaults; set here, removed after.

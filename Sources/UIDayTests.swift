@@ -23,6 +23,17 @@ enum UIDayTests {
       && ContentView.shortTitle("2025 年 6 月 1 日 09:00", now: day) == "2025 年 6 月 1 日 09:00"
       && ContentView.shortTitle("海边 2026", now: day) == "海边 2026",
       "the toolbar names a roll begun this year without its year, as Photos does; last year's and others' names whole")
+    // The film strip's height, its top edge dragged: kept, in its range, and as it was to begin with.
+    try check(model.preferences.stripFrameHeight == StripSize.standard && StripSize.width(60) == 84 && StripSize.stripHeight(60) == 114,
+      "the film strip begins as it was: frames 84 × 60, the strip 114 points tall")
+    model.preferences.stripFrameHeight = StripSize.dragged(from: StripSize.standard, by: -50)
+    try check(Preferences(defaults: defaults).stripFrameHeight == 110, "its top edge dragged 50 points up, the frames are 110 tall, and so at the next launch")
+    try check(StripSize.dragged(from: 60, by: 400) == 40 && StripSize.dragged(from: 60, by: -400) == 200
+      && StripSize.dragged(from: 60, by: -400, tallest: StripSize.tallest(window: 500)) == 146,
+      "dragged far, the frames stop at 40 and 200 points; in a window 500 tall the strip takes at most 4 tenths")
+    defaults.set(9999.0, forKey: "stripFrameHeight")
+    try check(Preferences(defaults: defaults).stripFrameHeight == StripSize.range.upperBound, "a height kept out of its range comes back into it")
+    model.preferences.stripFrameHeight = StripSize.standard
     // A new roll on ① with the scanner shows its preview key; with the camera, or on ②, it does not.
     model.startNewProject()
     model.page = .capture
