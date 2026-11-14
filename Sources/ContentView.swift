@@ -73,8 +73,15 @@ struct ContentView: View {
   /// The roll open, as the library names it, else the app's name.
   var windowTitle: String {
     guard let url = m.sessionURL else { return "Epson Scan plus" }
-    if !m.rollName.isEmpty { return m.rollName }
-    return RollLibrary.started(url.lastPathComponent).map(RollLibrary.title) ?? url.lastPathComponent
+    if !m.rollName.isEmpty { return Self.shortTitle(m.rollName) }
+    return Self.shortTitle(RollLibrary.started(url.lastPathComponent).map(RollLibrary.title) ?? url.lastPathComponent)
+  }
+  /// A roll named by the day it was begun, this year's, without its year in the toolbar, as
+  /// Photos writes this year's dates: at 1120 points wide 「2026 年 11 月 7 日 13:21」 was cut to
+  /// 「2026 年 11 月 7 日 13:…」. The name itself, in the library and the roll's panel, is whole.
+  static func shortTitle(_ name: String, now: Date = Date()) -> String {
+    let year = "\(Calendar.current.component(.year, from: now)) 年 "
+    return name.hasPrefix(year) && name.count > year.count ? String(name.dropFirst(year.count)) : name
   }
   var windowSubtitle: String {
     guard m.sessionURL != nil || !m.frames.isEmpty else { return "" }
@@ -314,10 +321,12 @@ struct ContentView: View {
   /// The scanner's front-panel lamp with a short LCD status; the full status is in the tooltip.
   var scannerLamp: some View {
     let state = lampState
+    // Inset on its glass, so the toolbar gives it a capsule: as it was, a round key's, the lamp
+    // stood on the rim and 「绪」 touched the other side.
     return HStack(spacing: 5) {
       StatusLED(lamp: state.lamp, size: 8)
-      Text(state.text).lineLimit(1)
-    }.readout(10).help(m.scanner.status)
+      Text(state.text).lineLimit(1).fixedSize()
+    }.padding(.horizontal, 6).readout(10).help(m.scanner.status)
       .accessibilityElement(children: .combine).accessibilityLabel("扫描仪状态")
       .accessibilityValue(state.text)
   }
@@ -378,22 +387,28 @@ struct ContentView: View {
   }
   /// The canvas tools, and fitting the picture.
   @ViewBuilder var toolControls: some View {
-      // Capturing places the frames; ② takes the mask off (the crops and the base), ③ grades (the
-      // neutral grey).
+      // Capturing places the frames; ② takes the mask off (the crops and the base), ③ grades (its
+      // own crop and straightening, as Lightroom's R, and the neutral grey).
+      let grading = m.page == .convert && m.convertStep == .grade
       let tools: [CanvasTool] = m.page == .capture ? [.select, .crop, .base]
-        : m.convertStep == .demask ? [.select, .crop, .region, .base] : m.settings.isMonochrome ? [.select] : [.select, .neutral]
+        : m.convertStep == .demask ? [.select, .crop, .region, .base] : m.settings.isMonochrome ? [.select, .crop] : [.select, .crop, .neutral]
       ForEach(tools, id: \.self) { t in
+        // The crop key pressed again finishes cropping, as the panel's key, R and C do.
+        let latched = m.tool == t, ownCrop = grading && t == .crop
         Button {
-          m.useTool(t)
+          m.useTool(t == .crop && latched ? .select : t)
         } label: {
           HStack(spacing: 4) {
             // The two crops' keys in their colours on the picture: amber the picture, cyan the de-masking region.
             Image(systemName: t.symbol).frame(width: 16, height: 14)
-              .foregroundStyle(t.colour.map { Color(red: $0.red, green: $0.green, blue: $0.blue) } ?? Color.primary)
-            if let label = t.label { Text(label).font(.system(size: 11)) }
+              .foregroundStyle(t.keyTint ?? Color.primary)
+            if let label = ownCrop ? "裁切" : t.label { Text(label).font(.system(size: 11)) }
           }
-        }.buttonStyle(KeyStyle(latched: m.tool == t)).controlSize(.small).help(t.help)
-          .accessibilityLabel(t.rawValue)
+        }.buttonStyle(KeyStyle(latched: latched)).controlSize(.small)
+          .disabled(ownCrop && m.selected == nil)
+          .help(!ownCrop ? t.help : latched ? "完成裁切 · R 或回车"
+            : "裁切与拉直（琥珀色）：画面在自己的范围里转着显示，拖四角和边裁切，框里拖动移动，框外拖动旋转，按住 ⌥ 拖一条线拉直；只管构图，颜色不变。比例和叠加线在右边的「裁切与拉直」里 · R")
+          .accessibilityLabel(ownCrop ? "裁切与拉直" : t.rawValue)
       }
       // ②'s last, optional part: the frame shown into 去漏光, and back with its repair into ③.
       if m.page == .convert && m.convertStep == .demask {
@@ -614,7 +629,7 @@ struct ContentView: View {
           if let region = f.adjustments.analysisRegion ?? m.toneAnalysis?.followed {
             HStack(spacing: 5) {
               Image(systemName: CanvasTool.region.symbol)
-                .foregroundStyle(CanvasTool.region.colour.map { Color(red: $0.red, green: $0.green, blue: $0.blue) } ?? .primary)
+                .foregroundStyle(CanvasTool.region.keyTint ?? .primary)
               Text(String(format: f.adjustments.analysisRegion == nil ? "去色罩区域 %.0f%%（避开片边）" : "去色罩区域 %.0f%%", region.width * region.height * 100))
             }
           }
@@ -675,8 +690,11 @@ struct ContentView: View {
   static let barInset = LightTable.glassInset + 6
   var sheetWorkspace: some View {
     let inset = Self.barInset, bar = inset + 44
+    // Cropping, or framing the de-masking region, on the single frame: room kept under the picture
+    // for the tool's hint, so it lies below the box's lower handles rather than over them.
+    let hintRoom: CGFloat = m.singleView && (m.tool == .crop || m.tool == .region) && m.toolHint != nil ? inset + 10 : 0
     return ZStack {
-      ScanCanvas(model: m, reserved: NSEdgeInsets(top: bar, left: 0, bottom: bar, right: 0))
+      ScanCanvas(model: m, reserved: NSEdgeInsets(top: bar, left: 0, bottom: bar + hintRoom, right: 0))
         .frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
       VStack(spacing: 0) {
         WidthFit {
@@ -684,6 +702,7 @@ struct ContentView: View {
         } compact: {
           glassToolRow.labelStyle(.iconOnly)
         }.lineLimit(1).padding(.horizontal, inset).padding(.top, inset)
+          .modifier(LitTableScheme(lit: !m.singleView))
         ZStack(alignment: .topTrailing) {
           Color.clear
           canvasOverlays
@@ -693,6 +712,7 @@ struct ContentView: View {
         } compact: {
           bottomBars(compact: true)
         }.lineLimit(1).buttonStyle(.bordered).controlSize(.small).padding(.horizontal, inset).padding(.bottom, inset)
+          .modifier(LitTableScheme(lit: !m.singleView))
           .animation(Liquid.flow, value: m.singleView)
           .animation(Liquid.flow, value: m.contactPages.count)
       }
@@ -970,8 +990,10 @@ struct ContentView: View {
           .help("这一卷用的预设：通道斜率和标定的中性。先列这种胶片的，分「数据表」和「本机标定」（这台扫描仪或翻拍时标定的）；选别的胶片的预设，这一卷也换成那种胶片")
         }
         // Where the preset in use comes from, at a glance: a data sheet, or calibrated here.
+        // On two lines where it must: cut in the middle, 「翻拍标定 · A7R I…-12 · 13 个中性点」 lost
+        // the camera and the day, the part that tells one calibration from another.
         Label(PresetTable.tag(m.profile), systemImage: PresetTable.symbol(m.profile))
-          .font(.system(size: 10.5, weight: .medium)).lineLimit(1).truncationMode(.middle)
+          .font(.system(size: 10.5, weight: .medium)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
           .foregroundStyle(m.profile.offsets != nil ? Hardware.amberText : Color.secondary)
           .help(m.profile.offsets != nil
             ? "本机标定的预设：用这台扫描仪或这次翻拍的中性点算出来的斜率和中性。\(m.profile.publication)"
@@ -1212,12 +1234,19 @@ struct ContentView: View {
             ValueField(title: "拉直", text: sliderText("%+.2f°", m.screenAngle), value: m.screenAngle, range: -45...45) {
               m.straighten($0)
             }
+            // Lightroom's 自动 under its straightening: the horizon found, on this Mac, and levelled.
+            Button("自动") { m.autoStraighten() }
+              .font(.system(size: 11)).disabled(m.selected == nil || m.isWorking)
+              .help("自动拉直：在画面里找地平线，按它放平，只在本机计算；画面里没有地平线时不改动，可以用「画线」。⌘ / ⇧ 选了几张时每张按自己的地平线 · ⌘Z 撤销")
             Button("画线") {
               m.useTool(.crop)
               m.levelling = true
             }
             .font(.system(size: 11)).help("沿地平线、墙边或建筑竖线拖一条线，按它拉直（裁切时也可以按住 ⌥ 拖）")
-            Button("归零") { m.straighten(0) }.font(.system(size: 11)).disabled(m.settings.angle == nil)
+            // As an icon, so the row keeps its figure on one line in a narrow inspector.
+            Button { m.straighten(0) } label: { Image(systemName: "arrow.counterclockwise").font(.system(size: 11, weight: .medium)) }
+              .buttonStyle(.plain).foregroundStyle(.secondary).disabled(m.settings.angle == nil)
+              .help("拉直归零（双击下面的滑块也可以）· ⌘Z 撤销").accessibilityLabel("拉直归零")
           }
           Fader(title: "拉直", value: Binding(get: { m.screenAngle }, set: { m.straighten($0) }), range: -45...45, detent: 0)
         }
@@ -1232,7 +1261,7 @@ struct ContentView: View {
   /// The de-masking region, under the picture's crop: what it is, its key, and back to following
   /// the picture.
   var regionRow: some View {
-    let region = m.settings.analysisRegion, cyan = CanvasTool.region.colour.map { Color(red: $0.red, green: $0.green, blue: $0.blue) }
+    let region = m.settings.analysisRegion, cyan = CanvasTool.region.keyTint
     return VStack(alignment: .leading, spacing: 4) {
       Divider()
       // Its name on one line: in the narrowest sidebar it wrapped beside its keys, the keys
@@ -1266,16 +1295,25 @@ struct ContentView: View {
   var compositionSection: some View {
     let composing = m.composing
     return PanelSection("裁切与拉直", key: "composition", open: false,
-      info: "像 Lightroom 修改照片里的裁切（R）：按「裁切」或 R 后，画面在它自己的范围里转着显示，琥珀色的框保持正的。拖四角和边改大小，框里拖动移动，框外拖动旋转画面，框始终留在画面上，转出的空角不会进来；按住 ⇧ 拖角保持现在的比例，⌥ 拖一条线按它拉直，X 横竖互换，O 换叠加线（三分、网格、黄金分割、对角线），方向键移动一点，回车或再按 R 完成。\n\n这里只管构图：在 ② 定的画面范围里裁，去色罩的片基、白平衡和色阶照旧读 ② 的范围，裁切、旋转都不会让颜色变。要把片边或更大的扫描范围放进来，在 ② 的「画面范围」里改。拉直和 ② 的是同一个角度，最多 ±45°。「还原」回到整幅画面、不拉直。",
+      info: "像 Lightroom 修改照片里的裁切（R）：按这里或画面上方工具条里的「裁切」，或按 R，画面在它自己的范围里转着显示，琥珀色的框保持正的。拖四角和边改大小，框里拖动移动，框外拖动旋转画面，框始终留在画面上，转出的空角不会进来；按住 ⇧ 拖角保持现在的比例，⌥ 拖一条线按它拉直，X 横竖互换，O 换叠加线（三分、网格、黄金分割、对角线），方向键移动一点，回车或再按 R 完成；Esc 取消这一次的裁切和旋转，回到按「裁切」之前（⌘Z 再拿回来）。\n\n这里只管构图：在 ② 定的画面范围里裁，去色罩的片基、白平衡和色阶照旧读 ② 的范围，裁切、旋转都不会让颜色变。要把片边或更大的扫描范围放进来，在 ② 的「画面范围」里改。拉直和 ② 的是同一个角度，最多 ±45°。「还原」回到整幅画面、不拉直。",
       forced: composing
     ) {
+      // Folded, what was done shows in its title row: the first to give way where it is narrow, so
+      // the section's name stays whole (with a ⟲ beside it too, the name was cut to 「裁切…」).
+      if !composing, let summary = compositionSummary {
+        // Cropped, 「已裁」 (the angle too in its tooltip): beside the section's name and its key there
+        // is room for some two characters at the inspector's usual width; 「已裁切 +6.0°」 pushed the
+        // name to 「裁切与…」, and 「已裁切」 itself was cut to 「已…」.
+        Text(summary.short).font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
+          .layoutPriority(-1).help("这张" + summary.full + "；「还原」回到整幅画面、不拉直")
+      }
       Button {
         m.useTool(m.tool == .crop ? .select : .crop)
       } label: {
         Label {
           Text(composing ? "完成" : "裁切")
         } icon: {
-          Image(systemName: CanvasTool.crop.symbol).foregroundStyle(CanvasTool.crop.colour.map { Color(red: $0.red, green: $0.green, blue: $0.blue) } ?? .primary)
+          Image(systemName: CanvasTool.crop.symbol).foregroundStyle(CanvasTool.crop.keyTint ?? .primary)
         }.lineLimit(1).fixedSize()
       }
       .buttonStyle(KeyStyle(latched: composing)).font(.system(size: 11)).disabled(m.selected == nil)
@@ -1301,12 +1339,19 @@ struct ContentView: View {
             ValueField(title: "拉直", text: sliderText("%+.2f°", m.screenAngle), value: m.screenAngle, range: -45...45) {
               m.straighten($0)
             }
+            // Lightroom's 自动 under its straightening: the horizon found, on this Mac, and levelled.
+            Button("自动") { m.autoStraighten() }
+              .font(.system(size: 11)).disabled(m.selected == nil || m.isWorking)
+              .help("自动拉直：在画面里找地平线，按它放平，只在本机计算；画面里没有地平线时不改动，可以用「画线」。⌘ / ⇧ 选了几张时每张按自己的地平线 · ⌘Z 撤销")
             Button("画线") {
               m.useTool(.crop)
               m.levelling = true
             }
             .font(.system(size: 11)).help("沿地平线、墙边或建筑竖线拖一条线，按它拉直（裁切时也可以按住 ⌥ 拖）")
-            Button("归零") { m.straighten(0) }.font(.system(size: 11)).disabled(m.settings.angle == nil)
+            // As an icon, so the row keeps its figure on one line in a narrow inspector.
+            Button { m.straighten(0) } label: { Image(systemName: "arrow.counterclockwise").font(.system(size: 11, weight: .medium)) }
+              .buttonStyle(.plain).foregroundStyle(.secondary).disabled(m.settings.angle == nil)
+              .help("拉直归零（双击下面的滑块也可以）· ⌘Z 撤销").accessibilityLabel("拉直归零")
           }
           Fader(title: "拉直", value: Binding(get: { m.screenAngle }, set: { m.straighten($0) }), range: -45...45, detent: 0)
         }
@@ -1327,6 +1372,16 @@ struct ContentView: View {
       }
     }
   }
+  /// The frame's ③ crop and straightening in a few characters, for the section's title row.
+  var compositionSummary: (full: String, short: String)? {
+    let turned = abs(m.settings.angle ?? 0) > 0.0001 ? String(format: "%+.1f°", m.screenAngle) : nil
+    switch (m.settings.composition != nil, turned) {
+    case (true, let t?): return ("已裁切 " + t, "已裁")
+    case (true, nil): return ("已裁切", "已裁")
+    case (false, let t?): return (t, t)
+    default: return nil
+    }
+  }
   var cropKey: some View {
     Button {
       m.useTool(m.tool == .crop ? .select : .crop)
@@ -1334,7 +1389,7 @@ struct ContentView: View {
       Label {
         Text("裁切")
       } icon: {
-        Image(systemName: CanvasTool.crop.symbol).foregroundStyle(CanvasTool.crop.colour.map { Color(red: $0.red, green: $0.green, blue: $0.blue) } ?? .primary)
+        Image(systemName: CanvasTool.crop.symbol).foregroundStyle(CanvasTool.crop.keyTint ?? .primary)
       }.lineLimit(1).fixedSize()
     }
     .buttonStyle(KeyStyle(latched: m.tool == .crop)).font(.system(size: 11)).disabled(m.selected == nil)
@@ -2016,4 +2071,25 @@ struct AssistantKey<Panel: View>: View {
     .popover(isPresented: $open, arrowEdge: .bottom) { panel.padding(16).frame(width: 320) }
     .accessibilityLabel("AI 助手").accessibilityValue(m.mcpStatus)
   }
+}
+
+extension CanvasTool {
+  /// The tool's colour on its keys and labels: as drawn on the picture in the dark appearance, a
+  /// deeper shade of it in the light one, where the pale amber and cyan were faint on a light key.
+  var keyTint: Color? {
+    guard let c = colour else { return nil }
+    let dark = NSColor(red: c.red, green: c.green, blue: c.blue, alpha: 1)
+    let light = NSColor(red: c.red * 0.78, green: c.green * 0.7, blue: c.blue * 0.62, alpha: 1)
+    return Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light })
+  }
+}
+
+/// The bars floating over the canvas, drawn for a light surface while the lit light table is
+/// under them, whatever the window's look: in the dark one they were dark glass on the white
+/// table, its white text hard to read. Over the single frame they follow the window. The same
+/// modifier either way, so the bars keep their identity as the view changes.
+struct LitTableScheme: ViewModifier {
+  let lit: Bool
+  @Environment(\.colorScheme) private var scheme
+  func body(content: Content) -> some View { content.environment(\.colorScheme, lit ? .light : scheme) }
 }

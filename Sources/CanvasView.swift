@@ -976,6 +976,13 @@ final class FilmCanvasView: NSView {
     if model.singleView, model.tool == .it8, let frame = model.selected {
       drawIT8(model.it8Marks, settings: frame.adjustments, aspect: model.shownAspect(frame))
     }
+    // The frame's dust, while it is shown or being marked: under the marks with names (the base
+    // picked, the region, the neutral points), whose labels it hid.
+    if model.singleView, let frame = model.selected, let dust = frame.dust, !dust.spots.isEmpty,
+      model.showDust && model.showsDemaskingMarks || model.tool == .dust
+    {
+      drawDust(dust, frame: frame, aspect: model.shownAspect(frame))
+    }
     // Where the film base was read: the spot picked by hand always in ②; the frame's edges read
     // asked for, or while a base is being picked.
     if model.singleView, let frame = model.selected, model.tool == .base || model.showsDemaskingMarks || model.page == .capture {
@@ -1014,12 +1021,6 @@ final class FilmCanvasView: NSView {
     if model.singleView, let frame = model.selected {
       let marks = model.neutralMarks(on: frame)
       if !marks.isEmpty { drawNeutralMarks(marks, frame: frame, aspect: model.shownAspect(frame)) }
-    }
-    // The frame's dust, while it is shown or being marked.
-    if model.singleView, let frame = model.selected, let dust = frame.dust, !dust.spots.isEmpty,
-      model.showDust && model.showsDemaskingMarks || model.tool == .dust
-    {
-      drawDust(dust, frame: frame, aspect: model.shownAspect(frame))
     }
     drawLens()
   }
@@ -2354,7 +2355,7 @@ final class FilmCanvasView: NSView {
     let sharp = current.map { $0.scale >= 0.999 || Double($0.image.width) / max(1, $0.region.width * across) >= 0.9 } ?? false
     if current.map({ !$0.region.covers(inView) }) ?? true || !sharp { askZoomDetail(frame, key: key, around: inView, across: across * 1.1) }
     guard let d = current else { return nil }
-    return (d.image, CGRect(x: r.minX + d.region.x * r.width, y: r.minY + d.region.y * r.height, width: d.region.width * r.width, height: d.region.height * r.height))
+    return (d.screen ?? d.image, CGRect(x: r.minX + d.region.x * r.width, y: r.minY + d.region.y * r.height, width: d.region.width * r.width, height: d.region.height * r.height))
   }
   private func askZoomDetail(_ frame: FilmFrame, key: String, around inView: NormalRect, across: Double) {
     // Redraws that leave the view as it is keep the wait as it is; a moved view starts it again.
@@ -2374,7 +2375,7 @@ final class FilmCanvasView: NSView {
         width: min(1, inView.x + inView.width * (1 + m)) - max(0, inView.x - inView.width * m),
         height: min(1, inView.y + inView.height * (1 + m)) - max(0, inView.y - inView.height * m))
       self.zoomDetailAsked = key
-      model.renderDetail(frame, region: region, across: across) { [weak self] detail in
+      model.renderDetail(frame, region: region, across: across, forScreen: true) { [weak self] detail in
         guard let self else { return }
         self.zoomDetailAsked = nil
         if let detail { self.zoomDetail = detail }
@@ -2838,6 +2839,8 @@ final class FilmCanvasView: NSView {
     } else if event.keyCode == 51 {
       model?.deletePressed()
     } else if event.keyCode == 53 {
+      // ③'s crop: as Lightroom's Esc, back to before it began (return keeps it).
+      model?.cancelComposition()
       model?.useTool(.select)
       model?.fitView()
       pan = .zero
@@ -2872,7 +2875,8 @@ final class FilmCanvasView: NSView {
       // The pickers belong to taking the mask off; capturing has only the frame tools.
       model?.page != .capture || ![CanvasTool.base, .neutral, .shadowNeutral, .region, .curvePick].contains(tool)
     {
-      model?.useTool(tool)
+      // C again finishes the crop, as its key and R do.
+      model?.useTool(tool == .crop && model?.tool == .crop ? .select : tool)
     } else {
       super.keyDown(with: event)
     }

@@ -186,7 +186,7 @@ struct ToneRangeView: View {
     }
   }
   private func percent(_ v: Double) -> String {
-    v < 0.0001 ? "0" : v < 0.01 ? String(format: "%.2f%%", v * 100) : String(format: "%.1f%%", v * 100)
+    v < 0.0001 ? "0%" : v < 0.01 ? String(format: "%.2f%%", v * 100) : String(format: "%.1f%%", v * 100)
   }
   /// How far past white the frame goes, where its brightest lie (a negative's, on the scale of
   /// print exposure), and what shows white or black: the same lines whatever the figures.

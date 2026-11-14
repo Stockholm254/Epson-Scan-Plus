@@ -17,6 +17,12 @@ enum UIDayTests {
     try check(!model.preferences.showDustMarks && defaults.object(forKey: "dustMarksShown") as? Bool == false,
       "the toolbar's 除尘标出 and the section's 标出 are one switch, kept in the preferences")
     try check(!Preferences(defaults: defaults).showDustMarks, "and it is off again at the next launch")
+    // The toolbar's title: a roll named by a day of this year without the year, others whole.
+    let day = DateComponents(calendar: .current, year: 2026, month: 11, day: 13).date!
+    try check(ContentView.shortTitle("2026 年 11 月 7 日 13:21", now: day) == "11 月 7 日 13:21"
+      && ContentView.shortTitle("2025 年 6 月 1 日 09:00", now: day) == "2025 年 6 月 1 日 09:00"
+      && ContentView.shortTitle("海边 2026", now: day) == "海边 2026",
+      "the toolbar names a roll begun this year without its year, as Photos does; last year's and others' names whole")
     // A new roll on ① with the scanner shows its preview key; with the camera, or on ②, it does not.
     model.startNewProject()
     model.page = .capture

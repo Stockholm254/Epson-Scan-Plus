@@ -126,7 +126,9 @@ struct SwitchRow: View {
   }
   var body: some View {
     HStack(spacing: 6) {
-      Text(title).font(.system(size: 12)).lineLimit(1).foregroundStyle(enabled && !off ? .primary : .secondary)
+      // On a second line where the panel is narrow, rather than cut: 「保留灯光红晕和真实红…」.
+      Text(title).font(.system(size: 12)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+        .foregroundStyle(enabled && !off ? .primary : .secondary)
       Spacer(minLength: 4)
       Toggle(title, isOn: $isOn).labelsHidden().toggleStyle(.switch).tint(Hardware.accent).disabled(off)
       // Without an ⓘ, its room kept, so this switch stands in line with those that have one.

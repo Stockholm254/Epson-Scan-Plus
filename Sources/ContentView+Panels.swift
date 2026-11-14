@@ -88,7 +88,9 @@ extension ContentView {
       }
       HStack {
         Button("重新连接") { m.scanner.reconnect() }
-        Button("Epson…") { m.openEpson() }
+        // Named for what it does: 「Epson…」 read as a cut-off label.
+        Button("打开 Epson Scan 2") { m.openEpson() }
+          .help("把扫描仪交给 Epson Scan 2 并打开它（用完回来点「重新连接」）")
       }.font(.system(size: 11)).disabled(m.isWorking)
       Divider()
       titled("存储", symbol: "externaldrive", info:

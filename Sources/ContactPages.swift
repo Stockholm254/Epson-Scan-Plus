@@ -68,7 +68,10 @@ extension AppModel {
   func sheetAspect(_ f: FilmFrame, positive: Bool) -> CGFloat {
     let pixels = f.sourcePath.map(filePixels) ?? .zero
     guard pixels.width > 0, pixels.height > 0, f.rect.width > 0, f.rect.height > 0 else { return Self.sheetCell.width / Self.sheetCell.height }
-    let aspect = CGFloat(f.rect.width) * pixels.width / (CGFloat(f.rect.height) * pixels.height)
+    var aspect = CGFloat(f.rect.width) * pixels.width / (CGFloat(f.rect.height) * pixels.height)
+    // ③'s crop, a box of the picture's own (0–1 of it, before the quarter turns): the positive's
+    // cell its shape, as the picture in it, not the frame's with black beside it.
+    if positive, let o = f.adjustments.composition, o.width > 0.001, o.height > 0.001 { aspect *= CGFloat(o.width / o.height) }
     return positive && ((f.adjustments.rotation % 4) + 4) % 2 == 1 ? 1 / aspect : aspect
   }
   /// From the film strip, the view switch or a finished preview: the frame selected, and from

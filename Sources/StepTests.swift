@@ -279,6 +279,55 @@ enum StepTests {
     try check(swapped.map { s in turned.map { t in (s.width * aspect > s.height) != (t.width * aspect > t.height) } ?? false } == true
       && model.frames[1].adjustments.composition == nil && model.frames[1].adjustments.angle == nil,
       "X swaps the crop's long side and short; 还原 takes it and the straightening back")
+    // ③'s crop key on the picture's tool bar: back on the light table the crop ends (there the tool
+    // would draw new frames), and with no frame chosen there is none to crop.
+    model.useTool(.crop)
+    model.singleView = false
+    let endedOnTable = model.tool == .select
+    let chosen = model.selectedID
+    model.selectedID = nil
+    model.useTool(.crop)
+    try check(endedOnTable && model.tool == .select && !model.singleView,
+      "③'s crop ends on the light table, and with no frame chosen its key does nothing")
+    model.selectedID = chosen
+    model.useTool(.crop)
+    // Esc, as Lightroom's in its crop overlay: the crop and the turn back to before the crop began.
+    if let shown = model.selected {
+      let was = (shown.adjustments.angle, shown.adjustments.composition)
+      model.setComposition(NormalRect(x: 0.1, y: 0.1, width: 0.5, height: 0.5))
+      model.straighten(4)
+      let moved = model.selected?.adjustments.composition != nil && model.selected?.adjustments.angle != nil
+      model.cancelComposition()
+      let now = model.selected?.adjustments
+      try check(moved && now?.angle == was.0 && now?.composition == was.1 && model.tool == .crop,
+        "Esc in ③'s crop takes the crop and the turn back to before it began")
+    }
+    // 自动拉直: a sea under a sky drawn, its horizon falling 5° to the right (turned clockwise on the
+    // screen), is levelled by a turn of 5° the other way.
+    do {
+      let (w, h) = (1200, 800)
+      if let g = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+      {
+        g.setFillColor(CGColor(red: 0.55, green: 0.7, blue: 0.9, alpha: 1))
+        g.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        let t = tan(5 * Double.pi / 180) * Double(w) / 2
+        g.setFillColor(CGColor(red: 0.1, green: 0.2, blue: 0.35, alpha: 1))
+        g.move(to: .zero)
+        g.addLine(to: CGPoint(x: 0, y: Double(h) / 2 + t))
+        g.addLine(to: CGPoint(x: Double(w), y: Double(h) / 2 - t))
+        g.addLine(to: CGPoint(x: Double(w), y: 0))
+        g.closePath()
+        g.fillPath()
+        let turn = g.makeImage().flatMap(AutoStraighten.degrees)
+        try check(turn.map { abs($0 + 5) < 0.5 } == true,
+          "自动拉直 levels a horizon falling 5° to the right by turning it 5° back: \(turn.map { String(format: "%+.2f°", $0) } ?? "none found")")
+        // Readings agree two at least: all three, the middle; else the closest two; else none.
+        let pair = AutoStraighten.agreed([0.1, 2.0, 0.3]), all = AutoStraighten.agreed([0, 0.7, 0.5])
+        try check(pair.map { abs($0 - 0.2) < 1e-9 } == true && all == 0.5 && AutoStraighten.agreed([0, 1, 2]) == nil && AutoStraighten.agreed([0.2]) == nil,
+          "自动拉直 goes by two readings that agree where the third is off, and by none where none agree")
+      }
+    }
     // ②'s crop is the frame's extent on the film, as before.
     model.convertStep = .demask
     try check(model.tool == .select, "and a step's tool is put down when the window leaves it")

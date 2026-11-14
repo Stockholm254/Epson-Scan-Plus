@@ -74,6 +74,7 @@ enum MCPTools {
       "auto_whites_blacks": ["type": "boolean", "description": "自动白色、黑色（像 Lightroom 按住 Shift 双击）：设白色、黑色，让这张最亮的 0.1% 正好到白、最暗的 0.1% 正好到黑；在其他参数之后算，要单张视图里算过的影调"],
     ]),
     Tool(name: "pick_film_base", description: "在指定位置取片基（只应点在未曝光的橙色片基上，例如画面边缘的片间）；会关闭自动白平衡以保留取样。", properties: point, required: ["x", "y"]),
+    Tool(name: "auto_straighten", description: "自动拉直选中的这张，像 Lightroom 裁切里的「自动」：在画面里找地平线（在本机用 macOS 的视觉框架），按它放平，③ 的裁切留在画面上；找不到清楚的地平线时不改动，说明原因。用 select_by_marks 选了几张时，每张按自己的地平线。地平线本来就该是斜的照片（有意的倾斜构图）不要用。可用 undo 撤销。", properties: [:]),
     Tool(name: "auto_crop", description: "翻拍的照片自动裁切：按片框的四条边裁到画面以内，并按边拉直。默认只裁选中的这张；whole_roll 为 true 时整卷一起裁。和本卷其他张的画面大小对照，改正找错的边。可用 undo 撤销，原文件不改。", properties: [
       "whole_roll": ["type": "boolean", "description": "整卷一起裁，默认 false"],
     ]),
@@ -124,6 +125,7 @@ enum MCPTools {
     - 偏色先查片基（get_state 里的 film_base 和来源）；片基可疑时用 pick_film_base 点未曝光的片间，或 auto_film_base 回到自动。再用 pick_neutral 或 warmth / tint。晴天的阴影由蓝天照亮，本来就比阳光下蓝；阳光下的灰已经是灰、只有暗部偏蓝时，用 shadow_warmth，不要动整体的 warmth；暗部蓝里带紫（常见于远处雾气、只有蓝层曝了光的阴影）时配合 shadow_tint 往负（绿），阴影里有中性的东西时用 pick_shadow_neutral 一次定两个。色调曲线（set_curve）在转换之后按通道查表，从黑到白都受影响，只在上面这些做不到时用；用之前看 get_state 的 curves，有人调过的曲线（比如把一条通道整体抬高）常常就是整张偏色的原因，用 set_curve 不给 points 把它恢复成直线。白平衡和阴影都对了、只剩某一段亮度偏色（比如高光发黄）时，在那段亮度本来是灰的地方用 pick_curve_point（mode neutral），只动那个亮度附近。
     - 坐标是单张视图里画面的相对位置，0–1，左上为原点。
     - 翻拍的照片四周带着片基、漏光或片夹时，先用 auto_crop 裁到画面（whole_roll 整卷一起），再看和取样：自动白平衡和色阶只看裁切以内。
+    - 地平线、水面拍斜了时可以用 auto_straighten 放平（找不到清楚的地平线时不改动）；有意倾斜的构图不要用。
     - 每次调整都能在 App 里用 ⌘Z 撤销，也可以调用 undo。转换的工具不会扫描、删除或导出文件。
     - 翻拍预设的斜率属于那台相机和那组灯，灯的配比变了也照样成立；它记下的中性却是标定那次的灯光。套用以后整体偏色、而白色或灰色的东西彼此一致时，在它们上面 pick_neutral 重新配平就好，不必重做标定。
     - 画面的方向和镜像这里改不了，要请用户在 App 里转。
@@ -189,6 +191,11 @@ enum MCPTools {
       } ?? "follows the crop: its outer 5% left out, and where the crop takes in the film's edge (rebate, sprocket holes, edge print) only the part inside it read",
       "picked": ["film_base": s.base != nil, "neutral": s.neutralSample != nil]]
     if let angle = s.angle { g["straighten_degrees"] = angle }
+    // ③'s crop and straightening (裁切与拉直), within the crop above; colours do not follow it.
+    if let o = s.composition {
+      g["grade_crop"] = ["x": round(o.x), "y": round(o.y), "width": round(o.width), "height": round(o.height),
+        "note": "③'s crop, 0-1 of the straightened picture before quarter turns and mirror; set by the user in ③ 裁切与拉直, it changes only what is shown and exported"]
+    }
     if let path = f.sourcePath { g["file"] = URL(fileURLWithPath: path).lastPathComponent }
     return g
   }
@@ -765,6 +772,25 @@ enum MCPTools {
       }
       if let error = result.error { throw DeskError.message(error) }
       return [["type": "text", "text": result.status + "。这一卷现在用「\(result.name)」。App 的单张画面上标出了这些点，「翻拍预设标定」（扫描的卷是「本机预设标定」）里列出了它们在哪几张。"]]
+    case "auto_straighten":
+      _ = try selected(model)
+      let finished = DispatchSemaphore(value: 0)
+      var said: String?
+      onMain {
+        model.autoStraighten { text in
+          said = text
+          finished.signal()
+        }
+      }
+      // A frame takes a second or so; a whole roll chosen, longer.
+      let end = Date().addingTimeInterval(240)
+      if Thread.isMainThread {
+        while said == nil && Date() < end { RunLoop.current.run(until: Date().addingTimeInterval(0.05)) }
+      } else {
+        _ = finished.wait(timeout: .now() + 240)
+      }
+      guard let said else { throw DeskError.message("自动拉直还没做完，稍后用 get_state 看 straighten_degrees。") }
+      return [["type": "text", "text": said]]
     case "auto_crop":
       _ = try selected(model)
       let roll = arguments["whole_roll"] as? Bool ?? false

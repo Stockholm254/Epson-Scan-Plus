@@ -261,6 +261,8 @@ enum CanvasTests {
     try check(model.preferences.showLoupe != loupeShown && model.tool == .crop, "Z shows or puts away the loupe, whatever the tool")
     key("z", code: 6)
     try check(model.preferences.showLoupe == loupeShown, "and Z again turns it back")
+    key("c", code: 8)
+    try check(model.tool == .select, "C again finishes the crop, as its key and R do")
     model.useTool(.select)
 
     model.select(frames[1].id)

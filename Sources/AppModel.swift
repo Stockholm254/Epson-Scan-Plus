@@ -114,6 +114,9 @@ final class AppModel: ObservableObject {
       if !singleView, zoom != 1 { fitView() }
       if singleView != oldValue { announceAutoBase() }
       if !singleView, curveState.reading != nil { curveState.reading = nil }
+      // ③'s crop is the frame's own: back on the light table it ends, where the crop tool would
+      // draw new frames instead.
+      if !singleView, tool == .crop, page == .convert, convertStep == .grade { (tool, levelling) = (.select, false) }
     }
   }
   /// The scanner's preview shows on the light table as it is read.
@@ -625,6 +628,20 @@ final class AppModel: ObservableObject {
   /// ③'s crop under way (`Adjustments.composition`), as Lightroom's in Develop: the picture shown
   /// turned in its own box, the box kept upright over it; dragged outside it, the picture turns.
   var composing: Bool { singleView && tool == .crop && page == .convert && convertStep == .grade && selected != nil }
+  /// The frame's crop and straightening as ③'s crop found them, for Esc to go back to, as Lightroom's
+  /// Esc in its crop overlay (return keeps them).
+  private(set) var cropStart: (frame: UUID, angle: Double?, composition: NormalRect?)?
+  /// Esc while ③'s crop is under way: its crop and straightening back to as they were when it began,
+  /// as one edit (⌘Z brings them again).
+  func cancelComposition() {
+    defer { cropStart = nil }
+    guard composing, let start = cropStart, let frame = selected, start.frame == frame.id else { return }
+    let s = frame.adjustments
+    guard s.angle != start.angle || s.composition != start.composition else { return }
+    change("取消裁切", separate: true) { ($0.angle, $0.composition) = (start.angle, start.composition) }
+    updateThumbnails()
+    status = "已取消这次裁切：回到按「裁切」之前的样子 · ⌘Z 撤销"
+  }
   /// What lies outside the box while ③'s crop is under way, as Lightroom's overlays (O).
   enum CropOverlay: String, CaseIterable { case thirds = "三分", grid = "网格", golden = "黄金分割", diagonal = "对角线", none = "不显示" }
   @Published var cropOverlay = CropOverlay.thirds
@@ -691,10 +708,10 @@ final class AppModel: ObservableObject {
   /// Turns the selected frame about its middle to `degrees` clockwise on the screen, cut to the
   /// largest rectangle of its shape inside; ③'s crop, where there is one, kept on the picture as
   /// Lightroom keeps it, of its shape about its middle, smaller where it would reach past.
-  func straighten(_ degrees: Double) {
+  func straighten(_ degrees: Double, named name: String = "拉直") {
     let a = (clamp(degrees, -45, 45) * 100).rounded() / 100 * (settings.flipHorizontal == true ? -1 : 1)
     let aspect = selected.flatMap(frameAspect)
-    change("拉直") {
+    change(name) {
       $0.angle = abs(a) < 0.005 ? nil : a
       if let o = $0.composition, let aspect { $0.composition = ImageGeometry.shrunk(o, degrees: a, aspect: aspect) }
     }
@@ -777,8 +794,8 @@ final class AppModel: ObservableObject {
     case .select: return nil
     case .crop:
       if composing {
-        if levelling { return "沿地平线、墙边或建筑竖线拖一条线，松手即按它拉直 · Esc 退出" }
-        return "拖动四角和边裁切 · 框外拖动旋转 · ⌥ 拖一条线拉直 · X 横竖互换 · O 换叠加 · 回车完成 · Esc 退出"
+        if levelling { return "沿地平线、墙边或建筑竖线拖一条线，松手即按它拉直 · Esc 取消这次裁切" }
+        return "拖动四角和边裁切 · 框外拖动旋转 · ⌥ 拖一条线拉直 · X 横竖互换 · O 换叠加 · 回车完成 · Esc 取消"
       }
       if singleView && levelling { return "沿地平线、墙边或建筑竖线拖一条线，松手即按它拉直 · Esc 退出" }
       return singleView ? "拖动四角裁切 · 方向键微调 · [ ] 拉直 0.1°（⇧ 1°） · ⌥ 拖一条线拉直 · 回车完成 · Esc 退出" : "在接触表上拖出新的画框 · Esc 退出"
@@ -864,12 +881,18 @@ final class AppModel: ObservableObject {
       convertStep = step
       status = value.rawValue + (step == .grade ? "在 ③ 调色" : "在 ② 去色罩")
     }
-    // ③'s crop opens the frame, as Lightroom's crop opens Develop: on the frame's own picture.
-    if value == .crop, page == .convert, convertStep == .grade, selected != nil { singleView = true }
+    // ③'s crop opens the frame, as Lightroom's crop opens Develop: on the frame's own picture; with
+    // no frame chosen there is none to crop (on the light table the tool would draw new frames).
+    if value == .crop, page == .convert, convertStep == .grade {
+      guard let f = selected else { return }
+      // Begun now (not again from within): what Esc goes back to.
+      if tool != .crop || cropStart?.frame != f.id { cropStart = (f.id, f.adjustments.angle, f.adjustments.composition) }
+      singleView = true
+    }
     let editing = editingSingle, willEdit = singleView && ((value == .crop && !(page == .convert && convertStep == .grade)) || value == .base)
     if editing != willEdit { viewWillChange?(.edit(entering: willEdit)) }
     if value != tool { editRegionLock = nil }
-    if value != .crop { levelling = false }
+    if value != .crop { (levelling, cropStart) = (false, nil) }
     tool = value
     if value == .neutral || value == .shadowNeutral || value == .calibrate || value == .it8 || value == .dust || value == .region || value == .curvePick { singleView = selected != nil }
     if value == .base || value == .crop { fitView() }
@@ -3598,6 +3621,9 @@ final class AppModel: ObservableObject {
     var image: CGImage
     /// Its pixels to the frame's own: 1 at its own resolution, less when the screen needed fewer.
     var scale = 1.0
+    /// Matched to the window's screen on the render queue (`ScreenCopy`), for the zoomed view: left
+    /// to the window server, it was matched on the main thread at every new part.
+    var screen: CGImage? = nil
   }
   /// The selected frame at its own resolution, read once for all the parts zoomed into; only on
   /// the render queue.
@@ -3606,7 +3632,7 @@ final class AppModel: ObservableObject {
   /// `region` of the single frame at its own resolution, rendered with the whole frame's analysis
   /// (its base, white balance and levels) so it matches the picture around it; with `across`, no
   /// finer than the whole picture `across` pixels wide. Nil until the frame has been analysed.
-  func renderDetail(_ frame: FilmFrame, region: NormalRect, across: Double? = nil, completion: @escaping (Detail?) -> Void) {
+  func renderDetail(_ frame: FilmFrame, region: NormalRect, across: Double? = nil, forScreen: Bool = false, completion: @escaping (Detail?) -> Void) {
     // Never answered at once: an asker that asks again on an answer would never stop.
     let original = showsOriginal
     // The raw picture needs no analysis: nothing is taken off it.
@@ -3643,7 +3669,9 @@ final class AppModel: ObservableObject {
         let part = ImagePipeline.shared.render(full, region: region, across: across, settings: settings, profile: p,
           analysis: original ? nil : analysis, negative: negative, gains: gains)
       {
-        detail = Detail(key: key, region: part.region, image: clipping ? ImagePipeline.shared.markClipping(part.image) : part.image, scale: part.scale)
+        let image = clipping ? ImagePipeline.shared.markClipping(part.image) : part.image
+        detail = Detail(key: key, region: part.region, image: image, scale: part.scale,
+          screen: forScreen ? ImagePipeline.shared.screenReady(image, space: ScreenCopy.space) : nil)
       }
       DispatchQueue.main.async { completion(detail) }
     }
@@ -4034,7 +4062,10 @@ final class AppModel: ObservableObject {
         // with what shows white or black counted on the picture itself where it is only the frame.
         func measure() -> (hist: ([Double], [[Double]]), thumbnail: CGImage?, range: ToneRange?) {
           let hist = Self.histograms(output, curves: negative ? nil : shownSettings.curves)
-          let thumbnail = !edit && !negative && !bypassed && !r.demasked ? ImagePipeline.shared.scaled(output, maxDimension: Self.thumbnailDimension) : nil
+          // Not while ③'s crop is under way: that picture is the whole turned frame, and kept for the
+          // strip it stayed there uncropped once the light table was gone back to.
+          let thumbnail = !edit && !negative && !bypassed && !r.demasked && !r.composing
+            ? ImagePipeline.shared.scaled(output, maxDimension: Self.thumbnailDimension) : nil
           var range = negative ? nil : ImagePipeline.shared.toneRange(cropped, settings: frame.adjustments, profile: p, analysis: analysis)
           if !edit, range != nil {
             (range!.atWhite, range!.atBlack) = ImagePipeline.shared.screenShares(output)
@@ -4076,8 +4107,12 @@ final class AppModel: ObservableObject {
         // A copy's dpi as the roll's format gives it.
         let copyDPI = frame.format == "翻拍" ? Self.formatDPI(crop: pixels, region: frame.adjustments.analysisRegion, format: rollFormat) : nil
         let fileDPI = copyDPI.map { Int($0.rounded()) } ?? frame.scanDPI
+        // As the picture shows it: a frame turned a quarter has its sides the other way round, as
+        // the export's size says (6321 × 6376 under the picture read 6376 × 6321 in 输出).
+        let turnedQuarter = ((frame.adjustments.rotation % 4) + 4) % 2 == 1
+        let (across, down) = turnedQuarter ? (pixels.height, pixels.width) : (pixels.width, pixels.height)
         let summary =
-          "\(Int(pixels.width)) × \(Int(pixels.height)) · \(frame.hasFullResolution ? (fileDPI.map{String($0)+" dpi"} ?? "源图") : r.previewDPI >= 600 ? "\(r.previewDPI) dpi 预览" : "低清预览")"
+          "\(Int(across)) × \(Int(down)) · \(frame.hasFullResolution ? (fileDPI.map{String($0)+" dpi"} ?? "源图") : r.previewDPI >= 600 ? "\(r.previewDPI) dpi 预览" : "低清预览")"
           + (Self.readsScan(frame) && frame.levels?.usable == true ? " · 已对齐预览" : "")
         DispatchQueue.main.async {
           // The newest asked for ends the render, shown or not.
