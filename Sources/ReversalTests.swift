@@ -102,6 +102,37 @@ enum ReversalTests {
     try check(!neutral(fadedGrey, 0.05) && neutral(restored, 0.012) && neutral(restoredDark, 0.012),
       "auto white balance takes each channel of a faded slide from its own black to its own white: the grey \(text(fadedGrey)) comes back \(text(restored))")
 
+    // Bare light past the film's edge or through the sprocket holes, cropped in with the slide, is
+    // not the slide's white: a faded slide with a band of lamp beside it balances and ends as it
+    // does alone. (Its clearest grey above, as flat, piles at the top too and stays: it runs on into
+    // the picture's tones.)
+    let edged = linear(230, 150) { x, y in
+      x >= 200 ? RGB(r: 0.92, g: 0.92, b: 0.92)
+        : RGB((0..<3).map { c in patches[min(2, y / 50) * 4 + min(3, x / 50)].values[c] * gains[c] + blacks[c] })
+    }
+    let besideLamp = try shown(edged, auto, patch: 2), besideLampDark = try shown(edged, auto, patch: 3)
+    try check(neutral(besideLamp, 0.012) && neutral(besideLampDark, 0.012) && zip(besideLamp.values, restored.values).allSatisfy { abs($0 - $1) < 0.012 },
+      "bare lamp light beside a faded slide is left out of its white balance and levels: the grey \(text(besideLamp)), alone \(text(restored))")
+
+    // Cross-processed or aged: each channel's contrast its own, red steeper and blue flatter than
+    // green, so one gain fits one grey and the rest go off. A light grey and a dark one picked set
+    // each channel's contrast, and every grey between and past them comes out grey.
+    let power = [1.3, 1.0, 0.75], tint = [0.9, 1.0, 0.7]
+    func crossedRead(_ v: RGB) -> RGB { RGB((0..<3).map { pow(v.values[$0], power[$0]) * tint[$0] }) }
+    let crossed = slide(crossedRead)
+    let lightGrey = crossedRead(RGB(r: 0.6, g: 0.6, b: 0.6)), darkGrey = crossedRead(RGB(r: 0.09, g: 0.09, b: 0.09))
+    var oneGrey = s
+    oneGrey.neutralSample = lightGrey
+    let contrast = AppModel.slideContrast(light: lightGrey, dark: darkGrey, gamma: 1)
+    var twoGreys = oneGrey
+    twoGreys.slideContrast = contrast
+    let offDark = try shown(crossed, oneGrey, patch: 4)
+    let greys = try [1, 2, 4, 11].map { try shown(crossed, twoGreys, patch: $0) }
+    let tooClose = AppModel.slideContrast(light: lightGrey, dark: crossedRead(RGB(r: 0.45, g: 0.45, b: 0.45)), gamma: 1)
+    try check(abs((contrast?.r ?? 0) - 1 / 1.3) < 0.01 && abs((contrast?.b ?? 0) - 1 / 0.75) < 0.01 && !neutral(offDark, 0.03)
+      && greys.allSatisfy { neutral($0, 0.012) } && tooClose == nil,
+      "a cross-processed slide's channels each get their contrast from a light and a dark grey (red \(contrast.map { String(format: "%.3f", $0.r) } ?? "-"), blue \(contrast.map { String(format: "%.3f", $0.b) } ?? "-")): one grey alone leaves the dark ones off (\(text(offDark))), both make every grey grey (\(greys.map(text).joined(separator: " | "))); two a stop apart or less are refused")
+
     // Frames on a preview, 150 dpi on a bed 120 × 160 mm: three mounted slides and an empty slot in
     // a holder, and a strip of three frames of reversal film, black between them.
     let dpi = 150.0, mm = dpi / 25.4
@@ -226,5 +257,22 @@ enum ReversalTests {
     }
     let copied = files.frames.count == 4 && joined == [true, true]
     try check(copied, "a picture copied into a roll of slides is a slide, into a roll of negatives a negative")
+
+    // In the App: a light grey picked, then a dark one with 阴影中性, set the channels' contrast as
+    // one edit, and the balance reads 自定义; 原片 takes it off. Without the light grey first, or
+    // with two too close, nothing changes and it says what to do.
+    files.setReversal(true)
+    files.select(files.frames[0].id)
+    let before = files.settings
+    let refused = !files.setShadowNeutral(darkGrey) && files.settings == before
+    files.setNeutral(lightGrey)
+    let set = files.setShadowNeutral(darkGrey)
+    let made = files.settings.slideContrast, mode = files.balanceMode
+    fileEdits.undo()
+    let undoneContrast = files.settings.slideContrast == nil && files.settings.neutralSample != nil
+    fileEdits.redo()
+    files.setBalanceMode(.asShot)
+    try check(refused && set && (made?.r ?? 1) < 0.9 && (made?.b ?? 1) > 1.1 && mode == .custom && undoneContrast && files.settings.slideContrast == nil,
+      "on a slide 阴影中性 after 中性灰 sets each channel's contrast as one edit (自定义), asked first for the light grey; 原片 takes it off")
   }
 }

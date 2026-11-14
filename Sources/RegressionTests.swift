@@ -45,6 +45,7 @@ enum RegressionTests {
     try UIDayTests.run(folder: folder)
     try FollowedRegionTests.run(folder: folder)
     try ReversalTests.run(folder: folder)
+    try MonochromeTests.run(folder: folder)
     try OriginalViewTests.run(folder: folder)
     try ProxyTests.run(folder: folder)
     try CopyLightTests.run(folder: folder)

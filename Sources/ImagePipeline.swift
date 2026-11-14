@@ -338,6 +338,21 @@ final class ImagePipeline {
   /// for. The rebate the crop takes in is unexposed film, the base itself, where the picture's own
   /// thinnest film is a shadow already up the toe. Nil otherwise: the base is then the known one,
   /// or the part's own thinnest film.
+  /// A black and white negative's reading as one: the geometric mean of the three, green weighted
+  /// twice (`Kernels.monochrome`), in each channel.
+  static func monochrome(_ c: RGB) -> RGB {
+    let m = exp(0.25 * log(max(1e-6, c.r)) + 0.5 * log(max(1e-6, c.g)) + 0.25 * log(max(1e-6, c.b)))
+    return RGB(r: m, g: m, b: m)
+  }
+  static func monochrome(_ s: Samples) -> Samples {
+    var out = s
+    for i in stride(from: 0, to: s.values.count - 3, by: 4) {
+      let m = Float(exp(0.25 * log(max(1e-6, Double(s.values[i]))) + 0.5 * log(max(1e-6, Double(s.values[i + 1]))) + 0.25 * log(max(1e-6, Double(s.values[i + 2])))))
+      (out.values[i], out.values[i + 1], out.values[i + 2]) = (m, m, m)
+    }
+    return out
+  }
+  static func monochrome(_ ci: CIImage) -> CIImage { Kernels.monochrome?.apply(extent: ci.extent, arguments: [ci]) ?? ci }
   func thinnestOfCrop(_ image: CGImage, _ part: AnalysisPart, _ settings: Adjustments, maxDimension: Int) -> RGB? {
     guard part.followed != nil, settings.inputIsNegative, settings.base == nil, settings.rollBase == nil else { return nil }
     return densities(samples(image, maxDimension: maxDimension), settings: settings, margin: 0.05).base
@@ -352,9 +367,11 @@ final class ImagePipeline {
   /// the base to take its film against where none is picked or known for the roll.
   /// `correct` gives a sample's densities as a light-leak repair leaves them (`leakCorrection`), by
   /// where it lies in the part.
-  func densities(_ r: Samples, settings: Adjustments, margin: Double, base fallback: RGB? = nil,
+  func densities(_ read: Samples, settings: Adjustments, margin: Double, base fallback: RGB? = nil,
     correct: ((Int, Int, [Double]) -> [Double])? = nil) -> (base: RGB, density: [[Double]])
   {
+    // A black and white negative read as one layer: its pixels and its base alike.
+    let r = settings.isMonochrome ? Self.monochrome(read) : read
     // The samples kept three to a pixel in one array, not an array each: the same figures, in the
     // same order and by the same sums, a sixth of a frame's analysis spent allocating them.
     var pixels = [Double](), places = [(Int, Int)]()
@@ -377,8 +394,9 @@ final class ImagePipeline {
     }
     let n = places.count
     // A picked base wins, then the roll's base from between the frames, then this frame's thinnest film.
-    let base = settings.base ?? settings.rollBase ?? fallback
+    let found = settings.base ?? settings.rollBase ?? fallback
       ?? RGB((0..<3).map { c in max(0.001, quantile((0..<n).map { pixels[$0 * 3 + c] }, 0.995)) })
+    let base = settings.isMonochrome ? Self.monochrome(found) : found
     let b = (0..<3).map { max(0.0001, base.values[$0]) }, gamma = settings.inputGamma
     // Only near-opaque areas, over 3.0 D above the base in every channel (holder, frame lines),
     // are left out, so a linear scan's densest highlights stay in the statistics.
@@ -426,9 +444,15 @@ final class ImagePipeline {
   /// base guessed from the frame's own thinnest area is already up the toe, and bending from there
   /// would tint the shadows, so then the straight line is kept.
   static func toe(_ s: Adjustments, _ p: FilmProfile) -> RGB {
-    (s.base ?? s.rollBase) != nil ? p.toe ?? .zero : .zero
+    let t = (s.base ?? s.rollBase) != nil ? p.toe ?? .zero : .zero
+    return s.isMonochrome ? RGB(r: t.g, g: t.g, b: t.g) : t
   }
   static func slopes(_ s: Adjustments, _ p: FilmProfile) -> (slopes: RGB, fixed: Bool) {
+    // One layer: one slope, green's, for the three alike.
+    if s.isMonochrome { let g = p.slopes.g; return (RGB(r: g, g: g, b: g), true) }
+    // A positive's light has no layers' slopes: its channels' own contrast, set by two neutrals on a
+    // slide, else 1 (`Kernels.straight` raises each channel's light by it).
+    if !s.inputIsNegative { return (s.isSlide ? s.slideContrast ?? RGB(r: 1, g: 1, b: 1) : RGB(r: 1, g: 1, b: 1), true) }
     if p.offsets != nil { return (p.slopes, true) }
     if let roll = s.rollSlopes { return (roll, true) }
     return (p.slopes, p.setsChannelContrast)
@@ -516,7 +540,12 @@ final class ImagePipeline {
     return (RGB(r: greenSlope * k[0], g: greenSlope, b: greenSlope * k[1]), nil)
   }
 
-  func analyze(_ image: CGImage, settings: Adjustments, profile: FilmProfile) -> ToneAnalysis {
+  func analyze(_ image: CGImage, settings given: Adjustments, profile film: FilmProfile) -> ToneAnalysis {
+    // A black and white negative has no colour calibration: its neutral and toe are colour film's.
+    // Nor any colour of its own to balance: a grey picked while it was read as colour is a colour
+    // reading, and balanced the one layer by it (a green picture, until this was so).
+    let settings = given.isMonochrome ? given.colourless : given
+    let profile = settings.isMonochrome ? film.uncalibrated : film
     // Only the de-masking region, or inside the film's edge: the base estimate, balance, ends and
     // reach alike.
     let part = analysisPart(image, settings)
@@ -544,7 +573,7 @@ final class ImagePipeline {
     // The roll's print: its balance, or its ends, in place of this frame's own, where they are left
     // to the app (no grey or balance of the frame's own, no calibrated neutral).
     if let print = settings.rollPrint {
-      if settings.sharedBalance == true, settings.autoWhiteBalance, settings.neutralSample == nil, profile.offsets == nil {
+      if settings.sharedBalance == true, settings.autoWhiteBalance, settings.neutralSample == nil, profile.offsets == nil, !settings.isMonochrome {
         // The frame's ends move with the balance, so it is lit as before, only its colour the roll's.
         let shift = (0..<3).map { print.balance.values[$0] - a.balance.values[$0] }.reduce(0, +) / 3
         a.balance = print.balance
@@ -571,6 +600,8 @@ final class ImagePipeline {
   /// brightest frame's: the roll's shoulder holds every frame's.
   func rollPrint(_ frames: [(image: CGImage, settings: Adjustments)], profile: FilmProfile) -> RollPrint? {
     guard let first = frames.first else { return nil }
+    // A black and white roll's one layer: no colour calibration (`analyze`).
+    let profile = first.settings.isMonochrome ? profile.uncalibrated : profile
     // Each frame's part read (`analysisPart`), its highlight reach too.
     let each = frames.map { f -> (image: CGImage, base: RGB, density: [[Double]], settings: Adjustments) in
       let part = analysisPart(f.image, f.settings)
@@ -583,7 +614,7 @@ final class ImagePipeline {
     var pooled = [[Double](), [Double](), [Double]()]
     for f in each { for c in 0..<3 { pooled[c] += f.density[c] } }
     guard !pooled[0].isEmpty else { return nil }
-    var s = first.settings
+    var s = first.settings.isMonochrome ? first.settings.colourless : first.settings
     s.neutralSample = nil
     (s.autoWhiteBalance, s.autoLevels) = (true, true)
     let a = analyze(base: .one, density: pooled, settings: s, profile: profile)
@@ -848,7 +879,11 @@ final class ImagePipeline {
   enum Conversion { case clipped, unclipped, range }
   /// The conversion `kind` of `ci` with `s` and `a`: with the frame's light-leak repair spread
   /// over it when it has one (`LeakFix`), else exactly as without.
-  func converted(_ kind: Conversion, _ ci: CIImage, _ s: Adjustments, _ profile: FilmProfile, _ a: ToneAnalysis) -> CIImage? {
+  func converted(_ kind: Conversion, _ read: CIImage, _ settings: Adjustments, _ film: FilmProfile, _ a: ToneAnalysis) -> CIImage? {
+    // A black and white negative as one layer, with no colour calibration of its own and nothing
+    // that would colour it.
+    let mono = settings.isMonochrome, s = mono ? settings.colourless : settings
+    let ci = mono ? Self.monochrome(read) : read, profile = mono ? film.uncalibrated : film
     var args = Self.arguments(ci, s, profile, a)
     // The picture's local lightness, for the shoulder's detail (`lightBase`) and the highlights
     // and shadows; the range has neither.
@@ -904,13 +939,14 @@ final class ImagePipeline {
   /// print's scale with none of ③'s grading, straightened, turned and mirrored as the frame shows,
   /// unclipped colours kept as they are; with the scale it is on, for `LeakFix.measure`.
   func neutral(_ image: CGImage, settings s: Adjustments, profile: FilmProfile) throws -> (image: CIImage, scale: LeakNeutralScale) {
-    var plain = s
+    var plain = s.isMonochrome ? s.colourless : s
     plain.leakFix = nil
     plain.exposure = 0
     let a = analyze(image, settings: plain, profile: profile)
     guard let kernel = Kernels.negativeNeutral else { throw DeskError.message("图像处理内核初始化失败。") }
-    let ci = CIImage(cgImage: image, options: [.colorSpace: NSNull()])
-    guard var result = kernel.apply(extent: ci.extent, arguments: Self.arguments(ci, plain, profile, a)) else {
+    let read = CIImage(cgImage: image, options: [.colorSpace: NSNull()])
+    let ci = plain.isMonochrome ? Self.monochrome(read) : read
+    guard var result = kernel.apply(extent: ci.extent, arguments: Self.arguments(ci, plain, plain.isMonochrome ? profile.uncalibrated : profile, a)) else {
       throw DeskError.message("图像处理失败。")
     }
     result = Self.straightened(result, degrees: s.angle ?? 0, composition: s.composition)
@@ -999,21 +1035,60 @@ final class ImagePipeline {
   /// Auto levels put the darkest 0.5% at black and the brightest 0.5% at white, one pair for every
   /// channel, so the colour stays. Bare light is left out, and `margin` of each side.
   /// `image` is the part read (`analysisPart`).
+  /// Where `s` reads bare light, light that passed no film: every channel at once in the pile at its
+  /// own top (a clipped sky's one channel is not), with three pixels round it, and that pile above
+  /// everything else by a tenth in every channel. The lamp reads brighter than the clearest film (a
+  /// slide's least density keeps back a fifth of it or more); a flat clear sky, the picture's own
+  /// white, piles up as well but runs on into the picture's tones, and stays.
+  static func bareInAll(_ s: Samples) -> [Bool] {
+    let w = s.width, h = s.height
+    let clip = (0..<3).map { c -> Double in
+      var top = 0.0
+      for i in stride(from: c, to: s.values.count, by: 4) { top = max(top, Double(s.values[i])) }
+      var piled = 0
+      for i in stride(from: c, to: s.values.count, by: 4) where Double(s.values[i]) >= top - 0.002 { piled += 1 }
+      return top > 0.3 && piled >= w * h / 500 ? top - 0.004 : 2
+    }
+    var bare = [Bool](repeating: false, count: w * h)
+    for y in 0..<h {
+      for x in 0..<w {
+        let p = s.pixel(x, y)
+        guard p.r >= clip[0] && p.g >= clip[1] && p.b >= clip[2] else { continue }
+        for yy in max(0, y - 3)...min(h - 1, y + 3) { for xx in max(0, x - 3)...min(w - 1, x + 3) { bare[yy * w + xx] = true } }
+      }
+    }
+    guard bare.contains(true) else { return bare }
+    for c in 0..<3 {
+      var rest = [Float]()
+      rest.reserveCapacity(w * h)
+      for i in 0..<(w * h) where !bare[i] { rest.append(s.values[i * 4 + c]) }
+      guard !rest.isEmpty else { return bare }
+      rest.sort()
+      let next = Double(rest[min(rest.count - 1, Int(Double(rest.count) * 0.999))])
+      if clip[c] + 0.004 < next * 1.1 { return [Bool](repeating: false, count: w * h) }
+    }
+    return bare
+  }
   func slideAnalysis(_ image: CGImage, settings s: Adjustments, margin: Double) -> ToneAnalysis {
     let r = samples(image, maxDimension: 300), gamma = max(0.1, s.inputGamma)
-    func linear(_ v: Double) -> Double { pow(max(0, v), gamma) }
+    let k = (s.slideContrast ?? RGB(r: 1, g: 1, b: 1)).values
+    func linear(_ v: Double, _ c: Int) -> Double { pow(max(0, v), gamma * k[c]) }
+    // Bare light through sprocket holes or past the film's edge, and round it, is no part of the
+    // slide: left out of its white balance and levels, the crop kept as it is (until 0.22.9 a copy
+    // cropped with its holes on took their light for the slide's white).
+    let bare = Self.bareInAll(r)
     var light = [[Double](), [Double](), [Double]()]
     let marginX = margin > 0 ? max(1, Int(ceil(Double(r.width) * margin))) : 0
     let marginY = margin > 0 ? max(1, Int(ceil(Double(r.height) * margin))) : 0
     for y in marginY..<max(marginY + 1, r.height - marginY) {
       for x in marginX..<max(marginX + 1, r.width - marginX) {
         let p = r.pixel(x, y).values
-        guard p.min()! < 0.995 else { continue }
-        for c in 0..<3 { light[c].append(linear(p[c])) }
+        guard p.min()! < 0.995, !bare[y * r.width + x] else { continue }
+        for c in 0..<3 { light[c].append(linear(p[c], c)) }
       }
     }
     var gain = [1.0, 1.0, 1.0], balance = [0.0, 0.0, 0.0]
-    let grey = s.neutralSample.map { $0.values.map { max(1e-6, linear($0)) } }
+    let grey = s.neutralSample.map { g in (0..<3).map { max(1e-6, linear(g.values[$0], $0)) } }
     if let grey {
       let mean = grey.reduce(0, +) / 3
       gain = grey.map { mean / $0 }
@@ -1036,7 +1111,8 @@ final class ImagePipeline {
   /// reach furthest and a smaller copy averages them away (the brightest 0.1% of a sunlit frame
   /// read a stop lower at 300 pixels across than at 3000). The screen's black and white are found
   /// by sending a grey ramp over that scale through the frame's ends, midtone and curves.
-  func toneRange(_ image: CGImage, settings s: Adjustments, profile: FilmProfile, analysis a: ToneAnalysis) -> ToneRange? {
+  func toneRange(_ image: CGImage, settings given: Adjustments, profile: FilmProfile, analysis a: ToneAnalysis) -> ToneRange? {
+    let s = given.isMonochrome ? given.colourless : given
     guard Kernels.negativeRange != nil, let ended = Kernels.negative else { return nil }
     let ci = CIImage(cgImage: image, options: [.colorSpace: NSNull()])
     guard let tones = converted(.range, ci, s, profile, a) else { return nil }
@@ -1080,6 +1156,9 @@ final class ImagePipeline {
     let line = CIImage(bitmapData: Data(bytes: grey, count: grey.count * 4), bytesPerRow: m * 16,
       size: CGSize(width: m, height: 1), format: .RGBAf, colorSpace: nil)
     var flat = Self.arguments(line, s, profile, a)
+    // Straight through as a positive: no channel raised by a slope (a positive's light is, by a
+    // slide's channel contrast, since it was given one).
+    flat[2] = CIVector(x: 1, y: 1, z: 1)
     flat[4] = CIVector(x: 1, y: 1, z: 1)
     flat[5] = CIVector(x: 0, y: 0, z: 0)
     flat[6] = CIVector(x: 0, y: 1, z: 2, w: 3)
@@ -1296,6 +1375,7 @@ final class ImagePipeline {
     var ci: CIImage
     if negative {
       var raw = CIImage(cgImage: image, options: [.colorSpace: NSNull()])
+      if settings.isMonochrome { raw = Self.monochrome(raw) }
       // The raw picture's white balance, as `original` takes it, before it is encoded for the screen.
       if let g = gains {
         raw = raw.applyingFilter("CIColorMatrix", parameters: [

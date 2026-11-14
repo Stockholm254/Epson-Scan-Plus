@@ -152,6 +152,7 @@ struct PasteSheet: View {
   private func plain(_ a: Adjustments) -> Adjustments {
     var p = Adjustments()
     if a.isSlide { p.setReversal(true) }
+    if a.isMonochrome { p.setMonochrome(true) }
     if source?.sensorRead == true { p.colourNoise = 1 }
     p.inputGamma = a.inputGamma
     p.inputIsNegative = a.inputIsNegative

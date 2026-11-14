@@ -57,14 +57,15 @@ extension ContentView {
       }
       VStack(alignment: .leading, spacing: 12) {
         labeled("胶片") {
-          Picker("", selection: Binding(get: { m.reversalRoll }, set: { m.setReversal($0) })) {
-            Text("彩色负片").tag(false)
-            Text("反转片（正片）").tag(true)
+          Picker("", selection: Binding(get: { m.rollKind }, set: { m.setRollKind($0) })) {
+            Text("彩色负片").tag(AppModel.RollKind.colour)
+            Text("黑白负片").tag(AppModel.RollKind.monochrome)
+            Text("反转片（正片）").tag(AppModel.RollKind.slide)
           }.labelsHidden().disabled(m.isWorking)
-            .help("这一卷是负片还是反转片；下一次预览沿用。还没正式扫描时切换会按新的片种重新识别画面。② 去色罩的「胶片」一节里也能切换")
+            .help("这一卷是彩色负片、黑白负片还是反转片；下一次预览沿用。还没正式扫描时切换会按新的片种重新识别画面。黑白负片没有橙色色罩，按透光找画面，转换时三个通道当一层银盐、出中性灰。② 去色罩的「胶片」一节里也能切换；在胶片架上选了黑白胶片，会自动设成黑白负片")
         }
         labeled("来源") {
-          Text(m.reversalRoll ? "透射光 · 不反相" : "透射光 · 保留负片").font(.system(size: 12)).foregroundStyle(.secondary)
+          Text(m.reversalRoll ? "透射光 · 不反相" : m.monochromeRoll ? "透射光 · 保留负片 · 黑白" : "透射光 · 保留负片").font(.system(size: 12)).foregroundStyle(.secondary)
         }
         labeled("分辨率") {
           Picker("", selection: $m.dpi) {
@@ -212,7 +213,12 @@ extension ContentView {
   /// Where this frame's channel slopes come from, in a line: the inspector's, with the whole of it
   /// (`conversionBasis`) behind its ⓘ.
   var conversionBasisShort: String {
-    if m.settings.isSlide { return "反转片 · 扫描的读数就是画面，不用通道斜率" }
+    if m.settings.isSlide {
+      return m.settings.slideContrast.map { String(format: "反转片 · 读数就是画面\n通道反差 R %.2f · G 1 · B %.2f（两个中性点）", $0.r, $0.b) }
+        ?? "反转片 · 扫描的读数就是画面，不用通道斜率"
+    }
+    // One layer: green's slope for all three, the preset's channel calibration left out.
+    if m.settings.isMonochrome { return String(format: "黑白负片 · 一层，三个通道同一个斜率\nG %.3f（预设里绿的）", m.conversionProfile.slopes.g) }
     // With the calibration switched off, what the film it was calibrated from comes to.
     // Where the slopes come from on a line, the three slopes under it: in the panel's width the
     // last slope wrapped onto a line of its own.

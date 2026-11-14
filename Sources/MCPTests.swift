@@ -100,6 +100,17 @@ enum MCPTests {
       && !call("set_curve", ["channel": "all"]).isError && model.settings.curves == nil,
       "set_curve without points straightens the curve, undo brings it back, and all clears every curve")
     try check(call("adjust", ["warmth": 0.3, "rotation": 1]).isError && model.settings.warmth == 0, "an unknown setting is refused, and nothing changes")
+    // A frame named: that one changed, and the reply says which; one not there, or the midtone
+    // taken out in 0.22, refused with why, nothing changed.
+    func said(_ r: (content: [[String: Any]], isError: Bool)) -> String { r.content.first?["text"] as? String ?? "" }
+    let named = call("adjust", ["frame": "01", "warmth": 0.2]), curved = call("set_curve", ["frame": "01", "channel": "red", "points": [[0.5, 0.52]]])
+    let midtone = call("adjust", ["midtone": 0.1])
+    try check(!named.isError && said(named).contains("第 01 张") && model.settings.warmth == 0.2
+      && !curved.isError && said(curved).contains("\"frame\"") && model.settings.curves?.red.isIdentity == false
+      && call("adjust", ["frame": "99", "warmth": 0.5]).isError && call("adjust", ["frame": "01"]).isError
+      && midtone.isError && said(midtone).contains("已经去掉") && model.settings.warmth == 0.2,
+      "adjust and set_curve take the frame by name and say which they changed; a frame not there, nothing to change, or midtone, refused")
+    _ = call("undo"); _ = call("undo")
     try check(!call("adjust", ["angle": 3]).isError && model.settings.angle == 3 && !call("undo").isError && model.settings.angle == nil,
       "adjust straightens the frame by an angle, and undo takes it back")
     let picked = call("pick_neutral", ["x": 0.5, "y": 0.5])

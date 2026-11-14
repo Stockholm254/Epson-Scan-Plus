@@ -53,7 +53,8 @@ enum MCPTools {
       "points": ["type": "array", "maxItems": 20, "description": "[[x, y], …]，坐标同 pick_neutral",
         "items": ["type": "array", "items": ["type": "number"], "minItems": 2, "maxItems": 2]],
     ], required: ["points"]),
-    Tool(name: "adjust", description: "调整选中画面的转换参数，只改给出的项；可用 ⌘Z 撤销。", properties: [
+    Tool(name: "adjust", description: "调整一张画面的转换参数，只改给出的项；给出 frame 时调那一张（先选中它），不给时调选中的那张；回复里写着调的是哪一张。可用 ⌘Z 撤销。", properties: [
+      "frame": ["type": "string", "description": "画面编号，如 \"09\"；省略时为选中的画面"],
       "warmth": number("冷暖，-1 到 1", -1...1), "tint": number("绿 / 洋红，-1 到 1", -1...1),
       "shadow_warmth": number("阴影冷暖：只动暗部，越亮作用越小，阳光下的灰不变；正数暖，-1 到 1", -1...1),
       "shadow_tint": number("阴影色调：和阴影冷暖动同样的暗部，负数绿、正数洋红；阴影蓝里带紫时往负拨，-1 到 1", -1...1),
@@ -79,7 +80,8 @@ enum MCPTools {
     Tool(name: "auto_film_base", description: "放弃手动片基，改用自动片基：扫描的卷用整卷片间测得的，翻拍和单张照片用片边的未曝光片基，都没有时按本张最薄处估计。", properties: [:]),
     Tool(name: "pick_neutral", description: "把指定位置作为中性灰，按它自动白平衡（灰卡、白墙、水泥等）。", properties: point, required: ["x", "y"]),
     Tool(name: "pick_shadow_neutral", description: "把阴影里的指定位置作为中性灰，设定阴影冷暖和阴影色调让它变灰（背光的水泥、路面、石头）；亮处和整体白平衡不变。这一点太暗或太亮时不改，并说明。", properties: point, required: ["x", "y"]),
-    Tool(name: "set_curve", description: "设定选中画面的一条色调曲线，和 App 里「曲线」一节的一样：channel 是 rgb、red、green 或 blue（各通道曲线在 RGB 曲线之后生效）；points 是 [[x, y], …]，都在 0 到 1 之间，x 是转换后的输出值，y 是曲线给它的新值。两端 x=0 和 x=1 不给时按 (0, 0)、(1, 1) 补上，相邻两点的 x 至少相隔 0.01，最多 16 个点；中间按单调三次样条连起来，不会过冲。points 省略或为空时把这条曲线恢复成直线；channel 为 all 时清掉全部曲线（连同用户在 App 里调的参数曲线）。曲线在转换之后按通道查表，从黑到白所有影调都受影响：偏色先用白平衡、阴影冷暖和阴影色调，曲线用来做它们做不到的。get_state 的 curves 列出现有曲线。可用 undo 撤销。", properties: [
+    Tool(name: "set_curve", description: "设定一张画面（frame，省略时为选中的那张）的一条色调曲线，和 App 里「曲线」一节的一样：channel 是 rgb、red、green 或 blue（各通道曲线在 RGB 曲线之后生效）；points 是 [[x, y], …]，都在 0 到 1 之间，x 是转换后的输出值，y 是曲线给它的新值。两端 x=0 和 x=1 不给时按 (0, 0)、(1, 1) 补上，相邻两点的 x 至少相隔 0.01，最多 16 个点；中间按单调三次样条连起来，不会过冲。points 省略或为空时把这条曲线恢复成直线；channel 为 all 时清掉全部曲线（连同用户在 App 里调的参数曲线）。曲线在转换之后按通道查表，从黑到白所有影调都受影响：偏色先用白平衡、阴影冷暖和阴影色调，曲线用来做它们做不到的。get_state 的 curves 列出现有曲线。可用 undo 撤销。", properties: [
+      "frame": ["type": "string", "description": "画面编号，如 \"09\"；省略时为选中的画面"],
       "channel": ["type": "string", "enum": ["rgb", "red", "green", "blue", "all"], "description": "哪条曲线；all 只用来清掉全部曲线"],
       "points": ["type": "array", "maxItems": 16, "items": ["type": "array", "minItems": 2, "maxItems": 2, "items": ["type": "number", "minimum": 0, "maximum": 1]],
         "description": "[[x, y], …]，0 到 1；省略或为空时恢复成直线"],
@@ -197,6 +199,24 @@ enum MCPTools {
     try onMain {
       guard let frame = model.selected else { throw DeskError.message("没有选中的画面。先在 App 里预览或打开工程，或用 select_frame。") }
       return (frame, model.conversionProfile)
+    }
+  }
+  /// The frame an edit goes to: `frame` given, that one by its name, selected first (and the
+  /// edit not synced to others chosen: it was named alone); else the one selected. Its name, for
+  /// the reply, so a caller sees which it changed (until 0.22.9 it had to select it first and
+  /// trust that nothing in the App had moved the selection since).
+  private static func target(_ model: AppModel, _ arguments: [String: Any]) throws -> (name: String, named: Bool) {
+    try onMain {
+      if let wanted = arguments["frame"] {
+        guard let name = wanted as? String, !name.isEmpty else { throw DeskError.message("frame 是画面编号，如 \"09\"。") }
+        guard let f = model.frames.first(where: { $0.name == name }) else {
+          throw DeskError.message("没有编号为 \(name) 的画面。可用 list_frames 查看。")
+        }
+        if model.selectedID != f.id { model.select(f.id) }
+        return (name, true)
+      }
+      guard let frame = model.selected else { throw DeskError.message("没有选中的画面。先在 App 里预览或打开工程，或用 select_frame，或给出 frame。") }
+      return (frame.name, false)
     }
   }
   private static func coordinate(_ arguments: [String: Any]) throws -> CGPoint {
@@ -577,10 +597,15 @@ enum MCPTools {
         return ["x": p.x, "y": p.y, "negative_linear": rgb(v), "density_above_base": rgb(d), "positive_srgb": rgb(out)]
       })
     case "adjust":
-      let known: Set = ["warmth", "tint", "shadow_warmth", "shadow_tint", "exposure", "contrast", "saturation", "highlights", "shadows", "whites", "blacks", "texture", "clarity", "dehaze", "vibrance", "auto_white_balance", "auto_levels", "angle", "shared_balance", "shared_levels", "auto_whites_blacks"]
+      let known: Set = ["warmth", "tint", "shadow_warmth", "shadow_tint", "exposure", "contrast", "saturation", "highlights", "shadows", "whites", "blacks", "texture", "clarity", "dehaze", "vibrance", "auto_white_balance", "auto_levels", "angle", "shared_balance", "shared_levels", "auto_whites_blacks", "frame"]
+      // Taken out in 0.22 (高光 / 阴影 / 白色 / 黑色 and the curves took its place): said so, not
+      // only as one not known.
+      if arguments["midtone"] != nil {
+        throw DeskError.message("midtone（中间调）0.22 起已经去掉：整体明暗用 exposure，中间调的对比用 contrast，或 set_curve 的 rgb 曲线在中间加一个点。")
+      }
       let unknown = Set(arguments.keys).subtracting(known)
       guard unknown.isEmpty else { throw DeskError.message("不认识的参数：\(unknown.sorted().joined(separator: ", "))") }
-      guard !arguments.isEmpty else { throw DeskError.message("没有要改的参数。") }
+      guard arguments.keys.contains(where: { $0 != "frame" }) else { throw DeskError.message("没有要改的参数。") }
       func value(_ key: String, _ range: ClosedRange<Double>) throws -> Double? {
         guard let raw = arguments[key] else { return nil }
         guard let v = (raw as? NSNumber)?.doubleValue, v.isFinite else { throw DeskError.message("\(key) 应为数字。") }
@@ -594,9 +619,9 @@ enum MCPTools {
       ]
       let values = try numbers.compactMap { n in try value(n.1, n.2).map { (n.0, $0) } }
       let angle = try value("angle", -45...45)
-      _ = try selected(model)
+      let (frameName, named) = try target(model, arguments)
       onMain {
-        model.change("AI 调整", separate: true) { a in
+        model.change("AI 调整", separate: true, syncing: !named) { a in
           for (key, v) in values { a[keyPath: key] = v }
           if let b = arguments["auto_white_balance"] as? Bool {
             // Turned on from off it starts over from the picture; already on, a neutral pick stays.
@@ -612,7 +637,8 @@ enum MCPTools {
         if let b = arguments["shared_levels"] as? Bool { model.setSharedLevels(b) }
         if arguments["auto_whites_blacks"] as? Bool == true { model.autoWhitesBlacks() }
       }
-      return [["type": "text", "text": "已调整：\(arguments.keys.sorted().joined(separator: ", "))。可用 ⌘Z 或 undo 撤销。"]]
+      let changed = arguments.keys.filter { $0 != "frame" }.sorted().joined(separator: ", ")
+      return [["type": "text", "text": "已调整第 \(frameName) 张：\(changed)。可用 ⌘Z 或 undo 撤销。"]]
     case "pick_film_base", "pick_neutral":
       let p = try coordinate(arguments)
       let (frame, _) = try selected(model)
@@ -653,9 +679,9 @@ enum MCPTools {
       guard zip(points, points.dropFirst()).allSatisfy({ $1.x - $0.x >= 0.01 - 1e-9 }) else {
         throw DeskError.message("相邻两点的 x 至少相隔 0.01（两端补上的 (0, 0)、(1, 1) 也算）。")
       }
-      _ = try selected(model)
+      let (frameName, named) = try target(model, arguments)
       let curves: ToneCurves? = onMain {
-        model.change("AI 曲线", separate: true) { a in
+        model.change("AI 曲线", separate: true, syncing: !named) { a in
           guard let index = channels[channel] else { a.curves = nil; return }
           var curves = a.curves ?? ToneCurves()
           curves[index] = points.isEmpty ? ToneCurve() : ToneCurve(points: points)
@@ -664,7 +690,7 @@ enum MCPTools {
         return model.settings.curves
       }
       let said = channel == "all" ? "已清掉全部曲线" : points.isEmpty ? "已把 \(channel) 曲线恢复成直线" : "已设定 \(channel) 曲线"
-      return text(["message": said + "。可用 ⌘Z 或 undo 撤销。", "curves": curvesState(curves)])
+      return text(["message": "第 \(frameName) 张：" + said + "。可用 ⌘Z 或 undo 撤销。", "frame": frameName, "curves": curvesState(curves)])
     case "pick_curve_point":
       let p = try coordinate(arguments)
       guard let mode = (arguments["mode"] as? String).flatMap(CurvePick.init(rawValue:)) else { throw DeskError.message("mode 应为 point 或 neutral。") }

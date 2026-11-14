@@ -381,7 +381,7 @@ struct ContentView: View {
       // Capturing places the frames; ② takes the mask off (the crops and the base), ③ grades (the
       // neutral grey).
       let tools: [CanvasTool] = m.page == .capture ? [.select, .crop, .base]
-        : m.convertStep == .demask ? [.select, .crop, .region, .base] : [.select, .neutral]
+        : m.convertStep == .demask ? [.select, .crop, .region, .base] : m.settings.isMonochrome ? [.select] : [.select, .neutral]
       ForEach(tools, id: \.self) { t in
         Button {
           m.useTool(t)
@@ -760,11 +760,13 @@ struct ContentView: View {
             compositionSection
             ArrangedColumn(.grade, shown: SectionColumn.grade.defaults) { key in
               switch key {
-              case "balance": balanceSection
+              // A black and white negative is grey by its film: no white balance or colour mixer;
+              // its toning is the colour grading's.
+              case "balance": if m.settings.isMonochrome { monochromeNote } else { balanceSection }
               case "tone": toneSection
               case "levels": levelsSection
               case "colour": colourSection
-              case "mixer": mixerSection
+              case "mixer": if !m.settings.isMonochrome { mixerSection }
               case "grading": gradingSection
               case "curves": curvesSection
               case "sharpening": sharpeningSection
@@ -976,12 +978,13 @@ struct ContentView: View {
             : "数据表的预设：斜率按厂家数据表的特性曲线，没有为这台扫描仪或相机标定过")
         // Which film the roll is comes before its preset: a slide is not inverted at all.
         labeled("本卷片种") {
-          Picker("本卷片种", selection: Binding(get: { m.reversalRoll }, set: { m.setReversal($0) })) {
-            Text("负片").tag(false)
-            Text("反转片").tag(true)
+          Picker("本卷片种", selection: Binding(get: { m.rollKind }, set: { m.setRollKind($0) })) {
+            Text("负片").tag(AppModel.RollKind.colour)
+            Text("黑白").tag(AppModel.RollKind.monochrome)
+            Text("反转片").tag(AppModel.RollKind.slide)
           }
           .pickerStyle(.segmented).labelsHidden().disabled(m.isWorking || m.frames.isEmpty)
-          .help("这一卷是负片还是反转片（幻灯片、正片）：整卷一起切换，可以撤销；扫描、翻拍和导入的卷都一样。反转片不去色罩、不用通道斜率，扫描或翻拍的读数就是画面。反转片当负片转时，片边发白、颜色反着")
+          .help("这一卷是彩色负片、黑白负片还是反转片（幻灯片、正片）：整卷一起切换，可以撤销；扫描、翻拍和导入的卷都一样。黑白负片只有一层银盐：三个通道当一个读，片基和灯的颜色一起去掉，转出来是中性灰，可以用色彩分级调色（棕调、硒调）。反转片不去色罩、不用通道斜率，扫描或翻拍的读数就是画面。反转片当负片转时，片边发白、颜色反着")
         }
         labeled("画幅") {
           Picker("画幅", selection: Binding(get: { m.format }, set: { m.setFormat($0) })) {
@@ -1005,12 +1008,13 @@ struct ContentView: View {
           }
         }
         if m.hasLinearPictures { flatRow }
-        if m.profile.offsets != nil {
+        // A black and white roll uses none of a colour calibration: no switch for it.
+        if m.profile.offsets != nil && !m.monochromeRoll {
           filmSwitch(calibrationSwitchTitle, isOn: Binding(get: { m.useCalibration }, set: { m.setUseCalibration($0) }),
             info: calibrationSwitchInfo)
             .disabled(m.isWorking || m.selected == nil)
         }
-        if negativeRoll {
+        if negativeRoll && !m.monochromeRoll {
           // With the calibration in use the slopes are its own: dimmed and said so.
           VStack(alignment: .leading, spacing: 3) {
             filmSwitch("全卷斜率估计", isOn: Binding(get: { m.estimatesSlopes }, set: { m.setRollSlopeEstimate($0) }),
@@ -1385,7 +1389,9 @@ struct ContentView: View {
           } label: {
             Label("阴影中性", systemImage: CanvasTool.shadowNeutral.symbol)
           }.buttonStyle(KeyStyle(latched: m.tool == .shadowNeutral)).disabled(m.selected == nil)
-            .help("阴影中性：点阴影里应为灰色的地方（背光的水泥、路面、石头），按它设定阴影冷暖和阴影色调，亮处不变")
+            .help(m.settings.isSlide
+              ? "反转片：取过亮处的「中性灰」以后，点一处暗的中性灰，按两个点定三个通道的反差，亮处和暗处的灰都是灰（交叉冲洗、褪色的片子越亮越偏的颜色）"
+              : "阴影中性：点阴影里应为灰色的地方（背光的水泥、路面、石头），按它设定阴影冷暖和阴影色调，亮处不变")
           if m.settings.neutralSample != nil {
             Spacer(minLength: 2)
             // A key of its own, so the two pickers keep their names beside it.
@@ -1398,8 +1404,23 @@ struct ContentView: View {
               .accessibilityLabel("清除取样")
           }
         }.font(.system(size: 11)).lineLimit(1).fixedSize(horizontal: false, vertical: true)
+        // A slide's channels' contrast, as two neutrals set it.
+        if m.settings.isSlide {
+          Text(m.settings.slideContrast.map { String(format: "通道反差：红 %.2f · 绿 1 · 蓝 %.2f（按亮、暗两个中性点）", $0.r, $0.b) }
+            ?? "反转片的颜色越亮越偏（交叉冲洗、褪色）时：先用「中性灰」点一处亮的灰，再用「阴影中性」点一处暗的，三个通道的反差一起定。")
+            .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
       }
     }
+  }
+  /// In place of the white balance on a black and white negative: what it is and how to tone it.
+  var monochromeNote: some View {
+    HStack(alignment: .top, spacing: 8) {
+      Image(systemName: "circle.lefthalf.filled").foregroundStyle(.secondary)
+      Text("黑白负片：三个通道当一层银盐读，转出来是中性灰，片基和灯的颜色都不进画面，所以没有白平衡和混色器。要棕调、硒调，用下面的「色彩分级」给高光或阴影加一点颜色。")
+        .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+    }
+    .padding(.vertical, 4)
   }
   /// Exposure and the tones, over the frame's histogram against what a screen shows.
   var toneSection: some View {
@@ -1451,9 +1472,12 @@ struct ContentView: View {
         slider("纹理", key: \.textureAmount, range: -1...1, format: "%+.2f")
         slider("清晰度", key: \.clarityAmount, range: -1...1, format: "%+.2f")
         slider("去朦胧", key: \.dehazeAmount, range: -1...1, format: "%+.2f")
-        slider("自然饱和度", key: \.vibranceAmount, range: -1...1, format: "%+.2f")
-        slider("饱和度", key: \.saturation, range: 0...1.8)
-        slider("色彩降噪", key: \.colourNoiseAmount, range: 0...2)
+        // A black and white negative comes out grey: nothing for saturation or colour noise to do.
+        if !m.settings.isMonochrome {
+          slider("自然饱和度", key: \.vibranceAmount, range: -1...1, format: "%+.2f")
+          slider("饱和度", key: \.saturation, range: 0...1.8)
+          slider("色彩降噪", key: \.colourNoiseAmount, range: 0...2)
+        }
         // The soft ends are a negative's print: a slide or a positive file goes straight to its ends.
         if m.settings.inputIsNegative {
           SwitchRow("柔和的暗部和高光", isOn: bool(\.softEndsOn))

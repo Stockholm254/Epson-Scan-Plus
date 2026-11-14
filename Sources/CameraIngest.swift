@@ -218,6 +218,7 @@ extension AppModel {
     // It joins the roll's film: a copy of a slide in a roll of slides is a slide, and a new roll's
     // first is as its sheet said (`startsAsSlides`).
     if frames.contains(where: { $0.adjustments.isSlide }) || (frames.isEmpty && startsAsSlides == true) { f.adjustments.setReversal(true) }
+    else if monochromeRoll { f.adjustments.setMonochrome(true) }
     f.sensorRead = sensor
     if sensor {
       f.adjustments.colourNoise = 1

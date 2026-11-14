@@ -164,6 +164,16 @@ enum Kernels {
       return float4(q, p.a);
     }
     """)
+  /// A black and white negative's three readings as one (`ImagePipeline.monochrome`): their
+  /// geometric mean, green weighted twice, so its density is the mean of the three's, the same in
+  /// each channel.
+  static let monochrome = color("monochrome", """
+    [[stitchable]] float4 monochrome(coreimage::sample_t p) {
+      float3 v = max(p.rgb, float3(0.000001));
+      float m = exp(0.25 * log(v.r) + 0.5 * log(v.g) + 0.25 * log(v.b));
+      return float4(float3(m), p.a);
+    }
+    """)
   /// Clipping shown (J), as Lightroom shows it: where a channel of the picture as shown is white, red;
   /// where one is black, blue; the rest as it is.
   static let clipMark = color("clipMark", """
@@ -253,7 +263,9 @@ enum Kernels {
     static float3 straight(float4 p, float3 a, float3 d, thread float &faded, NEGATIVE_ARGS) {
       float3 v = max(p.rgb, float3(0.000001));
       faded = 1.0;
-      if (inverted < 0.5) { return (pow(v, float3(color.w)) * a + d) * gain + balance; }
+      // A positive's light: a slide's channels each raised by its own contrast (`slope`, 1 unless
+      // two neutrals set it, `Adjustments.slideContrast`).
+      if (inverted < 0.5) { return (pow(v, float3(color.w) * slope) * a + d) * gain + balance; }
       float3 e = log(max(base, float3(0.000001)) / v) * (color.w / 2.302585093) / slope;
       e += toe * log(max(float3(1.0) - exp(-e / max(toe, float3(0.000001))), float3(0.02)));
       e = e * a + d;

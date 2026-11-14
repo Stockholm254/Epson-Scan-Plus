@@ -854,6 +854,11 @@ final class AppModel: ObservableObject {
       ?? "去色罩区域跟随画面：去掉四边 5%，裁切里带着片边（片基、齿孔、边字）时只看片边以内"
   }
   func useTool(_ value: CanvasTool) {
+    // A black and white negative has no grey to pick: its three channels are one (N, the menu).
+    if value == .neutral || value == .shadowNeutral, settings.isMonochrome {
+      status = "黑白负片没有白平衡：三个通道当一层读，本来就是中性灰"
+      return
+    }
     // A tool of the other step takes the window there, rather than working in a step not its own.
     if page == .convert, let step = value.step, step != convertStep {
       convertStep = step
@@ -959,10 +964,11 @@ final class AppModel: ObservableObject {
   /// stay.
   func clearBalanceSamples() {
     change("清除取样") {
-      // A slide goes back to its own colour; a negative to the scene's.
+      // A slide goes back to its own colour, its channels' contrast as it was; a negative to the scene's.
       $0.autoWhiteBalance = !$0.isSlide
       $0.neutralSample = nil
       $0.neutralPicked = nil
+      $0.slideContrast = nil
     }
     status = settings.isSlide ? "已清除取样 · 回到反转片本来的颜色" : "已清除取样 · 回到自动白平衡"
   }
@@ -1122,6 +1128,8 @@ final class AppModel: ObservableObject {
     useCalibration = true
     preferences.scanReversal = reversal
     startsAsSlides = reversal
+    // A black and white film from the shelf: its roll read as one layer from its first picture.
+    startsAsMonochrome = !reversal && monochromeFilm
     format = f
     filmEdges = edges
     status = "新建工程：\(filmName) · \(reversal ? "反转片" : "负片") · 画幅 \(f.rawValue)" + (edges == .auto ? "" : " · \(edges.summary)") + "；下一次预览、导入或拍摄存进新的一卷"
@@ -1195,6 +1203,10 @@ final class AppModel: ObservableObject {
       preferences.scanReversal = reversal
     }
     if reversal != reversalRoll { setReversal(reversal) }
+    // Changed to a black and white film, or from one: the roll read as it.
+    let blackWhite = !reversal && monochromeFilm
+    if frames.isEmpty { startsAsMonochrome = blackWhite }
+    if blackWhite != monochromeRoll { setMonochrome(blackWhite) }
     status = "这一卷换成 \(name) · \(reversal ? "反转片" : "负片") · 画幅 \(f.rawValue)" + (filmEdges == .auto ? "" : " · \(filmEdges.summary)")
   }
   /// The roll's film format, from the new-project sheet, ①'s 规格 or ②'s film section: a scan's
@@ -1344,13 +1356,14 @@ final class AppModel: ObservableObject {
     let importedPath = frames.first?.sourcePath
     let inputGamma = overviewInputGamma
     // A black and white negative's film has no orange mask to be found by.
-    let monochrome = !reversal && FilmCatalog.stock(named: filmName)?.kind == .blackWhite
+    let monochrome = !reversal && (startsAsMonochrome ?? monochromeFilm)
     renderQueue.async {
       var found = FrameDetector.detect(overview, physicalMM: size, format: format, reversal: reversal, monochrome: monochrome)
       if importedPath == nil, let inputGamma {
         for i in found.indices { found[i].adjustments.inputGamma = inputGamma }
       }
       if reversal { for i in found.indices { found[i].adjustments.setReversal(true) } }
+      if monochrome { for i in found.indices { found[i].adjustments.setMonochrome(true) } }
       if let path = importedPath {
         let info = ImagePipeline.shared.info(URL(fileURLWithPath: path))
         for i in found.indices {
@@ -1789,6 +1802,7 @@ final class AppModel: ObservableObject {
   static func reset(_ part: AdjustmentPart, of a: Adjustments, copyShot: Bool) -> Adjustments {
     var r = a, fresh = Adjustments()
     if a.isSlide { fresh.setReversal(true) }
+    if a.isMonochrome { fresh.setMonochrome(true) }
     switch part {
     case .balance:
       r.autoWhiteBalance = fresh.autoWhiteBalance
@@ -1875,6 +1889,7 @@ final class AppModel: ObservableObject {
     a.inputIsNegative = kept.inputIsNegative
     // Which film it is, not a setting: a slide comes back a slide, its own colour kept.
     if kept.isSlide { a.setReversal(true) }
+    if kept.isMonochrome { a.setMonochrome(true) }
     a.rotation = kept.rotation
     a.flipHorizontal = kept.flipHorizontal
     a.angle = kept.angle
@@ -2089,6 +2104,8 @@ final class AppModel: ObservableObject {
   /// laid over it after.
   func balanceShort(_ f: FilmFrame) -> String {
     let s = f.adjustments
+    // One layer, grey by its film: nothing balanced, nothing laid over it.
+    if s.isMonochrome { return "黑白负片 · 中性" }
     var parts = [String]()
     if s.neutralSample != nil {
       parts.append("取样中性灰")
@@ -2270,6 +2287,46 @@ final class AppModel: ObservableObject {
   }
   /// The roll is reversal film, slides; with no frames yet, what the next preview is set to.
   var reversalRoll: Bool { frames.isEmpty ? (startsAsSlides ?? preferences.scanReversal) : frames.contains { $0.adjustments.isSlide } }
+  /// The roll's film a black and white negative, as the film shelf knows it.
+  var monochromeFilm: Bool { FilmCatalog.stock(named: filmName)?.kind == .blackWhite }
+  /// A black and white negative roll: its frames read as one layer (`Adjustments.monochrome`); an
+  /// empty roll as chosen for it, else as its film is.
+  var monochromeRoll: Bool {
+    guard !reversalRoll else { return false }
+    return frames.isEmpty ? (startsAsMonochrome ?? monochromeFilm) : frames.contains { $0.adjustments.isMonochrome }
+  }
+  /// The film an empty roll was set to be read as black and white, or not; nil, as its film is.
+  var startsAsMonochrome: Bool?
+  /// Which film the roll is, as ① and ② offer it: colour negative, black and white negative, slide.
+  enum RollKind: String, CaseIterable, Identifiable {
+    case colour = "彩色负片", monochrome = "黑白负片", slide = "反转片"
+    var id: String { rawValue }
+  }
+  var rollKind: RollKind { reversalRoll ? .slide : monochromeRoll ? .monochrome : .colour }
+  func setRollKind(_ kind: RollKind) {
+    guard !isWorking else { return }
+    startsAsMonochrome = kind == .monochrome
+    switch kind {
+    case .slide: setReversal(true)
+    case .colour, .monochrome:
+      if reversalRoll { setReversal(false) }
+      setMonochrome(kind == .monochrome)
+    }
+  }
+  /// The roll read as black and white negative film, or as colour, as one edit.
+  func setMonochrome(_ on: Bool) {
+    guard !isWorking else { return }
+    let affected = frames.indices.filter { frames[$0].adjustments.isMonochrome != on && frames[$0].adjustments.inputIsNegative }
+    guard !affected.isEmpty else { return }
+    recordEdit(on ? "黑白负片" : "彩色负片")
+    for i in affected { frames[i].adjustments.setMonochrome(on) }
+    status = (on ? "按黑白负片转换：一层银盐，出中性灰" : "按彩色负片转换") + " · \(affected.count) 张"
+    updateRollBase()
+    updateRollSlopes()
+    refresh()
+    updateThumbnails()
+    saveProject()
+  }
   /// What the new-project sheet said the roll is, negative or slide: its first copy or import
   /// follows it (the scanner's previews follow `scanReversal`, which the sheet sets too). Nil for a
   /// roll begun otherwise, or opened: its pictures then come in as negatives until switched.
@@ -4470,7 +4527,7 @@ final class AppModel: ObservableObject {
   var balancesByCalibration: Bool { conversionProfile.offsets != nil && settings.inputIsNegative && !settings.isSlide }
   var balanceMode: BalanceMode {
     let s = settings
-    if s.neutralSample != nil || s.warmth != 0 || s.tint != 0 { return .custom }
+    if s.neutralSample != nil || s.warmth != 0 || s.tint != 0 || s.slideContrast != nil { return .custom }
     return s.autoWhiteBalance && !balancesByCalibration ? .auto : .asShot
   }
   func setBalanceMode(_ mode: BalanceMode) {
@@ -4481,11 +4538,11 @@ final class AppModel: ObservableObject {
     case .asShot, .auto:
       let auto = mode == .auto
       let s = settings
-      guard s.autoWhiteBalance != auto || s.neutralSample != nil || s.warmth != 0 || s.tint != 0 else { return }
+      guard s.autoWhiteBalance != auto || s.neutralSample != nil || s.warmth != 0 || s.tint != 0 || s.slideContrast != nil else { return }
       change("白平衡 · " + mode.rawValue) {
         $0.autoWhiteBalance = auto
         ($0.neutralSample, $0.neutralPicked) = (nil, nil)
-        ($0.warmth, $0.tint) = (0, 0)
+        ($0.warmth, $0.tint, $0.slideContrast) = (0, 0, nil)
       }
       status = balancesByCalibration ? "白平衡：标定预设记下的中性 · 冷暖、绿 / 洋红归零"
         : auto ? "白平衡：自动 · 冷暖、绿 / 洋红归零"
@@ -4509,6 +4566,26 @@ final class AppModel: ObservableObject {
   /// the point is too dark or too light for the dark tones' controls to reach.
   @discardableResult
   func setShadowNeutral(_ color: RGB) -> Bool {
+    // A slide: the light grey picked and this dark one set each channel's contrast, so both come
+    // out grey (`Adjustments.slideContrast`): a cross-processed or faded slide's cast that changes
+    // with brightness, which a balance's gain and offset cannot take out.
+    if settings.isSlide {
+      guard let light = settings.neutralSample else {
+        status = "反转片：先用「中性灰」点一处亮的中性灰，再用「阴影中性」点一处暗的，三个通道的反差一起定"
+        return false
+      }
+      guard let k = Self.slideContrast(light: light, dark: color, gamma: settings.inputGamma) else {
+        status = "两个中性点太接近（亮暗至少要差一档），或者有一个通道在暗处读不出来：换一处更暗、但不是全黑的中性点"
+        return false
+      }
+      change("通道反差") {
+        $0.slideContrast = k
+        ($0.shadowWarmth, $0.shadowTint) = (nil, nil)
+      }
+      status = String(format: "已按亮、暗两个中性点定通道反差：红 %.2f、蓝 %.2f（绿为 1），亮处和暗处的灰都是灰", k.r, k.b)
+      updateThumbnails()
+      return true
+    }
     guard let analysis = toneAnalysis,
       let found = ImagePipeline.shadowBalance(color, settings: settings, profile: conversionProfile, analysis: analysis)
     else {
@@ -4523,6 +4600,24 @@ final class AppModel: ObservableObject {
       + (found.reached ? "" : "（已到滑块的一端，还没完全中性）")
     updateThumbnails()
     return true
+  }
+  /// The power each channel of a slide's light is raised to, green 1, so that a light neutral and a
+  /// dark one (encoded readings, `gamma` their encoding) both come out grey: the slope of each
+  /// channel's log light against green's between them. Nil where they lie under a stop apart in
+  /// green, a channel barely changes between them, or the answer is past a third or three times.
+  static func slideContrast(light: RGB, dark: RGB, gamma: Double) -> RGB? {
+    let g = max(0.1, gamma)
+    let l = light.values.map { log(max(1e-6, pow(max(0, $0), g))) }, d = dark.values.map { log(max(1e-6, pow(max(0, $0), g))) }
+    let green = l[1] - d[1]
+    guard green >= log(2.0) else { return nil }
+    var k = [1.0, 1.0, 1.0]
+    for c in [0, 2] {
+      let span = l[c] - d[c]
+      guard span > 0.1 else { return nil }
+      k[c] = green / span
+      guard k[c] > 0.33, k[c] < 3 else { return nil }
+    }
+    return RGB(r: (k[0] * 1000).rounded() / 1000, g: 1, b: (k[2] * 1000).rounded() / 1000)
   }
   func scanEnabled() {
     guard !isWorking else { return }
@@ -4913,7 +5008,7 @@ final class AppModel: ObservableObject {
         f.scanDPI = Int(info.dpi > 0 ? info.dpi : Double(dpi))
         f.sourceBits = info.bits
         // A new roll the sheet said is slides imports them as slides.
-        if startsAsSlides == true { f.adjustments.setReversal(true) }
+        if startsAsSlides == true { f.adjustments.setReversal(true) } else if monochromeRoll { f.adjustments.setMonochrome(true) }
         frames.append(f)
         if idx == 0 {
           overviewURL = dest

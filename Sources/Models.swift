@@ -541,10 +541,38 @@ struct Adjustments: Codable, Equatable {
   var filmEdges: PictureEdges? = nil
   /// A slide's reading, converted as `reversal` says; never a negative's.
   var isSlide: Bool { reversal == true && !inputIsNegative }
+  /// A black and white negative (Tri-X, HP5, T-Max…): one layer of silver, so its three readings
+  /// are taken as one (`ImagePipeline.monochrome`) and it converts to neutral grey, whatever colour
+  /// its base or the light gave it. Nil for colour film.
+  var monochrome: Bool? = nil
+  var isMonochrome: Bool { monochrome == true && inputIsNegative }
+  /// A slide's channels' contrast, as two neutrals picked set it (`AppModel.setShadowNeutral`): the
+  /// power each channel's light is raised to, green 1, before its balance and levels. A cross-processed
+  /// or faded slide's cast that changes with brightness (red 1.8 times green's contrast on a C-41 roll
+  /// in E-6) comes out of it; gain and offset alone could not. Nil, as the slide is.
+  var slideContrast: RGB? = nil
+  /// A black and white negative's settings with nothing that would colour it (warmth, tint, the
+  /// shadows' two, a grey picked): carried over from a preset or a paste, they would tint the grey
+  /// with no control to show it. Its toning is the colour grading's.
+  var colourless: Adjustments {
+    var a = self
+    (a.warmth, a.tint, a.shadowWarmth, a.shadowTint, a.neutralSample, a.neutralPicked) = (0, 0, nil, nil, nil, nil)
+    return a
+  }
+  /// Read as a black and white negative, or as colour again.
+  /// Read as a black and white negative, or as colour again. The colour settings stay as they were
+  /// (`colourless` leaves them out of the conversion), so colour, black and white and colour again
+  /// is as it was; from a slide, a negative's auto white balance as `setReversal(false)` gives.
+  mutating func setMonochrome(_ on: Bool) {
+    if on && isSlide { autoWhiteBalance = true }
+    monochrome = on ? true : nil
+    if on { (inputIsNegative, reversal) = (true, nil) }
+  }
   /// Read as a slide, or as a negative again. A slide's own colour is its picture, so it starts
   /// with auto white balance off; a negative with it on, as it always does.
   mutating func setReversal(_ on: Bool) {
     (inputIsNegative, reversal, autoWhiteBalance) = on ? (false, true, false) : (true, nil, true)
+    if on { monochrome = nil }
   }
   var base: RGB? = nil
   /// Where `base` was picked on the frame, normalised in the frame as cropped; nil when it came
@@ -643,6 +671,13 @@ struct FilmProfile: Codable, Identifiable, Equatable {
   var toe: RGB? = nil
   /// Calibrated presets only: where their neutral points were picked, so the frames can show them.
   var spots: [CalibrationSpot]? = nil
+  /// The preset without what calibrated it for colour film (its neutral, its toes), as a black and
+  /// white negative converts with it.
+  var uncalibrated: FilmProfile {
+    var p = self
+    (p.offsets, p.toe) = (nil, nil)
+    return p
+  }
   /// A copy preset's: whether its points were read with the copy light's crosstalk taken out, which
   /// its slopes and neutral hold for (nil: not known, or both). Presets made before 0.22.6 said so
   /// only in their notes (`readsUnmixed`).
@@ -794,6 +829,7 @@ extension Adjustments {
   mutating func takeGrading(from o: Adjustments) {
     (autoWhiteBalance, neutralSample, neutralPicked) = (o.autoWhiteBalance, o.neutralSample, o.neutralPicked)
     (warmth, tint, shadowWarmth, shadowTint) = (o.warmth, o.tint, o.shadowWarmth, o.shadowTint)
+    slideContrast = o.slideContrast
     (sharedBalance, sharedLevels, rollPrint) = (o.sharedBalance, o.sharedLevels, o.rollPrint)
     (exposure, contrast, highlights, pressHighlights, shadows) = (o.exposure, o.contrast, o.highlights, o.pressHighlights, o.shadows)
     (whites, blacks) = (o.whites, o.blacks)
@@ -866,7 +902,7 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
     switch self {
     case .whiteBalance:
       (a.autoWhiteBalance, a.neutralSample, a.neutralPicked) = (o.autoWhiteBalance, o.neutralSample, o.neutralPicked)
-      (a.warmth, a.tint) = (o.warmth, o.tint)
+      (a.warmth, a.tint, a.slideContrast) = (o.warmth, o.tint, o.slideContrast)
     case .shadowColour: (a.shadowWarmth, a.shadowTint) = (o.shadowWarmth, o.shadowTint)
     case .exposure: a.exposure = o.exposure
     case .contrast: a.contrast = o.contrast
@@ -909,7 +945,8 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
     switch self {
     case .whiteBalance:
       let how = a.neutralSample != nil ? "中性灰取样" : a.autoWhiteBalance ? "自动" : "不自动"
-      return joined([how, a.warmth != 0 ? "冷暖 " + signed(a.warmth) : nil, a.tint != 0 ? "绿 / 洋红 " + signed(a.tint) : nil], or: how)
+      return joined([how, a.warmth != 0 ? "冷暖 " + signed(a.warmth) : nil, a.tint != 0 ? "绿 / 洋红 " + signed(a.tint) : nil,
+        a.slideContrast.map { String(format: "通道反差 红 %.2f · 蓝 %.2f", $0.r, $0.b) }], or: how)
     case .shadowColour: return joined([a.shadowWarmth.map { "冷暖 " + signed($0) }, a.shadowTint.map { "色调 " + signed($0) }], or: "0")
     case .exposure: return signed(a.exposure) + " EV"
     case .contrast: return String(format: "%.2f", a.contrast)
