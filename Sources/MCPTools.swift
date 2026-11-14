@@ -80,6 +80,7 @@ enum MCPTools {
     ]),
     Tool(name: "auto_film_base", description: "放弃手动片基，改用自动片基：扫描的卷用整卷片间测得的，翻拍和单张照片用片边的未曝光片基，都没有时按本张最薄处估计。", properties: [:]),
     Tool(name: "pick_neutral", description: "把指定位置作为中性灰，按它自动白平衡（灰卡、白墙、水泥等）。", properties: point, required: ["x", "y"]),
+    Tool(name: "find_neutral", description: "把选中的这张的白平衡设为「自动」（和 App 白平衡选单里选「自动」一样）并等它找完：彩色负片的自动按画面里的灰像素配平（白墙、水泥、路面、石头的明暗和纹理：三个通道一起变、颜色不变的地方），只在标定的中性附近找（没有标定时在整张的平均附近），草地、橙色的桥这类有颜色的东西不当成灰；放弃取的中性灰，冷暖、绿 / 洋红归零。回报找到多少处灰像素、先验和找到的中性（红、蓝对绿的对数曝光）、光比先验偏暖多少、偏洋红多少；画面几乎没有灰的东西时说明，自动按原来的办法（标定的中性，或对齐各通道的黑）。0.23.3 以前的画面（get_state 的 white_balance.auto_gray_pixels 为 older_frame）保持原来的自动，用它才改成灰像素。只用于彩色负片。可用 undo 撤销。", properties: [:]),
     Tool(name: "pick_shadow_neutral", description: "把阴影里的指定位置作为中性灰，设定阴影冷暖和阴影色调让它变灰（背光的水泥、路面、石头）；亮处和整体白平衡不变。这一点太暗或太亮时不改，并说明。", properties: point, required: ["x", "y"]),
     Tool(name: "set_curve", description: "设定一张画面（frame，省略时为选中的那张）的一条色调曲线，和 App 里「曲线」一节的一样：channel 是 rgb、red、green 或 blue（各通道曲线在 RGB 曲线之后生效）；points 是 [[x, y], …]，都在 0 到 1 之间，x 是转换后的输出值，y 是曲线给它的新值。两端 x=0 和 x=1 不给时按 (0, 0)、(1, 1) 补上，相邻两点的 x 至少相隔 0.01，最多 16 个点；中间按单调三次样条连起来，不会过冲。points 省略或为空时把这条曲线恢复成直线；channel 为 all 时清掉全部曲线（连同用户在 App 里调的参数曲线）。曲线在转换之后按通道查表，从黑到白所有影调都受影响：偏色先用白平衡、阴影冷暖和阴影色调，曲线用来做它们做不到的。get_state 的 curves 列出现有曲线。可用 undo 撤销。", properties: [
       "frame": ["type": "string", "description": "画面编号，如 \"09\"；省略时为选中的画面"],
@@ -126,6 +127,7 @@ enum MCPTools {
     - 坐标是单张视图里画面的相对位置，0–1，左上为原点。
     - 翻拍的照片四周带着片基、漏光或片夹时，先用 auto_crop 裁到画面（whole_roll 整卷一起），再看和取样：自动白平衡和色阶只看裁切以内。
     - 地平线、水面拍斜了时可以用 auto_straighten 放平（找不到清楚的地平线时不改动）；有意倾斜的构图不要用。
+    - 彩色负片的自动白平衡按画面里的灰像素配平（只在标定的中性附近找，所以草地、橙色的桥这类有颜色的东西不会被当成灰）；get_state 的 white_balance.auto_gray_pixels 说明找到没有。旧画面（older_frame）还是原来的自动，用 find_neutral 改成灰像素，再 preview 看。用 pick_neutral 自己挑点时避开云（常透着蓝天或带着雾）。
     - 每次调整都能在 App 里用 ⌘Z 撤销，也可以调用 undo。转换的工具不会扫描、删除或导出文件。
     - 翻拍预设的斜率属于那台相机和那组灯，灯的配比变了也照样成立；它记下的中性却是标定那次的灯光。套用以后整体偏色、而白色或灰色的东西彼此一致时，在它们上面 pick_neutral 重新配平就好，不必重做标定。
     - 画面的方向和镜像这里改不了，要请用户在 App 里转。
@@ -454,6 +456,16 @@ enum MCPTools {
       // 原片 / 自动 / 自定义, as the white balance menu shows it.
       var balance: [String: Any] = ["mode": model.balanceMode.rawValue, "auto": s.autoWhiteBalance, "warmth": s.warmth, "tint": s.tint, "shadow_warmth": s.shadowWarmthAmount, "shadow_tint": s.shadowTintAmount]
       if let neutral = s.neutralSample { balance["neutral_sample"] = rgb(neutral) }
+      // 自动's gray pixels: found (the neutral they set), still looked for, none found (自动 as before),
+      // or a frame from before them (its old 自动).
+      if s.inputIsNegative && !s.isSlide && !s.isMonochrome {
+        switch s.autoNeutral {
+        case .some(.found(let r)): balance["auto_gray_pixels"] = ["state": "found", "neutral_reading": rgb(r)]
+        case .some(.pending): balance["auto_gray_pixels"] = ["state": "looking"]
+        case .some(.none): balance["auto_gray_pixels"] = ["state": "none_found"]
+        case nil: balance["auto_gray_pixels"] = ["state": "older_frame"]
+        }
+      }
       state["white_balance"] = balance
       state["levels"] = ["auto": s.autoLevels]
       state["curves"] = curvesState(s.curves)
@@ -631,9 +643,11 @@ enum MCPTools {
         model.change("AI 调整", separate: true, syncing: !named) { a in
           for (key, v) in values { a[keyPath: key] = v }
           if let b = arguments["auto_white_balance"] as? Bool {
-            // Turned on from off it starts over from the picture; already on, a neutral pick stays.
+            // Turned on from off it starts over from the picture, a colour negative's gray pixels
+            // looked for anew; already on, a neutral pick stays.
             if b && !a.autoWhiteBalance {
               a.neutralSample = nil
+              if a.inputIsNegative && !a.isSlide && !a.isMonochrome { a.autoNeutral = .pending }
             }
             a.autoWhiteBalance = b
           }
@@ -790,6 +804,25 @@ enum MCPTools {
         _ = finished.wait(timeout: .now() + 240)
       }
       guard let said else { throw DeskError.message("自动拉直还没做完，稍后用 get_state 看 straighten_degrees。") }
+      return [["type": "text", "text": said]]
+    case "find_neutral":
+      _ = try selected(model)
+      let finished = DispatchSemaphore(value: 0)
+      var said: String?
+      onMain {
+        model.findNeutral { text in
+          said = text
+          finished.signal()
+        }
+      }
+      // A frame takes under a second; a whole roll chosen, longer.
+      let end = Date().addingTimeInterval(240)
+      if Thread.isMainThread {
+        while said == nil && Date() < end { RunLoop.current.run(until: Date().addingTimeInterval(0.05)) }
+      } else {
+        _ = finished.wait(timeout: .now() + 240)
+      }
+      guard let said else { throw DeskError.message("找中性还没做完，稍后用 get_state 看 white_balance。") }
       return [["type": "text", "text": said]]
     case "auto_crop":
       _ = try selected(model)

@@ -1787,7 +1787,11 @@ final class AppModel: ObservableObject {
       let keys = frames[j].flatID == shown.flatID && frames[j].crosstalk == shown.crosstalk ? changed : changed.subtracting(Self.pictureReadings)
       guard !keys.isEmpty, var theirs = Self.fields(frames[j].adjustments) else { continue }
       for k in keys { theirs[k] = now[k] }
-      if let synced = Self.adjustments(theirs), synced != frames[j].adjustments { frames[j].adjustments = synced }
+      if var synced = Self.adjustments(theirs) {
+        // A neutral found in this frame's picture is its own: the other looks in its own.
+        if synced.autoNeutral != frames[j].adjustments.autoNeutral, synced.autoNeutral?.reading != nil { synced.autoNeutral = .pending }
+        if synced != frames[j].adjustments { frames[j].adjustments = synced }
+      }
     }
     // Their thumbnails once a drag stops: made on the render queue, they would hold up the picture's.
     syncedThumbnails?.cancel()
@@ -1831,6 +1835,8 @@ final class AppModel: ObservableObject {
       r.autoWhiteBalance = fresh.autoWhiteBalance
       (r.warmth, r.tint, r.shadowWarmth, r.shadowTint) = (fresh.warmth, fresh.tint, nil, nil)
       (r.neutralSample, r.neutralPicked) = (nil, nil)
+      // 自动 as a new frame's: the gray pixels', found again.
+      r.autoNeutral = .pending
     case .tone:
       (r.exposure, r.contrast, r.highlights, r.pressHighlights, r.shadows) = (fresh.exposure, fresh.contrast, nil, nil, nil)
       (r.whites, r.blacks) = (nil, nil)
@@ -2132,6 +2138,13 @@ final class AppModel: ObservableObject {
     var parts = [String]()
     if s.neutralSample != nil {
       parts.append("取样中性灰")
+    } else if s.autoWhiteBalance && s.balancesByGrays && s.sharedBalance != true {
+      // While they are looked for (a fraction of a second), 自动 as it shows until then.
+      switch s.autoNeutral {
+      case .some(.found): parts.append("自动 · 灰像素")
+      case .some(.none): parts.append(profile.offsets != nil ? "自动 · 没找到灰像素，按标定的中性" : "自动 · 没找到灰像素")
+      default: parts.append(profile.offsets != nil ? "标定预设的中性" : "自动")
+      }
     } else if profile.offsets != nil {
       parts.append("标定预设的中性")
     } else if s.autoWhiteBalance {
@@ -2427,6 +2440,8 @@ final class AppModel: ObservableObject {
     frames[i].adjustments.base = moved(a.base, at: basePlace(frames[i]))
     frames[i].adjustments.rollBase = moved(a.rollBase, at: cropMiddle(frames[i]))
     frames[i].adjustments.neutralSample = moved(a.neutralSample, at: a.neutralPicked.map(Self.centre) ?? cropMiddle(frames[i]))
+    // 自动's gray pixels lie all over the picture: looked for again through the new reading.
+    if a.autoNeutral?.reading != nil { frames[i].adjustments.autoNeutral = .pending }
     frames[i].crosstalk = to
     frames[i].flatID = flatID
     frames[i].flatField = flatTo
@@ -2672,6 +2687,7 @@ final class AppModel: ObservableObject {
   static func presetGrading(_ a: Adjustments) -> Adjustments {
     var p = a
     (p.neutralSample, p.neutralPicked) = (nil, nil)
+    p.autoNeutral = Adjustments.carried(p.autoNeutral)
     return p
   }
   /// The frame shown's grading, of `groups`, kept as the preset `name` (one of that name replaced).
@@ -2747,6 +2763,10 @@ final class AppModel: ObservableObject {
       frames[i].adjustments.analysisRegion = own.analysisRegion
       // A light-leak repair belongs to its own picture.
       frames[i].adjustments.leakFix = own.leakFix
+      // So does a neutral found in its gray pixels: one pasted from another is looked for in its own.
+      if frames[i].id != s.id, frames[i].adjustments.autoNeutral != own.autoNeutral, frames[i].adjustments.autoNeutral?.reading != nil {
+        frames[i].adjustments.autoNeutral = .pending
+      }
     }
     refresh()
     updateThumbnails()
@@ -3737,6 +3757,7 @@ final class AppModel: ObservableObject {
     return (hist.map { $0 / max(1, maxBin) }, channels.map { $0.map { $0 / max(1, maxChannel) } })
   }
   func refresh() {
+    resolveAutoNeutrals()
     revision += 1
     let token = revision
     wantedLock.lock()
@@ -4558,13 +4579,20 @@ final class AppModel: ObservableObject {
     case asShot = "原片", auto = "自动", custom = "自定义"
     var id: String { rawValue }
   }
-  /// A negative converted with a preset that has a neutral of its own: its 原片 is that neutral,
-  /// and the scene's estimate is not used, so 原片 and 自动 come to the same.
+  /// A negative converted with a preset that has a neutral of its own: its 原片 is that neutral.
+  /// 自动 is the picture's gray pixels', looked for near it (`GrayPixelNeutral`); on a frame from
+  /// before 0.23.3 (`Adjustments.autoNeutral` nil) it is still that neutral, as 原片.
   var balancesByCalibration: Bool { conversionProfile.offsets != nil && settings.inputIsNegative && !settings.isSlide }
   var balanceMode: BalanceMode {
     let s = settings
     if s.neutralSample != nil || s.warmth != 0 || s.tint != 0 || s.slideContrast != nil { return .custom }
-    return s.autoWhiteBalance && !balancesByCalibration ? .auto : .asShot
+    return s.autoWhiteBalance && (s.balancesByGrays || !balancesByCalibration) ? .auto : .asShot
+  }
+  /// 自动 as it was before gray pixels: a frame of an older roll left as it was graded, until 自动
+  /// is chosen again.
+  var balanceIsOldAuto: Bool {
+    let s = settings
+    return balanceMode == .auto && s.autoNeutral == nil && s.inputIsNegative && !s.isSlide && !s.isMonochrome
   }
   func setBalanceMode(_ mode: BalanceMode) {
     guard selected != nil else { return }
@@ -4574,13 +4602,18 @@ final class AppModel: ObservableObject {
     case .asShot, .auto:
       let auto = mode == .auto
       let s = settings
-      guard s.autoWhiteBalance != auto || s.neutralSample != nil || s.warmth != 0 || s.tint != 0 || s.slideContrast != nil else { return }
+      // 自动 on a colour negative is the gray pixels': chosen on an older frame, it starts using them.
+      let grays = auto && s.inputIsNegative && !s.isSlide && !s.isMonochrome
+      guard s.autoWhiteBalance != auto || s.neutralSample != nil || s.warmth != 0 || s.tint != 0 || s.slideContrast != nil
+        || (grays && s.autoNeutral == nil) else { return }
       change("白平衡 · " + mode.rawValue) {
         $0.autoWhiteBalance = auto
         ($0.neutralSample, $0.neutralPicked) = (nil, nil)
         ($0.warmth, $0.tint, $0.slideContrast) = (0, 0, nil)
+        if grays { $0.autoNeutral = .pending }
       }
-      status = balancesByCalibration ? "白平衡：标定预设记下的中性 · 冷暖、绿 / 洋红归零"
+      status = grays ? "白平衡：自动，按画面里的灰像素 · 冷暖、绿 / 洋红归零"
+        : balancesByCalibration ? "白平衡：标定预设记下的中性 · 冷暖、绿 / 洋红归零"
         : auto ? "白平衡：自动 · 冷暖、绿 / 洋红归零"
         : settings.isSlide ? "白平衡：原片，片子本来的颜色" : "白平衡：原片，只除片基，不按画面配平"
       updateThumbnails()
@@ -5407,6 +5440,8 @@ final class AppModel: ObservableObject {
     let own = Dictionary(items.map { ($0.id, $0.adjustments) }, uniquingKeysWith: { a, _ in a })
     // Each frame's sharpening as it is shown, a copy's default worked out here, on the main thread.
     let items = items.map(sharpened)
+    // Frames whose 自动 still waits for its gray pixels, looked for as each is written.
+    let grayKeys = exportGrayKeys(items)
     // Named after the roll's preset; converted, and recorded, with what the roll converts with.
     let p = profile, film = conversionProfile
     // Named after the roll's own film (a film converted as the generic preset keeps its name).
@@ -5431,9 +5466,13 @@ final class AppModel: ObservableObject {
       do {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         // Each frame's pictures let go before the next: a 60-megapixel frame holds half a gigabyte.
-        for f in items {
+        for item in items {
           if stop.stopped { break }
-          DispatchQueue.main.async { self.writing(f) }
+          DispatchQueue.main.async { self.writing(item) }
+          // Exported before the finder reached it (a roll exported as it came in): its gray pixels
+          // looked for here, so the file is balanced as the window will show it, not by the old 自动.
+          let grays = grayKeys[item.id].map { _ in self.withGrays(item, profile: film) }
+          let f = grays?.frame ?? item
           let url: URL
           do {
           url = try autoreleasepool { () throws -> URL in
@@ -5478,8 +5517,13 @@ final class AppModel: ObservableObject {
           }
           written.append(url)
           writtenIDs.insert(f.id)
-          let stamp = ExportStamp(at: Date(), file: url.path, settings: own[f.id] ?? f.adjustments, film: filmID)
-          DispatchQueue.main.async { self.wrote(f.id, stamp: stamp) }
+          var settings = own[f.id] ?? f.adjustments
+          if grays != nil { settings.autoNeutral = f.adjustments.autoNeutral }
+          let stamp = ExportStamp(at: Date(), file: url.path, settings: settings, film: filmID)
+          DispatchQueue.main.async {
+            if let grays, let key = grayKeys[f.id] { self.keepExportedGrays(grays.frame, found: grays.found, key: key) }
+            self.wrote(f.id, stamp: stamp)
+          }
         }
         let files = written
         let left = items.map(\.id).filter { !writtenIDs.contains($0) }

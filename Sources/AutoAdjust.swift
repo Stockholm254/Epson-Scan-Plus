@@ -308,6 +308,8 @@ extension AppModel {
     var parts = [String]()
     if s.neutralSample != nil {
       parts.append("白平衡按取的中性灰 · 自动色阶")
+    } else if s.autoWhiteBalance, s.balancesByGrays, s.sharedBalance != true, s.autoNeutral?.reading != nil {
+      parts.append("白平衡按灰像素 · 自动色阶")
     } else if calibrated && s.inputIsNegative {
       parts.append("白平衡按标定预设的中性 · 自动色阶")
     } else if s.inputIsNegative {

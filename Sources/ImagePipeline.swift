@@ -615,7 +615,8 @@ final class ImagePipeline {
     for f in each { for c in 0..<3 { pooled[c] += f.density[c] } }
     guard !pooled[0].isEmpty else { return nil }
     var s = first.settings.isMonochrome ? first.settings.colourless : first.settings
-    s.neutralSample = nil
+    // The roll's own balance, as 自动 before gray pixels (no frame's neutral is the roll's).
+    (s.neutralSample, s.autoNeutral) = (nil, nil)
     (s.autoWhiteBalance, s.autoLevels) = (true, true)
     let a = analyze(base: .one, density: pooled, settings: s, profile: profile)
     let reach = each.map { f -> Double in
@@ -774,7 +775,8 @@ final class ImagePipeline {
     func pointExposure(_ v: RGB) -> [Double] {
       (0..<3).map { exposure(log10(max(0.0001, base.values[$0]) / max(0.0001, v.values[$0])) * settings.inputGamma, $0) }
     }
-    let grey = settings.neutralSample.map(pointExposure)
+    // A grey picked, else 自动's gray pixels' (`Adjustments.balancingNeutral`).
+    let grey = settings.balancingNeutral.map(pointExposure)
     if let grey {
       // With auto white balance on, the generic preset still fits each channel's contrast to the
       // scene; the picked grey then sets where the channels meet.
@@ -801,7 +803,7 @@ final class ImagePipeline {
     }
     // Unexposed film comes out a neutral black (`unexposedFade`), unless the balance already starts
     // from the scene's black or a fitted toe takes the curve down to the base.
-    let fromBlack = settings.neutralSample == nil && profile.offsets == nil
+    let fromBlack = grey == nil && profile.offsets == nil
       && settings.autoWhiteBalance
     let fade = fromBlack || toe.values.contains { $0 > 0 } ? 0 : Self.unexposedFade
     func fadedIn(_ e: [Double]) -> Double { 1 - exp(-max(0, e.reduce(0, +) / 3) / fade) }

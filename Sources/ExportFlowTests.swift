@@ -193,5 +193,20 @@ enum ExportFlowTests {
     settle(0.7)
     try check(during.map { abs($0 - 0.65) > 1e-9 } == true && saved().map { abs($0 - 0.65) < 1e-9 } == true,
       "a drag is saved once it stops, with its last step: \(during ?? -1) during, \(saved() ?? -1) after")
+
+    // A frame whose 自动 still waits for its gray pixels: looked for as it is written, the file
+    // and its stamp balanced as the window will show it, the frame marked exported, not changed.
+    AppModel.findsAutoNeutrals = true
+    m.frames[2].adjustments.autoNeutral = .pending
+    let grayOut = root.appendingPathComponent("grays", isDirectory: true)
+    done = false
+    m.export(items: [m.frames[2]], to: grayOut) { done = true }
+    for _ in 0..<200 where !done { settle() }
+    settle(0.2)
+    AppModel.findsAutoNeutrals = false
+    let stamped = m.exportStamps[ids[2]]?.settings.autoNeutral
+    try check(done && stamped != nil && stamped != .pending && m.frames[2].adjustments.autoNeutral == stamped
+      && m.exportMark(m.frames[2]) == .exported,
+      "a frame exported before its gray pixels were found has them looked for first, kept for the frame, and is marked exported: \(String(describing: stamped))")
   }
 }

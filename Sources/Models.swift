@@ -609,6 +609,24 @@ struct Adjustments: Codable, Equatable {
   /// Where `neutralSample` was picked, normalised in the frame's picture (not its crop); nil when
   /// not known.
   var neutralPicked: NormalRect? = nil
+  /// 自动's neutral on a colour negative: where the picture's gray pixels put it
+  /// (`GrayPixelNeutral`), a reading as a grey picked is, found once and kept. `.pending` until it
+  /// is looked for (`AppModel.resolveAutoNeutrals`), `.none` where none was found, 自动 then as
+  /// before. Nil on frames from before 0.23.3 (the key not saved), whose 自动 stays as it was, each
+  /// channel's black aligned or the calibrated neutral, until 自动 is chosen again.
+  var autoNeutral: AutoNeutral? = .pending
+  enum AutoNeutral: Codable, Equatable {
+    case pending, found(RGB), none
+    var reading: RGB? { if case .found(let r) = self { return r } else { return nil } }
+  }
+  /// Whether 自动 is the gray pixels' here: a colour negative of 0.23.3 on.
+  var balancesByGrays: Bool { autoNeutral != nil && inputIsNegative && !isSlide && !isMonochrome }
+  /// The neutral the balance is set by: the grey picked, else, on 自动, the gray pixels' found.
+  var balancingNeutral: RGB? {
+    neutralSample ?? (autoWhiteBalance && balancesByGrays ? autoNeutral?.reading : nil)
+  }
+  /// What `o`'s 自动 neutral gives another frame: the kind, to be looked for in its own picture.
+  static func carried(_ o: AutoNeutral?) -> AutoNeutral? { o == nil ? nil : .pending }
   // The white picked as the densest highlight (`highlightSample`, Dmax) is gone (2026-11-07): it
   // fitted each channel's contrast to a point on the film's shoulder in place of the roll's or the
   // calibration's slopes. A project saved with one opens without it, the key not read.
@@ -828,6 +846,8 @@ extension Adjustments {
   /// Every setting not named here is ②'s.
   mutating func takeGrading(from o: Adjustments) {
     (autoWhiteBalance, neutralSample, neutralPicked) = (o.autoWhiteBalance, o.neutralSample, o.neutralPicked)
+    // The same frame's own found neutral kept (a snapshot, a frame's own grading back); another's looked for anew.
+    autoNeutral = o.autoNeutral == autoNeutral ? autoNeutral : Self.carried(o.autoNeutral)
     (warmth, tint, shadowWarmth, shadowTint) = (o.warmth, o.tint, o.shadowWarmth, o.shadowTint)
     slideContrast = o.slideContrast
     (sharedBalance, sharedLevels, rollPrint) = (o.sharedBalance, o.sharedLevels, o.rollPrint)
@@ -843,6 +863,7 @@ extension Adjustments {
     let grading = self
     self = o
     takeGrading(from: grading)
+    autoNeutral = grading.autoNeutral
   }
   /// `other`'s settings of `scope` in place of these.
   mutating func take(_ scope: SettingsScope, from o: Adjustments) {
@@ -902,6 +923,7 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
     switch self {
     case .whiteBalance:
       (a.autoWhiteBalance, a.neutralSample, a.neutralPicked) = (o.autoWhiteBalance, o.neutralSample, o.neutralPicked)
+      a.autoNeutral = o.autoNeutral == a.autoNeutral ? a.autoNeutral : Adjustments.carried(o.autoNeutral)
       (a.warmth, a.tint, a.slideContrast) = (o.warmth, o.tint, o.slideContrast)
     case .shadowColour: (a.shadowWarmth, a.shadowTint) = (o.shadowWarmth, o.shadowTint)
     case .exposure: a.exposure = o.exposure
@@ -944,7 +966,7 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
     }
     switch self {
     case .whiteBalance:
-      let how = a.neutralSample != nil ? "中性灰取样" : a.autoWhiteBalance ? "自动" : "不自动"
+      let how = a.neutralSample != nil ? "中性灰取样" : a.autoWhiteBalance ? (a.balancesByGrays ? "自动（灰像素）" : "自动") : "不自动"
       return joined([how, a.warmth != 0 ? "冷暖 " + signed(a.warmth) : nil, a.tint != 0 ? "绿 / 洋红 " + signed(a.tint) : nil,
         a.slideContrast.map { String(format: "通道反差 红 %.2f · 蓝 %.2f", $0.r, $0.b) }], or: how)
     case .shadowColour: return joined([a.shadowWarmth.map { "冷暖 " + signed($0) }, a.shadowTint.map { "色调 " + signed($0) }], or: "0")
