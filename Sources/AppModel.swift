@@ -419,17 +419,40 @@ final class AppModel: ObservableObject {
     didSet { if onSheetPage && !showsNegative && showsDemasked { refresh() } }
   }
   private var demaskThumbnailKeys = [UUID: String]()
+  /// What each of them was made from but for how its frame faced, and how it faced.
+  private var demaskThumbnailFacing = [UUID: (unfaced: String, facing: Facing)]()
   func updateDemaskThumbnails() {
     let ids = Set(frames.map(\.id))
     if demaskThumbnails.keys.contains(where: { !ids.contains($0) }) {
       demaskThumbnails = demaskThumbnails.filter { ids.contains($0.key) }
       demaskThumbnailKeys = demaskThumbnailKeys.filter { ids.contains($0.key) }
+      demaskThumbnailFacing = demaskThumbnailFacing.filter { ids.contains($0.key) }
     }
     guard showsDemasked, overview != nil || frames.contains(where: { $0.sourcePath != nil }) else { return }
     let p = conversionProfile
     // Those not made as they are now, nor on their way.
-    let wanted = frames.map { ($0, analysisKey(Self.demasked($0), everything: true)) }
+    var wanted = frames.map { ($0, analysisKey(Self.demasked($0), everything: true)) }
       .filter { demaskThumbnailKeys[$0.0.id] != $0.1 && demaskPending[$0.0.id] != $0.1 }
+    // Turned or mirrored only: the picture it had, turned, at once (a roll of copies turned with
+    // 整卷一起转 was converted again a frame at a time).
+    if !wanted.isEmpty {
+      var refaced = [UUID: CGImage]()
+      wanted = wanted.filter { f, key in
+        let d = Self.demasked(f)
+        var plain = d
+        plain.adjustments = d.adjustments.unfaced
+        guard let had = demaskThumbnails[f.id], let was = demaskThumbnailFacing[f.id], was.unfaced == analysisKey(plain, everything: true),
+          let turned = ImagePipeline.shared.refaced(had, from: was.facing, to: d.adjustments.facing)
+        else { return true }
+        refaced[f.id] = turned
+        demaskThumbnailKeys[f.id] = key
+        demaskThumbnailFacing[f.id] = (was.unfaced, d.adjustments.facing)
+        // One still on its way, made as the frame faced before, is not shown when it comes.
+        demaskPending[f.id] = nil
+        return false
+      }
+      if !refaced.isEmpty { demaskThumbnails.merge(refaced) { _, new in new } }
+    }
     // On a queue of their own, behind nothing and ahead of nothing the render queue does (the
     // single frame, a flat measured, the strip's own positives): a frame a step.
     for (f, key) in wanted {
@@ -437,12 +460,17 @@ final class AppModel: ObservableObject {
       demaskQueue.async { [weak self] in
         guard let self else { return }
         let d = Self.demasked(f)
+        var plain = d
+        plain.adjustments = d.adjustments.unfaced
         let positive = (try? self.source(for: d, maxDimension: 480)).flatMap { try? ImagePipeline.shared.preview($0, settings: d.adjustments, profile: p) }
         DispatchQueue.main.async {
-          if self.demaskPending[f.id] == key { self.demaskPending[f.id] = nil }
+          // Asked for last, else made from what the frame no longer is.
+          guard self.demaskPending[f.id] == key else { return }
+          self.demaskPending[f.id] = nil
           guard let positive else { return }
           self.demaskThumbnails[f.id] = positive
           self.demaskThumbnailKeys[f.id] = key
+          self.demaskThumbnailFacing[f.id] = (self.analysisKey(plain, everything: true), d.adjustments.facing)
         }
       }
     }
@@ -3833,7 +3861,14 @@ final class AppModel: ObservableObject {
       }
       // The same frames, preset and preview as the print shown: it stands (another frame was
       // selected, or the single frame left), where it was printed again each time, a second for 18.
-      let key = "print \(contactPage) \(ObjectIdentifier(overview).hashValue)|" + onOverview.map { analysisKey($0, everything: true) }.joined(separator: "|")
+      // Upright and unstraightened, as `contactPrint` prints them: turning the roll on the table
+      // turns the table, not the print, which was printed again each time all the same.
+      let key = "print \(contactPage) \(ObjectIdentifier(overview).hashValue)|" + onOverview.map { f -> String in
+        var upright = f
+        upright.adjustments = f.adjustments.unfaced
+        upright.adjustments.angle = nil
+        return analysisKey(upright, everything: true)
+      }.joined(separator: "|")
       if let kept = tablePrint, kept.page == contactPage, kept.positive, tablePrintKey == key,
         kept.image.width == overview.width, kept.image.height == overview.height
       {
@@ -4366,9 +4401,20 @@ final class AppModel: ObservableObject {
     if showsDemasked { updateDemaskThumbnails() }
     guard overview != nil else { return }
     thumbnailRevision += 1
+    // Each frame's picture by what it is made from but for how it faces, and that facing: one
+    // key read a frame, as before.
+    let unfaced = Dictionary(frames.map { f -> (UUID, String) in
+      var plain = f
+      plain.adjustments = f.adjustments.unfaced
+      return (f.id, analysisKey(plain, everything: true))
+    }, uniquingKeysWith: { a, _ in a })
     let request = ThumbnailPass(
       token: thumbnailRevision, frames: frames, profile: conversionProfile,
-      keys: Dictionary(frames.map { ($0.id, analysisKey($0, everything: true)) }, uniquingKeysWith: { a, _ in a }))
+      keys: Dictionary(frames.map { f in
+        let facing = f.adjustments.facing
+        return (f.id, (unfaced[f.id] ?? "") + "|facing \(facing.rotation) \(facing.mirrored)")
+      }, uniquingKeysWith: { a, _ in a }),
+      unfaced: unfaced)
     wantedLock.lock()
     wantedThumbnails = request
     let queued = thumbnailsQueued
@@ -4378,12 +4424,15 @@ final class AppModel: ObservableObject {
   }
   private final class ThumbnailPass {
     let token: Int, profile: FilmProfile, keys: [UUID: String]
+    /// Each frame's key but for how it faces: a frame only turned or mirrored is the picture it
+    /// had, turned.
+    let unfaced: [UUID: String]
     var pending: ArraySlice<FilmFrame>
     var result = [UUID: CGImage]()
     /// The frames converted, of those that had to be.
     var done = 0, total = 0
-    init(token: Int, frames: [FilmFrame], profile: FilmProfile, keys: [UUID: String]) {
-      (self.token, self.profile, self.keys, pending) = (token, profile, keys, frames[...])
+    init(token: Int, frames: [FilmFrame], profile: FilmProfile, keys: [UUID: String], unfaced: [UUID: String]) {
+      (self.token, self.profile, self.keys, self.unfaced, pending) = (token, profile, keys, unfaced, frames[...])
     }
   }
   private var thumbnailRevision = 0
@@ -4391,7 +4440,7 @@ final class AppModel: ObservableObject {
   private var wantedThumbnails: ThumbnailPass?
   private var thumbnailsQueued = false
   /// Each frame's positive by what it was converted from (render queue only).
-  private var keptThumbnails = [UUID: (key: String, image: CGImage)]()
+  private var keptThumbnails = [UUID: (key: String, unfaced: String, facing: Facing, image: CGImage)]()
   private var thumbnailsWaiting: Bool {
     wantedLock.lock()
     defer { wantedLock.unlock() }
@@ -4404,7 +4453,10 @@ final class AppModel: ObservableObject {
     thumbnailsQueued = false
     wantedLock.unlock()
     guard let pass = wanted else { return }
-    pass.total = pass.pending.filter { f in pass.keys[f.id].map { keptThumbnails[f.id]?.key != $0 } ?? false }.count
+    // Those to convert: not kept as they are now, nor only turned or mirrored from what is kept.
+    pass.total = pass.pending.filter { f in
+      pass.keys[f.id].map { keptThumbnails[f.id]?.key != $0 } ?? false && keptThumbnails[f.id]?.unfaced != pass.unfaced[f.id]
+    }.count
     let (token, total) = (pass.token, pass.total)
     DispatchQueue.main.async {
       guard token == self.thumbnailRevision else { return }
@@ -4427,14 +4479,21 @@ final class AppModel: ObservableObject {
       }
       return
     }
-    if let key = pass.keys[f.id] {
+    if let key = pass.keys[f.id], let unfaced = pass.unfaced[f.id] {
       if let kept = keptThumbnails[f.id], kept.key == key {
         pass.result[f.id] = kept.image
+      } else if let kept = keptThumbnails[f.id], kept.unfaced == unfaced,
+        let turned = ImagePipeline.shared.refaced(kept.image, from: kept.facing, to: f.adjustments.facing)
+      {
+        // Only turned or mirrored: the picture it had, turned, in some milliseconds, shown with
+        // the rest of the pass at its end, the strip and the table laid out once.
+        keptThumbnails[f.id] = (key, unfaced, f.adjustments.facing, turned)
+        pass.result[f.id] = turned
       } else if let input = try? source(for: f),
         let positive = try? ImagePipeline.shared.preview(input, settings: f.adjustments, profile: pass.profile)
       {
         let small = ImagePipeline.shared.scaled(positive, maxDimension: Self.thumbnailDimension)
-        keptThumbnails[f.id] = (key, small)
+        keptThumbnails[f.id] = (key, unfaced, f.adjustments.facing, small)
         pass.result[f.id] = small
         // Shown as it comes, rather than when the whole roll is done.
         pass.done += 1

@@ -651,10 +651,24 @@ struct Adjustments: Codable, Equatable {
   var leakFix: LeakFix? = nil
   /// Turns the displayed picture 90°. Rotation is applied before the mirror, so a
   /// mirrored frame needs the opposite raw step to turn the same way on screen.
+  /// How the frame faces: its quarter turns and mirror, the last the pipeline gives its picture.
+  var facing: Facing { Facing(rotation: ((rotation % 4) + 4) % 4, mirrored: flipHorizontal == true) }
+  /// The same, facing as read: what a picture of it is made from but for how it faces.
+  var unfaced: Adjustments {
+    var s = self
+    (s.rotation, s.flipHorizontal) = (0, nil)
+    return s
+  }
   mutating func turn(clockwise: Bool) {
     let step = clockwise == (flipHorizontal != true) ? 1 : 3
     rotation = ((rotation + step) % 4 + 4) % 4
   }
+}
+
+/// How a frame faces on the screen: turned `rotation` quarter turns clockwise, then mirrored.
+struct Facing: Equatable, Hashable {
+  var rotation: Int
+  var mirrored: Bool
 }
 
 /// Where a calibrated preset's neutral point was picked: the frame (and its name then), and the

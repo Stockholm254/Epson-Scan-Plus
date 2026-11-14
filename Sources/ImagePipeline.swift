@@ -1646,6 +1646,23 @@ final class ImagePipeline {
     return decoded
   }
   /// `image` no larger than `maxDimension`, Lanczos-filtered, in its own depth and colour space.
+  /// `image`, a picture as a frame facing `from` shows it, as the frame facing `to` shows it: the
+  /// quarter turns and the mirror are the last the pipeline gives a picture (`output`, `original`),
+  /// so the one turned is the same picture turned, pixel for pixel. Nil where it cannot be made.
+  func refaced(_ image: CGImage, from: Facing, to: Facing) -> CGImage? {
+    guard from != to else { return image }
+    let exif: [Int32] = [1, 6, 3, 8]
+    var ci = CIImage(cgImage: image, options: [.colorSpace: NSNull()])
+    // Back to as it was read: the mirror off, then the turn undone.
+    if from.mirrored { ci = ci.transformed(by: CGAffineTransform(scaleX: -1, y: 1)) }
+    ci = ci.oriented(forExifOrientation: exif[(4 - from.rotation) % 4])
+    // Then as it is to be shown.
+    ci = ci.oriented(forExifOrientation: exif[to.rotation])
+    if to.mirrored { ci = ci.transformed(by: CGAffineTransform(scaleX: -1, y: 1)) }
+    ci = ci.transformed(by: CGAffineTransform(translationX: -ci.extent.minX, y: -ci.extent.minY))
+    return context.createCGImage(
+      ci, from: ci.extent, format: image.bitsPerComponent > 8 ? .RGBA16 : .RGBA8, colorSpace: image.colorSpace ?? outputSpace)
+  }
   func scaled(_ image: CGImage, maxDimension: Int) -> CGImage {
     let scale = Double(maxDimension) / Double(max(image.width, image.height))
     guard scale < 1, let filter = CIFilter(name: "CILanczosScaleTransform") else { return image }

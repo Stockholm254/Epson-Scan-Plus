@@ -275,6 +275,36 @@ enum RenderTests {
     table.change("曝光") { $0.exposure = -0.3 }
     for _ in 0..<80 where table.rendering { settle(0.05) }
     try check(table.displayed !== printed, "and a frame changed prints it again")
+    // The roll turned: its positives in the strip are the ones it had, turned, at once, with no
+    // frame converted again (a roll of copies turned with 整卷一起转 was converted again a frame
+    // at a time, the window laid out for each), and the same as converting them turned.
+    for _ in 0..<80 where table.rendering || table.positivesLoading != nil { settle(0.05) }
+    settle(0.3)
+    let unturned = ids.map { table.thumbnails[$0] }
+    var converting = false
+    let turnedAt = Date()
+    table.turnRoll(clockwise: true)
+    for _ in 0..<100 where zip(ids, unturned).contains(where: { table.thumbnails[$0] === $1 }) {
+      if table.positivesLoading != nil { converting = true }
+      settle(0.02)
+    }
+    let tookTurn = Date().timeIntervalSince(turnedAt)
+    let turnedStrip = ids.compactMap { table.thumbnails[$0] }
+    func bytes(_ image: CGImage) -> [UInt8] {
+      let ctx = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: image.width * 4,
+        space: pipe.outputSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+      ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+      return Array(UnsafeBufferPointer(start: ctx.data!.assumingMemoryBound(to: UInt8.self), count: image.width * image.height * 4))
+    }
+    let freshStrip = try table.frames.map { f in
+      pipe.scaled(try pipe.preview(try table.source(for: f), settings: f.adjustments, profile: table.conversionProfile), maxDimension: AppModel.thumbnailDimension)
+    }
+    let sameAsFresh = turnedStrip.count == 3 && zip(turnedStrip, freshStrip).allSatisfy { t, f in
+      t.width == f.width && t.height == f.height && (zip(bytes(t), bytes(f)).map { abs(Int($0) - Int($1)) }.max() ?? 0) <= 1
+    }
+    try check(turnedStrip.count == 3 && zip(turnedStrip, unturned).allSatisfy { t, u in u.map { t.width == $0.height && t.height == $0.width } ?? false }
+      && !converting && tookTurn < 1 && sameAsFresh,
+      "the roll turned, the strip's positives are the ones it had, turned, in \(Int(tookTurn * 1000)) ms with no frame converted again, as converting them turned gives")
 
     // A full-resolution contact sheet's tiles sized from their files' headers, as reading them gives.
     let turned = strip.appendingPathComponent("turned.tif")
