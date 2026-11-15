@@ -243,6 +243,13 @@ final class FilmCanvasView: NSView {
   var edge: Int?
   /// The crop's resize pointer is up (`updateCropCursor`).
   private var cropCursorShown = false
+  /// A press on a frame's box on the scanner's contact sheet in ① (`cropsOnTable`): its corner,
+  /// its edge or inside it, and where. Until it moves it is a click, which opens the frame; moved,
+  /// the box follows the pointer (`tableCropping`) and the frame is cropped there when let go.
+  private var tablePress: (id: UUID, corner: Int?, edge: Int?, at: CGPoint)?
+  /// A frame's box on the contact sheet being dragged: free of the crop's ratio, the lens on its
+  /// corner or edge, the table left as it is when let go.
+  private(set) var tableCropping = false
   /// The glass bubble over a corner being dragged: the corner, in the shown picture's normalised
   /// coordinates, and when it appeared; the bubble last drawn, and the one fading after release.
   var lens: (point: CGPoint, since: CFTimeInterval)?
@@ -421,18 +428,57 @@ final class FilmCanvasView: NSView {
   /// What a press at canvas point `p` takes hold of on the crop `r`: a corner (`cornerReach` round
   /// it, in `corners` order), else an edge (`edgeReach` either side of it, in `edgeEnds` order),
   /// else neither.
-  func cropHold(_ r: CGRect, at p: CGPoint) -> (corner: Int?, edge: Int?) {
+  func cropHold(_ r: CGRect, at p: CGPoint, cornerReach: CGFloat = cornerReach, edgeReach: CGFloat = edgeReach) -> (corner: Int?, edge: Int?) {
     let c = corners(r)
-    if let i = c.indices.filter({ hypot(c[$0].x - p.x, c[$0].y - p.y) < Self.cornerReach }).min(by: { hypot(c[$0].x - p.x, c[$0].y - p.y) < hypot(c[$1].x - p.x, c[$1].y - p.y) }) { return (i, nil) }
+    if let i = c.indices.filter({ hypot(c[$0].x - p.x, c[$0].y - p.y) < cornerReach }).min(by: { hypot(c[$0].x - p.x, c[$0].y - p.y) < hypot(c[$1].x - p.x, c[$1].y - p.y) }) { return (i, nil) }
     func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat {
       let d = CGPoint(x: b.x - a.x, y: b.y - a.y), length = d.x * d.x + d.y * d.y
       let t = length > 0 ? max(0, min(1, ((p.x - a.x) * d.x + (p.y - a.y) * d.y) / length)) : 0
       return hypot(p.x - (a.x + t * d.x), p.y - (a.y + t * d.y))
     }
     let near = Self.edgeEnds.indices.map { ($0, distance(c[Self.edgeEnds[$0].0], c[Self.edgeEnds[$0].1])) }
-      .filter { $0.1 < Self.edgeReach }.min { $0.1 < $1.1 }
+      .filter { $0.1 < edgeReach }.min { $0.1 < $1.1 }
     return (nil, near?.0)
+  }  /// Whether frames on the light table are cropped by dragging their boxes: the scanner's preview
+  /// in ①, the frames' boxes on the holder's picture (not a page laid out), the pointer tool up and
+  /// nothing under way.
+  var cropsOnTable: Bool {
+    guard let model else { return false }
+    return model.page == .capture && !model.singleView && !model.onSheetPage && model.tool == .select && !model.isWorking
+      && model.scanner.previewSoFar == nil && model.displayed != nil
   }
+  /// The frame on the contact sheet whose corner or edge a press at `p` takes hold of (nearer than
+  /// the crop's, the frames lying close together in the holder), the frame chosen first.
+  func tableHold(at p: CGPoint) -> (id: UUID, corner: Int?, edge: Int?)? {
+    guard let model, cropsOnTable else { return nil }
+    let frames = model.contactFrames.reversed().sorted { a, b in a.id == model.selectedID && b.id != model.selectedID }
+    for f in frames {
+      let hold = cropHold(model.contactRect(f).cg, at: p, cornerReach: Self.tableCornerReach, edgeReach: Self.tableEdgeReach)
+      if hold.corner != nil || hold.edge != nil { return (f.id, hold.corner, hold.edge) }
+    }
+    return nil
+  }
+  static let tableCornerReach: CGFloat = 12, tableEdgeReach: CGFloat = 7
+  /// How far a press on the contact sheet moves before it drags the box rather than clicks.
+  static let tableDragStart: CGFloat = 3
+  /// The resize pointer for a press at `hold` of the box `r` (overview coordinates), at the side of
+  /// the box it is on the screen.
+  func resizeCursor(_ r: CGRect, _ hold: (corner: Int?, edge: Int?)) -> NSCursor? {
+    let c = corners(r), box = screen(r)
+    let at: CGPoint? = hold.corner.map { c[$0] } ?? hold.edge.map { e in
+      let (a, b) = (c[Self.edgeEnds[e].0], c[Self.edgeEnds[e].1])
+      return CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
+    }
+    guard let at else { return nil }
+    // The view is flipped: the smaller y is the top.
+    let left = at.x < box.midX - box.width / 4, right = at.x > box.midX + box.width / 4
+    let top = at.y < box.midY - box.height / 4, bottom = at.y > box.midY + box.height / 4
+    let position: NSCursor.FrameResizePosition? =
+      top && left ? .topLeft : top && right ? .topRight : bottom && left ? .bottomLeft : bottom && right ? .bottomRight
+      : top ? .top : bottom ? .bottom : left ? .left : right ? .right : nil
+    return position.map { NSCursor.frameResize(position: $0, directions: .all) }
+  }
+
   /// The two crops' colours on the picture: the picture's amber, the de-masking region's cyan.
   static func colour(_ tool: CanvasTool) -> NSColor {
     let c = tool.colour ?? (1, 1, 1)
@@ -588,6 +634,9 @@ final class FilmCanvasView: NSView {
           : top ? .top : bottom ? .bottom : left ? .left : right ? .right : nil
         cursor = position.map { NSCursor.frameResize(position: $0, directions: .all) }
       }
+    } else if let p, let model, dragStart == nil, let hold = tableHold(at: p), let f = model.frames.first(where: { $0.id == hold.id }) {
+      // A frame's corner or edge on the scanner's contact sheet in ①: dragged, it crops the frame.
+      cursor = resizeCursor(model.contactRect(f).cg, (hold.corner, hold.edge))
     } else if let p, let model, model.singleView, model.tool == .region, let frame = model.selected,
       !model.isWorking, regionDrag == nil, imageRect.contains(p)
     {
@@ -897,7 +946,9 @@ final class FilmCanvasView: NSView {
       let movingSelection = glidingSelectionRect()
       for (n, f) in model.contactFrames.enumerated() {
         let appear = rippleShare(n)
-        let r = screen(model.contactRect(f).cg).insetBy(dx: -(1 - appear) * 10, dy: -(1 - appear) * 10)
+        // Its box being dragged on the contact sheet: where the pointer has it.
+        let dragged = tableCropping && f.id == dragID
+        let r = screen(dragged ? draft ?? model.contactRect(f).cg : model.contactRect(f).cg).insetBy(dx: -(1 - appear) * 10, dy: -(1 - appear) * 10)
         // Moving to it by ← →, the selection's outline is on its way there (drawn below).
         let selected = f.id == model.selectedID && movingSelection == nil
         // Those chosen with it (⌘ / ⇧) in its colour, fainter.
@@ -921,7 +972,7 @@ final class FilmCanvasView: NSView {
         path.stroke()
         // Straightened, the part kept, turned on the film as it lies.
         let degrees = f.adjustments.angle ?? 0
-        if !sheet, abs(degrees) > 0.0001 || f.adjustments.composition != nil, let aspect = model.frameAspect(f) {
+        if !sheet, !dragged, abs(degrees) > 0.0001 || f.adjustments.composition != nil, let aspect = model.frameAspect(f) {
           let box = f.rect.cg, b = imageRect
           let kept = [CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 0), CGPoint(x: 1, y: 1), CGPoint(x: 0, y: 1)].map { corner -> CGPoint in
             let q = ImageGeometry.straightened(corner, degrees: degrees, aspect: aspect, inverse: true, composition: f.adjustments.composition)
@@ -966,7 +1017,7 @@ final class FilmCanvasView: NSView {
         path.lineWidth = 2
         path.stroke()
       }
-      if let draft {
+      if let draft, !tableCropping {
         NSColor.systemOrange.setStroke()
         let p = NSBezierPath(rect: screen(draft))
         p.lineWidth = 1.5
@@ -1463,9 +1514,11 @@ final class FilmCanvasView: NSView {
     rim.fill()
     NSGraphicsContext.restoreGraphicsState()
   }
-  /// A right click on a frame in ②: export it, or the frames chosen together when it is one of them.
+  /// A right click on a frame in ② and ③: export it, or the frames chosen together when it is one
+  /// of them. In ①: tick it for scanning, mark it or delete it, as the film strip's menu does there
+  /// (until 0.23.6 a right click on the picture in ① showed nothing).
   override func menu(for event: NSEvent) -> NSMenu? {
-    guard let model, model.page == .convert, model.scanner.previewSoFar == nil else { return super.menu(for: event) }
+    guard let model, model.page == .convert || model.page == .capture, model.scanner.previewSoFar == nil else { return super.menu(for: event) }
     let p = convert(event.locationInWindow, from: nil)
     let frame = model.singleView
       ? (imageRect.contains(p) ? model.selected : nil)
@@ -1475,6 +1528,28 @@ final class FilmCanvasView: NSView {
     menu.autoenablesItems = false
     let chosen = model.selection
     let free = !model.isWorking
+    if model.page == .capture {
+      if chosen.count > 1, chosen.contains(where: { $0.id == frame.id }) {
+        let n = chosen.count, ticked = model.selectionEnabled
+        menu.addItem(ActionMenuItem(ticked ? "取消勾选所选的 \(n) 张" : "勾选所选的 \(n) 张", symbol: ticked ? "circle" : "checkmark.circle", enabled: free) {
+          [weak model] in model?.setSelectionEnabled(!ticked)
+        })
+        menu.addItem(Self.marksItem(model, frame: nil, enabled: free))
+        menu.addItem(.separator())
+        menu.addItem(ActionMenuItem("删除所选的 \(n) 张", symbol: "trash", enabled: free) { [weak model] in
+          guard let model else { return }
+          model.remove(model.selectionIDs)
+        })
+      } else {
+        menu.addItem(ActionMenuItem(frame.enabled ? "取消勾选" : "勾选", symbol: frame.enabled ? "circle" : "checkmark.circle", enabled: free) { [weak model] in
+          model?.setEnabled(frame.id, enabled: !frame.enabled)
+        })
+        menu.addItem(Self.marksItem(model, frame: frame, enabled: free))
+        menu.addItem(.separator())
+        menu.addItem(ActionMenuItem("删除这张", symbol: "trash", enabled: free) { [weak model] in model?.remove(frame.id) })
+      }
+      return menu
+    }
     if chosen.count > 1, chosen.contains(where: { $0.id == frame.id }) {
       // The frames chosen, all at once, as the film strip's menu has them.
       let n = chosen.count
@@ -2507,6 +2582,19 @@ final class FilmCanvasView: NSView {
     }
     guard !model.isWorking else { return }
     dragStart = normal(p)
+    // On the scanner's contact sheet in ①, a frame's corner or edge, or the frame itself, dragged
+    // crops it there (`tablePress`); pressed and let go, it opens as a click on it does.
+    if let hold = tableHold(at: p) {
+      if model.choose(hold.id, modifiers: event.modifierFlags) {
+        dragStart = nil
+        needsDisplay = true
+        return
+      }
+      model.select(hold.id)
+      clickedFrame = (hold.id, p)
+      tablePress = (hold.id, hold.corner, hold.edge, p)
+      return
+    }
     // A missed frame is drawn on the holder's picture; a laid-out page is not one.
     if model.tool == .crop, !model.onSheetPage {
       draft = CGRect(origin: dragStart!, size: .zero)
@@ -2523,6 +2611,7 @@ final class FilmCanvasView: NSView {
       }
       model.select(f.id)
       clickedFrame = (f.id, p)
+      if cropsOnTable { tablePress = (f.id, nil, nil, p) }
     }
   }
   override func mouseDragged(with event: NSEvent) {
@@ -2582,14 +2671,26 @@ final class FilmCanvasView: NSView {
       needsDisplay = true
       return
     }
+    // A frame's box on the contact sheet, once the press moves: no longer a click opening it.
+    if let press = tablePress, !tableCropping {
+      guard hypot(p.x - press.at.x, p.y - press.at.y) >= Self.tableDragStart, let f = model?.frames.first(where: { $0.id == press.id }) else { return }
+      clickedFrame = nil
+      tableCropping = true
+      (dragID, original, draft, corner, edge) = (f.id, f.rect.cg, f.rect.cg, press.corner, press.edge)
+      dragStart = normal(press.at)
+      if press.corner == nil && press.edge == nil { NSCursor.closedHand.set() }
+    }
     guard let start = dragStart else { return }
-    let end = normal(p)
+    // On the contact sheet, within the holder's picture.
+    let end = tableCropping ? CGPoint(x: clamp(normal(p).x, 0, 1), y: clamp(normal(p).y, 0, 1)) : normal(p)
     if let original, dragID != nil {
       if let corner {
         let opposite = CGPoint(
           x: corner % 2 == 0 ? original.maxX : original.minX,
           y: corner < 2 ? original.maxY : original.minY)
-        draft = ratioKept(from: opposite, to: end)
+        draft = tableCropping
+          ? CGRect(x: min(opposite.x, end.x), y: min(opposite.y, end.y), width: abs(end.x - opposite.x), height: abs(end.y - opposite.y))
+          : ratioKept(from: opposite, to: end)
         showLens(at: p)
       } else if let edge {
         // Only that edge follows the pointer, across it; the other three stay.
@@ -2602,7 +2703,7 @@ final class FilmCanvasView: NSView {
         }
         draft = CGRect(x: min(x0, x1), y: min(y0, y1), width: abs(x1 - x0), height: abs(y1 - y0))
         // With a ratio kept, the other two edges follow, about the middle across.
-        if let long = model?.cropLong, let aspect = model?.cropAspect, let d = draft, d.width > 0, d.height > 0 {
+        if !tableCropping, let long = model?.cropLong, let aspect = model?.cropAspect, let d = draft, d.width > 0, d.height > 0 {
           let across = edge < 2
           var e = d
           if across {
@@ -2649,6 +2750,11 @@ final class FilmCanvasView: NSView {
       edge = nil
       panStart = nil
       levelLine = nil
+      if tableCropping {
+        tableCropping = false
+        updateCropCursor(at: convert(event.locationInWindow, from: nil))
+      }
+      tablePress = nil
       needsDisplay = true
     }
     if let drag = composeDrag {

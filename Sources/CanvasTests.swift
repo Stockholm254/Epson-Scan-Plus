@@ -173,6 +173,47 @@ enum CanvasTests {
     canvas.mouseUp(with: event(.leftMouseUp, moved))
     try check(model.frames[2].rect == frames[2].rect && model.selectedID == frames[2].id && !model.singleView,
       "on the light table a frame's box neither resizes by its corner nor moves, and a drag opens nothing: its crop is set on its own")
+    // On the scanner's contact sheet in ①, a frame's corner dragged crops it there, the lens over
+    // the corner, the frame left on the table; a click on its edge still opens it; dragged from
+    // inside, its box moves; a right click offers to delete it.
+    model.page = .capture
+    for _ in 0..<40 where model.rendering { settle(0.1) }
+    let held = model.frames[2].rect
+    let tip = canvas.corners(held.cg)[3], pulled = CGPoint(x: tip.x + 10, y: tip.y - 12)
+    canvas.mouseDown(with: event(.leftMouseDown, tip))
+    canvas.mouseDragged(with: event(.leftMouseDragged, CGPoint(x: tip.x + 5, y: tip.y - 6)))
+    canvas.mouseDragged(with: event(.leftMouseDragged, pulled))
+    let lensOver = canvas.lens != nil && canvas.tableCropping
+    canvas.mouseUp(with: event(.leftMouseUp, pulled))
+    let cropped = model.frames[2].rect
+    try check(lensOver && !model.singleView && abs(cropped.x - held.x) < 1e-9 && abs(cropped.y - held.y) < 1e-9
+      && (abs(cropped.width - held.width) > 0.001 || abs(cropped.height - held.height) > 0.001),
+      String(format: "on the scanner's contact sheet in ① a frame's corner drags to crop it, the lens over it, the frame left on the table (%.3f × %.3f, was %.3f × %.3f)",
+        cropped.width, cropped.height, held.width, held.height))
+    let ends = canvas.corners(cropped.cg), edgeMiddle = CGPoint(x: (ends[0].x + ends[1].x) / 2, y: (ends[0].y + ends[1].y) / 2)
+    let onEdge = canvas.tableHold(at: edgeMiddle)
+    canvas.mouseDown(with: event(.leftMouseDown, edgeMiddle))
+    canvas.mouseUp(with: event(.leftMouseUp, edgeMiddle))
+    let openedByClick = model.singleView && model.frames[2].rect == cropped
+    model.singleView = false
+    for _ in 0..<40 where model.rendering { settle(0.1) }
+    let middle = canvas.screen(cropped.cg), grip2 = CGPoint(x: middle.midX, y: middle.midY), slid = CGPoint(x: grip2.x + 14, y: grip2.y + 4)
+    canvas.mouseDown(with: event(.leftMouseDown, grip2))
+    canvas.mouseDragged(with: event(.leftMouseDragged, CGPoint(x: grip2.x + 7, y: grip2.y + 2)))
+    canvas.mouseDragged(with: event(.leftMouseDragged, slid))
+    canvas.mouseUp(with: event(.leftMouseUp, slid))
+    let slidRect = model.frames[2].rect
+    try check(onEdge?.id == frames[2].id && onEdge?.edge == 0 && openedByClick && !model.singleView
+      && abs(slidRect.width - cropped.width) < 1e-9 && abs(slidRect.height - cropped.height) < 1e-9 && slidRect != cropped,
+      "a click on a frame's edge on the contact sheet still opens it, and its box dragged from inside moves, the frame left on the table")
+    let rightClick = NSEvent.mouseEvent(with: .rightMouseDown, location: canvas.convert(grip2, to: nil), modifierFlags: [], timestamp: 0,
+      windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+    let offered = canvas.menu(for: rightClick)?.items.map(\.title) ?? []
+    try check(offered.contains("删除这张") && !offered.contains("导出这张…"),
+      "a right click on a frame in ① offers to delete it (and tick or mark it), as the film strip's menu does: \(offered.joined(separator: "、"))")
+    model.setRect(frames[2].id, rect: frames[2].rect)
+    model.page = .convert
+    for _ in 0..<40 where model.rendering { settle(0.1) }
 
     // Over the single frame with the crop tool, an edge drags on its own: the right edge 40 points
     // in, the other three where they were.
