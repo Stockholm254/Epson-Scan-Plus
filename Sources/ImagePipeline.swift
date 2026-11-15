@@ -181,10 +181,12 @@ final class ImagePipeline {
     return join.apply(extent: image.extent, arguments: [image, smooth]) ?? image
   }
   /// Tone curves as a lookup (`Kernels.curves`), from a 1024-entry table.
-  func applyCurves(_ curves: ToneCurves, to image: CIImage) -> CIImage {
-    guard !curves.isIdentity, let curveKernel = Kernels.curves else { return image }
+  /// 色阶 (`levels`) and the curves on the picture as shown, one table for the two.
+  func applyCurves(_ curves: ToneCurves?, levels: Levels? = nil, to image: CIImage) -> CIImage {
+    let curves = curves ?? ToneCurves(), levels = levels?.normalized
+    guard !curves.isIdentity || levels != nil, let curveKernel = Kernels.curves else { return image }
     let n = 1024
-    let entries = curves.table(n)
+    let entries = curves.table(n, levels: levels)
     let table = CIImage(
       bitmapData: entries.withUnsafeBufferPointer { Data(buffer: $0) }, bytesPerRow: n * 16,
       size: CGSize(width: n, height: 1), format: .RGBAf, colorSpace: nil)
@@ -1018,7 +1020,7 @@ final class ImagePipeline {
       result = colourSmoothed(result, radius: amount * 0.0002 * Double(max(ci.extent.width, ci.extent.height)))
     }
     result = looks(result, s)
-    if let curves = s.curves { result = applyCurves(curves, to: result) }
+    if s.curves != nil || s.levels != nil { result = applyCurves(s.curves, levels: s.levels, to: result) }
     result = Self.straightened(result, degrees: s.angle ?? 0, composition: s.composition)
     if s.rotation % 4 != 0 {
       let orientation: Int32 = [1, 6, 3, 8][((s.rotation % 4) + 4) % 4]
@@ -1345,7 +1347,7 @@ final class ImagePipeline {
     // A ramp has no detail of its own: the shoulder as it takes the light.
     flat.insert(line, at: 1)
     guard var shown = ended.apply(extent: line.extent, arguments: flat) else { return nil }
-    if let curves = s.curves { shown = applyCurves(curves, to: shown) }
+    if s.curves != nil || s.levels != nil { shown = applyCurves(s.curves, levels: s.levels, to: shown) }
     var screen = [Float](repeating: 0, count: m * 4)
     screen.withUnsafeMutableBytes {
       context.render(shown, toBitmap: $0.baseAddress!, rowBytes: m * 16, bounds: line.extent, format: .RGBAf, colorSpace: nil)

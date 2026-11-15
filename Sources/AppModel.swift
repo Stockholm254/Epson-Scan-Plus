@@ -252,6 +252,28 @@ final class AppModel: ObservableObject {
   @Published var curvesBypassed = false {
     didSet { if curvesBypassed != oldValue { refresh() } }
   }
+  /// 色阶's 预览 off: the picture shown without the frame's levels for a while, as Photoshop's
+  /// Levels shows it with 预览 unticked; nothing of the frame's changes.
+  @Published var levelsBypassed = false {
+    didSet { if levelsBypassed != oldValue { refresh() } }
+  }
+  /// While a black or white input point of 色阶 is dragged with ⌥ held: the picture shown as what
+  /// it cuts to black or white, as Photoshop's Levels shows it (`ImagePipeline.levelsClipping`).
+  @Published var levelsClipping: LevelsClipping? = nil {
+    didSet { if levelsClipping != oldValue { refresh() } }
+  }
+  /// 色阶's eyedropper picked up: a click on the picture sets that point (`pickLevelsPoint`).
+  @Published var levelsPicker: LevelsPicker? = nil
+  /// The picture before 色阶, as the levels panel draws and reads it.
+  @Published private(set) var levelsHistogram: LevelsHistogram?
+  /// The single picture as the canvas shows it: what 色阶 cuts while ⌥ is held on one of its points
+  /// (`levelsClipping`), else with 溢出 marked when that is on.
+  func canvasPicture(_ image: CGImage, _ s: Adjustments, negative: Bool) -> CGImage {
+    if !negative, let clip = levelsClipping {
+      return ImagePipeline.shared.levelsClipping(image, curves: s.curves, levels: s.levels, clip)
+    }
+    return showClipping ? ImagePipeline.shared.markClipping(image) : image
+  }
   /// The curves the single frame's picture on the canvas was printed with: what lies under the
   /// pointer before them is read through these, not through curves newer than the picture.
   private(set) var shownCurves: ToneCurves?
@@ -1995,7 +2017,7 @@ final class AppModel: ObservableObject {
       (r.exposure, r.contrast, r.highlights, r.pressHighlights, r.shadows) = (fresh.exposure, fresh.contrast, nil, nil, nil)
       (r.whites, r.blacks) = (nil, nil)
     case .levels:
-      r.autoLevels = fresh.autoLevels
+      (r.autoLevels, r.levels) = (fresh.autoLevels, nil)
     case .colour:
       (r.saturation, r.softEnds, r.colourNoise) = (fresh.saturation, nil, copyShot ? 1 : nil)
       (r.texture, r.clarity, r.dehaze, r.vibrance) = (nil, nil, nil, nil)
@@ -3989,6 +4011,7 @@ final class AppModel: ObservableObject {
     let clipping = showClipping && !original
     if original { (settings.base, settings.rollBase) = (nil, nil) }
     if curvesBypassed { settings.curves = nil }
+    if levelsBypassed { settings.levels = nil }
     // Sharpened as the export is, at the frame's own resolution, where the picture is graded: zoomed
     // in is where sharpening is judged (until 0.22.6 the detail was not sharpened at all).
     let graded = !original && !negative && !showsDemasked && !showsBefore
@@ -4228,20 +4251,21 @@ final class AppModel: ObservableObject {
     return SingleRender(
       token: token, frame: demasked ? Self.demasked(frame) : sharpened(frame), profile: conversionProfile, edit: editingSingle,
       negative: showsNegative || tool == .base, original: showsOriginal,
-      bypassed: curvesBypassed, sharpening: demasked ? nil : preferences.sharpening, previewDPI: Int(overviewDPI),
+      bypassed: curvesBypassed, levelsOff: levelsBypassed && !demasked, sharpening: demasked ? nil : preferences.sharpening, previewDPI: Int(overviewDPI),
       analysisKey: analysisKey(asShown(frame)), overview: overview, demasked: demasked, sliding: sliding,
       looseKey: analysisKey(asShown(frame), loose: true), composing: composing, grays: demasked ? nil : graysForRender(frame))
   }
   /// Everything a single render of `frame` reads, as `r` asks for it: what a picture made ahead is kept by.
   private func readyKey(_ r: SingleRender, _ frame: FilmFrame) -> String {
-    [analysisKey(asShown(frame), everything: true), "\(r.demasked) \(r.negative) \(r.edit) \(r.original) \(r.bypassed) \(r.composing)",
+    [analysisKey(asShown(frame), everything: true), "\(r.demasked) \(r.negative) \(r.edit) \(r.original) \(r.bypassed) \(r.levelsOff) \(r.composing)",
      String(describing: r.sharpening)].joined(separator: "|")
   }
   /// The single frame's render, as asked for (`wantedSingle`, under `wantedLock`).
   private struct SingleRender {
     let token: Int, frame: FilmFrame, profile: FilmProfile, edit: Bool, negative: Bool, original: Bool
-    /// The curves left off for a while (`curvesBypassed`).
+    /// The curves left off for a while (`curvesBypassed`), and 色阶 (`levelsBypassed`).
     let bypassed: Bool
+    let levelsOff: Bool
     let sharpening: SharpeningProfile?, previewDPI: Int, analysisKey: String
     /// The preview it may be cut from, kept with its analysis so the key's identity of it holds.
     let overview: CGImage?
@@ -4265,7 +4289,7 @@ final class AppModel: ObservableObject {
     let key: String, overview: CGImage?, source: CGImage, analysis: ToneAnalysis, output: CGImage, screen: CGImage?
     let measures: SingleMeasures
   }
-  private typealias SingleMeasures = (hist: ([Double], [[Double]]), thumbnail: CGImage?, range: ToneRange?)
+  private typealias SingleMeasures = (hist: ([Double], [[Double]]), thumbnail: CGImage?, range: ToneRange?, levels: LevelsHistogram?)
   /// Module ①'s raw picture made ahead the same way: read, shown as the sensor read it, its exposure
   /// and base read (`renderOriginal`).
   private struct PreparedRaw {
@@ -4306,6 +4330,7 @@ final class AppModel: ObservableObject {
     var thumbnail: CGImage?
     var histograms: ([Double], [[Double]])?
     var range: ToneRange??
+    var levelsHistogram: LevelsHistogram??
     var finished: Int?
   }
   private var besidePicture: BesidePicture?
@@ -4336,6 +4361,7 @@ final class AppModel: ObservableObject {
         tableHistogramsOf = nil
       }
       if let r = side.range { toneRange = r }
+      if let l = side.levelsHistogram, levelsHistogram != l { levelsHistogram = l }
     }
     if let token = side.finished, revision == token {
       rendering = false
@@ -4367,6 +4393,7 @@ final class AppModel: ObservableObject {
       var s = f.adjustments
       (s.exposure, s.contrast, s.warmth, s.tint, s.shadowWarmth, s.shadowTint) = (0, 1, 0, 0, nil, nil)
       (s.shadows, s.highlights, s.pressHighlights, s.colourNoise, s.sharpening, s.curves) = (nil, nil, nil, nil, nil, nil)
+      s.levels = nil
       (s.whites, s.blacks) = (nil, nil)
       // Lightroom's looks, after the conversion (`ImagePipeline.looks`): read by no analysis.
       // Vibrance is not one: it is in the conversion's saturation, whose reach the analysis measures.
@@ -4462,6 +4489,7 @@ final class AppModel: ObservableObject {
         // ③'s crop under way: the picture turned in its whole box, for the canvas to lay the box on.
         if r.composing { shownSettings.composition = .full }
         if bypassed { shownSettings.curves = nil }
+        if r.levelsOff { shownSettings.levels = nil }
         // The kernel follows the size the source was loaded at, as in source(for:) and contextSource(for:).
         let loaded = edit ? 3000 : (frame.sourcePath != nil ? 3000 : 2200)
         let sharpener = negative || r.demasked ? nil : Sharpening.sharpener(r.sharpening, frame: frame, maxDimension: loaded)
@@ -4494,7 +4522,7 @@ final class AppModel: ObservableObject {
             else { return }
             self.shownCurves = negative ? nil : shownSettings.curves
             self.shownFrameID = frame.id
-            self.showOnCanvas(self.showClipping ? ImagePipeline.shared.markClipping(early) : early)
+            self.showOnCanvas(self.canvasPicture(early, shownSettings, negative: negative))
           }
         }
         self.step(0.9, "直方图", token, since: started)
@@ -4504,7 +4532,7 @@ final class AppModel: ObservableObject {
           // Not while ③'s crop is under way: that picture is the whole turned frame, and kept for the
           // strip it stayed there uncropped once the light table was gone back to.
           measureSingle(output, cropped: cropped, frame: frame, shown: shownSettings, profile: p, analysis: analysis, negative: negative,
-            edit: edit, keepsThumbnail: !edit && !negative && !bypassed && !r.demasked && !r.composing)
+            edit: edit, keepsThumbnail: !edit && !negative && !bypassed && !r.levelsOff && !r.demasked && !r.composing)
         }
         let measures = measured ? (ready?.measures ?? measure()) : nil
         let hist = measures?.hist, thumbnail = measures?.thumbnail, range = measures?.range
@@ -4522,6 +4550,7 @@ final class AppModel: ObservableObject {
               if let thumbnail = late.thumbnail { side.thumbnail = thumbnail }
               side.histograms = late.hist
               side.range = .some(late.range)
+              side.levelsHistogram = .some(late.levels)
               self.besidePicture = side
               self.catchUp()
             }
@@ -4561,7 +4590,7 @@ final class AppModel: ObservableObject {
           self.shownSingle = token
           self.shownCurves = negative ? nil : shownSettings.curves
           self.shownFrameID = frame.id
-          self.showOnCanvas(self.showClipping ? ImagePipeline.shared.markClipping(output) : output)
+          self.showOnCanvas(self.canvasPicture(output, shownSettings, negative: negative))
           // Only what changed is set, as setting published state updates the window even to the same.
           if self.canvasRegion != context?.region { self.canvasRegion = context?.region }
           self.samplingInput = input
@@ -4579,6 +4608,7 @@ final class AppModel: ObservableObject {
           if let thumbnail { side.thumbnail = thumbnail }
           if let hist { side.histograms = hist }
           if measured { side.range = .some(range) }
+          if measured { side.levelsHistogram = .some(measures?.levels) }
           if newest { side.finished = token }
           self.besidePicture = side
           self.catchUp()
@@ -4606,13 +4636,28 @@ final class AppModel: ObservableObject {
     analysis: ToneAnalysis, negative: Bool, edit: Bool, keepsThumbnail: Bool) -> SingleMeasures
   {
     let hist = Self.histograms(output, curves: negative ? nil : shown.curves)
+    // 色阶's: the picture before it, made again small without it and the curves where it changes
+    // anything (what it cuts to black or white is not in the picture shown), else read back
+    // through the curves alone.
+    var levels: LevelsHistogram?
+    if !negative {
+      if let set = shown.levels?.normalized {
+        var plain = shown
+        (plain.levels, plain.curves) = (nil, nil)
+        let small = ImagePipeline.shared.scaled(cropped, maxDimension: 500)
+        levels = ImagePipeline.shared.render(small, settings: plain, profile: p, analysis: analysis, negative: false).map { LevelsHistogram($0) }
+          ?? LevelsHistogram(output, curves: shown.curves, levels: set)
+      } else {
+        levels = LevelsHistogram(output, curves: shown.curves)
+      }
+    }
     let thumbnail = keepsThumbnail ? ImagePipeline.shared.scaled(output, maxDimension: Self.thumbnailDimension) : nil
     var range = negative ? nil : ImagePipeline.shared.toneRange(cropped, settings: frame.adjustments, profile: p, analysis: analysis)
     if !edit, range != nil {
       (range!.atWhite, range!.atBlack) = ImagePipeline.shared.screenShares(output)
       range!.screen = ImagePipeline.shared.screenCounts(output)
     }
-    return (hist, thumbnail, range)
+    return (hist, thumbnail, range, levels)
   }
   /// On the render queue: the picture made ahead for `r`, if it is what `r` reads, waited for while
   /// it is still being made (it is further on than a render begun now).
@@ -4738,6 +4783,7 @@ final class AppModel: ObservableObject {
     guard wanted() else { return nil }
     var shown = frame.adjustments
     if r.bypassed { shown.curves = nil }
+    if r.levelsOff { shown.levels = nil }
     let loaded = frame.sourcePath != nil ? 3000 : 2200
     let sharpener = r.negative || r.demasked ? nil : Sharpening.sharpener(r.sharpening, frame: frame, maxDimension: loaded)
     guard let output = ImagePipeline.shared.render(cropped, settings: shown, profile: p, analysis: analysis, negative: r.negative, sharpener: sharpener),
@@ -4745,7 +4791,7 @@ final class AppModel: ObservableObject {
     else { return nil }
     let screen = ImagePipeline.shared.screenReady(output, space: ScreenCopy.space)
     let measures = measureSingle(output, cropped: cropped, frame: frame, shown: shown, profile: p, analysis: analysis, negative: r.negative,
-      edit: false, keepsThumbnail: !r.negative && !r.bypassed && !r.demasked)
+      edit: false, keepsThumbnail: !r.negative && !r.bypassed && !r.levelsOff && !r.demasked)
     return Prepared(key: key, overview: r.overview, source: cropped, analysis: analysis, output: output, screen: screen, measures: measures)
   }
   /// Module ①'s single frame: the raw picture in a linear response (`ImagePipeline.original`) and
@@ -4990,6 +5036,7 @@ final class AppModel: ObservableObject {
     }
     tableHistogramsOf = (f.id, picture, unfaced, curves)
     (histogram, channelHistograms) = Self.histograms(picture, curves: curves)
+    levelsHistogram = LevelsHistogram(picture, curves: curves, levels: f.adjustments.levels)
   }
   private var thumbnailsWaiting: Bool {
     wantedLock.lock()

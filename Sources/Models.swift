@@ -660,6 +660,8 @@ struct Adjustments: Codable, Equatable {
   var sharpening: Double? = nil
   /// RGB and per-channel tone curves, applied after conversion; nil leaves tones as they are.
   var curves: ToneCurves? = nil
+  /// 色阶 as Photoshop's Levels, on the picture as shown, before the curves (`Levels`); nil none.
+  var levels: Levels? = nil
   /// Straightening, in degrees clockwise on screen, before the quarter turns: the frame turned
   /// about its middle and cut to the largest rectangle of its own shape inside. Nil is level.
   var angle: Double? = nil
@@ -917,7 +919,7 @@ extension Adjustments {
     (texture, clarity, dehaze, vibrance, mixer, grading) = (o.texture, o.clarity, o.dehaze, o.vibrance, o.mixer, o.grading)
     autoLevels = o.autoLevels
     (saturation, colourNoise, softEnds) = (o.saturation, o.colourNoise, o.softEnds)
-    (curves, sharpening) = (o.curves, o.sharpening)
+    (curves, sharpening, levels) = (o.curves, o.sharpening, o.levels)
   }
   /// `other`'s ② 去色罩 settings in place of these, ③ 调色's kept.
   mutating func takeDemasking(from o: Adjustments) {
@@ -1006,7 +1008,7 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
     case .contrast: a.contrast = o.contrast
     case .highlightsShadows: (a.highlights, a.shadows) = (o.highlights, o.shadows)
     case .whitesBlacks: (a.whites, a.blacks, a.pressHighlights) = (o.whites, o.blacks, o.pressHighlights)
-    case .levels: a.autoLevels = o.autoLevels
+    case .levels: (a.autoLevels, a.levels) = (o.autoLevels, o.levels)
     case .saturation: a.saturation = o.saturation
     case .softEnds: a.softEnds = o.softEnds
     case .colourNoise: a.colourNoise = o.colourNoise
@@ -1033,6 +1035,7 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
   /// as the frame keeps them, are none.
   func isSet(in a: Adjustments, plain: Adjustments = Adjustments()) -> Bool {
     if self == .curves { return a.curves?.normalized != plain.curves?.normalized }
+    if self == .levels { return a.autoLevels != plain.autoLevels || a.levels?.normalized != plain.levels?.normalized }
     var b = plain
     take(&b, from: a)
     return b != plain
@@ -1056,7 +1059,7 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
     case .whitesBlacks:
       return joined([a.whites.map { "白色 " + signed($0) }, a.blacks.map { "黑色 " + signed($0) },
         a.pressHighlights.map { "压高光 " + String(format: "%.2f", $0) }], or: "0")
-    case .levels: return a.autoLevels ? "自动" : "不自动"
+    case .levels: return (a.autoLevels ? "自动" : "不自动") + (a.levels?.isIdentity == false ? "，色阶调过" : "")
     case .saturation: return String(format: "%.2f", a.saturation)
     case .softEnds: return a.softEndsOn ? "开" : "关"
     case .colourNoise: return String(format: "%.2f", a.colourNoiseAmount)

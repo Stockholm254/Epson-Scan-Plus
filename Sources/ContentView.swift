@@ -1526,13 +1526,17 @@ struct ContentView: View {
   }
   /// The ends: automatic, the roll as one, or set by hand.
   var levelsSection: some View {
-    PanelSection("色阶", key: "levels", info: "自动：按画面的密度范围设定黑白两端。范围不到 4 档的画面（雾、霾、很平的光）不拉满到黑和白，以中间为准撑开到 4 档，保留它本来的灰和柔；要更硬，调「对比度」或关掉自动。两端之后再用「影调」里的白色、黑色（或「自动白色、黑色」）微调，中间调用曲线。\n\n「整卷同一色阶」：整卷用同一组黑白两端，按整卷所有画面一起统计，像冲印店一卷用一个印放曝光：暗的场景就是暗的，亮的就是亮的。每张仍可以用「曝光」微调。关了自动色阶的那一张按你的来。\n\n反转片：自动把最暗的 0.5% 定为黑、最亮的 0.5% 定为白，三个通道用同一对两端，颜色不变；关掉时扫描仪的裸光是白，片子显示得和看片台上一样暗。", reset: resetKey(.levels)) {
-      Toggle("自动", isOn: bool(\.autoLevels)).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
+    PanelSection("色阶", key: "levels", info: "下面的色阶和 Photoshop 的「色阶」一样，作用在屏幕上显示的这张上、在曲线之前：直方图是色阶之前的这张，0 到 255；输入色阶的黑、灰、白三角是输入黑点、中间调（1.00 不变，大于 1 变亮）和输入白点，拖黑或白时按住 ⌥，画面上显示切成纯黑或纯白的地方；输出色阶是最暗、最亮印成多暗、多亮。RGB 是三个通道一起，也可以只调红、绿、蓝里的一个；各通道自己的色阶先起作用，再走 RGB 的。三个吸管在画面上点一处定为黑、灰、白。「自动」按它旁边的选项（滑杆图标）里的算法（增强单色对比度、增强每通道的对比度、查找深色与浅色、增强亮度和对比度）和剪切比例自动设定。「预览」关掉时画面暂时不带色阶。\n\n「自动两端」：转换时按画面的密度范围设定黑白两端，在上面这些之前。范围不到 4 档的画面（雾、霾、很平的光）不拉满到黑和白，以中间为准撑开到 4 档，保留它本来的灰和柔；要更硬，调「对比度」或关掉自动。两端之后再用「影调」里的白色、黑色（或「自动白色、黑色」）微调，中间调用曲线。\n\n「整卷同一色阶」：整卷用同一组黑白两端，按整卷所有画面一起统计，像冲印店一卷用一个印放曝光：暗的场景就是暗的，亮的就是亮的。每张仍可以用「曝光」微调。关了自动色阶的那一张按你的来。\n\n反转片：自动把最暗的 0.5% 定为黑、最亮的 0.5% 定为白，三个通道用同一对两端，颜色不变；关掉时扫描仪的裸光是白，片子显示得和看片台上一样暗。", reset: resetKey(.levels)) {
+      Toggle("自动两端", isOn: bool(\.autoLevels)).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
     } content: {
       VStack(alignment: .leading, spacing: 10) {
         if !m.settings.isSlide && (m.selectedSharesRoll || m.settings.sharedLevels == true) {
           SwitchRow("整卷同一色阶", isOn: Binding(get: { m.settings.sharedLevels == true }, set: { m.setSharedLevels($0) }),
             off: m.selected == nil || m.isWorking)
+        }
+        // Photoshop's Levels on the picture as shown, in the single view where its histogram is.
+        if m.singleView, m.levelsHistogram != nil {
+          LevelsPanel(m: m)
         }
       }
     }

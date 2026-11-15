@@ -189,8 +189,8 @@ final class FilmCanvasView: NSView {
   func modelChanged() {
     guard let model else { return }
     // A sampler shows its eyedropper over the canvas.
-    if cursorTool != model.tool {
-      cursorTool = model.tool
+    if cursorTool != model.tool || cursorLevelsPicker != model.levelsPicker {
+      (cursorTool, cursorLevelsPicker) = (model.tool, model.levelsPicker)
       window?.invalidateCursorRects(for: self)
       window?.invalidateCursorRects(for: loupe)
     }
@@ -287,9 +287,16 @@ final class FilmCanvasView: NSView {
     }
   }
   var cursorTool: CanvasTool?
+  var cursorLevelsPicker: LevelsPicker?
   /// The pointer while a sampler is chosen: an eyedropper, its tip on the point read (filled for
   /// the film base, as its key shows), or cross hairs for marking the IT8 target.
   var samplingCursor: NSCursor? {
+    // 色阶's eyedroppers, as Photoshop's: black filled, grey and white hollow.
+    switch model?.levelsPicker {
+    case .black: return Self.filledDropper
+    case .grey, .white: return Self.dropper
+    case nil: break
+    }
     switch model?.tool {
     case .base: return Self.filledDropper
     case .neutral, .shadowNeutral, .calibrate, .curvePick: return Self.dropper
@@ -2525,6 +2532,15 @@ final class FilmCanvasView: NSView {
       if composeDrag?.hold == .move { NSCursor.closedHand.set() }
       return
     }
+    // 色阶's eyedropper: what lies under the press before the curves, set as its point.
+    if let picker = model.levelsPicker, model.singleView {
+      if !model.showsNegative, !model.showsOriginal, let cg = shown, let colour = Self.colour(in: cg, at: shownNormal(p)) {
+        let curves = model.shownCurves
+        if pointerInverse == nil || pointerInverse?.curves != curves { pointerInverse = (curves, CurveInverse(curves)) }
+        model.pickLevelsPoint(picker, afterLevels: pointerInverse?.inverse?.input(colour) ?? colour)
+      }
+      return
+    }
     if model.tool.picksPoint {
       sample(at: p)
       return
@@ -2965,6 +2981,9 @@ final class FilmCanvasView: NSView {
       glideTableSelection(from: was)
     } else if event.keyCode == 51 {
       model?.deletePressed()
+    } else if event.keyCode == 53, model?.levelsPicker != nil {
+      // 色阶's eyedropper put down.
+      model?.levelsPicker = nil
     } else if event.keyCode == 53 {
       // ③'s crop: as Lightroom's Esc, back to before it began (return keeps it).
       model?.cancelComposition()

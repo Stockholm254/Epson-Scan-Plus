@@ -116,15 +116,17 @@ struct ToneCurves: Codable, Equatable {
   }
   /// `count` RGBA entries for 0...1: the parametric curve, the RGB curve after it, and each
   /// channel's curve after that.
-  func table(_ count: Int) -> [Float] {
+  func table(_ count: Int, levels: Levels? = nil) -> [Float] {
     var out = [Float](repeating: 1, count: count * 4)
-    let first = firstStage
+    let first = firstStage, channels = [red, green, blue]
+    let levels = levels?.normalized
     for i in 0..<count {
       let x = Double(i) / Double(count - 1)
-      let v = rgb.value(first?.value(x) ?? x)
-      out[i * 4] = Float(red.value(v))
-      out[i * 4 + 1] = Float(green.value(v))
-      out[i * 4 + 2] = Float(blue.value(v))
+      // 色阶 first, each channel its own (Photoshop's Levels before its Curves).
+      for c in 0..<3 {
+        let l = levels.map { $0.value(x, c) } ?? x
+        out[i * 4 + c] = Float(channels[c].value(rgb.value(first?.value(l) ?? l)))
+      }
     }
     return out
   }
