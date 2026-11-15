@@ -140,7 +140,7 @@ enum MultiPreviewTests {
     }
     let rollA = scannedRoll(target, 0.8, 0.45, 0.3, frames: 3), rollB = scannedRoll(target, 0.3, 0.45, 0.8, frames: 2)
     let entries = RollLibrary.scan([library])
-    let entryA = entries.first { $0.folder.standardizedFileURL == rollA.standardizedFileURL }
+    let entryA = entries.first { $0.folder.standardizedFileURL.path == rollA.standardizedFileURL.path }
     let offered = entryA.map { AppModel.mergeCandidates(for: $0, among: entries).map(\.folder.lastPathComponent) } ?? []
     let added = try target.mergeRolls(into: rollA.appendingPathComponent(AppModel.projectFile), from: [rollB.appendingPathComponent(AppModel.projectFile)])
     let fromB = target.frames.filter { target.previewIndex(of: $0) == target.previewCount - 1 }
