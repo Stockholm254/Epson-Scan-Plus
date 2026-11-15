@@ -44,7 +44,8 @@ enum RollCheckTests {
         shouldInterpolate: false, intent: .defaultIntent)!
     }
     // Blocks of thinner and denser film, for edges; the base measured as the thinner film's reading
-    // 0.45 D lighter, then as 0.2 D darker (a base picked on exposed film).
+    // 0.45 D lighter, then as 0.2 D darker (a base picked on exposed film). Smoothed 3 × 3, a block's
+    // inner 6 × 6 stays clearer than that base: some 28% of the film.
     let film = image { x, y in (x / 8 + y / 8) % 2 == 0 ? 0.5 : 0.15 }
     let thinner = pipe.samples(image { _, _ in 0.5 }, maxDimension: 240).pixel(4, 4)
     var settings = Adjustments()
@@ -54,7 +55,7 @@ enum RollCheckTests {
     settings.base = RGB(thinner.values.map { $0 * pow(10, -0.2) })
     let dense = pipe.edgeRatios(film, settings: settings)
     try check(lifted.darkest.map { $0.values.allSatisfy { abs($0 - 0.45) < 0.04 } } == true && lifted.clearer < 0.001
-      && dense.clearer > 0.3 && lifted.count > 0 && lifted.own != nil,
+      && dense.clearer > 0.2 && lifted.count > 0 && lifted.own != nil,
       String(format: "a frame's darkest film above its base and the share clearer than it are read with its edges (%.2f %.2f %.2f D, %.0f%%; %.0f%% against a denser base)",
         lifted.darkest?.r ?? -1, lifted.darkest?.g ?? -1, lifted.darkest?.b ?? -1, lifted.clearer * 100, dense.clearer * 100))
     // Kept by frame, the estimate is the same as read from the pictures.
