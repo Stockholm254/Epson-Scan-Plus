@@ -142,6 +142,20 @@ enum SonyPTPTests {
     until(12) { c.shiftSwitching == nil }
     try check(a.shifts.last == 4 && c.picturesPerShot == 4,
       "and the half-press is let go of after it, so the pixel shift switches again (the camera takes no setting while it is held)")
+    // 去串色校准's shutter keeps the lock: the half-press stays held after the picture, and the next
+    // press does not focus either; 解除锁焦 lets go of it.
+    c.autofocus()
+    until(10) { c.focusResult != nil && c.focusLocked }
+    c.shoot(keepFocus: true)
+    until(15) { a.arrived.count == 25 && !c.awaitingPicture }
+    let keptFirst = c.focusLocked
+    c.shoot(keepFocus: true)
+    until(15) { a.arrived.count == 29 && !c.awaitingPicture }
+    try check(a.arrived.count == 29 && keptFirst && c.focusLocked && c.log.filter { $0.contains("拍完继续按住半按") }.count == 2,
+      "a shutter asked to keep the lock leaves the half-press held: two presses, neither focusing, the lock still there")
+    c.unlockFocus()
+    until(3) { !c.focusLocked }
+    try check(!c.focusLocked, "and 解除锁焦 lets go of it")
 
     // Let go of: the process ends; a connection straight after waits for it to be gone.
     c.disconnect()

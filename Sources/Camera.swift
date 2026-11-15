@@ -197,7 +197,8 @@ final class CameraController: ObservableObject {
   private var pending = Data()
   /// The focus locked by a half-press held since AF: where the camera offers no MF (the lens's
   /// switch at AF), the way to fine-tune it with steps and to take a picture without focusing
-  /// again. The camera lets go of it with the picture.
+  /// again. The camera lets go of it with the picture, unless the shutter asks to keep it
+  /// (`shoot(keepFocus:)`).
   @Published private(set) var focusLocked = false
   private var propsQueued = false
 
@@ -428,8 +429,10 @@ final class CameraController: ObservableObject {
   }
   /// The shutter, once the last picture is in: the camera takes no new one while it writes and
   /// sends the last, and says nothing. It does not focus, which is AF's: in an autofocus mode the
-  /// camera is switched to manual focus first, the lens left where it is.
-  func shoot() {
+  /// camera is switched to manual focus first, the lens left where it is. With `keepFocus`, a lock
+  /// held stays held after the picture (去串色校准: blank frames, on which the camera could not
+  /// focus again), where the camera lets it.
+  func shoot(keepFocus: Bool = false) {
     guard !awaitingPicture else {
       message = "上一张还在写入和传输，到了再拍"
       return
@@ -440,7 +443,10 @@ final class CameraController: ObservableObject {
     let press = presses
     var command: [String: Any] = ["cmd": "shoot", "mf": autofocusMode]
     if magnification > 0 { command["magnify"] = magnifierValue }
-    if focusLocked {
+    if focusLocked, keepFocus {
+      command["keep"] = true
+      message = "快门：焦点锁住，不会再对焦；拍完继续按住半按，焦点一直锁着"
+    } else if focusLocked {
       message = "快门：焦点锁住，不会再对焦"
     } else if autofocusMode {
       message = "快门：先切手动对焦；相机不提供手动对焦时，这一张会先对焦（先按 AF 锁住焦点就不会）"
@@ -693,6 +699,7 @@ final class CameraController: ObservableObject {
       case "shot": message = "焦点锁随这一张松开了：下一张前再按 AF。整卷不想每张对焦，就在锁焦后把镜头开关拨到 MF，焦点停在原处"
       case "set": message = "改设置前松开了半按，焦点锁已解除：要微调或拍摄不再对焦，再按 AF"
       case "asked": message = "已解除锁焦，松开了半按：现在按快门，相机会先对焦一次；要再锁住，按 AF"
+      case "notKept": message = "这台相机用 SDK 连接时，拍完不能继续按住半按，焦点锁随这一张松开了：去串色校准请改用「直连 PTP」连接相机，或锁焦后把镜头开关拨到 MF"
       default: break
       }
     case "live":

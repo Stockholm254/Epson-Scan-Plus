@@ -145,6 +145,10 @@ enum CopyLightTests {
     let two = pipe.lightReading(both).map { AppModel.lightVerdict($0, light: 0) }
     try check(dim?.problem == nil && dim?.warning?.contains("偏暗") == true && two?.problem?.contains("不止开了一种灯") == true,
       "a dim frame of the light is used with a note; a frame with two lights on is refused")
+    let dimLocked = pipe.lightReading(blank(0, 0.3)).map { AppModel.lightVerdict($0, light: 0, locked: true) }
+    try check(dimLocked?.warning?.contains("把红灯调亮") == true && dimLocked?.warning?.contains("快门") == false
+      && dim?.warning?.contains("快门慢") == true,
+      "with the focus locked, the camera taking no setting, a dim frame's note says to turn the light up, not the shutter")
     let url = decoded.appendingPathComponent("EPS00004.tif")
     try pipe.saveTIFF(negative, to: url, dpi: 300)
     model.addCapturedFrame(url, original: url, linear: true, sensor: true)

@@ -907,11 +907,13 @@ final class SonyPTPCamera {
     emit(["event": "set", "name": "NearFar", "ok": code == SonyWire.ok, "code": hex(code)])
   }
   /// The shutter without focusing (CameraHelper.cpp's shoot): over a held half-press, pressed fully
-  /// where the lens is; else with the computer's priority, in MF where the camera takes it, half-
-  /// pressed a moment, pressed fully, and let go. The pictures come by the monitor.
+  /// where the lens is, and the half-press let go after unless asked to keep it (`keep`: 去串色校准's
+  /// frames, one light after another); else with the computer's priority, in MF where the camera
+  /// takes it, half-pressed a moment, pressed fully, and let go. The pictures come by the monitor.
   private func shoot(_ m: [String: Any]) {
     var steps = ""
     if halfHeld {
+      let keep = m["keep"] as? Bool == true
       shotAt = Date()
       let down = write("Release", 2)
       pause(0.2)
@@ -919,12 +921,12 @@ final class SonyPTPCamera {
       pause(0.3)
       // Over PTP the half-press stays down until it is let go of (the SDK let go of it with the
       // picture), and the camera takes no setting while it is: the pixel shift would not switch
-      // after the group (seen 2026-11-07).
-      releaseS1()
+      // after the group (seen 2026-11-07). Kept, the next picture does not focus either.
+      if !keep { releaseS1() }
       let code = down != SonyWire.ok ? down : up
-      log("快门（焦点锁住，不再对焦）：全按 " + hex(code))
-      emit(["event": "shot", "ok": code == SonyWire.ok, "code": hex(code), "manual": true, "locked": true])
-      emit(["event": "unlocked", "why": "shot"])
+      log("快门（焦点锁住，不再对焦" + (keep ? "，拍完继续按住半按" : "") + "）：全按 " + hex(code))
+      emit(["event": "shot", "ok": code == SonyWire.ok, "code": hex(code), "manual": true, "locked": true, "kept": keep])
+      if !keep { emit(["event": "unlocked", "why": "shot"]) }
       wake.signal()
       return
     }

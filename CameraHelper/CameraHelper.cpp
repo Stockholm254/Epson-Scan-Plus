@@ -6,7 +6,7 @@
 // Commands: {"cmd":"connect","save":"<folder>"} · {"cmd":"disconnect"} · {"cmd":"props"} ·
 // {"cmd":"set","name":"FNumber","value":800} · {"cmd":"live","on":true,"dir":"<folder>"} ·
 // {"cmd":"af"} · {"cmd":"unlock"} · {"cmd":"nearfar","step":-3} · {"cmd":"afpoint","x":320,"y":240} ·
-// {"cmd":"shoot","mf":false} · {"cmd":"quit"}.
+// {"cmd":"shoot","mf":false,"keep":false} · {"cmd":"quit"}.
 // Events: ready, connected, disconnected, error, warning, props, changed, set, frame, af, shot,
 // downloaded, log.
 
@@ -231,6 +231,11 @@ static std::atomic<bool> connected{false};
 /// picture, and takes no setting while it is held.
 static std::atomic<bool> halfHeld{false};
 static void releaseS1();
+/// The full press without the half-press (S2), for a picture over a held half-press that keeps
+/// it held: not one of `known`, as the camera lists it not.
+static const Known fullPress{"S2", sdk::CrDeviceProperty_S2, sdk::CrDataType_UInt16};
+/// Whether the camera refused S2 over the half-press this connection: then not asked again.
+static bool fullPressRefused = false;
 static std::mutex stateLock;
 static std::condition_variable stateChanged;
 static int connectOutcome = 0;  // 1 connected, -1 failed
@@ -376,6 +381,7 @@ static void stopLive() {
 
 static void connect(const Message& m) {
   if (connected) { emit("{\"event\":\"connected\",\"again\":true}"); return; }
+  fullPressRefused = false;
   if (cameras) { cameras->Release(); cameras = nullptr; }
   sdk::CrError err = sdk::EnumCameraObjects(&cameras, 3);
   if (err != 0 || !cameras || cameras->GetCount() == 0) {
@@ -580,6 +586,24 @@ static bool lensAtMF() { return focusModeNow() == sdk::CrFocus_MF && !offersFocu
 /// diagnostics.
 static void shoot(const Message& m) {
   std::string steps;
+  const bool keep = m.on("keep");
+  if (halfHeld && keep && !fullPressRefused) {
+    // Asked to keep the lock (去串色校准's frames, one light after another): the full press alone
+    // (S2), the half-press left held as a finger holds it, so the next picture does not focus
+    // either. Where the camera takes no S2 over it, the full press below, which lets go of it.
+    shotAt = std::chrono::steady_clock::now();
+    sdk::CrError down = writeProp(fullPress, sdk::CrLockIndicator_Locked);
+    if (!down) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(150));
+      sdk::CrError up = writeProp(fullPress, sdk::CrLockIndicator_Unlocked);
+      std::this_thread::sleep_for(std::chrono::milliseconds(300));
+      logLine("快门（焦点锁住，不再对焦，拍完继续按住半按）：S2 " + hex(up));
+      emit("{\"event\":\"shot\",\"ok\":" + std::string(up ? "false" : "true") + ",\"code\":" + quote(hex(up)) + ",\"manual\":true,\"locked\":true,\"kept\":true}");
+      return;
+    }
+    fullPressRefused = true;
+    logLine("半按按住时相机不收 S2（" + hex(down) + "）：改用全按，焦点锁随这一张松开");
+  }
   if (halfHeld) {
     // The focus locked by the half-press held since AF: pressed fully over it, the picture taken
     // where the lens is. The camera lets go of the half-press with it.
@@ -592,7 +616,7 @@ static void shoot(const Message& m) {
     halfHeld = false;
     logLine("快门（焦点锁住，不再对焦）：全按 " + hex(err));
     emit("{\"event\":\"shot\",\"ok\":" + std::string(err ? "false" : "true") + ",\"code\":" + quote(hex(err)) + ",\"manual\":true,\"locked\":true}");
-    emit("{\"event\":\"unlocked\",\"why\":\"shot\"}");
+    emit(std::string("{\"event\":\"unlocked\",\"why\":") + (keep ? "\"notKept\"" : "\"shot\"") + "}");
     return;
   }
   remote(steps);

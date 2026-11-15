@@ -66,10 +66,11 @@ extension AppModel {
     w.step = step
     lightWizard = w
   }
-  /// The camera's shutter, for the step's light.
+  /// The camera's shutter, for the step's light: over a focus lock, kept held after the picture,
+  /// as the next light's blank frame gives the camera nothing to focus on.
   func shootLightFrame() {
     guard lightWizard?.light != nil, camera.connected else { return }
-    camera.shoot()
+    camera.shoot(keepFocus: true)
   }
   /// A picture the camera sent while the wizard is open: the step's light, kept in its folder; on
   /// another step it is kept there unused and said so.
@@ -99,6 +100,8 @@ extension AppModel {
     w.reading = true
     lightWizard = w
     let token = w.token
+    // Locked, the camera takes no setting: what to change is the light, not the shutter.
+    let locked = camera.focusLocked
     Self.captureQueue.async {
       var shot = LightShot(file: file, owned: owned)
       do {
@@ -112,7 +115,7 @@ extension AppModel {
         if !sensor {
           shot.problem = "这张 RAW 不是直接从传感器读出来的（压缩 RAW 或别的格式，系统的 RAW 引擎已经混过颜色）：请把相机的 RAW 设为无压缩再拍。"
         } else if let reading = shot.reading {
-          (shot.problem, shot.warning) = Self.lightVerdict(reading, light: light)
+          (shot.problem, shot.warning) = Self.lightVerdict(reading, light: light, locked: locked)
         } else {
           shot.problem = "读不出这张的像素。"
         }
@@ -132,16 +135,18 @@ extension AppModel {
       }
     }
   }
-  /// What keeps a frame of `light` alone from measuring its crosstalk, and what could be better.
-  static func lightVerdict(_ r: ImagePipeline.LightReading, light: Int) -> (problem: String?, warning: String?) {
+  /// What keeps a frame of `light` alone from measuring its crosstalk, and what could be better;
+  /// with the focus `locked`, the camera takes no setting, so the light is to be turned up or down.
+  static func lightVerdict(_ r: ImagePipeline.LightReading, light: Int, locked: Bool = false) -> (problem: String?, warning: String?) {
     let names = lightNames, want = names[light]
     let percent = Int((r.peak * 100).rounded())
     let stops = log2(0.7 / max(r.peak, 0.001))
+    let slower = locked ? "把\(want)灯调亮约 %.1f 档" : "快门慢约 %.1f 档"
     if r.clipped > 0.005 {
-      return (String(format: "过曝：%.1f%% 的地方到了满量程。快门快一档以上再拍，最亮处约 70%% 最好。", r.clipped * 100), nil)
+      return (String(format: "过曝：%.1f%% 的地方到了满量程。" + (locked ? "把\(want)灯调暗一档以上" : "快门快一档以上") + "再拍，最亮处约 70%% 最好。", r.clipped * 100), nil)
     }
     if r.peak < 0.15 {
-      return (String(format: "太暗：最亮处只到满量程的 %d%%。快门慢约 %.1f 档再拍（到最亮处约 70%%）。", percent, stops), nil)
+      return (String(format: "太暗：最亮处只到满量程的 %d%%。" + slower + "再拍（到最亮处约 70%%）。", percent, stops), nil)
     }
     if r.own != light {
       return ("这张最亮的是\(names[r.own])通道，像是开着\(names[r.own])灯。只开\(want)灯，其他两种关掉，再拍一张。", nil)
@@ -154,8 +159,8 @@ extension AppModel {
       return ("画面上曝光合适的地方太少：拿走底片和挡光的东西，让灯照满画面再拍。", nil)
     }
     var notes = [String]()
-    if r.peak < 0.4 { notes.append(String(format: "偏暗：最亮处 %d%%。能用，但小的串色会读得不准；快门慢约 %.1f 档更好。", percent, stops)) }
-    if r.peak > 0.92 { notes.append("接近过曝：最亮处 \(percent)%，快一点更稳。") }
+    if r.peak < 0.4 { notes.append(String(format: "偏暗：最亮处 %d%%。能用，但小的串色会读得不准；" + slower + "更好。", percent, stops)) }
+    if r.peak > 0.92 { notes.append("接近过曝：最亮处 \(percent)%，" + (locked ? "灯暗一点" : "快一点") + "更稳。") }
     if r.spread > 0.25 {
       notes.append(String(format: "画面各处读进\(names[leak.channel])通道的比例不一样（相差 %.0f%%）：可能有房间的灯或别的灯漏进来。", r.spread * 100))
     }
@@ -241,10 +246,10 @@ struct LightWizardSheet: View {
   var prepare: some View {
     VStack(alignment: .leading, spacing: 10) {
       ForEach(Array([
-        "拿走底片，片夹里、灯上什么都不放。镜头、光圈和放大倍率和翻拍时一样。",
+        "镜头、光圈和放大倍率和翻拍时一样。相机拍单张（不开像素位移），RAW 设为无压缩。",
         "关掉房间的灯、挡住窗户：别的光会被算成串色。",
-        "相机拍单张（不开像素位移），RAW 设为无压缩。",
-        "接下来每一步只开一种灯，曝光到最亮处约 70%。三种灯的亮度不用一样，快门可以各调各的。",
+        "先锁焦：底片还在时按「AF 锁焦」，再拿走底片，片夹里、灯上什么都不放。空白画面上相机合不了焦，所以三张都按住半按拍，焦点一直锁着，拍完也不松开。",
+        "每一步只开一种灯，曝光到最亮处约 70%。锁焦时相机不收设置，快门改不了：快门在锁焦前对着取景的直方图定好，三种灯亮暗不一时在灯上调。",
       ].enumerated()), id: \.offset) { i, line in
         HStack(alignment: .firstTextBaseline, spacing: 8) {
           Text("\(i + 1)").font(.system(size: 12, weight: .semibold)).monospacedDigit().foregroundStyle(.secondary)
@@ -252,10 +257,11 @@ struct LightWizardSheet: View {
         }
       }
       Divider()
-      Label(camera.connected ? "相机已连接（\(camera.model)）：每一步点「拍摄」，或按相机上的快门。"
+      Label(camera.connected ? "相机已连接（\(camera.model)）：每一步点「拍摄」。"
         : "相机没有连接：可以先关掉这个窗口连上相机，也可以每一步选一张已经拍好的 RAW。",
         systemImage: camera.connected ? "camera" : "camera.badge.ellipsis")
         .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      if camera.connected { focusLock }
       if m.pixelShiftCount > 1 {
         Label("取景区下方现在是位移 \(m.pixelShiftCount) 张：标定拍单张就够，先改成「单张」更快。", systemImage: "exclamationmark.triangle")
           .font(.system(size: 12)).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
@@ -289,6 +295,7 @@ struct LightWizardSheet: View {
         Spacer()
         if camera.connected { shutter }
       }
+      if camera.connected { focusLock }
       if w.reading {
         HStack(spacing: 8) {
           ProgressView().controlSize(.small)
@@ -303,12 +310,35 @@ struct LightWizardSheet: View {
     }
   }
 
-  /// The camera's shutter speed, a step either way, beside the shutter.
+  /// Whether the focus is locked for the blank frames, and the key that locks or lets go of it.
+  var focusLock: some View {
+    HStack(alignment: .firstTextBaseline, spacing: 10) {
+      if camera.focusLocked {
+        Label("已锁焦：每一张都按住半按拍，焦点不动，拍完也不松开。锁焦时相机不收设置，快门改不了。", systemImage: "lock.fill")
+          .foregroundStyle(.secondary)
+        Spacer(minLength: 6)
+        Button("解除锁焦") { camera.unlockFocus() }
+          .help("松开半按。之后快门会先对焦，空白画面上合不了焦；要再锁住，放回底片按 AF 锁焦")
+      } else if camera.autofocusMode {
+        Label("没有锁焦：空白画面上相机合不了焦，按快门可能拍不出来，焦点也会跑。放回底片（或别的有纹理的东西）按「AF 锁焦」，再拿走。", systemImage: "lock.open")
+          .foregroundStyle(.orange)
+        Spacer(minLength: 6)
+        Button("AF 锁焦") { camera.autofocus() }
+          .help("对焦一次并按住半按，焦点锁住：之后的每一张都不再对焦")
+      } else {
+        Label("镜头在手动对焦：快门不对焦，焦点不动。", systemImage: "lock.fill").foregroundStyle(.secondary)
+      }
+    }
+    .font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
+  }
+
+  /// The camera's shutter speed, a step either way, beside the shutter; locked, the camera takes no
+  /// setting, and it is shown only.
   var shutter: some View {
     let name = "ShutterSpeed", p = camera.properties[name]
     return HStack(spacing: 6) {
       Text("快门").font(.system(size: 12)).foregroundStyle(.secondary)
-      if let p, p.settable, !p.values.isEmpty {
+      if let p, p.settable, !p.values.isEmpty, !camera.focusLocked {
         let all = p.choices
         let i = all.firstIndex(of: p.value)
         let back: (() -> Void)? = i.flatMap { k in k > 0 ? { camera.set(name, all[k - 1]) } : nil }
@@ -316,6 +346,7 @@ struct LightWizardSheet: View {
         CameraStepper(text: p.text, choices: all.map { v in (CameraProperty.describe(name, v), { camera.set(name, v) }) }, back: back, on: on)
       } else {
         Text(p?.text ?? "--").font(.system(size: 13, weight: .medium)).monospacedDigit().foregroundStyle(.secondary)
+          .help(camera.focusLocked ? "锁焦时相机不收设置：要改快门，先解除锁焦，改完放回底片再按 AF 锁焦" : "")
       }
     }
   }

@@ -167,6 +167,32 @@ enum CameraSimulationTests {
     try check(relocked && !g.focusLocked && g.message.contains("已解除锁焦") && lens.arrived.count == 1,
       "解除锁焦 lets go of the half-press holding the focus without taking a picture, and says so")
 
+    // 去串色校准's shutter keeps the lock: the full press alone (S2), the half-press held on, so a
+    // second blank frame does not focus either, and the lock is there after both.
+    let kept = connect("keep-lock", "lensaf=1,s2=1,early=200,transfer=400")
+    let k = kept.camera
+    func keptRuns() -> Int { k.log.filter { $0.contains("半按，开始对焦") }.count }
+    k.autofocus()
+    until(10) { k.focusLocked }
+    k.shoot(keepFocus: true)
+    until(8) { kept.arrived.count == 1 && !k.awaitingPicture }
+    let lockedAfterFirst = k.focusLocked
+    k.shoot(keepFocus: true)
+    until(8) { kept.arrived.count == 2 && !k.awaitingPicture }
+    until(0.5) { false }
+    try check(kept.arrived.count == 2 && keptRuns() == 1 && lockedAfterFirst && k.focusLocked
+      && k.log.contains { $0.contains("拍完继续按住半按") } && !k.log.contains { $0.contains("快门被忽略") },
+      "the shutter asked to keep the lock takes two pictures by S2 alone, focusing only for AF, and the lock stays (\(kept.arrived.count) pictures, \(keptRuns()) focusings)")
+    // A camera that takes no S2 over the half-press: the full press, the lock let go, and why.
+    let refused = connect("keep-refused", "lensaf=1,early=200,transfer=400")
+    let q = refused.camera
+    q.autofocus()
+    until(10) { q.focusLocked }
+    q.shoot(keepFocus: true)
+    until(8) { refused.arrived.count == 1 && !q.awaitingPicture && !q.focusLocked }
+    try check(refused.arrived.count == 1 && !q.focusLocked && q.message.contains("直连 PTP") && q.log.contains { $0.contains("不收 S2") },
+      "where the camera takes no S2 over the half-press, the full press takes the picture, and the lock let go says why")
+
     // The lens's switch at MF: the camera drives no lens and takes no AF; the shutter does not focus.
     let ring2 = connect("lens-at-mf", "lensmf=1,early=200,transfer=600")
     let h = ring2.camera

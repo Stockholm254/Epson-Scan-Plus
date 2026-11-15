@@ -19,6 +19,8 @@
 // - A focus step moves the lens in MF it drives, or in DMF while a half-press holds the focus;
 //   in AF-S, in DMF without it, or with the lens's switch at MF it is refused with 0x60003.
 // - While a half-press is held it takes no setting (0x8402), and the full press lets go of it.
+//   Set up so (s2), it takes the full press alone (S2) over it as a finger's, the half-press held
+//   on after the picture; else S2 is a setting like any other, and refused while it is held.
 // - Each half-press that focuses, and each step the lens makes, goes to stderr.
 //
 // EPSON_CAMERA_SIM sets it up, as name=value pairs separated by commas: focus (the focus mode, 6
@@ -28,7 +30,7 @@
 // camera another program has a session with, which refuses the connection), busy (milliseconds
 // after a half-press is let go that a change of focus mode is not made, 0), stepsneed (1: a focus
 // step needs the computer's priority, 0), lensaf (1: the lens's switch at AF, no MF offered, 0),
-// lensmf (1: the lens's switch at MF, 0). EPSON_CAMERA_SIM_LIVE
+// lensmf (1: the lens's switch at MF, 0), s2 (1: S2 taken over a held half-press, 0). EPSON_CAMERA_SIM_LIVE
 // names a JPEG for its live view. What it does with a press goes to stderr, a line each.
 //
 // Not Sony's code: the functions and classes the camera process uses, declared by Sony's headers,
@@ -85,7 +87,7 @@ struct Camera {
   IDeviceCallback* callback = nullptr;
   Clock::time_point connectedAt;
   int early = 600, transfer = 1500, hold = 100, busy = 0;
-  bool focuses = true, stepsNeedPriority = false, lensAF = false, lensMF = false;
+  bool focuses = true, stepsNeedPriority = false, lensAF = false, lensMF = false, fullPress = false;
   Clock::time_point letGo;
   std::map<CrInt32u, int64_t> values;
   bool halfPressed = false, focused = false, sending = false;
@@ -165,8 +167,9 @@ struct Found : ICrEnumCameraObjectInfo {
   void Release() override {}
 } found;
 
-/// The full press let go: a picture, unless the camera has a reason to take none.
-void released(int heldMs) {
+/// The full press let go: a picture, unless the camera has a reason to take none. With S2 alone
+/// (`keepHalf`), the half-press held under it stays held.
+void released(int heldMs, bool keepHalf = false) {
   std::string why;
   {
     std::lock_guard<std::mutex> g(camera.lock);
@@ -176,7 +179,7 @@ void released(int heldMs) {
     else if (autofocusing() && !(camera.halfPressed && camera.focused)) why = "对焦优先，没有合焦";
     else camera.sending = true;
   }
-  {
+  if (!keepHalf) {
     // The full press lets go of the half-press with it.
     std::lock_guard<std::mutex> g(camera.lock);
     camera.halfPressed = camera.focused = false;
@@ -273,6 +276,7 @@ bool Init(CrInt32u) {
   camera.stepsNeedPriority = setting("stepsneed", 0) != 0;
   camera.lensAF = setting("lensaf", 0) != 0;
   camera.lensMF = setting("lensmf", 0) != 0;
+  camera.fullPress = setting("s2", 0) != 0;
   camera.values[CrDeviceProperty_FocusMode] = setting("focus", 6);
   if (setting("lensmf", 0)) camera.values[CrDeviceProperty_FocusMode] = CrFocus_MF;
   camera.values[CrDeviceProperty_PriorityKeySettings] = setting("priority", CrPriorityKey_CameraPosition);
@@ -346,7 +350,8 @@ CrError SetDeviceProperty(CrDeviceHandle, CrDeviceProperty* p) {
   CrInt32u code = p->GetCode();
   int64_t v = (int64_t)p->GetCurrentValue();
   std::unique_lock<std::mutex> g(camera.lock);
-  if (camera.halfPressed && code != CrDeviceProperty_S1 && code != CrDeviceProperty_NearFar) {
+  if (camera.halfPressed && code != CrDeviceProperty_S1 && code != CrDeviceProperty_NearFar
+      && !(code == CrDeviceProperty_S2 && camera.fullPress)) {
     g.unlock();
     say("半按按住时不收设置");
     return CrError_Api_InvalidCalled;
@@ -411,6 +416,24 @@ CrError SetDeviceProperty(CrDeviceHandle, CrDeviceProperty* p) {
         camera.values[CrDeviceProperty_FocusIndication] = CrFocusIndicator_Unlocked;
       }
       return CrError_None;
+    case CrDeviceProperty_S2: {
+      if (!camera.fullPress) {
+        camera.values[code] = v;
+        return CrError_None;
+      }
+      if (v == CrLockIndicator_Locked) {
+        camera.down = true;
+        camera.downAt = Clock::now();
+        return CrError_None;
+      }
+      if (!camera.down) return CrError_None;
+      camera.down = false;
+      int held = (int)std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - camera.downAt).count();
+      g.unlock();
+      say("全按（S2），半按还按着");
+      released(held, true);
+      return CrError_None;
+    }
     case CrDeviceProperty_Focus_Magnifier_Setting:
     case CrDeviceProperty_PriorityKeySettings:
       camera.values[code] = v;
