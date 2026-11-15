@@ -68,6 +68,9 @@ enum RollGroupTests {
       var done = false
       model.updateRollSlopes { done = true }
       for _ in 0..<200 where !done { settle(0.05) }
+      // An estimate asked for meanwhile (by the import or a change) lets this one's caller go on
+      // before any slopes are set: until the newest has set them.
+      for _ in 0..<200 where model.estimatesSlopes && model.frames.contains(where: { $0.adjustments.rollSlopes == nil }) { settle(0.05) }
       for _ in 0..<40 where model.rendering { settle(0.05) }
     }
     estimate()
