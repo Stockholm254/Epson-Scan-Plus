@@ -20,14 +20,56 @@ final class LightTable {
     else { return nil }
     return (queue, pipeline)
   }()
-  private var cached: (size: CGSize, scale: CGFloat, image: CGImage)?
+  private var cached: (size: CGSize, scale: CGFloat, space: CGColorSpace?, image: CGImage)?
 
-  /// The table for a view of `size` points at `scale` pixels per point; nil without Metal.
-  func image(size: CGSize, scale: CGFloat) -> CGImage? {
-    if let cached, cached.size == size, cached.scale == scale { return cached.image }
-    guard let image = render(size: size, scale: scale) else { return nil }
-    cached = (size, scale, image)
+  /// The table for a view of `size` points at `scale` pixels per point, in `space` (the window's,
+  /// as the screen takes it) or as made (sRGB); nil without Metal. Made in sRGB and drawn so, it
+  /// was matched to the screen again at each drawing of the canvas, 20–35 ms on the main thread.
+  func image(size: CGSize, scale: CGFloat, space: CGColorSpace? = nil) -> CGImage? {
+    if let cached, cached.size == size, cached.scale == scale, cached.space == space { return cached.image }
+    guard let made = render(size: size, scale: scale) else { return nil }
+    let image = space.flatMap { Self.matched(made, to: $0) } ?? made
+    cached = (size, scale, space, image)
     return image
+  }
+  /// `image` in `space`, once: drawn into it as the screen would at each drawing.
+  static func matched(_ image: CGImage, to space: CGColorSpace) -> CGImage? {
+    guard space.model == .rgb, image.colorSpace != space,
+      let ctx = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+    else { return nil }
+    ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+    return ctx.makeImage()
+  }
+  /// The table made last, whatever its size, and the size it was made for: stretched over a view
+  /// whose size is still changing (`drawStretched`).
+  var last: (size: CGSize, image: CGImage)? { cached.map { ($0.size, $0.image) } }
+  /// Made for one size, the table drawn over `rect` of another: its frame and the glass's corners,
+  /// `cap` points in from each edge, as they are, the rest stretched between them. Where the light
+  /// falls on the glass moves by as much as the view's size changed, which while it changes shows
+  /// no more than the change itself.
+  static let cap: CGFloat = 24
+  static func drawStretched(_ image: CGImage, made: CGSize, in rect: CGRect) {
+    let k = CGFloat(image.width) / max(1, made.width)
+    let c = cap, pc = (c * k).rounded()
+    let w = CGFloat(image.width), h = CGFloat(image.height)
+    guard rect.width > 2 * c + 1, rect.height > 2 * c + 1, w > 2 * pc + 1, h > 2 * pc + 1 else {
+      NSImage(cgImage: image, size: made).draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+      return
+    }
+    // Columns and rows of the picture, in its pixels from its top left, and where each goes, in
+    // the view's points from its top left (the view is flipped).
+    let from = ([0, pc, w - pc, w], [0, pc, h - pc, h])
+    let to = ([rect.minX, rect.minX + c, rect.maxX - c, rect.maxX], [rect.minY, rect.minY + c, rect.maxY - c, rect.maxY])
+    for row in 0..<3 {
+      for column in 0..<3 {
+        let source = CGRect(x: from.0[column], y: from.1[row], width: from.0[column + 1] - from.0[column], height: from.1[row + 1] - from.1[row])
+        let place = CGRect(x: to.0[column], y: to.1[row], width: to.0[column + 1] - to.0[column], height: to.1[row + 1] - to.1[row])
+        guard let part = image.cropping(to: source) else { continue }
+        NSImage(cgImage: part, size: CGSize(width: source.width / k, height: source.height / k)).draw(
+          in: place, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: [.interpolation: NSImageInterpolation.low])
+      }
+    }
   }
 
   private struct Parameters {

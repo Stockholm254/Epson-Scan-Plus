@@ -1393,17 +1393,38 @@ final class FilmCanvasView: NSView {
   private func drawLightTable() {
     // While the window is being resized, a 1× table keeps up with the drag; full resolution follows.
     let scale = inLiveResize ? 1 : window?.backingScaleFactor ?? 2
-    guard let table = LightTable.shared.image(size: bounds.size, scale: scale) else {
+    let now = CACurrentMediaTime()
+    if tableSize?.size != bounds.size { tableSize = (bounds.size, now) }
+    // The canvas growing or shrinking, as the status line folds in or out under it (0.3 s, after
+    // each change on the table): the table made last stretched over it, made again for the size
+    // once it holds still. Until 0.23.5 it was made again for each frame of the change, some
+    // 10–40 ms each on the main thread, a turn of the roll held up by a dozen of them.
+    if let last = LightTable.shared.last, last.size != bounds.size, now - (tableSize?.since ?? 0) < Self.tableSettles {
+      LightTable.drawStretched(last.image, made: last.size, in: bounds)
+      if !tableRedrawQueued {
+        tableRedrawQueued = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.tableSettles + 0.02) { [weak self] in
+          self?.tableRedrawQueued = false
+          self?.needsDisplay = true
+        }
+      }
+    } else if let table = LightTable.shared.image(size: bounds.size, scale: scale, space: window?.colorSpace?.cgColorSpace) {
+      NSImage(cgImage: table, size: bounds.size).draw(
+        in: bounds, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true,
+        hints: [.interpolation: NSImageInterpolation.none])
+    } else {
       drawGradientLightTable()
       return
     }
-    NSImage(cgImage: table, size: bounds.size).draw(
-      in: bounds, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true,
-      hints: [.interpolation: NSImageInterpolation.none])
     NSBezierPath(
       roundedRect: LightTable.glassRect(in: bounds), xRadius: LightTable.glassRadius, yRadius: LightTable.glassRadius
     ).addClip()
   }
+  /// The canvas's size as the light table was last drawn, and since when it has been so.
+  private var tableSize: (size: CGSize, since: CFTimeInterval)?
+  private var tableRedrawQueued = false
+  /// How long the canvas keeps one size before the table is made for it.
+  static let tableSettles: CFTimeInterval = 0.15
   /// Without Metal: opal glass in an aluminium frame, brighter at the centre, with a faint
   /// printed grid.
   private func drawGradientLightTable() {

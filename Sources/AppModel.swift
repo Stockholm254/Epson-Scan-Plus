@@ -92,7 +92,7 @@ final class AppModel: ObservableObject {
     didSet {
       // On the light table the curves' histograms are the selected positive's, as it comes.
       if !singleView, let picture = selected.flatMap({ thumbnails[$0.id] }), picture !== selected.flatMap({ oldValue[$0.id] }) {
-        (histogram, channelHistograms) = Self.histograms(picture, curves: selected?.adjustments.curves)
+        tableHistograms(of: picture)
       }
       if onSheetPage && !showsNegative { refresh() }
       guard !thumbnails.isEmpty, !readOnly, let folder = sessionURL else { return }
@@ -430,38 +430,43 @@ final class AppModel: ObservableObject {
     }
     guard showsDemasked, overview != nil || frames.contains(where: { $0.sourcePath != nil }) else { return }
     let p = conversionProfile
+    // Each frame's key: what it is made from but for how it faces, and how it faces, one
+    // `analysisKey` a frame (two a frame took 16 ms of each turn of a roll of 12).
+    let keyed = frames.map { f -> (frame: FilmFrame, key: String, unfaced: String, facing: Facing) in
+      var plain = Self.demasked(f)
+      let facing = plain.adjustments.facing
+      plain.adjustments = plain.adjustments.unfaced
+      let unfaced = analysisKey(plain, everything: true)
+      return (f, unfaced + "|facing \(facing.rotation) \(facing.mirrored)", unfaced, facing)
+    }
     // Those not made as they are now, nor on their way.
-    var wanted = frames.map { ($0, analysisKey(Self.demasked($0), everything: true)) }
-      .filter { demaskThumbnailKeys[$0.0.id] != $0.1 && demaskPending[$0.0.id] != $0.1 }
+    var wanted = keyed.filter { demaskThumbnailKeys[$0.frame.id] != $0.key && demaskPending[$0.frame.id] != $0.key }
     // Turned or mirrored only: the picture it had, turned, at once (a roll of copies turned with
     // 整卷一起转 was converted again a frame at a time).
     if !wanted.isEmpty {
       var refaced = [UUID: CGImage]()
-      wanted = wanted.filter { f, key in
-        let d = Self.demasked(f)
-        var plain = d
-        plain.adjustments = d.adjustments.unfaced
-        guard let had = demaskThumbnails[f.id], let was = demaskThumbnailFacing[f.id], was.unfaced == analysisKey(plain, everything: true),
-          let turned = ImagePipeline.shared.refaced(had, from: was.facing, to: d.adjustments.facing)
+      wanted = wanted.filter { w in
+        let id = w.frame.id
+        guard let had = demaskThumbnails[id], let was = demaskThumbnailFacing[id], was.unfaced == w.unfaced,
+          let turned = ImagePipeline.shared.refaced(had, from: was.facing, to: w.facing)
         else { return true }
-        refaced[f.id] = turned
-        demaskThumbnailKeys[f.id] = key
-        demaskThumbnailFacing[f.id] = (was.unfaced, d.adjustments.facing)
+        refaced[id] = turned
+        demaskThumbnailKeys[id] = w.key
+        demaskThumbnailFacing[id] = (w.unfaced, w.facing)
         // One still on its way, made as the frame faced before, is not shown when it comes.
-        demaskPending[f.id] = nil
+        demaskPending[id] = nil
         return false
       }
       if !refaced.isEmpty { demaskThumbnails.merge(refaced) { _, new in new } }
     }
     // On a queue of their own, behind nothing and ahead of nothing the render queue does (the
     // single frame, a flat measured, the strip's own positives): a frame a step.
-    for (f, key) in wanted {
+    for w in wanted {
+      let (f, key, unfaced, facing) = (w.frame, w.key, w.unfaced, w.facing)
       demaskPending[f.id] = key
       demaskQueue.async { [weak self] in
         guard let self else { return }
         let d = Self.demasked(f)
-        var plain = d
-        plain.adjustments = d.adjustments.unfaced
         let positive = (try? self.source(for: d, maxDimension: 480)).flatMap { try? ImagePipeline.shared.preview($0, settings: d.adjustments, profile: p) }
         DispatchQueue.main.async {
           // Asked for last, else made from what the frame no longer is.
@@ -470,7 +475,7 @@ final class AppModel: ObservableObject {
           guard let positive else { return }
           self.demaskThumbnails[f.id] = positive
           self.demaskThumbnailKeys[f.id] = key
-          self.demaskThumbnailFacing[f.id] = (self.analysisKey(plain, everything: true), d.adjustments.facing)
+          self.demaskThumbnailFacing[f.id] = (unfaced, facing)
         }
       }
     }
@@ -3800,9 +3805,7 @@ final class AppModel: ObservableObject {
       toneAnalysis = nil
       toneRange = nil
       // The curves' histograms, from the selected frame's positive as the filmstrip has it.
-      if let picture = selected.flatMap({ thumbnails[$0.id] }) {
-        (histogram, channelHistograms) = Self.histograms(picture, curves: selected?.adjustments.curves)
-      }
+      if let picture = selected.flatMap({ thumbnails[$0.id] }) { tableHistograms(of: picture) }
       // Frames of their own files (a camera's, imports) on a page laid out as a contact sheet:
       // positives from the film strip's, negatives read small from their files.
       if onSheetPage {
@@ -3984,7 +3987,10 @@ final class AppModel: ObservableObject {
     if let thumbnail = side.thumbnail { thumbnails[side.frame.id] = thumbnail }
     // Another frame or the table shown since: the histograms and range are not its.
     if singleView, selectedID == side.frame.id {
-      if let h = side.histograms { (histogram, channelHistograms) = h }
+      if let h = side.histograms {
+        (histogram, channelHistograms) = h
+        tableHistogramsOf = nil
+      }
       if let r = side.range { toneRange = r }
     }
     if let token = side.finished, revision == token {
@@ -4441,6 +4447,25 @@ final class AppModel: ObservableObject {
   private var thumbnailsQueued = false
   /// Each frame's positive by what it was converted from (render queue only).
   private var keptThumbnails = [UUID: (key: String, unfaced: String, facing: Facing, image: CGImage)]()
+  /// What the curves' histograms on the light table were worked out from last: the selected
+  /// frame, its strip positive (and what that was made from but for how it faces), the curves.
+  /// The table's every refresh worked them out again, some 15 ms on the main thread at each turn
+  /// of the roll, and again for the positive turned, whose tones are the same.
+  private var tableHistogramsOf: (frame: UUID, picture: CGImage, unfaced: String?, curves: ToneCurves?)?
+  /// The curves' histograms of `picture`, the selected frame's strip positive, on the light table.
+  func tableHistograms(of picture: CGImage) {
+    guard let f = selected else { return }
+    let curves = f.adjustments.curves
+    let unfaced = keptThumbnails[f.id].flatMap { $0.image === picture ? $0.unfaced : nil }
+    if let was = tableHistogramsOf, was.frame == f.id, was.curves == curves,
+      was.picture === picture || (unfaced != nil && was.unfaced == unfaced)
+    {
+      tableHistogramsOf = (f.id, picture, unfaced, curves)
+      return
+    }
+    tableHistogramsOf = (f.id, picture, unfaced, curves)
+    (histogram, channelHistograms) = Self.histograms(picture, curves: curves)
+  }
   private var thumbnailsWaiting: Bool {
     wantedLock.lock()
     defer { wantedLock.unlock() }
