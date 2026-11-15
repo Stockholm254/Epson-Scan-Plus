@@ -3182,13 +3182,15 @@ final class AppModel: ObservableObject {
         guard token == self.rollSlopesRevision else { return self.afterNewestEstimate(completion) }
         self.rollSlopesWhy = why
         if self.frameFigures != figures { self.frameFigures = figures }
-        var changed = false
-        for i in self.frames.indices {
-          if let slopes = result[self.frames[i].id], self.frames[i].adjustments.rollSlopes != slopes {
-            self.frames[i].adjustments.rollSlopes = slopes
+        // All at once: each change of `frames` is published (and its didSet runs), a dozen a roll.
+        var all = self.frames, changed = false
+        for i in all.indices {
+          if let slopes = result[all[i].id], all[i].adjustments.rollSlopes != slopes {
+            all[i].adjustments.rollSlopes = slopes
             changed = true
           }
         }
+        if changed { self.frames = all }
         // The same as saved (a roll opened again): nothing to convert, show or save again.
         if changed {
           self.refresh()
@@ -4944,11 +4946,16 @@ final class AppModel: ObservableObject {
     var result = [UUID: CGImage]()
     /// The frames converted, of those that had to be.
     var done = 0, total = 0
+    /// When it began and last showed what it had made, and what it has made since.
+    let started = Date()
+    var shownAt = Date()
+    var unshown = [UUID: CGImage]()
     init(token: Int, frames: [FilmFrame], profile: FilmProfile, keys: [UUID: String], unfaced: [UUID: String]) {
       (self.token, self.profile, self.keys, self.unfaced, pending) = (token, profile, keys, unfaced, frames[...])
     }
   }
   private var thumbnailRevision = 0
+  static let thumbnailsShownEvery = 0.25
   /// The pass asked for last, not yet begun (`wantedLock`).
   private var wantedThumbnails: ThumbnailPass?
   private var thumbnailsQueued = false
@@ -4989,12 +4996,8 @@ final class AppModel: ObservableObject {
     pass.total = pass.pending.filter { f in
       pass.keys[f.id].map { keptThumbnails[f.id]?.key != $0 } ?? false && keptThumbnails[f.id]?.unfaced != pass.unfaced[f.id]
     }.count
-    let (token, total) = (pass.token, pass.total)
-    DispatchQueue.main.async {
-      guard token == self.thumbnailRevision else { return }
-      let progress = total >= 2 ? LoadProgress(done: 0, total: total) : nil
-      if self.positivesLoading != progress { self.positivesLoading = progress }
-    }
+    // The bar comes once the pass has taken a while (`thumbnailStep`): one of some 40 ms a frame,
+    // the roll's slopes changed, flashed it.
     thumbnailStep(pass)
   }
   /// One frame of `pass`, then the next on the queue's turn; a newer pass asked for takes over.
@@ -5027,13 +5030,23 @@ final class AppModel: ObservableObject {
         let small = ImagePipeline.shared.scaled(positive, maxDimension: Self.thumbnailDimension)
         keptThumbnails[f.id] = (key, unfaced, f.adjustments.facing, small)
         pass.result[f.id] = small
-        // Shown as it comes, rather than when the whole roll is done.
         pass.done += 1
-        let (id, token, progress) = (f.id, pass.token, pass.total >= 2 ? LoadProgress(done: pass.done, total: pass.total) : nil)
-        DispatchQueue.main.async {
-          guard token == self.thumbnailRevision else { return }
-          if self.thumbnails[id] !== small { self.thumbnails[id] = small }
-          if self.positivesLoading != progress { self.positivesLoading = progress }
+        pass.unshown[f.id] = small
+        // Shown as they come rather than when the whole roll is done, but at most every quarter
+        // second: each showing updates the whole window, and a frame at a time a roll's slopes
+        // changed (12 copies, some 40 ms each) updated it a dozen times running. The bar only for a
+        // pass that takes a while.
+        let now = Date()
+        if now.timeIntervalSince(pass.shownAt) >= Self.thumbnailsShownEvery {
+          pass.shownAt = now
+          let batch = pass.unshown, token = pass.token
+          pass.unshown = [:]
+          let progress = pass.total >= 2 && now.timeIntervalSince(pass.started) > 0.5 ? LoadProgress(done: pass.done, total: pass.total) : nil
+          DispatchQueue.main.async {
+            guard token == self.thumbnailRevision else { return }
+            if batch.contains(where: { self.thumbnails[$0.key] !== $0.value }) { self.thumbnails.merge(batch) { _, new in new } }
+            if let progress, self.positivesLoading != progress { self.positivesLoading = progress }
+          }
         }
       }
     }
