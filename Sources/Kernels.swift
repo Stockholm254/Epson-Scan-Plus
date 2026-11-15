@@ -270,7 +270,8 @@ enum Kernels {
       e += toe * log(max(float3(1.0) - exp(-e / max(toe, float3(0.000001))), float3(0.02)));
       e = e * a + d;
       float3 b = balance;
-      if (fade.x > 0.0) { faded = min((1.0 - exp(-max((e.r + e.g + e.b) / 3.0, 0.0) / fade.x)) / fade.y, 1.0); b *= faded; }
+      // By the most exposed layer, as ImagePipeline.fadeExposure.
+      if (fade.x > 0.0) { faded = min((1.0 - exp(-max(max(e.r, max(e.g, e.b)), 0.0) / fade.x)) / fade.y, 1.0); b *= faded; }
       return e * gain + b;
     }
     // The straight line on the print's scale, black at 0 and white at 1 (levels.x, levels.y), with

@@ -101,6 +101,29 @@ enum CalibrationTests {
     try check(warmBlack < 1.5 && warmGrey > 12,
       String(format: "warmth 0.3 and tint −0.2 leave the unexposed film a neutral black (%.1f levels of cast) and warm the greys above it (%.1f)", warmBlack, warmGrey))
 
+    // A film whose layers differ much in speed (Phoenix II): a neutral shadow has its green at the
+    // base while red and blue are well up. It keeps nearly all its balance (the fade goes by the most
+    // exposed layer, here 0.31 log up: 93% of it; by the three's mean, 0.16 up, it had 74%, some 21
+    // levels of purple-blue): nearly grey; unexposed film is still black.
+    let phoenixSlopes = [0.88, 0.55, 0.88], phoenixOffsets = [0.15, 0.0, 0.30]
+    func phoenix(_ x: Double) -> [Double] {
+      (0..<3).map { base.values[$0] * pow(10, -max(0, phoenixSlopes[$0] * (x + phoenixOffsets[$0]))) }
+    }
+    var layered = [UInt16](repeating: 65535, count: w * h * 4)
+    for y in 0..<h {
+      for x in 0..<w {
+        let v = y < h / 3 ? phoenix(0.5) : y < h * 2 / 3 ? phoenix(0.01) : base.values
+        for c in 0..<3 { layered[(y * w + x) * 4 + c] = UInt16(v[c] * 65535) }
+      }
+    }
+    var phoenixFilm = portra
+    (phoenixFilm.slopes, phoenixFilm.offsets, phoenixFilm.toe) = (RGB(phoenixSlopes), RGB(phoenixOffsets), nil)
+    let layeredShot = picture(layered)
+    let shadowGrey = try cast(phoenixFilm, in: layeredShot, row: h / 2), litGrey = try cast(phoenixFilm, in: layeredShot, row: h / 6)
+    let layeredBlack = try cast(phoenixFilm, in: layeredShot, row: h * 5 / 6)
+    try check(shadowGrey < 8 && litGrey < 1.5 && layeredBlack < 1.5,
+      String(format: "a neutral shadow with its green at the base and red and blue well up keeps nearly all its balance: %.1f levels of cast (about 21 by the three layers' mean; lit grey %.1f), unexposed film still a neutral black (%.1f)", shadowGrey, litGrey, layeredBlack))
+
     // Making, keeping, applying and deleting a preset through the model.
     let suite = "EpsonScanPlus.tests.\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: suite)!

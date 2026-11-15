@@ -127,7 +127,13 @@ final class ImagePipeline {
   /// black. So, where no fitted toe bends the curve down to the base, the balance fades in over
   /// about a toe's width of log exposure above it (the Kodak sheets' toes are 0.10–0.165): 95% of
   /// it by 0.36, 1.2 stops up. Warmth and tint, white balance too, fade in with it in the kernel.
+  /// How far above it is the most exposed layer's (`fadeExposure`), not the three's mean: a neutral
+  /// shadow on a film whose layers differ much in speed (Harman Phoenix II, no mask) has its green at
+  /// the base while red and blue are 0.08–0.17 D up; by the mean it lost half its balance and came
+  /// out purple-blue (2026-11-14), the black taken down by hand to hide it.
   static var unexposedFade = 0.12
+  /// The exposure the balance fades in by: the most exposed layer's, above the base.
+  @inline(__always) static func fadeExposure(_ r: Double, _ g: Double, _ b: Double) -> Double { max(0, r, g, b) }
   /// `image` with its colour smoothed over `radius` pixels and its lightness kept exactly: colour
   /// noise (the sensor's, and what taking the crosstalk out adds to it) goes, the grain stays. The
   /// colour has no lightness of its own, so its blur leaves the luma as it was. Scaled with the
@@ -799,7 +805,7 @@ final class ImagePipeline {
     let k = lightWeights, g = a.gain.values, bv = a.balance.values
     let b = k[0] * bv[0] + k[1] * bv[1] + k[2] * bv[2]
     return (0..<e[0].count).map { i in
-      let w = a.fade > 0 ? min(1, (1 - exp(-max(0, (e[0][i] + e[1][i] + e[2][i]) / 3) / a.fade)) / a.fadeAtGrey) : 1
+      let w = a.fade > 0 ? min(1, (1 - exp(-Self.fadeExposure(e[0][i], e[1][i], e[2][i]) / a.fade)) / a.fadeAtGrey) : 1
       return k[0] * e[0][i] * g[0] + k[1] * e[1][i] * g[1] + k[2] * e[2][i] * g[2] + b * w
     }
   }
@@ -899,7 +905,7 @@ final class ImagePipeline {
     let fromBlack = grey == nil && profile.offsets == nil
       && settings.autoWhiteBalance
     let fade = fromBlack || toe.values.contains { $0 > 0 } ? 0 : Self.unexposedFade
-    func fadedIn(_ e: [Double]) -> Double { 1 - exp(-max(0, e.reduce(0, +) / 3) / fade) }
+    func fadedIn(_ e: [Double]) -> Double { 1 - exp(-Self.fadeExposure(e[0], e[1], e[2]) / fade) }
     let fadeAtGrey = fade > 0 ? max(0.001, grey.map(fadedIn) ?? 1) : 1
     let weight = fade > 0
       ? (0..<e[0].count).map { i in min(1, fadedIn([e[0][i], e[1][i], e[2][i]]) / fadeAtGrey) } : nil
@@ -1097,7 +1103,7 @@ final class ImagePipeline {
         let u = log(max(base, 0.000001) / max(reading.values[c], 0.000001)) * (s.inputGamma / 2.302585093) / slopes.values[c]
         return FilmToe.exposure(u, width: toe.values[c])
       }
-      if a.fade > 0 { faded = min((1 - exp(-max(e.reduce(0, +) / 3, 0) / a.fade)) / a.fadeAtGrey, 1) }
+      if a.fade > 0 { faded = min((1 - exp(-Self.fadeExposure(e[0], e[1], e[2]) / a.fade)) / a.fadeAtGrey, 1) }
       q = (0..<3).map { (e[$0] * a.gain.values[$0] + a.balance.values[$0] * faded + s.exposure * 0.30103 - a.low) / max(span, 0.001) }
     } else {
       let encode = 1 / (s.isSlide ? Self.slideEncoding : max(s.inputGamma, 0.1))
