@@ -134,10 +134,14 @@ final class AppModel: ObservableObject {
     let gauge: String? = filmEdges == .rebate && ImagePipeline.rebateShare(format.rawValue, width: 1, height: 1) != nil ? format.rawValue : nil
     func stamped(_ f: FilmFrame) -> String? { f.sourcePath == nil ? nil : gauge }
     guard frames.contains(where: { $0.adjustments.filmEdges != edges || $0.adjustments.filmFormat != stamped($0) }) else { return }
-    for i in frames.indices where frames[i].adjustments.filmEdges != edges || frames[i].adjustments.filmFormat != stamped(frames[i]) {
-      frames[i].adjustments.filmEdges = edges
-      frames[i].adjustments.filmFormat = stamped(frames[i])
+    // All at once: each change of `frames` stamps them again (its didSet), and a frame half stamped
+    // stamped it again without end.
+    var all = frames
+    for i in all.indices {
+      all[i].adjustments.filmEdges = edges
+      all[i].adjustments.filmFormat = stamped(all[i])
     }
+    frames = all
   }
   @Published var dpi = 2400
   @Published var filmName = "Kodak Portra 160"
