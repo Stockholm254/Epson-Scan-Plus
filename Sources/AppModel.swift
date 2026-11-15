@@ -2332,15 +2332,10 @@ final class AppModel: ObservableObject {
   /// pictures a file each read alike together) and used where the preset is not calibrated; off,
   /// the calibration, else the data sheet.
   var estimatesSlopes: Bool { rollSlopeEstimate ?? estimatesSlopesByDefault }
-  /// On for a roll scanned here or taken on the copy stand, and for a scan's or a strip file's
-  /// frames, one film read at once; off for pictures imported a file each, which need not have been
-  /// scanned alike.
-  var estimatesSlopesByDefault: Bool {
-    if rollSource == .camera || rollSource == .scanner { return true }
-    var perFile = [String: Int]()
-    for path in frames.compactMap(\.sourcePath) { perFile[path, default: 0] += 1 }
-    return frames.contains { $0.sourcePath == nil } || perFile.values.contains { $0 > 1 }
-  }
+  /// On for every roll (the user's call, 2026-11-14): its slopes come from its own frames, and the
+  /// data sheet's only where they cannot be estimated. Pictures imported a file each are estimated
+  /// in their groups read alike (`rollGroups`).
+  var estimatesSlopesByDefault: Bool { true }
   /// The roll has pictures read from a camera's sensor, which can have the copy light's crosstalk
   /// taken out; and whether they have.
   var hasSensorPictures: Bool { frames.contains { $0.sensorRead == true } }
@@ -2911,7 +2906,10 @@ final class AppModel: ObservableObject {
     recordEdit(on ? "用标定" : "不用标定")
     useCalibration = on
     let film = Self.uncalibrated(profile, among: profiles)
+    // Its 原片 frames had the calibration's neutral; without it they are balanced as 自动.
+    let balanced = balanceUncalibrated()
     status = on ? "按「\(profile.name)」的标定转换" : "这一卷先不用标定：按 \(film.name) 转换" + (estimatesSlopes ? "，有全卷斜率估计时按它的斜率" : "的数据表")
+      + (balanced > 0 ? "；\(balanced) 张原片改成自动（按灰像素）" : "")
     updateRollSlopes()
     refresh()
     updateThumbnails()
@@ -3790,6 +3788,11 @@ final class AppModel: ObservableObject {
     return (hist.map { $0 / max(1, maxBin) }, channels.map { $0.map { $0 / max(1, maxChannel) } })
   }
   func refresh() {
+    let balanced = balanceUncalibrated()
+    if balanced > 0 {
+      status = "没有标定时原片不配平：\(balanced) 张改成自动（按灰像素）"
+      updateThumbnails()
+    }
     resolveAutoNeutrals()
     revision += 1
     let token = revision
@@ -4667,6 +4670,32 @@ final class AppModel: ObservableObject {
   /// 自动 is the picture's gray pixels', looked for near it (`GrayPixelNeutral`); on a frame from
   /// before 0.23.3 (`Adjustments.autoNeutral` nil) it is still that neutral, as 原片.
   var balancesByCalibration: Bool { conversionProfile.offsets != nil && settings.inputIsNegative && !settings.isSlide }
+  /// Whether 原片 is there to choose: a colour negative's is the calibrated neutral, and without one
+  /// it would balance nothing (`balanceUncalibrated`); a slide's, a black and white negative's or a
+  /// positive file's is the picture as it is.
+  var offersAsShot: Bool { balancesByCalibration || !Self.balancesLayers(settings) }
+  /// A colour negative: its three layers balanced by a neutral.
+  static func balancesLayers(_ a: Adjustments) -> Bool { a.inputIsNegative && !a.isSlide && !a.isMonochrome }
+  /// 原片 on a colour negative is the calibrated neutral. With none in use (no calibrated preset, or
+  /// its calibration switched off) it balances nothing, and the frame takes the film's and the copy
+  /// light's cast (a roll copied under the RGB light came out green-blue, red 0.22 log short); so
+  /// such frames are balanced as 自动, by their gray pixels, their warmth and tint kept (the user's
+  /// call, 2026-11-14, frames from before too). Run before each conversion, so whatever brought
+  /// 原片 there (the calibration switched off, another preset, a paste, an old roll opened) is
+  /// undone with the edit that did it.
+  /// How many frames it balanced so.
+  @discardableResult func balanceUncalibrated() -> Int {
+    guard conversionProfile.offsets == nil else { return 0 }
+    let asShot = frames.indices.filter { i in
+      let a = frames[i].adjustments
+      return Self.balancesLayers(a) && !a.autoWhiteBalance && a.neutralSample == nil
+    }
+    for i in asShot {
+      frames[i].adjustments.autoWhiteBalance = true
+      if frames[i].adjustments.autoNeutral == nil { frames[i].adjustments.autoNeutral = .pending }
+    }
+    return asShot.count
+  }
   var balanceMode: BalanceMode {
     let s = settings
     if s.neutralSample != nil || s.warmth != 0 || s.tint != 0 || s.slideContrast != nil { return .custom }
@@ -4678,8 +4707,10 @@ final class AppModel: ObservableObject {
     let s = settings
     return balanceMode == .auto && s.autoNeutral == nil && s.inputIsNegative && !s.isSlide && !s.isMonochrome
   }
-  func setBalanceMode(_ mode: BalanceMode) {
+  func setBalanceMode(_ chosen: BalanceMode) {
     guard selected != nil else { return }
+    // A colour negative without a calibrated neutral has no 原片 to balance it (`offersAsShot`).
+    let mode = chosen == .asShot && !offersAsShot ? .auto : chosen
     switch mode {
     case .custom:
       status = "自定义白平衡：取中性灰，或拖冷暖、绿 / 洋红"

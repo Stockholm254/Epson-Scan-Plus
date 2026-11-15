@@ -72,14 +72,10 @@ enum RollGroupTests {
     }
     estimate()
     model.select(model.frames[0].id)
-    try check(model.frames.count == 3 && !model.estimatesSlopes && !model.selectedSharesRoll
-      && model.frames.allSatisfy { $0.adjustments.rollSlopes == nil },
-      "pictures imported a file each start with 全卷斜率估计 off, and are each a roll of their own to print")
-    model.setRollSlopeEstimate(true)
-    estimate()
     let slopes = model.frames.compactMap(\.adjustments.rollSlopes)
-    try check(slopes.count == 3 && slopes.allSatisfy { abs($0.r / truth.r - 1) < 0.04 && abs($0.b / truth.b - 1) < 0.04 },
-      String(format: "with 全卷斜率估计 on they give the roll estimate, as the scanned frames do: R %.3f · B %.3f (true %.2f · %.2f)",
+    try check(model.frames.count == 3 && model.estimatesSlopes && !model.selectedSharesRoll
+      && slopes.count == 3 && slopes.allSatisfy { abs($0.r / truth.r - 1) < 0.04 && abs($0.b / truth.b - 1) < 0.04 },
+      String(format: "pictures imported a file each start with 全卷斜率估计 on, as every roll does, each a roll of their own to print, and give the roll estimate, as the scanned frames do: R %.3f · B %.3f (true %.2f · %.2f)",
         slopes.first?.r ?? 0, slopes.first?.b ?? 0, truth.r, truth.b))
 
     // Off again: the data sheet's slopes, the estimate cleared.

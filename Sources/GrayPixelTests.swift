@@ -240,8 +240,36 @@ enum GrayPixelTests {
     let pickedAgain = model.frames[2].adjustments.autoNeutral == .pending && model.frames[2].adjustments.balanceKeepsLightness
     edits.undo()
     let undone = model.frames[2].adjustments.autoNeutral == nil
+    // 原片 is the calibrated neutral: chosen with the calibrated preset.
+    let plainFilm = model.profile
+    model.profile = calibrated
     model.setBalanceMode(.asShot)
     try check(pickedAgain && undone && model.frames[2].adjustments.autoNeutral == .pending && !model.frames[2].adjustments.autoWhiteBalance,
       "a grey picked or 原片 chosen on a frame from before keeps it as light as 自动 from then on, ⌘Z back as it was")
+
+    // Without a calibrated neutral 原片 would balance nothing: the calibration switched off, its
+    // 原片 frames are balanced as 自动, a frame from before too; ⌘Z puts them back.
+    for i in 0..<3 { model.frames[i].adjustments.autoWhiteBalance = false; model.frames[i].adjustments.neutralSample = nil }
+    model.frames[0].adjustments.autoNeutral = nil
+    model.frames[1].adjustments.warmth = 0.2
+    model.refresh()
+    let keptWhileCalibrated = model.frames.allSatisfy { !$0.adjustments.autoWhiteBalance } && model.offersAsShot
+    model.setUseCalibration(false)
+    let switched = model.frames.allSatisfy { $0.adjustments.autoWhiteBalance && $0.adjustments.autoNeutral == .pending }
+      && model.frames[1].adjustments.warmth == 0.2 && model.status.contains("3 张原片改成自动") && !model.offersAsShot
+    edits.undo()
+    let back = model.useCalibration && model.frames.allSatisfy { !$0.adjustments.autoWhiteBalance } && model.frames[0].adjustments.autoNeutral == nil
+    try check(keptWhileCalibrated && switched && back,
+      "with the calibration switched off, its 原片 frames are balanced as 自动 by their gray pixels, warmth kept, a frame from before too; ⌘Z puts them back")
+    // A roll with no calibration at all: a 原片 frame (an old roll opened) is balanced as 自动, and
+    // 原片 is not offered; chosen anyway, it is 自动.
+    model.profile = plainFilm
+    model.frames[2].adjustments.autoNeutral = nil
+    model.refresh()
+    let openedAsAuto = model.frames.allSatisfy { $0.adjustments.autoWhiteBalance } && model.frames[2].adjustments.autoNeutral == .pending
+    model.selectedID = model.frames[2].id
+    model.setBalanceMode(.asShot)
+    try check(openedAsAuto && !model.offersAsShot && model.frames[2].adjustments.autoWhiteBalance && model.balanceMode == .auto,
+      "without any calibration a frame set to 原片 is balanced as 自动, and 原片 is not offered; chosen anyway it is 自动")
   }
 }

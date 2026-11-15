@@ -229,9 +229,10 @@ enum StepTests {
     model.setBalanceMode(.auto)
     let auto = model.frames[1].adjustments
     model.setFilmBase(RGB(r: 0.8, g: 0.5, b: 0.3))
-    try check(wasAuto == .auto && movedIsCustom && !asShot.autoWhiteBalance && asShot.warmth == 0 && pickedIsCustom
+    // Without a calibration a colour negative's 原片 would balance nothing: chosen, it is 自动.
+    try check(wasAuto == .auto && movedIsCustom && asShot.autoWhiteBalance && asShot.warmth == 0 && pickedIsCustom
       && auto.autoWhiteBalance && auto.neutralSample == nil && auto.warmth == 0 && model.balanceMode == .auto,
-      "white balance as Lightroom's: 自动 by default, 冷暖 moved or a grey picked is 自定义, 原片 and 自动 set it back; picking the base leaves it 自动")
+      "white balance as Lightroom's: 自动 by default, 冷暖 moved or a grey picked is 自定义, 原片 (自动 without a calibration) and 自动 set it back; picking the base leaves it 自动")
     edits.undo()
 
     // A tool of the other step takes the window there.
