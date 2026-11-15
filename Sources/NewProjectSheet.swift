@@ -30,6 +30,9 @@ struct NewProjectSheet: View {
   @State private var hovering: Choice?
   /// The last choice came from ↑ or ↓, so the shelf scrolls to it.
   @State private var stepped = false
+  /// The film taken, told large below the shelf (`chosen`): once one is picked, not as the sheet
+  /// opens, which leaves the shelf the room; put away by its close key.
+  @State private var showsChosen = false
   /// What the shelf is for: a new roll's film, or the open roll's changed (from ②'s film section).
   enum Purpose { case newProject, changeFilm }
   let purpose: Purpose
@@ -49,7 +52,20 @@ struct NewProjectSheet: View {
       shelf
       Divider()
       VStack(alignment: .leading, spacing: 14) {
-        chosen
+        if showsChosen {
+          chosen
+            .overlay(alignment: .topTrailing) {
+              Button {
+                withAnimation(.easeOut(duration: 0.18)) { showsChosen = false }
+              } label: {
+                Image(systemName: "xmark.circle.fill").font(.system(size: 15))
+              }
+              .buttonStyle(.plain).foregroundStyle(.tertiary)
+              .help("收起胶片说明：选的胶片不变，「开始」照样用它")
+              .accessibilityLabel("收起胶片说明")
+            }
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
         formats
         edgesRow
         kindRow
@@ -584,6 +600,7 @@ struct NewProjectSheet: View {
   /// `format`: the format to take with it, from a roll it was used in.
   private func pick(_ item: Choice, format used: FilmFormat? = nil, calibration: Calibrating = .film) {
     choice = item
+    if !showsChosen { withAnimation(.easeOut(duration: 0.18)) { showsChosen = true } }
     switch calibration {
     case .film: calibrationID = Self.filmName(item, m: m).flatMap { m.calibration(for: $0) }?.id
     case .this(let id): calibrationID = id
