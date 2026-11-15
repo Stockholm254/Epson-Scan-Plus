@@ -147,11 +147,13 @@ enum MultiPreviewTests {
     let blueB = try fromB.first.map { mean(try target.source(for: $0, raw: true)) } ?? [0, 0, 0]
     let after = RollLibrary.scan([library]).map(\.folder.lastPathComponent)
     let names = target.frames.compactMap { Int($0.name) }
-    try check(offered.contains(rollB.lastPathComponent) && added == 2 && target.sessionURL == rollA && target.frames.count == 5
+    let mergedInto = target.sessionURL?.standardizedFileURL.path == rollA.standardizedFileURL.path
+    try check(offered.contains(rollB.lastPathComponent) && added == 2 && mergedInto && target.frames.count == 5
       && fromB.count == 2 && blueB[2] > blueB[0] + 0.2 && Set(names).count == 5
       && FileManager.default.fileExists(atPath: rollA.appendingPathComponent("Merged").appendingPathComponent(rollB.lastPathComponent).path)
       && !FileManager.default.fileExists(atPath: rollB.path) && after.contains(rollA.lastPathComponent) && !after.contains(rollB.lastPathComponent),
-      "合并同类卷 moves the other roll's folder into this one's, its frames on a page of their own preview, numbered on and read where they now are, one roll in the library")
+      "合并同类卷 moves the other roll's folder into this one's, its frames on a page of their own preview, numbered on and read where they now are, one roll in the library"
+        + " (offered \(offered.contains(rollB.lastPathComponent)), added \(added), into \(mergedInto), frames \(target.frames.count), its \(fromB.count), blue \(blueB.map { Int($0 * 255) }), library \(after.contains(rollA.lastPathComponent)) \(!after.contains(rollB.lastPathComponent)))")
     let reopened2 = AppModel(libraryURL: library)
     reopened2.loadProject(rollA.appendingPathComponent(AppModel.projectFile))
     try check(reopened2.frames.count == 5 && reopened2.previewCount == target.previewCount
