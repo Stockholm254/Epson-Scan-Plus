@@ -721,12 +721,14 @@ final class ImagePipeline {
   /// darkest and lightest of the three, moved with them, a frame printing from 17/255 darker to 62/255
   /// lighter with a grey picked than on 自动 (20 of the author's frames with one, 17 apart in the
   /// middle). So the ends are those that put how light each sample is (`lightness`) where 自动 puts
-  /// it (`matched`), the balance's colour about that.
+  /// it (`matched`), the balance's colour about that. A negative's with the auto levels off too,
+  /// where 自动's ends are the fixed ones (until 0.23.5 a grey picked there printed as its balance
+  /// put it); a slide's ends left alone show it as on a light box (`slideAnalysis`).
   func analyze(
     base: RGB, density: [[Double]], settings: Adjustments, profile: FilmProfile, shortestEnds: Double = ImagePipeline.shortestEnds
   ) -> ToneAnalysis {
     var a = balanced(base: base, density: density, settings: settings, profile: profile, shortestEnds: shortestEnds)
-    guard settings.autoLevels, settings.balanceKeepsLightness, settings.balancingNeutral != nil || !settings.autoWhiteBalance
+    guard settings.balanceKeepsLightness, settings.balancingNeutral != nil || !settings.autoWhiteBalance
     else { return a }
     var auto = settings
     (auto.neutralSample, auto.neutralPicked, auto.autoNeutral, auto.autoWhiteBalance) = (nil, nil, nil, true)
@@ -1151,7 +1153,8 @@ final class ImagePipeline {
     }
     var (gain, balance, low, high) = balanced(grey: grey, auto: s.autoWhiteBalance)
     // A grey picked or 原片 prints as light as 自动 (`analyze`): the ends that put how light each
-    // sample is where 自动 puts it.
+    // sample is where 自动 puts it. Not with the ends left alone, where a slide shows as on a light
+    // box, the bare lamp white.
     if s.autoLevels, s.balanceKeepsLightness, grey != nil || !s.autoWhiteBalance, !light[0].isEmpty {
       let auto = balanced(grey: nil, auto: true)
       let k = Self.lightWeights

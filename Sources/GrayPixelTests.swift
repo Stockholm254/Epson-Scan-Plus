@@ -198,6 +198,16 @@ enum GrayPixelTests {
     try check(abs(lit[1] - lit[0]) < 1.5 && abs(lit[2] - lit[0]) < 1.5 && abs(lit[4] - lit[3]) < 1.5 && abs(lit[5] - lit[3]) < 1.5,
       String(format: "a grey picked, the gray pixels and 原片 print as light as 自动 (%.1f, %.1f against %.1f; %.1f, %.1f against %.1f /255)",
         lit[1], lit[2], lit[0], lit[4], lit[5], lit[3]))
+    // So with the auto levels off: 自动's ends are the fixed ones, and a grey picked, the gray pixels
+    // and 原片 print as light as it does there.
+    let manual = try [onAuto, onPick, onGrays, plainAuto, plainGrey, plainRaw].enumerated().map { i, s -> Double in
+      var s = s
+      s.autoLevels = false
+      return try lightness(mixed, s, i < 3 ? calibrated : film)
+    }
+    try check(abs(manual[1] - manual[0]) < 1.5 && abs(manual[2] - manual[0]) < 1.5 && abs(manual[4] - manual[3]) < 1.5 && abs(manual[5] - manual[3]) < 1.5,
+      String(format: "with the auto levels off, a grey picked, the gray pixels and 原片 print as light as 自动 (%.1f, %.1f against %.1f; %.1f, %.1f against %.1f /255)",
+        manual[1], manual[2], manual[0], manual[4], manual[5], manual[3]))
     var oldPick = onPick
     oldPick.autoNeutral = nil
     var oldAuto = onAuto
