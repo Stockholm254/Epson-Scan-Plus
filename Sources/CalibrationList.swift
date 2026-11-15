@@ -48,25 +48,53 @@ struct CalibrationRow: Identifiable, Equatable {
 }
 
 /// The calibrations of the film chosen, to take one or none: 不用标定 on its own row over a table
-/// that scrolls past six rows, sorts by any column and, past eight, can be searched.
+/// that scrolls past six rows, sorts by any column and, past eight, can be searched. Folded to its
+/// header, which says what is taken, until opened (open, the table stood taller than the film's
+/// picture beside it); folded or open as it was left.
 struct CalibrationTable: View {
   let rows: [CalibrationRow]
   let without: String
   @Binding var selection: String?
   @State private var order = [KeyPathComparator(\CalibrationRow.when, order: .reverse)]
   @State private var query = ""
+  @AppStorage("panelSection.calibrationTable") private var open = false
   static let shownRows = 6, searchFrom = 8
+  /// What the folded header says is taken: the calibration chosen, or 不用标定.
+  static func taken(_ rows: [CalibrationRow], _ selection: String?) -> String {
+    selection.flatMap { id in rows.first { $0.id == id }?.title } ?? "不用标定"
+  }
   var body: some View {
     let found = CalibrationRow.filtered(rows, query).sorted(using: order)
     VStack(alignment: .leading, spacing: 5) {
       HStack(spacing: 8) {
-        Text("已有的标定").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-        Text("\(rows.count) 个").font(.system(size: 10.5)).foregroundStyle(.tertiary)
+        Button {
+          withAnimation(.easeOut(duration: 0.15)) { open.toggle() }
+        } label: {
+          HStack(spacing: 6) {
+            Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+              .rotationEffect(.degrees(open ? 90 : 0))
+            Text("已有的标定").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+            Text("\(rows.count) 个").font(.system(size: 10.5)).foregroundStyle(.tertiary)
+            if !open {
+              Text("用：" + Self.taken(rows, selection)).font(.system(size: 11)).foregroundStyle(Hardware.amberText).lineLimit(1)
+            }
+          }.contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(open ? "收起标定列表" : "展开标定列表，选用哪个标定或不用")
+        .accessibilityLabel("已有的标定，\(rows.count) 个，用\(Self.taken(rows, selection))")
+        .accessibilityValue(open ? "已展开" : "已折叠")
         Spacer(minLength: 8)
-        if rows.count > Self.searchFrom {
+        if open && rows.count > Self.searchFrom {
           TextField("搜索标定：设备、日期", text: $query).textFieldStyle(.roundedBorder).controlSize(.small).frame(maxWidth: 180)
         }
       }.padding(.top, 4)
+      if open { list(found) }
+    }
+  }
+  /// 不用标定 and the table under it.
+  @ViewBuilder private func list(_ found: [CalibrationRow]) -> some View {
+    Group {
       // None of them: the film as its data sheet or the generic film converts it.
       Button {
         withAnimation(.easeOut(duration: 0.12)) { selection = nil }
@@ -92,7 +120,7 @@ struct CalibrationTable: View {
       if found.isEmpty && !query.isEmpty {
         Text("没有符合「\(query)」的标定").font(.system(size: 10.5)).foregroundStyle(.secondary)
       }
-    }
+    }.transition(.opacity)
   }
   /// Tall enough for the rows up to six, then scrolling: its header and a row's height each.
   static func height(_ rows: Int) -> CGFloat { 28 + CGFloat(min(max(rows, 1), shownRows)) * 24 + 4 }

@@ -20,5 +20,8 @@ enum CalibrationListTests {
     // A hundred of them: the table stays six rows tall and scrolls.
     try check(CalibrationTable.height(100) == CalibrationTable.height(6) && CalibrationTable.height(2) < CalibrationTable.height(6),
       "with a hundred calibrations the table is no taller than six rows, and scrolls")
+    // Folded, its header says what is taken.
+    try check(CalibrationTable.taken([v850, copy], "b") == "翻拍标定 · 2026-11-11 20:13" && CalibrationTable.taken([v850, copy], nil) == "不用标定",
+      "folded, the calibrations' header says which one is taken, or 不用标定")
   }
 }
