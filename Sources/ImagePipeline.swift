@@ -1845,25 +1845,36 @@ struct ExportMetadata {
 /// queues: a 600 dpi preview takes about half a second to decode, too slow for every refresh.
 final class OverviewCache {
   private let lock = NSLock()
-  private var url: URL?
-  private var full: CGImage?
-  private var scaled = [Int: CGImage]()
+  /// The previews read, the one used last first: two, for a roll of several holder loads whose
+  /// frames are converted across two of them (a 600 dpi preview of a holder is some 200 MB).
+  private var kept = [(url: URL, full: CGImage, scaled: [Int: CGImage])]()
+  static let size = 2
   /// A preview just scanned, already in memory.
   func keep(_ image: CGImage, for url: URL) {
     lock.lock()
     defer { lock.unlock() }
-    (self.url, full, scaled) = (url, image, [:])
+    kept.removeAll { $0.url == url }
+    kept.insert((url, image, [:]), at: 0)
+    if kept.count > Self.size { kept.removeLast(kept.count - Self.size) }
   }
   func image(_ url: URL, maxDimension: Int? = nil) throws -> CGImage {
     lock.lock()
     defer { lock.unlock() }
-    if url != self.url { (self.url, full, scaled) = (url, nil, [:]) }
-    let image = try full ?? ImagePipeline.shared.loadDecoded(url)
-    full = image
+    var entry: (url: URL, full: CGImage, scaled: [Int: CGImage])
+    if let i = kept.firstIndex(where: { $0.url == url }) {
+      entry = kept.remove(at: i)
+    } else {
+      entry = (url, try ImagePipeline.shared.loadDecoded(url), [:])
+    }
+    defer {
+      kept.insert(entry, at: 0)
+      if kept.count > Self.size { kept.removeLast(kept.count - Self.size) }
+    }
+    let image = entry.full
     guard let maxDimension, maxDimension < max(image.width, image.height) else { return image }
-    if let copy = scaled[maxDimension] { return copy }
+    if let copy = entry.scaled[maxDimension] { return copy }
     let copy = ImagePipeline.shared.scaled(image, maxDimension: maxDimension)
-    scaled[maxDimension] = copy
+    entry.scaled[maxDimension] = copy
     return copy
   }
 }

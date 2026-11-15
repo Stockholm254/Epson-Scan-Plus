@@ -843,6 +843,9 @@ struct FilmFrame: Identifiable, Codable {
   /// system's RAW engine, which applies the camera's colour matrix). Nil in projects from before
   /// it was recorded, until the file is looked at.
   var sensorRead: Bool? = nil
+  /// Which of its roll's previews a scanned frame lies on (`DeskProject.previews`), each holder
+  /// load its own: nil or 0 the first, the project's own overview; 1 the next, and so on.
+  var preview: Int? = nil
   /// The copy light's crosstalk taken out of the picture as read, before anything is measured on
   /// it; nil keeps it as the sensor read it.
   var crosstalk: Crosstalk? = nil
@@ -1082,6 +1085,21 @@ struct DeskProject: Codable {
   var exports: [String: ExportStamp]? = nil
   /// Each frame's 快照 (by `FilmFrame.id`); nil, none.
   var snapshots: [String: [GradeSnapshot]]? = nil
+  /// The roll's previews after the first (its overview, above): one for every holder load added to
+  /// it (`FilmFrame.preview`); nil, the first only. Older versions open the first only.
+  var previews: [RollPreview]? = nil
+}
+
+/// One of a scanned roll's previews after the first: its file, named as the project names its
+/// other files, and how it was read.
+struct RollPreview: Codable, Equatable {
+  var path: String
+  var file: String? = nil
+  var dpi: Double
+  var widthMM: Double
+  var heightMM: Double
+  var backendID: String? = nil
+  var inputGamma: Double? = nil
 }
 
 /// A project names its files by absolute path, which older versions read, and relative to its

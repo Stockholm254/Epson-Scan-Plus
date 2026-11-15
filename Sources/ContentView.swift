@@ -109,6 +109,10 @@ struct ContentView: View {
             workspace.transition(.opacity)
           }
         }
+        // A preview just made: kept with the roll open, a new roll, or let go.
+        if m.page != .library, let decision = m.previewDecision {
+          PreviewDecisionBar(m: m, decision: decision).transition(.move(edge: .bottom).combined(with: .opacity))
+        }
         // The open roll's strip, under the modules that work on it; the library shows every roll.
         if m.page != .library { filmstrip.transition(.move(edge: .bottom).combined(with: .opacity)) }
         if m.page == .leak, m.leak.busy != nil { LeakStatus(lab: m.leak) }
@@ -127,6 +131,7 @@ struct ContentView: View {
         }
       }
       .animation(Liquid.flow, value: footerShown)
+      .animation(Liquid.flow, value: m.previewDecision)
       .inspector(isPresented: inspectorShown) {
         ZStack { if m.page == .leak { LeakPanel(m: m, lab: m.leak).transition(.opacity) } else { rightPanel.transition(.opacity) } }
           .inspectorColumnWidth(min: Preferences.rightWidths.lowerBound, ideal: m.preferences.rightWidth, max: Preferences.rightWidths.upperBound + 40)
@@ -616,7 +621,7 @@ struct ContentView: View {
             } label: {
               Label("预览", systemImage: "viewfinder")
             }.buttonStyle(KeyStyle(prominent: true)).controlSize(.large).disabled(m.isWorking)
-              .help("扫一张整幅预览（⇧⌘P）：找出片夹里的画面，再勾选要正式扫描的")
+              .help("扫一张整幅预览（⇧⌘P）：找出片夹里的画面，再勾选要正式扫描的。打开着有画面的一卷时，预览完在下面选加到这一卷（同一卷分几次放进片夹）、存成新的一卷或不保留")
           } else {
             Button {
               m.scanner.reconnect()

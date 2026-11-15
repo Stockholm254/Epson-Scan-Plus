@@ -75,6 +75,7 @@ extension AppModel {
     clearEdits()
     overview = nil
     overviewURL = nil
+    forgetPreviews()
     overviewBackendID = nil
     overviewInputGamma = 1
     pendingShift = []

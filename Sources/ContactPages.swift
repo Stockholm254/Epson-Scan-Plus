@@ -6,7 +6,9 @@ import CoreText
 /// is printed on a contact sheet, in strips of six, six strips to a page, and once a page is full
 /// the next one lies beyond it, a swipe to the right away.
 extension AppModel {
-  enum ContactPage: Equatable { case holder, sheet(Int) }
+  /// A holder's preview (a roll of several holder loads has one each, `RollPreviews.swift`), or a
+  /// page laid out of frames of files of their own.
+  enum ContactPage: Equatable { case holder(Int), sheet(Int) }
   static let sheetPerStrip = 6, sheetStrips = 6
   static var sheetPerPage: Int { sheetPerStrip * sheetStrips }
 
@@ -17,11 +19,16 @@ extension AppModel {
     for f in frames { if let path = f.sourcePath { shared[path, default: 0] += 1 } }
     return frames.filter { f in f.sourcePath.map { shared[$0] == 1 } ?? false }
   }
-  /// The holder's preview first when frames lie on it, then a page for every 36 frames of their own.
+  /// The holders' previews first when frames lie on them, one page each, then a page for every 36
+  /// frames of their own.
   var contactPages: [ContactPage] {
     var pages = [ContactPage]()
-    let own = sheetFrames.count
-    if own < frames.count || frames.isEmpty || scanner.previewSoFar != nil { pages.append(.holder) }
+    let sheet = sheetFrames, own = sheet.count
+    if own < frames.count || frames.isEmpty || previewShowing {
+      let ownIDs = Set(sheet.map(\.id))
+      let used = Set(frames.filter { !ownIDs.contains($0.id) }.map { previewIndex(of: $0) })
+      for k in 0..<max(1, previewCount) where used.contains(k) || k == activePreview || frames.isEmpty { pages.append(.holder(k)) }
+    }
     pages += (0..<((own + Self.sheetPerPage - 1) / Self.sheetPerPage)).map { ContactPage.sheet($0) }
     return pages
   }
@@ -43,7 +50,7 @@ extension AppModel {
   func contactPageIndex(of id: UUID) -> Int? {
     let pages = contactPages
     if let i = sheetFrames.firstIndex(where: { $0.id == id }) { return pages.firstIndex(of: .sheet(i / Self.sheetPerPage)) }
-    return frames.contains { $0.id == id } ? pages.firstIndex(of: .holder) : nil
+    return frames.first { $0.id == id }.flatMap { pages.firstIndex(of: .holder(previewIndex(of: $0))) }
   }
   /// Turns to page `index` of the light table, as a swipe or its keys do.
   func showContactPage(_ index: Int) {

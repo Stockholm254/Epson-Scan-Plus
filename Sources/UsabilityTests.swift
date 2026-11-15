@@ -133,11 +133,11 @@ enum UsabilityTests {
     try check(rescan?.scanned == 1 && rescan?.ticked == 3 && asked?.frames == 2,
       "scanning again asks about the frame already scanned at 2400 dpi, and plans the two left")
     (model.frames[0].scanPath, model.frames[0].scanDPI) = (nil, nil)
-    // A preview starts a new roll: asked first while one with frames is open.
-    var newRoll: Int?
-    model.confirmNewRoll = { newRoll = $0; return false }
+    // A preview over a roll with frames is asked about once it is made (`previewDecision`), not
+    // before: the roll as it was meanwhile (until 0.23.6 it asked first, a new roll the only way).
     model.requestPreview()
-    try check(newRoll == 3 && !model.scanner.busy && model.frames.count == 3, "a preview asks before it starts a new roll in place of the one open")
+    try check(model.frames.count == 3 && model.previewDecision == nil && model.pendingPreview == nil,
+      "a preview over a roll with frames starts without asking, the roll as it was until it is made")
     // The helper's English said in Chinese, a lid left open no fault of the connection.
     let lid = SaneScannerController.explained("start scan: Scanner cover is open")
     let io = SaneScannerController.explained("read scan data: Error during device I/O")

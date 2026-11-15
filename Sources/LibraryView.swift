@@ -74,6 +74,10 @@ struct LibraryPage: View {
   @Environment(\.colorScheme) private var scheme
   @AppStorage("libraryStacks") private var stacks = true
   @State private var renaming: RollEntry?
+  /// The roll others are to be merged into (`MergeSheet`), and a stack to merge into its newest.
+  @State private var merging: RollEntry?
+  @State private var mergingStack: (top: RollEntry, under: [RollEntry])?
+  @State private var mergeFailure: String?
   /// The roll asked to go to the Trash, until the user says yes.
   @State private var trashing: RollEntry?
   @State private var newName = ""
@@ -116,6 +120,30 @@ struct LibraryPage: View {
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .onAppear { shelf.reload(m.libraryRoots) }
+    .sheet(item: $merging) { target in
+      MergeSheet(m: m, target: target, candidates: AppModel.mergeCandidates(for: target, among: shelf.entries)) {
+        shelf.spread = nil
+        shelf.reload(m.libraryRoots)
+      }
+    }
+    .confirmationDialog(mergingStack.map { "把这一摞的 \($0.under.count + 1) 卷合并成「\($0.top.title)」一卷？" } ?? "",
+      isPresented: Binding(get: { mergingStack != nil }, set: { if !$0 { mergingStack = nil } })) {
+      Button("合并") {
+        guard let stack = mergingStack else { return }
+        do {
+          try m.mergeRolls(into: stack.top.project, from: stack.under.map(\.project))
+        } catch { mergeFailure = error.localizedDescription }
+        mergingStack = nil
+        shelf.spread = nil
+        shelf.reload(m.libraryRoots)
+      }
+      Button("取消", role: .cancel) { mergingStack = nil }
+    } message: {
+      Text("下面几卷的画面、预览和原图都并进最新的这一卷，它们的文件夹搬进这一卷的 Merged 文件夹里。合并不能用 ⌘Z 撤销。")
+    }
+    .alert("合并没有完成", isPresented: Binding(get: { mergeFailure != nil }, set: { if !$0 { mergeFailure = nil } })) {
+      Button("好") { mergeFailure = nil }
+    } message: { Text(mergeFailure ?? "") }
     .onChange(of: m.libraryURL) { shelf.reload(m.libraryRoots) }
     // Shown while a preview, a camera picture or an import makes or grows the open roll.
     .onChange(of: m.sessionURL) { shelf.reload(m.libraryRoots) }
@@ -255,7 +283,11 @@ struct LibraryPage: View {
                 newName = e.named ? e.title : ""
                 renaming = e
               },
-              trash: { trashing = e }
+              trash: { trashing = e },
+              merge: AppModel.mergeCandidates(for: e, among: shelf.entries).isEmpty ? nil : { merging = e },
+              mergeStack: under.count > 1 ? {
+                mergingStack = (e, under.dropFirst().compactMap { id in shelf.entries.first { $0.id == id } })
+              } : nil
             ) { m.openRoll(e, inBackground: true) }
           }
         }.padding(.horizontal, 28).padding(.vertical, 30)
@@ -297,6 +329,9 @@ struct RollSleeve: View {
   var spread: () -> Void = {}
   var rename: () -> Void = {}
   var trash: () -> Void = {}
+  /// 合并进这一卷…, and for a stack 合并这一摞: nil where there is nothing of its kind to merge.
+  var merge: (() -> Void)? = nil
+  var mergeStack: (() -> Void)? = nil
   let open: () -> Void
   @State private var pictures = [UUID: (image: CGImage, positive: Bool)]()
   /// A roll with no frames cut from its preview: the preview, small, in their place.
@@ -353,6 +388,8 @@ struct RollSleeve: View {
       Button("打开") { open() }
       Button("重命名…") { rename() }
       if stacked > 1 { Button("摊开同一批底片的 \(stacked) 卷") { spread() } }
+      if stacked > 1, let mergeStack { Button("合并这一摞的 \(stacked) 卷…") { mergeStack() } }
+      if let merge { Button("合并进这一卷…") { merge() } }
       Button("在 Finder 中显示") { NSWorkspace.shared.activateFileViewerSelecting([entry.folder]) }
       Divider()
       Button("移到废纸篓…", role: .destructive) { trash() }

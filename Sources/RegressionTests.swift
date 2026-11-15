@@ -69,6 +69,7 @@ enum RegressionTests {
     try PreviewExportTests.run(folder: folder)
     try SectionOrderTests.run(folder: folder)
     try CalibrationListTests.run(folder: folder)
+    try MultiPreviewTests.run(folder: folder)
     try TopLCDTests.run(folder: folder)
     try AppIconTests.run()
     let pipe = ImagePipeline.shared

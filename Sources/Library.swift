@@ -18,6 +18,8 @@ struct RollEntry: Identifiable, Equatable {
     let rect: NormalRect
     /// The frame's own file, for pictures imported one by one; nil for frames on the overview.
     let file: URL?
+    /// The preview it lies on, of a roll of several holder loads; nil for the first (`overview`).
+    var preview: URL? = nil
   }
   var id: String { project.path }
   let folder: URL
@@ -93,11 +95,15 @@ enum RollLibrary {
     let folder = projectURL.deletingLastPathComponent()
     let files = FileManager.default
     let overview = ProjectFiles.resolve(p.overviewPath, relative: p.overviewFile, in: folder)
+    // A roll of several holder loads: the previews after the first, its frames on each.
+    let previews = (p.previews ?? []).map { URL(fileURLWithPath: ProjectFiles.resolve($0.path, relative: $0.file, in: folder)) }
     let frames = p.frames.map { f -> RollEntry.Frame in
       let own = f.sourcePath.map { ProjectFiles.resolve($0, relative: f.sourceFile, in: folder) }
+      let k = f.sourcePath == nil ? (f.preview ?? 0) : 0
       return RollEntry.Frame(
         id: f.id, name: f.name, rect: f.rect,
-        file: own.flatMap { $0 == overview ? nil : URL(fileURLWithPath: $0) })
+        file: own.flatMap { $0 == overview ? nil : URL(fileURLWithPath: $0) },
+        preview: k > 0 && k <= previews.count ? previews[k - 1] : nil)
     }
     let modified = (try? projectURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
     let date = started(folder.lastPathComponent) ?? modified
@@ -179,6 +185,7 @@ enum RollLibrary {
     let cache = cacheFolder(for: entry.folder)
     var overview: CGImage?
     var loadedOverview = false
+    var morePreviews = [URL: CGImage]()
     for frame in entry.frames.prefix(limit) {
       let cached = cache.appendingPathComponent(frame.id.uuidString + ".jpg")
       if let src = CGImageSourceCreateWithURL(cached as CFURL, nil), let image = CGImageSourceCreateImageAtIndex(src, 0, nil) {
@@ -188,6 +195,9 @@ enum RollLibrary {
       let picture: CGImage?
       if let file = frame.file {
         picture = thumbnail(file, maxPixels: maxPixels * 3)
+      } else if let other = frame.preview {
+        if morePreviews[other] == nil { morePreviews[other] = thumbnail(other, maxPixels: 1600) }
+        picture = morePreviews[other]
       } else {
         if !loadedOverview {
           overview = entry.overview.flatMap { thumbnail($0, maxPixels: 1600) }

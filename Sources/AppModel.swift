@@ -120,7 +120,8 @@ final class AppModel: ObservableObject {
     }
   }
   /// The scanner's preview shows on the light table as it is read.
-  var previewShowing: Bool { scanner.previewSoFar != nil }
+  /// A preview being read, or one made and not yet kept: the light table shows it, nothing else.
+  var previewShowing: Bool { scanner.previewSoFar != nil || pendingPreview != nil }
   @Published var showNegative = false
   @Published var tool = CanvasTool.select
   @Published var format = FilmFormat.auto { didSet { if format != oldValue { stampFilmEdges() } } }
@@ -231,7 +232,7 @@ final class AppModel: ObservableObject {
   /// The exports running, frame by frame, for the status line's bar and the strip's marks.
   @Published private(set) var exportProgress = ExportProgress()
   /// What each frame was last exported with, saved with the roll.
-  @Published private(set) var exportStamps = [UUID: ExportStamp]()
+  @Published var exportStamps = [UUID: ExportStamp]()
   /// Each frame's 快照 (`GradeSnapshot`), kept with the roll.
   @Published var gradeSnapshots = [UUID: [GradeSnapshot]]()
   /// One for each export running: 停止 sets them all.
@@ -325,9 +326,41 @@ final class AppModel: ObservableObject {
   private(set) var samplingInput: CGImage?
   private var editRegionLock: NormalRect?
   var overviewURL: URL?
-  private let overviewCache = OverviewCache()
+  let overviewCache = OverviewCache()
   var overviewBackendID: String?
   var overviewInputGamma: Double?
+  /// The roll's previews, one for every holder load (`RollPreviews.swift`): the first the project's
+  /// overview. The one on the light table (`activePreview`) is the one the overview's properties
+  /// above are; the others as they were when it last was. Empty for a roll of files of their own.
+  var previews = [Preview]()
+  var activePreview = 0
+  /// Previews' copies at most 2200 pixels across, by index, as `overview` is the shown one's.
+  var previewCopies = [Int: CGImage]()
+  /// The preview whose holder is on the scanner: the last made, else (a roll opened) its last.
+  var loadedPreview: Int?
+  /// A preview made over a roll with frames, waiting for 加到这一卷 / 存成新的一卷 / 不保留.
+  @Published var pendingPreview: PendingPreview?
+  /// What the bar under the light table asks of the preview just made, while it asks.
+  @Published var previewDecision: PreviewDecision?
+  /// A roll folder let go (`discardNewRoll`): into the Trash. Tests take it away themselves.
+  var discardRollFolder: (URL) -> Void = { try? FileManager.default.trashItem(at: $0, resultingItemURL: nil) }
+  /// Frames to scan of a roll of several previews, some not on the holder on the scanner: scan only
+  /// those that are, the holder put back, or none. Tests answer for the user.
+  var askPutBack: (_ off: Int, _ others: [Int], _ loaded: Int, _ on: Int) -> PutBackChoice = { off, others, loaded, on in
+    let alert = NSAlert()
+    let where_ = others.map { "第 \($0 + 1) 次" }.joined(separator: "、")
+    alert.messageText = "有 \(off) 张在\(where_)预览的片夹上"
+    alert.informativeText = "扫描仪上现在是第 \(loaded + 1) 次预览的那一条。要扫\(where_)的，先把那一条放回片夹，放的位置和预览时一样。"
+    if others.count == 1 { alert.addButton(withTitle: "已放回第 \(others[0] + 1) 次的那一条，扫描") }
+    if on > 0 { alert.addButton(withTitle: "只扫扫描仪上的 \(on) 张") }
+    alert.addButton(withTitle: "取消")
+    let answer = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+    var choices = [PutBackChoice]()
+    if others.count == 1 { choices.append(.putBack) }
+    if on > 0 { choices.append(.onScanner) }
+    choices.append(.cancel)
+    return choices.indices.contains(answer) ? choices[answer] : .cancel
+  }
   /// The pass under way, and the box it covers in the overview.
   private var currentScan: [UUID]?
   private var currentScanRect: NormalRect?
@@ -1043,8 +1076,11 @@ final class AppModel: ObservableObject {
   /// The frames on the light table's page shown: laid out from their own files, or on the holder.
   var contactFrames: [FilmFrame] {
     if onSheetPage { return sheetPageFrames }
+    // A preview not yet kept has no frames on it.
+    if pendingPreview != nil { return [] }
     let own = Set(sheetFrames.map(\.id))
-    return frames.filter { !own.contains($0.id) }
+    // A roll of several previews: those on the one shown.
+    return frames.filter { !own.contains($0.id) && previewIndex(of: $0) == activePreview }
   }
   init(libraryURL: URL, scanner: ScannerController = ScannerController(), preferences: Preferences = Preferences()) {
     self.libraryURL = libraryURL
@@ -1335,6 +1371,7 @@ final class AppModel: ObservableObject {
     overviewURL = nil
     overviewBackendID = nil
     overviewInputGamma = 1
+    forgetPreviews()
     pendingShift = []
     startsAsSlides = nil
     // A new roll is a negative until said otherwise, whatever the last one was.
@@ -1356,9 +1393,11 @@ final class AppModel: ObservableObject {
   }
   func requestPreview() {
     guard !isWorking else { return }
-    // A preview is a new roll: the one open, with its frames, asked about first (⇧⌘P works from
-    // ② and ③, a key away from ⇧⌘S). It stays in the library either way.
-    if !frames.isEmpty, !confirmNewRoll(frames.count) { return }
+    // Over a roll with frames, the preview is asked about once it is made (`previewDecision`): added
+    // to the roll as its next holder load, a new roll, or let go; until 0.23.6 it was always a new
+    // roll, asked about first. A preview not yet kept gives way to the new one.
+    pendingPreview = nil
+    previewDecision = nil
     cancelRequested = false
     // From the library (⇧⌘P), the preview comes in on ①'s light table.
     if page == .library { page = .capture }
@@ -1368,7 +1407,27 @@ final class AppModel: ObservableObject {
     scanner.preview()
   }
   func receiveOverview(_ cg: CGImage, size: CGSize, dpi: Double) {
+    // Over a roll with frames on a holder: shown, and asked about (`addPendingPreview`,
+    // `pendingAsNewRoll`, `discardPendingPreview`).
+    if canAddPreview {
+      saveProject()
+      pendingPreview = PendingPreview(
+        image: cg, working: overviewWorkingCopy(ImagePipeline.shared.scaled(cg, maxDimension: 2200), backend: scanner.backendID),
+        mm: size, dpi: dpi, backend: scanner.backendID, inputGamma: scanner.captureInputGamma)
+      previewDecision = .addOrNew
+      singleView = false
+      showNegative = false
+      status = "预览好了：加到这一卷、存成新的一卷，还是不保留？"
+      refresh()
+      return
+    }
+    beginRoll(with: cg, size: size, dpi: dpi)
+    if sessionURL != nil { previewDecision = .keepNew }
+  }
+  /// A new roll begun by a preview: its overview, its frames found on it.
+  func beginRoll(with cg: CGImage, size: CGSize, dpi: Double) {
     do {
+      forgetPreviews()
       sessionURL = nil
       frames = []
       thumbnails = [:]
@@ -1396,6 +1455,8 @@ final class AppModel: ObservableObject {
       overviewDPI = dpi
       overviewBackendID = scanner.backendID
       overviewInputGamma = scanner.captureInputGamma
+      previews = shownPreview.map { [$0] } ?? []
+      loadedPreview = 0
       singleView = false
       showNegative = false
       sourceSummary = "透扫预览 · \(Int(dpi)) dpi"
@@ -1408,7 +1469,9 @@ final class AppModel: ObservableObject {
   func detectFrames(reversal: Bool? = nil) {
     guard let overview, !isWorking else { return }
     let reversal = reversal ?? reversalRoll
-    if frames.contains(where: { $0.hasFullResolution }) {
+    // A roll of several previews: only the frames of the one shown are found again.
+    let several = previewCount > 1, holderShown = activePreview
+    if frames.contains(where: { $0.hasFullResolution && (!several || previewIndex(of: $0) == holderShown) }) {
       let a = NSAlert()
       a.messageText = "重新识别画面？"
       a.informativeText = "当前裁切和逐张调整将被替换，原始文件仍保留在工程文件夹中。"
@@ -1442,7 +1505,26 @@ final class AppModel: ObservableObject {
       }
       DispatchQueue.main.async {
         self.clearEdits()
-        self.frames = found
+        if several {
+          // The other previews' frames stay; this one's are numbered on from those of the previews
+          // before it, and lie between them and those after.
+          let onHolder = { (f: FilmFrame) in f.sourcePath == nil }
+          let before = self.frames.filter { onHolder($0) && self.previewIndex(of: $0) < holderShown }
+          let after = self.frames.filter { !onHolder($0) || self.previewIndex(of: $0) > holderShown }
+          var next = (before.compactMap { Int($0.name) }.max() ?? 0) + 1
+          for i in found.indices {
+            found[i].preview = holderShown == 0 ? nil : holderShown
+            if holderShown > 0 {
+              found[i].name = String(format: "%02d", next)
+              next += 1
+            }
+          }
+          var all = before + found + after
+          Self.renumberRepeats(&all)
+          self.frames = all
+        } else {
+          self.frames = found
+        }
         self.selectedID = found.first?.id
         self.detectingFrames = false
         self.tool = .select
@@ -1579,6 +1661,9 @@ final class AppModel: ObservableObject {
       f.sourcePath = path
       f.scanDPI = selected.scanDPI
       f.sourceBits = selected.sourceBits
+    } else if activePreview > 0 {
+      // Drawn on the preview shown, of a roll of several.
+      f.preview = activePreview
     }
     frames.append(f)
     selectedID = f.id
@@ -2083,14 +2168,17 @@ final class AppModel: ObservableObject {
   /// A base picked once and shared with the roll stays as it is, and reaches the frames of its
   /// roll that came after it.
   func updateRollBase() {
-    if let overview {
+    // Each preview's frames, by that preview: a roll of several holder loads has one each.
+    for k in 0..<max(1, previewCount) {
+      guard let picture = workingCopy(k), let p = preview(k) else { continue }
       // A picture with the copy light's crosstalk taken out no longer reads as the overview does.
       let onOverview = frames.indices.filter {
         frames[$0].adjustments.rollBasePicked != true && frames[$0].crosstalk == nil
-          && (frames[$0].sourcePath == nil ? overviewBackendID == "epson2-linear-v1" : frames[$0].sourcePath == overviewURL?.path)
+          && (frames[$0].sourcePath == nil ? previewIndex(of: frames[$0]) == k && p.backend == "epson2-linear-v1"
+            : k == 0 && frames[$0].sourcePath == overviewURL?.path)
       }
       if !onOverview.isEmpty {
-        let base = ImagePipeline.shared.rollBase(overview, frames: onOverview.map { frames[$0] })
+        let base = ImagePipeline.shared.rollBase(picture, frames: onOverview.map { frames[$0] })
         for i in onOverview { frames[i].adjustments.rollBase = base }
       }
     }
@@ -3466,7 +3554,7 @@ final class AppModel: ObservableObject {
   /// Points clicked on the selected frame, in 0–1 of its raw image, in `IT8Layout.marks` order.
   @Published var it8Marks = [CGPoint]()
   /// The overview as statistics and the contact view use it: a 48-bit preview loses its stray light.
-  private func overviewWorkingCopy(_ image: CGImage, backend: String?) -> CGImage {
+  func overviewWorkingCopy(_ image: CGImage, backend: String?) -> CGImage {
     guard backend == "epson2-linear-v1", preferences.removeFlare, let offset = preferences.scannerCalibration?.offset else { return image }
     return ImagePipeline.shared.removingFlare(offset, from: image)
   }
@@ -3564,11 +3652,11 @@ final class AppModel: ObservableObject {
   /// Whether a frame's scan can be put on its preview's scale: this app's linear scans, against
   /// a 48-bit preview of the same holder.
   func canRegister(_ frame: FilmFrame) -> Bool {
-    Self.readsScan(frame) && overviewBackendID == "epson2-linear-v1" && frame.adjustments.inputGamma == 1 && overviewURL != nil
+    Self.readsScan(frame) && preview(previewIndex(of: frame))?.backend == "epson2-linear-v1" && frame.adjustments.inputGamma == 1
   }
   /// Measures a scan against the preview; `unmeasured` when its levels cannot be told apart.
   func measureLevels(_ frame: FilmFrame) -> LevelRegistration? {
-    guard canRegister(frame), let path = frame.scanPath, let url = overviewURL,
+    guard canRegister(frame), let path = frame.scanPath, let url = previewURL(of: frame),
       let scan = try? ImagePipeline.shared.loadDecoded(URL(fileURLWithPath: path)), let preview = try? overviewCache.image(url)
     else { return nil }
     return LevelRegistration.measure(scan: scan, footprint: frame.captureRect, preview: preview, region: frame.rect) ?? .unmeasured
@@ -3671,7 +3759,7 @@ final class AppModel: ObservableObject {
       let image = try load(URL(fileURLWithPath: path), maxDimension: full ? nil : maxDimension ?? 3000, crosstalk: frame.crosstalk, flat: frame.flatField)
       return try ImagePipeline.shared.crop(image, rect: frame.rect)
     }
-    guard let url = overviewURL else { throw DeskError.message("尚无图像。") }
+    guard let url = previewURL(of: frame) else { throw DeskError.message("尚无图像。") }
     // Cropped from the full resolution first, so each frame keeps all of a 600 dpi preview.
     let crop = try ImagePipeline.shared.crop(overviewCache.image(url), rect: frame.rect)
     let limit = full ? nil : maxDimension ?? 2200
@@ -3687,7 +3775,7 @@ final class AppModel: ObservableObject {
     if let path = frame.sourcePath {
       return pipe.headerSize(URL(fileURLWithPath: path)).map { frame.rect.pixels($0).size }
     }
-    return overviewURL.flatMap(pipe.headerSize).map { frame.rect.pixels($0).size }
+    return previewURL(of: frame).flatMap(pipe.headerSize).map { frame.rect.pixels($0).size }
   }
   func contextSource(for frame: FilmFrame) throws -> (image: CGImage, region: NormalRect) {
     let pipe = ImagePipeline.shared
@@ -3698,7 +3786,7 @@ final class AppModel: ObservableObject {
       let scan = try load(URL(fileURLWithPath: path), maxDimension: 3000)
       return (corrected(scan, frame, scan: true), frame.captureRect)
     }
-    guard let url = overviewURL else { throw DeskError.message("尚无图像。") }
+    guard let url = previewURL(of: frame) else { throw DeskError.message("尚无图像。") }
     let region = editRegionLock ?? frame.rect.expanded(by: 0.14)
     let context = pipe.scaled(try pipe.crop(overviewCache.image(url), rect: region), maxDimension: 3000)
     return (flareOffset(frame).map { pipe.removingFlare($0, from: context) } ?? context, region)
@@ -3950,6 +4038,8 @@ final class AppModel: ObservableObject {
       updateThumbnails()
     }
     resolveAutoNeutrals()
+    // A roll of several previews: the one of the page or the frame shown.
+    followPreview()
     revision += 1
     let token = revision
     wantedLock.lock()
@@ -3965,6 +4055,12 @@ final class AppModel: ObservableObject {
       toneRange = nil
       // The curves' histograms, from the selected frame's positive as the filmstrip has it.
       if let picture = selected.flatMap({ thumbnails[$0.id] }) { tableHistograms(of: picture) }
+      // A preview not yet kept, as it was read, with nothing on it.
+      if let pending = pendingPreview {
+        displayed = pending.working
+        rendering = false
+        return
+      }
       // Frames of their own files (a camera's, imports) on a page laid out as a contact sheet:
       // positives from the film strip's, negatives read small from their files.
       if onSheetPage {
@@ -4015,7 +4111,9 @@ final class AppModel: ObservableObject {
         return
       }
       // Frames that lie on the displayed overview; imports from other files are not on it.
-      let onOverview = frames.filter { $0.sourcePath == nil || $0.sourcePath == overviewURL?.path }.map(asShown)
+      let onOverview = frames.filter {
+        $0.sourcePath == nil ? previewIndex(of: $0) == activePreview : $0.sourcePath == overviewURL?.path
+      }.map(asShown)
       guard !showsNegative, let overview, !onOverview.isEmpty else {
         displayed = overview
         rendering = false
@@ -4025,7 +4123,7 @@ final class AppModel: ObservableObject {
       // selected, or the single frame left), where it was printed again each time, a second for 18.
       // Upright and unstraightened, as `contactPrint` prints them: turning the roll on the table
       // turns the table, not the print, which was printed again each time all the same.
-      let key = "print \(contactPage) \(ObjectIdentifier(overview).hashValue)|" + onOverview.map { f -> String in
+      let key = "print \(contactPage) \(activePreview) \(ObjectIdentifier(overview).hashValue)|" + onOverview.map { f -> String in
         var upright = f
         upright.adjustments = f.adjustments.unfaced
         upright.adjustments.angle = nil
@@ -4232,8 +4330,10 @@ final class AppModel: ObservableObject {
     let frameKey = (try? encoder.encode(f)).map { String(decoding: $0, as: UTF8.self) } ?? UUID().uuidString
     let profileKey = (try? encoder.encode(conversionProfile)).map { String(decoding: $0, as: UTF8.self) } ?? UUID().uuidString
     let flare = flareOffset(frame).map { "\($0.values)" } ?? "-"
-    let preview = overview.map { "\(ObjectIdentifier($0).hashValue)" } ?? "-"
-    return [frameKey, flat, profileKey, flare, overviewURL?.path ?? "-", preview].joined(separator: "|")
+    // The preview the frame lies on, and its copy as read: of a roll of several, its own.
+    let k = previewIndex(of: frame)
+    let copy = (k == activePreview ? overview : previewCopies[k]).map { "\(ObjectIdentifier($0).hashValue)" } ?? "-"
+    return [frameKey, flat, profileKey, flare, previewURL(of: frame)?.path ?? "-", copy].joined(separator: "|")
   }
   private var singleWaiting: Bool {
     wantedLock.lock()
@@ -5160,16 +5260,6 @@ final class AppModel: ObservableObject {
     }
     scanSelected()
   }
-  /// Asks before a preview replaces the roll open (`count` frames) with a new one; true previews.
-  /// Tests answer for the user.
-  var confirmNewRoll: (Int) -> Bool = { count in
-    let alert = NSAlert()
-    alert.messageText = "预览会开始新的一卷"
-    alert.informativeText = "现在打开的这一卷（\(count) 张）和它的扫描、调色都留在库里，随时可以再打开。"
-    alert.addButton(withTitle: "预览新的一卷")
-    alert.addButton(withTitle: "取消")
-    return alert.runModal() == .alertFirstButtonReturn
-  }
   /// Some of the frames ticked already scanned at this resolution: scan the rest, all again, or
   /// none. Tests answer for the user.
   enum RescanChoice { case rest, all, none }
@@ -5242,8 +5332,16 @@ final class AppModel: ObservableObject {
   /// `dpi` overrides the selected resolution for this batch only.
   private func startScanBatch(_ ids: [UUID], dpi batchDPI: Int? = nil) {
     guard !ids.isEmpty else { return }
+    // A preview not yet kept is of the holder on the scanner now, not of the frames.
+    guard pendingPreview == nil else {
+      errorText = "先决定刚才的预览：加到这一卷、存成新的一卷，还是不保留。"
+      return
+    }
+    // A roll of several previews: only frames of the holder on the scanner, or of one put back.
+    guard let ids = scannableOnHolder(ids) else { return }
+    previewDecision = nil
     if scanner.backendID == "epson2-linear-v1" && overviewBackendID != scanner.backendID {
-      errorText = "使用 48-bit 接口前请重新预览，建立匹配的扫描坐标与线性片基。重新预览会创建新工程，旧工程和原图仍保留。"
+      errorText = "使用 48-bit 接口前请重新预览，建立匹配的扫描坐标与线性片基。预览完在下面选「存成新的一卷」，旧工程和原图仍保留。"
       return
     }
     self.batchDPI = batchDPI
@@ -5519,6 +5617,7 @@ final class AppModel: ObservableObject {
         if startsAsSlides == true { f.adjustments.setReversal(true) } else if monochromeRoll { f.adjustments.setMonochrome(true) }
         frames.append(f)
         if idx == 0 {
+          forgetPreviews()
           overviewURL = dest
           overview = try ImagePipeline.shared.load(dest, maxDimension: 2200)
           overviewDPI = info.dpi > 0 ? info.dpi : Double(dpi)
@@ -5783,7 +5882,7 @@ final class AppModel: ObservableObject {
       crop = f.rect.pixels(filePixels(path)).size
     } else if let path = f.scanPath, f.hasFullResolution {
       crop = f.rect.relative(to: f.captureRect).pixels(filePixels(path)).size
-    } else if let overview = overviewURL {
+    } else if let overview = previewURL(of: f) {
       crop = f.rect.pixels(filePixels(overview.path)).size
     } else { return nil }
     guard crop.width > 0, crop.height > 0 else { return nil }
@@ -6147,7 +6246,8 @@ final class AppModel: ObservableObject {
   func saveProject() {
     pendingSave?.cancel()
     pendingSave = nil
-    guard !readOnly, let root = sessionURL, let overviewURL else { return }
+    guard !readOnly, let root = sessionURL, let first = preview(0) ?? shownPreview else { return }
+    let overviewURL = first.url
     var saved = frames
     var stripped = false
     for i in saved.indices {
@@ -6160,11 +6260,13 @@ final class AppModel: ObservableObject {
         stripped = true
       }
     }
+    // The first preview is the project's overview, as a roll of one has it; the rest follow it.
     var project = DeskProject(
-      overviewPath: overviewURL.path, overviewDPI: overviewDPI, physicalWidthMM: physicalMM.width,
-      physicalHeightMM: physicalMM.height, filmName: filmName, profile: profile, scanDPI: dpi,
-      frames: saved, scanBackendID: overviewBackendID, overviewInputGamma: overviewInputGamma)
+      overviewPath: overviewURL.path, overviewDPI: first.dpi, physicalWidthMM: first.mm.width,
+      physicalHeightMM: first.mm.height, filmName: filmName, profile: profile, scanDPI: dpi,
+      frames: saved, scanBackendID: first.backend, overviewInputGamma: first.inputGamma)
     project.overviewFile = ProjectFiles.relative(overviewURL.path, to: root)
+    project.previews = savedPreviews(in: root)
     let name = rollName.trimmingCharacters(in: .whitespacesAndNewlines)
     project.rollName = name.isEmpty ? nil : name
     project.notes = rollNotes.isEmpty ? nil : rollNotes
@@ -6248,6 +6350,8 @@ final class AppModel: ObservableObject {
     var project: DeskProject
     var overviewPath: String
     var overview: CGImage
+    /// The previews after the first, and their copies as read.
+    var previews: [(Preview, CGImage?)] = []
   }
   /// Reads a project's file and its preview; touches nothing of the model, so it may run off the
   /// main thread.
@@ -6260,7 +6364,16 @@ final class AppModel: ObservableObject {
     let overviewPath = ProjectFiles.resolve(p.overviewPath, relative: p.overviewFile, in: folder)
     var cg = try ImagePipeline.shared.load(URL(fileURLWithPath: overviewPath), maxDimension: 2200)
     if p.scanBackendID == "epson2-linear-v1", let flare { cg = ImagePipeline.shared.removingFlare(flare, from: cg) }
-    return ReadProject(project: p, overviewPath: overviewPath, overview: cg)
+    // The previews after the first, found where the folder is now; a missing one is left out of
+    // the copies, its frames read from their scans.
+    let more = (p.previews ?? []).map { r -> (Preview, CGImage?) in
+      let path = ProjectFiles.resolve(r.path, relative: r.file, in: folder)
+      var copy = try? ImagePipeline.shared.load(URL(fileURLWithPath: path), maxDimension: 2200)
+      if r.backendID == "epson2-linear-v1", let flare, let c = copy { copy = ImagePipeline.shared.removingFlare(flare, from: c) }
+      return (Preview(url: URL(fileURLWithPath: path), dpi: r.dpi, mm: CGSize(width: r.widthMM, height: r.heightMM), backend: r.backendID,
+        inputGamma: r.inputGamma), copy)
+    }
+    return ReadProject(project: p, overviewPath: overviewPath, overview: cg, previews: more)
   }
   func loadProject(_ url: URL) {
     do {
@@ -6340,6 +6453,15 @@ final class AppModel: ObservableObject {
     overviewBackendID = p.scanBackendID
     overviewInputGamma = p.overviewInputGamma
     physicalMM = CGSize(width: p.physicalWidthMM, height: p.physicalHeightMM)
+    // Its previews, the first shown; the holder on the scanner is not known, so taken as the last.
+    forgetPreviews()
+    if !read.previews.isEmpty, let first = shownPreview {
+      previews = [first] + read.previews.map { $0.0 }
+      for (i, more) in read.previews.enumerated() { if let copy = more.1 { previewCopies[i + 1] = copy } }
+    } else if let first = shownPreview {
+      previews = [first]
+    }
+    contactPage = 0
     selectedID = frames.first?.id
     // A roll opens on its first frame alone; one with none yet, on the light table.
     singleView = Self.opensRollsSingle && !frames.isEmpty
