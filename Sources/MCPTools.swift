@@ -765,7 +765,8 @@ enum MCPTools {
         for dy in -3...3 { for dx in -3...3 { let v = s.pixel(x + dx, y + dy).values; for c in 0..<3 { sum[c] += v[c] } } }
         let crop = frame.rect
         return NeutralPoint(frame: frame.id, value: RGB(sum.map { $0 / 49 }), base: base, gamma: frame.adjustments.inputGamma,
-          at: CGPoint(x: crop.x + raw.x * crop.width, y: crop.y + raw.y * crop.height))
+          at: CGPoint(x: crop.x + raw.x * crop.width, y: crop.y + raw.y * crop.height),
+          reading: PointReading(crosstalk: frame.crosstalk, flatID: frame.flatID))
       }
       onMain { model.calibrationPoints += added }
       // A base only estimated from the frame's clearest film leans the points by how much denser it is.

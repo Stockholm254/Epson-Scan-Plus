@@ -1684,7 +1684,6 @@ final class AppModel: ObservableObject {
       if calibrationPoints.isEmpty, resumableCalibration != nil { resumeCalibration() }
       guard !calibrationPoints.isEmpty else { return }
       calibrationPoints.removeLast()
-      calibrateAsPicked()
       status = "已撤回一个中性点 · 还有 \(calibrationPoints.count) 个"
     default: removeSelected()
     }
@@ -3375,7 +3374,7 @@ final class AppModel: ObservableObject {
     return (profile.spots ?? []).compactMap { s in
       guard let value = s.value, let base = s.base else { return nil }
       return NeutralPoint(frame: s.frame, value: value, base: base, gamma: s.gamma ?? 1, at: CGPoint(x: s.x, y: s.y),
-        name: frames.first { $0.id == s.frame }?.name ?? s.name)
+        name: frames.first { $0.id == s.frame }?.name ?? s.name, reading: s.reading)
     }
   }
   /// Their line, fitted as the preset was.
@@ -3384,34 +3383,56 @@ final class AppModel: ObservableObject {
   }
   /// Solves this scanner's preset for the current film from the picked neutral points, keeps it
   /// and applies it to the project. The current preset supplies the film and the green slope.
-  /// The preset made again from the points as they stand, once they are enough (two, 0.3 D
-  /// apart): after each one picked on the picture or taken out, the picker kept.
-  func calibrateAsPicked() {
-    let greens = calibrationPoints.map { $0.density[1] }
-    // Three at least: two always lie on a line, so a point on something not neutral would make
-    // the preset wrong with nothing to show it (until 0.22.4 two made it).
-    guard calibrationPoints.count >= 3, (greens.max() ?? 0) - (greens.min() ?? 0) >= FilmCalibration.minimumSpan else { return }
-    makeScannerPreset(keepPicking: true)
+  /// The points as their frames read now, for making the preset: each one's reading moved from the
+  /// crosstalk and flat field it came through to its frame's (`relit`, as a change of crosstalk moves
+  /// a picked base), and its base the one the frame converts with now. Picked over a while, with the
+  /// base picked again or the light calibrated anew between, they are all read one way (the user's
+  /// call, 2026-11-14). A point on a frame not in this roll, or whose flat field is gone, stays as
+  /// it was read; `kept` counts them.
+  func uniformPoints(_ points: [NeutralPoint]) -> (points: [NeutralPoint], kept: Int) {
+    var bases = [UUID: RGB](), kept = 0
+    let out = points.map { p -> NeutralPoint in
+      guard let f = frames.first(where: { $0.id == p.frame }) else { kept += 1; return p }
+      var q = p
+      if let r = p.reading, let at = p.at, r.crosstalk != f.crosstalk || r.flatID != f.flatID {
+        let from = resolvedFlat(r.flatID, crosstalk: r.crosstalk)
+        if r.flatID == nil || r.flatID == Self.noFlat || from != nil {
+          q.value = Self.relit(p.value, at: at, from: (r.crosstalk, from), to: (f.crosstalk, f.flatField))
+          q.reading = PointReading(crosstalk: f.crosstalk, flatID: f.flatID)
+        } else {
+          kept += 1
+          return p
+        }
+      }
+      if bases[f.id] == nil, let small = try? source(for: f, maxDimension: 600) {
+        bases[f.id] = ImagePipeline.shared.analyze(small, settings: f.adjustments, profile: profile).base
+      }
+      if let base = bases[f.id] { q.base = base }
+      return q
+    }
+    return (out, kept)
   }
   /// `keepPicking`: made as points are picked, the picker stays on for the next.
   func makeScannerPreset(keepPicking: Bool = false) {
     do {
       let measured = calibrationMeasured
-      let fit = try FilmCalibration.fit(calibrationPoints, greenSlope: profile.slopes.g, curve: measured ? profile.dataSheetToe : nil)
+      // All read one way: as their frames read now.
+      let (points, kept) = uniformPoints(calibrationPoints)
+      let fit = try FilmCalibration.fit(points, greenSlope: profile.slopes.g, curve: measured ? profile.dataSheetToe : nil)
       let copy = copyStandRoll
       // How the points' frames were read: the slopes hold for that reading.
-      let readings = Set(calibrationPoints.compactMap { p in frames.first { $0.id == p.frame }.map { $0.crosstalk != nil } })
+      let readings = Set(points.compactMap { p in frames.first { $0.id == p.frame }.map { $0.crosstalk != nil } })
       // Where they were picked and what was read there, kept with the preset: marked on their
       // frames, and taken up again to add points to (`resumeCalibration`).
-      let spots = calibrationPoints.compactMap { p in
+      let spots = points.compactMap { p in
         p.at.map { at in
           CalibrationSpot(
             frame: p.frame, name: frames.first { $0.id == p.frame }?.name ?? p.name ?? "?", x: at.x, y: at.y,
-            value: p.value, base: p.base, gamma: p.gamma)
+            value: p.value, base: p.base, gamma: p.gamma, reading: p.reading)
         }
       }
       let made = FilmCalibration.profile(
-        from: fit, basedOn: profile, points: calibrationPoints.count,
+        from: fit, basedOn: profile, points: points.count,
         scanner: copy ? (camera.model.isEmpty ? "A7R IV" : camera.model) : scanner.name, copyStand: copy,
         unmixed: readings.count == 1 ? readings.first : nil, spots: spots.isEmpty ? nil : spots, batch: copy ? copyBatch : nil,
         named: calibrationName)
@@ -3439,6 +3460,7 @@ final class AppModel: ObservableObject {
         format: "%@ · R %.3f · G %.3f · B %.3f · 残差 %.3f D",
         before.map { "已更新预设「\(made.name)」，替换了\($0)那一个（用过它的卷各自留着副本）" } ?? "已生成预设「\(made.name)」",
         fit.slopes.r, fit.slopes.g, fit.slopes.b, fit.residual)
+        + (kept > 0 ? " · \(kept) 个点在别的卷上或平场已不在，按取点时的读数算" : "")
     } catch { errorText = error.localizedDescription }
   }
   /// The points picked cleared, or, with none, the preset's own let go: calibrating starts from
@@ -3457,8 +3479,7 @@ final class AppModel: ObservableObject {
     if calibrationPoints.isEmpty, resumableCalibration != nil { resumeCalibration() }
     guard calibrationPoints.indices.contains(i) else { return }
     calibrationPoints.remove(at: i)
-    status = "去掉了中性点 \(i + 1)，还有 \(calibrationPoints.count) 个"
-    calibrateAsPicked()
+    status = "去掉了中性点 \(i + 1)，还有 \(calibrationPoints.count) 个 · 点「完成取点」重新生成"
   }
   /// The neutral points as the calibration panel lists them: those being picked, else those the
   /// preset in use was made from; with each one's frame, its green density above the base, and
@@ -3523,7 +3544,8 @@ final class AppModel: ObservableObject {
     for s in spots {
       let at = CGPoint(x: s.x, y: s.y)
       if let value = s.value, let base = s.base {
-        points.append(NeutralPoint(frame: s.frame, value: value, base: base, gamma: s.gamma ?? 1, at: at, name: frames.first { $0.id == s.frame }?.name ?? s.name))
+        points.append(NeutralPoint(frame: s.frame, value: value, base: base, gamma: s.gamma ?? 1, at: at, name: frames.first { $0.id == s.frame }?.name ?? s.name,
+          reading: s.reading))
         continue
       }
       guard let frame = frames.first(where: { $0.id == s.frame }) else { missing += 1; continue }
@@ -3549,14 +3571,15 @@ final class AppModel: ObservableObject {
         }
       }
       points.append(NeutralPoint(
-        frame: frame.id, value: RGB(sum.map { $0 / n }), base: base, gamma: frame.adjustments.inputGamma, at: at, name: frame.name))
+        frame: frame.id, value: RGB(sum.map { $0 / n }), base: base, gamma: frame.adjustments.inputGamma, at: at, name: frame.name,
+        reading: PointReading(crosstalk: frame.crosstalk, flatID: frame.flatID)))
     }
     calibrationPoints = points
     resumedCalibration = points.isEmpty ? nil : profile.id
     showCalibrationPoints = true
     status = "接着「\(profile.name)」标定：已取 \(points.count) 个中性点"
       + (missing > 0 ? " · 另有 \(missing) 个在别的卷或画面外，读不回来，没有算进去" : "")
-      + " · 再点选中性灰加点，然后重新生成"
+      + " · 再点选中性灰加点，然后点「完成取点」重新生成"
   }
 
   // MARK: Scanner calibration (IT8)
@@ -5002,7 +5025,8 @@ final class AppModel: ObservableObject {
         frame: frames[i].id, value: color,
         base: analysis.base,
         gamma: frames[i].adjustments.inputGamma,
-        at: CGPoint(x: crop.x + pt.x * crop.width, y: crop.y + pt.y * crop.height), name: frames[i].name)
+        at: CGPoint(x: crop.x + pt.x * crop.width, y: crop.y + pt.y * crop.height), name: frames[i].name,
+        reading: PointReading(crosstalk: frames[i].crosstalk, flatID: frames[i].flatID))
       // Added to the calibration in use, made here: its points first.
       if calibrationPoints.isEmpty, resumableCalibration != nil { resumeCalibration() }
       calibrationPoints.append(point)
@@ -5010,7 +5034,10 @@ final class AppModel: ObservableObject {
       status = String(
         format: "已取 %d 个中性点 · 本点绿色密度 %.2f · 跨度 %.2f D", calibrationPoints.count, point.density[1],
         (span.max() ?? 0) - (span.min() ?? 0))
-      calibrateAsPicked()
+      // The picture stays as it was while points are picked; 「完成取点」 makes the preset.
+      if calibrationPoints.count >= 3, (span.max() ?? 0) - (span.min() ?? 0) >= FilmCalibration.minimumSpan {
+        status += " · 够了就点「完成取点」生成预设"
+      }
       // A base only estimated from the frame's clearest film is denser than the film's own: the
       // point's density, and the preset's slopes and neutral with it, lean by it.
       if (frames[i].adjustments.base ?? frames[i].adjustments.rollBase) == nil {

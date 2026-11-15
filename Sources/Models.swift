@@ -708,6 +708,8 @@ struct CalibrationSpot: Codable, Equatable {
   var value: RGB? = nil
   var base: RGB? = nil
   var gamma: Double? = nil
+  /// How the frame was read when it was picked (`NeutralPoint.reading`).
+  var reading: PointReading? = nil
 }
 
 struct FilmProfile: Codable, Identifiable, Equatable {

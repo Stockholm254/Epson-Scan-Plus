@@ -159,6 +159,21 @@ enum CopyLightTests {
       "a copy that comes in next is read through the calibrated light; turned off for the roll, every frame is read as the sensor read it")
     edits.undo()
     try check(model.frames.allSatisfy { $0.crosstalk == kept?.crosstalk }, "and undo reads them through it again")
+    // Neutral points picked while the frame was read another way (here with the crosstalk in, and
+    // another base) are made into the preset as the frame reads now: the reading moved to its
+    // crosstalk, the base the one it converts with. One on a frame of another roll stays as read.
+    let spot = CGPoint(x: 0.5, y: 0.5)
+    let asPicked = NeutralPoint(frame: model.frames[0].id, value: RGB(r: 0.2, g: 0.3, b: 0.25), base: RGB(r: 0.9, g: 0.9, b: 0.9), gamma: 1,
+      at: spot, reading: PointReading(crosstalk: nil, flatID: nil))
+    let elsewhere = NeutralPoint(frame: UUID(), value: RGB(r: 0.2, g: 0.3, b: 0.25), base: RGB(r: 0.9, g: 0.9, b: 0.9), gamma: 1,
+      at: spot, reading: PointReading(crosstalk: nil, flatID: nil))
+    let (uniform, keptAsRead) = model.uniformPoints([asPicked, elsewhere])
+    let nowBase = pipe.analyze(try model.source(for: model.frames[0], maxDimension: 600), settings: model.frames[0].adjustments, profile: model.profile).base
+    let relitValue = AppModel.relit(asPicked.value, at: spot, from: (nil, nil), to: (model.frames[0].crosstalk, model.frames[0].flatField))
+    try check(uniform[0].value == relitValue && uniform[0].value != asPicked.value && uniform[0].base == nowBase && uniform[0].base != asPicked.base
+      && uniform[0].reading == PointReading(crosstalk: model.frames[0].crosstalk, flatID: model.frames[0].flatID)
+      && uniform[1] == elsewhere && keptAsRead == 1,
+      "neutral points picked while the frame was read another way are made into the preset as it reads now: crosstalk and base its own; one on another roll stays as read")
 
     // One blank frame under all the lights (no film; the lens's vignetting and the light's
     // unevenness together) gives each light's fall-off once its cells are unmixed; a frame clipped, or

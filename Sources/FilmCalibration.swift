@@ -1,6 +1,13 @@
 import CoreGraphics
 import Foundation
 
+/// How a frame was read when a point was picked on it: through which crosstalk, divided by which
+/// flat field (its id in the roll's flats).
+struct PointReading: Codable, Equatable {
+  var crosstalk: Crosstalk?
+  var flatID: String?
+}
+
 /// A neutral patch picked for calibration: its raw negative value, with the film base and
 /// encoding gamma the frame is converted with.
 struct NeutralPoint: Equatable {
@@ -13,6 +20,9 @@ struct NeutralPoint: Equatable {
   var at: CGPoint? = nil
   /// The frame's name when it was picked, for a point on a frame of another roll.
   var name: String? = nil
+  /// How the frame was read when it was picked: the crosstalk and flat field `value` came through.
+  /// Nil for a point from before it was kept (read as the frame reads now).
+  var reading: PointReading? = nil
   /// How far it lies off a preset's line, red and blue, in density: 0 for a neutral the preset
   /// makes grey.
   func misfit(slopes: RGB, offsets: RGB, toe: RGB?) -> [Double] {

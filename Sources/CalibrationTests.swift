@@ -232,16 +232,19 @@ enum CalibrationTests {
     copying.removeCalibrationPoint(at: 0)
     try check(copying.calibrationPoints == Array(picked.dropFirst()) && copying.calibrationRows.count == 2,
       "taking one of the preset's points out takes the calibration up without it (the two left too close to make it again)")
-    // Picking on: a point added to the calibration in use makes the preset again with it, the
-    // picker kept for the next.
+    // Picking on: a point added leaves the preset in use, and the picture with it, as they are
+    // (the user's call, 2026-11-14); 「完成取点」 makes the preset again from all of them.
     copying.useTool(.calibrate)
     if copying.calibrationPoints.isEmpty, copying.resumableCalibration != nil { copying.resumeCalibration() }
+    let whilePicking = copying.profile
     var added = point(0.35)
     added.at = CGPoint(x: 0.4, y: 0.7)
     copying.calibrationPoints.append(added)
-    copying.calibrateAsPicked()
-    try check(copying.calibrationPoints.isEmpty && copying.profile.spots?.count == 3 && copying.tool == .calibrate,
-      "取点后自动生成: a point added makes the preset again from all of them, and picking goes on")
+    let unchanged = copying.profile == whilePicking && copying.calibrationPoints.count == 3 && copying.tool == .calibrate
+    copying.makeScannerPreset()
+    try check(unchanged && copying.calibrationPoints.isEmpty && copying.profile.spots?.count == 3 && copying.profile.id != whilePicking.id
+      && copying.tool == .select,
+      "a point picked leaves the preset in use as it is; 「完成取点」 makes the preset again from all of them and ends picking")
     copying.useTool(.select)
     copying.clearCalibration()
     try check(copying.calibrationPoints.isEmpty && copying.resumableCalibration == nil && copying.calibrationRows.isEmpty

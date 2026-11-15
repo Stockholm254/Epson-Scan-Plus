@@ -317,25 +317,27 @@ extension ContentView {
     let rows = m.calibrationRows
     let greens = rows.compactMap(\.green)
     let span = (greens.max() ?? 0) - (greens.min() ?? 0)
-    // The preset in use made here: its points are where adding begins, and each point picked or
-    // taken out makes it again (`calibrateAsPicked`).
+    // The preset in use made here: its points are where adding begins. While points are picked the
+    // picture stays as it was; 「完成取点」 makes the preset from them, all read as their frames read now.
     let resumable = m.resumableCalibration
     let step =
-      ready ? "③ 可以生成预设；再取几个点能检查一致性。"
+      ready ? (picking ? "③ 可以点「完成取点」生成预设；再取几个点能检查一致性。" : "③ 可以生成预设；再取几个点能检查一致性。")
       : resumable.map { n in picking
-        ? "② 接着在单张画面上点选本来是中性的东西：每加一个点就重新生成这个预设（现在 \(n) 个点）；⌫ 去掉最后一个。"
-        : "已有这个预设的 \(n) 个点：点「添加点」在它们上面接着点选，每加或去一个点就重新生成、替换这个预设；要从头标定，点「清除」。" }
-      ?? (m.calibrationPoints.isEmpty ? (picking ? (copy ? "② 在单张画面上点选本来是中性的东西，比如白牌子、灰水泥；够两个、相差 0.3 D 以上就自动生成预设。" : "② 在单张画面上点选中性灰；够两个、相差 0.3 D 以上就自动生成预设。") : "① 点「取中性点」开始。")
-      : "② 继续点选更亮或更暗的中性灰，跨度到 0.3 D 就自动生成预设。")
+        ? "② 接着在单张画面上点选本来是中性的东西（现在 \(n) 个点）；⌫ 去掉最后一个；点「完成取点」重新生成这个预设。"
+        : "已有这个预设的 \(n) 个点：点「添加点」在它们上面接着点选，点「完成取点」重新生成、替换这个预设；要从头标定，点「清除」。" }
+      ?? (m.calibrationPoints.isEmpty ? (picking ? (copy ? "② 在单张画面上点选本来是中性的东西，比如白牌子、灰水泥；取点时画面不变，取够、相差 0.3 D 以上后点「完成取点」生成预设。" : "② 在单张画面上点选中性灰；取点时画面不变，取够、相差 0.3 D 以上后点「完成取点」生成预设。") : "① 点「取中性点」开始。")
+      : "② 继续点选更亮或更暗的中性灰，跨度到 0.3 D 才能生成预设。")
     return VStack(alignment: .leading, spacing: 8) {
       HStack(spacing: 8) {
         Button {
-          m.useTool(picking ? .select : .calibrate)
+          // Done picking: the preset made from the points, once they are enough; else picking ends.
+          if picking && ready { m.makeScannerPreset() } else { m.useTool(picking ? .select : .calibrate) }
         } label: {
           Label(picking ? "完成取点" : resumable != nil ? "添加点" : "取中性点", systemImage: CanvasTool.calibrate.symbol)
             .lineLimit(1).fixedSize()
         }.buttonStyle(KeyStyle(latched: picking)).disabled(m.selected == nil)
-        .help(picking ? "结束取点" : resumable != nil ? "在「\(m.profile.name)」的中性点上接着点选，每加一个点就重新生成这个预设" : "在单张画面上点选中性灰；够两个、相差 0.3 D 就自动生成预设")
+        .help(picking ? (ready ? "结束取点，用这些点生成预设（每个点按它那张画面现在的片基、去串色和平场算）" : "结束取点（点还不够生成预设，留着）")
+          : resumable != nil ? "在「\(m.profile.name)」的中性点上接着点选，取完点「完成取点」重新生成这个预设" : "在单张画面上点选中性灰；取点时画面不变，点「完成取点」才生成预设")
         Text(String(format: "%d 点 · %.2f D", rows.count, span)).readout()
         Spacer(minLength: 0)
       }
