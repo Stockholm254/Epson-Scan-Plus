@@ -580,17 +580,17 @@ struct CameraPanel: View {
         .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       Divider()
       HStack {
-        Text("光源标定").font(.system(size: 12, weight: .medium))
+        Text("去串色校准").font(.system(size: 12, weight: .medium))
         Spacer()
-        InfoButton(text: "拿走底片，灯箱上什么都不放：只开红灯拍一张、只开绿灯拍一张、只开蓝灯拍一张，每张曝光到最亮处约 70%（看上面的直方图）。拍完点下面的按钮。\n\nApp 从这三张算出这组灯的串色矩阵：每种灯有多少读进了别的通道。之后翻拍时，读出 RAW 先去串色。换了灯或相机，就再标一次；灯的亮度配比怎么调都不用重标。标定完，这三张空白帧可以在胶片条上删掉。\n\n微距镜头的暗角和灯的不匀不在这里补：在 ② 去色罩「胶片」一节的「平场」里用一张空白帧（三种灯一起开），去串色开不开都行。")
+        InfoButton(text: "去串色校准：拿走底片，灯上什么都不放，只开红灯、只开绿灯、只开蓝灯各拍一张空白帧。向导一步步说开哪种灯，每张拍完马上读出曝光和串色，不合适会说怎么改；三张都能用，就算出矩阵，和现在用的一起列出来，确认以后才换上。这三张存在应用支持文件夹的「光源标定」里，不进胶片条。\n\n之后翻拍时，读出 RAW 先按这组矩阵去串色。换了灯或相机，就再标一次；灯的亮度配比怎么调都不用重标。\n\n微距镜头的暗角和灯的不匀不在这里补：在 ② 去色罩「胶片」一节的「平场」里用一张空白帧（三种灯一起开），去串色开不开都行。")
       }
-      Text("拿走底片，红、绿、蓝灯各单独拍一张空白帧（最亮处约 70%），再点下面的按钮。")
+      Text("红、绿、蓝灯各拍一张空白帧，算出这组灯读进相机别的通道有多少。")
         .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       Button {
-        m.calibrateLight()
+        m.openLightWizard()
       } label: {
-        Label("用最近三张标定光源", systemImage: "light.panel")
-      }.disabled(m.frames.filter { $0.sensorRead == true }.count < 3 || m.isWorking)
+        Label("去串色校准…", systemImage: "light.panel")
+      }.disabled(m.isWorking)
       Text(m.lightDescription).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       DisclosureGroup("诊断") {
         ScrollView {

@@ -161,6 +161,7 @@ struct ContentView: View {
     }
     .sheet(isPresented: $m.showPresets) { PresetManagerSheet(m: m) }
     .sheet(isPresented: $m.showFlats) { FlatManagerSheet(m: m) }
+    .sheet(isPresented: Binding(get: { m.lightWizard != nil }, set: { if !$0 { m.cancelLightWizard() } })) { LightWizardSheet(m: m, camera: m.camera) }
     .sheet(isPresented: $m.showUpdates) { UpdateSheet(m: m, updater: m.updater) }
     .sheet(isPresented: $m.showShortcuts) { ShortcutsSheet() }
     .sheet(isPresented: $m.choosingPaste) { PasteSheet(m: m) }
@@ -1134,7 +1135,7 @@ struct ContentView: View {
     } ?? ""
     return "打开：按「\(p.name)」的标定转换：三个通道的斜率；标定时那种光下的中性，白平衡按它配平，开着自动也一样；取到很暗的点时还有暗部趾部。\n\n关掉：这一卷按标定之前的胶片 \(film) 转换：斜率在「全卷斜率估计」开着时先用它，没有时用数据表；白平衡回到自动（对齐各通道的黑）或你取的中性灰；不用趾部。预设本身不变，别的卷照旧用它；可以 ⌘Z 撤销，在胶片菜单里重新选这个预设也会打开。\n\n\(points)\(roll)点少、明暗没拉开，或标定和全卷斜率估计差很多时，关掉比较一下。"
   }
-  static let crosstalkInfo = "翻拍时相机的红、绿、蓝滤色片和光源的三种灯光谱有重叠：蓝灯有 34% 读进绿通道，绿灯约 12% 和 11% 读进红、蓝。每个通道掺了别的灯的光，转出来颜色发灰，要把饱和度拉到 1.8 左右才像 Capture One。\n\n打开后，从传感器读出的 RAW（无压缩 ARW）在算片基和密度之前，先在线性读数上把串色去掉。矩阵用翻拍页「光源标定」最近测的，没有标定时用 2026-10-29 用 IT8 色卡测的；它属于这台 A7R IV 和这组 RGB 灯，换了相机或灯就要重新标定。白光翻拍时关掉。\n\n整卷一起开关，可以 ⌘Z 撤销；取过的片基和中性灰跟着换算。下一卷沿用这里的选择。\n\n暗角和灯的不匀用「平场」一行里的空白帧补：用了它的照片，开关去串色时按同一张空白帧换算。"
+  static let crosstalkInfo = "翻拍时相机的红、绿、蓝滤色片和光源的三种灯光谱有重叠：蓝灯有 34% 读进绿通道，绿灯约 12% 和 11% 读进红、蓝。每个通道掺了别的灯的光，转出来颜色发灰，要把饱和度拉到 1.8 左右才像 Capture One。\n\n打开后，从传感器读出的 RAW（无压缩 ARW）在算片基和密度之前，先在线性读数上把串色去掉。矩阵用翻拍页「去串色校准」最近测的，没有标定时用 2026-10-29 用 IT8 色卡测的；它属于这台 A7R IV 和这组 RGB 灯，换了相机或灯就要重新标定。白光翻拍时关掉。\n\n整卷一起开关，可以 ⌘Z 撤销；取过的片基和中性灰跟着换算。下一卷沿用这里的选择。\n\n暗角和灯的不匀用「平场」一行里的空白帧补：用了它的照片，开关去串色时按同一张空白帧换算。"
   /// The film base: where it was read in a line, picking it or going back to the automatic one,
   /// and the fine adjustment folded under it.
   var baseSection: some View {

@@ -72,23 +72,83 @@ enum CopyLightTests {
     let edits = UndoManager()
     edits.groupsByEvent = false
     model.undoManager = edits
-    for (n, frame) in frames.enumerated() {
-      let url = decoded.appendingPathComponent("EPS0000\(n + 1).tif")
-      try pipe.saveTIFF(frame, to: url, dpi: 300)
-      model.addCapturedFrame(url, original: url, linear: true, sensor: true)
+    // 去串色校准: the wizard reads each light's frame as it comes, refuses the wrong light or a
+    // clipped one, takes the camera's frames away from the roll, and gives the matrix.
+    let shotRoot = AppModel.lightShotRoot
+    AppModel.lightShotRoot = root.appendingPathComponent("光源标定", isDirectory: true)
+    defer { AppModel.lightShotRoot = shotRoot }
+    func file(_ image: CGImage, _ name: String) throws -> URL {
+      let url = root.appendingPathComponent(name + ".tif")
+      try pipe.saveTIFF(image, to: url, dpi: 300)
+      return url
     }
-    model.calibrateLight()
-    for _ in 0..<100 where model.preferences.lightCalibration == nil { RunLoop.current.run(until: Date().addingTimeInterval(0.05)) }
-    RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+    func settle() {
+      RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+      for _ in 0..<200 where model.lightWizard?.reading == true { RunLoop.current.run(until: Date().addingTimeInterval(0.05)) }
+    }
+    let copied = decoded.appendingPathComponent("EPS00001.tif")
+    try pipe.saveTIFF(negative, to: copied, dpi: 300)
+    model.addCapturedFrame(copied, original: copied, linear: true, sensor: true)
+    let readBefore = model.frames[0].crosstalk
+    model.openLightWizard()
+    model.lightWizardStep(1)
+    model.useLightShot(try file(blank(1, 0.5), "green-on-red"))
+    settle()
+    let wrongLight = model.lightWizard?.shots[0]?.problem?.contains("开着绿灯") == true
+    model.lightWizardStep(2)
+    let held = model.lightWizard?.step == 1
+    model.useLightShot(try file(blank(0, 1.6), "red-over"))
+    settle()
+    let clipped = model.lightWizard?.shots[0]?.problem?.contains("过曝") == true
+    let sent = root.appendingPathComponent("DSC09001.tif")
+    try pipe.saveTIFF(blank(0, 0.7), to: sent, dpi: 300)
+    model.receiveCapture(sent)
+    settle()
+    let red = model.lightWizard?.shots[0]
+    let routed = model.frames.count == 1 && red?.usable == true && red?.owned == true
+      && red.map { FileManager.default.fileExists(atPath: $0.file.path) && $0.file.path.hasPrefix(AppModel.lightShotRoot.path) } == true
+      && !FileManager.default.fileExists(atPath: sent.path)
+    try check(wrongLight && held && clipped && routed,
+      "去串色校准: the green light on the red step and a clipped frame are refused, saying why, and the step waits; the camera's frame goes to the wizard's folder, not into the roll")
+    model.lightWizardStep(2)
+    model.useLightShot(try file(blank(1, 0.5), "green"))
+    settle()
+    model.lightWizardStep(3)
+    model.useLightShot(try file(blank(2, 0.6), "blue"))
+    settle()
+    model.lightWizardStep(4)
+    let shown = model.lightWizard?.step == 4 && model.lightWizard?.crosstalk.map { zip($0.m, mix.m).allSatisfy { abs($0 - $1) < 0.01 } } == true
+    model.applyLightWizard()
     let kept = Preferences(defaults: defaults).lightCalibration
-    try check(kept.map { zip($0.crosstalk.m, mix.m).allSatisfy { abs($0 - $1) < 0.01 } } == true
-      && model.frames.allSatisfy { $0.crosstalk == kept?.crosstalk && $0.flatField == nil }
+    try check(shown && kept.map { zip($0.crosstalk.m, mix.m).allSatisfy { abs($0 - $1) < 0.01 } } == true && kept?.sources?.count == 3
+      && model.lightWizard == nil && readBefore == .measured
+      && model.frames.count == 1 && model.frames.allSatisfy { $0.crosstalk == kept?.crosstalk && $0.flatField == nil }
       && model.lightDescription.contains("漏进"),
-      "the roll's last three frames calibrate the light, kept for the copies to come, and the roll is read through it")
+      "the red, green and blue frames give the light's crosstalk, kept with its frames for the copies to come, and the roll is read through it")
+    // Cancelled, the wizard takes the camera's frames it kept with it.
+    model.openLightWizard()
+    let folderMade = model.lightWizard?.folder
+    model.lightWizardStep(1)
+    let again = root.appendingPathComponent("DSC09002.tif")
+    try pipe.saveTIFF(blank(0, 0.7), to: again, dpi: 300)
+    model.receiveCapture(again)
+    settle()
+    let keptFile = model.lightWizard?.shots[0]?.file
+    model.cancelLightWizard()
+    try check(keptFile != nil && keptFile.map { !FileManager.default.fileExists(atPath: $0.path) } == true
+      && folderMade.map { !FileManager.default.fileExists(atPath: $0.path) } == true
+      && model.frames.count == 1 && Preferences(defaults: defaults).lightCalibration == kept,
+      "cancelled, the wizard removes the frames it kept and changes nothing")
+    // A dim frame can be used, said so; two lights at once cannot.
+    let dim = pipe.lightReading(blank(0, 0.3)).map { AppModel.lightVerdict($0, light: 0) }
+    let both = picture { x, y in (0..<3).map { c in (mix.m[3 * c] + 0.8 * mix.m[3 * c + 1]) * 0.45 * lit(0, x, y) } }
+    let two = pipe.lightReading(both).map { AppModel.lightVerdict($0, light: 0) }
+    try check(dim?.problem == nil && dim?.warning?.contains("偏暗") == true && two?.problem?.contains("不止开了一种灯") == true,
+      "a dim frame of the light is used with a note; a frame with two lights on is refused")
     let url = decoded.appendingPathComponent("EPS00004.tif")
     try pipe.saveTIFF(negative, to: url, dpi: 300)
     model.addCapturedFrame(url, original: url, linear: true, sensor: true)
-    let next = model.frames[3]
+    let next = model.frames[1]
     model.removeCrosstalk(false)
     try check(next.crosstalk == kept?.crosstalk && next.flatField == nil
       && model.frames.allSatisfy { $0.crosstalk == nil && $0.flatField == nil },

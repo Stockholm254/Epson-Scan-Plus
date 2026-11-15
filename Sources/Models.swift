@@ -164,6 +164,9 @@ struct FlatProfile: Codable, Identifiable, Equatable {
 struct LightCalibration: Codable, Equatable {
   var date: Date
   var crosstalk: Crosstalk
+  /// The red, green and blue light's frames it was measured from (`LightWizard`), in that order;
+  /// nil for a calibration from before the wizard kept them.
+  var sources: [String]? = nil
 }
 
 /// How a camera's channels mix the red, green and blue lights of a copy stand: `m` row by row, a

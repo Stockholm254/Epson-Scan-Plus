@@ -150,6 +150,8 @@ final class AppModel: ObservableObject {
   @Published var measuringFlat = false
   /// The flats table is shown, and the frames to select in it when it opens.
   @Published var showFlats = false
+  /// 去串色校准, while it is open (`LightWizard`): the camera's pictures go to it, not into a roll.
+  @Published var lightWizard: LightWizard?
   @Published var flatsFocus: Set<UUID>?
   /// Each picture's size as decoded, by path: whether a flat field fits it, read once.
   var pictureSizes = [String: (width: Int, height: Int)]()
@@ -2507,31 +2509,6 @@ final class AppModel: ObservableObject {
   func resolvedFlat(_ flatID: String?, crosstalk: Crosstalk?) -> FlatField? {
     guard let flatID, flatID != Self.noFlat else { return nil }
     return rollFlats.first { $0.id == flatID }?.variant(crosstalk)
-  }
-  /// The copy light measured from the roll's last three pictures read from the sensor: blank frames,
-  /// the red, green and blue light each alone. Kept for the copies to come, and this roll's pictures
-  /// converted with it if the crosstalk is taken out of them.
-  func calibrateLight() {
-    let blanks = frames.filter { $0.sensorRead == true }.suffix(3)
-    guard blanks.count == 3, !isWorking else { return }
-    let paths = blanks.compactMap(\.sourcePath)
-    status = "正在标定光源…"
-    renderQueue.async {
-      let images = paths.compactMap { try? ImagePipeline.shared.load(URL(fileURLWithPath: $0), maxDimension: 600) }
-      let found = images.count == 3 ? ImagePipeline.shared.lightCalibration(images) : nil
-      DispatchQueue.main.async {
-        guard let (light, exposure) = found else {
-          self.errorText = "标定不了：最近三张要是不放底片、只开红灯、只开绿灯、只开蓝灯各一张，每张曝光够（最亮处到满量程的一半以上）、不过曝。"
-          return
-        }
-        self.preferences.lightCalibration = light
-        let leak = light.crosstalk.largestLeak, names = ["红", "绿", "蓝"]
-        let weak = (0..<3).filter { exposure.values[$0] < 0.15 }.map { names[$0] }
-        self.status = String(format: "已标定光源：%@灯漏进%@通道 %.0f%%", names[leak.light], names[leak.channel], leak.share * 100)
-          + (weak.isEmpty ? "" : "；\(weak.joined(separator: "、"))灯曝光偏暗，最好重拍到最亮处约 70%")
-        if self.crosstalkRemoved || self.preferences.removeCrosstalk { self.removeCrosstalk(true) }
-      }
-    }
   }
   /// What the copy light's correction is now, for the panels.
   var lightDescription: String {

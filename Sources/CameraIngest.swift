@@ -11,6 +11,8 @@ extension AppModel {
 
   /// A picture the camera has just sent.
   func receiveCapture(_ url: URL) {
+    // While the light is calibrated, its frames go to the wizard, not into a roll.
+    if lightWizard != nil { return receiveLightShot(url) }
     do {
       if sessionURL == nil || rollSource != .camera { try startCameraRoll() }
       guard let root = sessionURL else { return }
@@ -283,10 +285,13 @@ extension AppModel {
   /// white balance for every frame, so the channels keep one scale across the roll; it still
   /// applies the camera's colour matrix. True when it was read from the sensor.
   @discardableResult static func linearTIFF(fromRAW url: URL, to out: URL) throws -> Bool {
-    if let native = try SensorRaw.nativeRGB(url) {
-      try ImagePipeline.shared.saveTIFF(native, to: out, dpi: 300)
-      return true
-    }
+    let (image, sensor) = try linearImage(fromRAW: url)
+    try ImagePipeline.shared.saveTIFF(image, to: out, dpi: 300)
+    return sensor
+  }
+  /// What `linearTIFF` writes, and whether it was read from the sensor.
+  static func linearImage(fromRAW url: URL) throws -> (image: CGImage, sensor: Bool) {
+    if let native = try SensorRaw.nativeRGB(url) { return (native, true) }
     guard let raw = CIRAWFilter(imageURL: url) else { throw DeskError.message("系统无法读取这个 RAW：\(url.lastPathComponent)") }
     raw.boostAmount = 0
     raw.baselineExposure = 0
@@ -309,8 +314,7 @@ extension AppModel {
     guard let cg = context.createCGImage(image, from: image.extent, format: .RGBA16, colorSpace: linear) else {
       throw DeskError.message("RAW 解码失败：\(url.lastPathComponent)")
     }
-    try ImagePipeline.shared.saveTIFF(cg, to: out, dpi: 300)
-    return false
+    return (cg, false)
   }
   /// Whether the TIFF at `path` is one `linearTIFF` read from a camera's sensor: decoded into a
   /// roll's Decoded folder, red, green and blue with no alpha, which the system's RAW engine adds.

@@ -130,6 +130,74 @@ extension ImagePipeline {
     return cells
   }
 
+  /// One light alone on a blank frame, as the camera read it (`lightReading`).
+  struct LightReading: Equatable {
+    /// The channel it reads brightest in: which light it is.
+    var own: Int
+    /// Each channel against `own` (1), its median over where `own` is well exposed: the light's
+    /// column of the crosstalk.
+    var column: [Double]
+    /// `own`'s median there, and its brightest (the 99.5th percentile over the frame), of full.
+    var level: Double
+    var peak: Double
+    /// The share of the frame at full in some channel.
+    var clipped: Double
+    /// How far the light's largest leak varies across the frame: its interquartile range against
+    /// its median. One light read through the same filters leaks alike everywhere; other light
+    /// (a room's, a second lamp) does not.
+    var spread: Double
+    /// The pixels `own` is well exposed in (between 5% and 95% of full).
+    var count: Int
+    /// The largest of the other channels against `own`, and which.
+    var leak: (channel: Int, share: Double) {
+      let others = (0..<3).filter { $0 != own && $0 < column.count }
+      let c = others.max { column[$0] < column[$1] } ?? (own + 1) % 3
+      return (c, c < column.count ? column[c] : 0)
+    }
+  }
+  /// What a frame of one light alone tells of the copy light: over the frame but its outer
+  /// twentieth, which channel it is, what it leaks into the others, how well it is exposed. Nil
+  /// for a frame with no pixels.
+  func lightReading(_ image: CGImage) -> LightReading? {
+    let s = samples(image, maxDimension: 600)
+    func median(_ v: [Double]) -> Double {
+      guard !v.isEmpty else { return 0 }
+      let s = v.sorted()
+      return s[s.count / 2]
+    }
+    var pixels = [RGB]()
+    for y in stride(from: s.height / 20, to: s.height - s.height / 20, by: 2) {
+      for x in stride(from: s.width / 20, to: s.width - s.width / 20, by: 2) { pixels.append(s.pixel(x, y)) }
+    }
+    guard !pixels.isEmpty else { return nil }
+    let clipped = Double(pixels.filter { max($0.r, $0.g, $0.b) >= 0.98 }.count) / Double(pixels.count)
+    let levels = (0..<3).map { c in median(pixels.map { p in p.values[c] }) }
+    let own = levels.indices.max { levels[$0] < levels[$1] } ?? 0
+    let brightest = pixels.map { $0.values[own] }.sorted()
+    let peak = brightest[min(brightest.count - 1, brightest.count * 995 / 1000)]
+    let lit = pixels.filter { p in p.values[own] > 0.05 && p.values[own] < 0.95 }
+    let measured = lit.isEmpty ? pixels.filter { $0.values[own] > 0 } : lit
+    var column = [Double]()
+    for c in 0..<3 { column.append(c == own ? 1 : median(measured.map { p in p.values[c] / max(p.values[own], 1e-6) })) }
+    var reading = LightReading(own: own, column: column, level: median(measured.map { $0.values[own] }), peak: peak,
+      clipped: clipped, spread: 0, count: lit.count)
+    let c = reading.leak.channel
+    let ratios = measured.map { p in p.values[c] / max(p.values[own], 1e-6) }.sorted()
+    if ratios.count > 3, reading.leak.share > 0 {
+      reading.spread = (ratios[ratios.count * 3 / 4] - ratios[ratios.count / 4]) / reading.leak.share
+    }
+    return reading
+  }
+  /// The crosstalk of a red, green and blue light's readings, in that order: each its column.
+  /// Nil unless each is well enough exposed to measure (`count`), its own light, and leaks less
+  /// than 0.8 into any other channel.
+  static func crosstalk(_ readings: [LightReading]) -> Crosstalk? {
+    guard readings.count == 3, readings.enumerated().allSatisfy({ j, r in
+      r.own == j && r.count > 100 && r.column.count == 3 && (0..<3).allSatisfy { $0 == j || r.column[$0] < 0.8 }
+    }) else { return nil }
+    return Crosstalk(m: (0..<3).flatMap { c in readings.map { $0.column[c] } })
+  }
+
   /// The copy light's crosstalk from its red, green and blue lights each alone on a blank frame (no film), in any
   /// order: which light each frame shows is told by its brightest channel. Each light's column of the
   /// crosstalk is the median of the other channels against its own, over the frame where it is well
@@ -137,32 +205,9 @@ extension ImagePipeline {
   /// is too weak to measure.
   func lightCalibration(_ frames: [CGImage], date: Date = Date()) -> (calibration: LightCalibration, exposure: RGB)? {
     guard frames.count == 3 else { return nil }
-    let read = frames.map { samples($0, maxDimension: 600) }
-    func median(_ v: [Double]) -> Double {
-      guard !v.isEmpty else { return 0 }
-      let s = v.sorted()
-      return s[s.count / 2]
-    }
-    var columns = [Int: [Double]](), exposure = [Int: Double]()
-    for s in read {
-      var pixels = [RGB]()
-      for y in stride(from: s.height / 20, to: s.height - s.height / 20, by: 2) {
-        for x in stride(from: s.width / 20, to: s.width - s.width / 20, by: 2) { pixels.append(s.pixel(x, y)) }
-      }
-      let levels = (0..<3).map { c in median(pixels.map { p in p.values[c] }) }
-      let own = levels.indices.max { levels[$0] < levels[$1] } ?? 0
-      let lit = pixels.filter { p in p.values[own] > 0.05 && p.values[own] < 0.95 }
-      guard lit.count > 100, columns[own] == nil else { return nil }
-      var column = [Double]()
-      for c in 0..<3 { column.append(c == own ? 1 : median(lit.map { p in p.values[c] / p.values[own] })) }
-      columns[own] = column
-      exposure[own] = median(lit.map { p in p.values[own] })
-    }
-    guard columns.count == 3, let r = columns[0], let g = columns[1], let b = columns[2],
-      [r, g, b].enumerated().allSatisfy({ j, col in (0..<3).allSatisfy { $0 == j || col[$0] < 0.8 } })
-    else { return nil }
-    let crosstalk = Crosstalk(m: (0..<3).flatMap { c in [r[c], g[c], b[c]] })
-    return (LightCalibration(date: date, crosstalk: crosstalk),
-      RGB(r: exposure[0] ?? 0, g: exposure[1] ?? 0, b: exposure[2] ?? 0))
+    let read = frames.compactMap(lightReading)
+    let ordered = (0..<3).compactMap { j in read.first { $0.own == j } }
+    guard read.count == 3, ordered.count == 3, let crosstalk = Self.crosstalk(ordered) else { return nil }
+    return (LightCalibration(date: date, crosstalk: crosstalk), RGB(ordered.map(\.level)))
   }
 }
