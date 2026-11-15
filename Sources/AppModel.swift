@@ -3043,7 +3043,7 @@ final class AppModel: ObservableObject {
           // A newer estimate wanted (another region drawn, a base picked): this one is left to it.
           guard self.estimateLock.withLock({ self.estimateLatest == token }) else {
             hideBar()
-            return DispatchQueue.main.async { completion?() }
+            return DispatchQueue.main.async { self.afterNewestEstimate(completion) }
           }
           guard let key = keys[f.id] else { continue }
           if let kept = self.keptEdges[f.id], kept.key == key {
@@ -3078,11 +3078,9 @@ final class AppModel: ObservableObject {
       let wasShown = shown
       DispatchQueue.main.async {
         if wasShown, self.positivesLoading?.what == "读取原图" { self.positivesLoading = nil }
-        // A newer estimate is on its way; still let the caller go on.
-        guard token == self.rollSlopesRevision else {
-          completion?()
-          return
-        }
+        // A newer estimate is on its way: the caller goes on once that one is in (until 0.23.8 at
+        // once, its slopes not yet on the frames).
+        guard token == self.rollSlopesRevision else { return self.afterNewestEstimate(completion) }
         self.rollSlopesWhy = why
         if self.frameFigures != figures { self.frameFigures = figures }
         var changed = false
@@ -3101,8 +3099,16 @@ final class AppModel: ObservableObject {
           self.updateRollPrint()
         }
         completion?()
+        let waiting = self.estimateWaiters
+        self.estimateWaiters = []
+        waiting.forEach { $0() }
       }
     }
+  }
+  /// Callers of an estimate a newer one took the place of, told when the newest is in.
+  private var estimateWaiters = [() -> Void]()
+  private func afterNewestEstimate(_ completion: (() -> Void)?) {
+    if let completion { estimateWaiters.append(completion) }
   }
   /// The roll's slope estimate runs on a queue of its own, not the render queue: a base picked or a
   /// region drawn shows at once, with the slopes before, and again if they changed. Each frame's
