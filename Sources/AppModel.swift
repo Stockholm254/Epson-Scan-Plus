@@ -4481,6 +4481,10 @@ final class AppModel: ObservableObject {
   /// finder's, kept by them, would not hold).
   private func readAhead(around frame: FilmFrame, token: Int) {
     guard singleView, let i = frames.firstIndex(where: { $0.id == frame.id }) else { return }
+    // Which way the frames are gone through, from every frame shown, quick runs too (a frame passed
+    // over in one left the way as it was before it, and the frame behind was made ahead).
+    if let last = lastShownIndex, last != i { goingBack = i < last }
+    lastShownIndex = i
     // Frames run through quickly: the one they stop at, once they have.
     if sliding {
       DispatchQueue.main.asyncAfter(deadline: .now() + Self.slideStep + 0.02) { [weak self] in
@@ -4489,8 +4493,6 @@ final class AppModel: ObservableObject {
       }
       return
     }
-    if let last = lastShownIndex, last != i { goingBack = i < last }
-    lastShownIndex = i
     let ahead = goingBack ? i - 1 : i + 1, behind = goingBack ? i + 1 : i - 1
     if frames.indices.contains(ahead) { prepareAhead(frames[ahead]) }
     let around = [behind].filter(frames.indices.contains).map { frames[$0] }
