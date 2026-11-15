@@ -1157,13 +1157,7 @@ struct ContentView: View {
         } label: {
           Label("取", systemImage: CanvasTool.base.symbol)
         }.buttonStyle(KeyStyle(latched: m.tool == .base)).help("取片基：点未曝光的橙色片基 · B")
-        Button("自动") {
-          m.change("自动片基") {
-            $0.base = nil
-            $0.basePicked = nil
-          }
-          m.announceAutoBase()
-        }.help("回到自动片基：片间或片边测到的")
+        Button("自动") { m.useAutoBase() }.help("回到自动片基：片间或片边测到的")
       }.font(.system(size: 11))
     } content: {
       VStack(alignment: .leading, spacing: 8) {

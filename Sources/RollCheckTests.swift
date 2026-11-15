@@ -113,6 +113,13 @@ enum RollCheckTests {
     let picked = !model.rendersGrays(model.frames[0])
     AppModel.findsAutoNeutrals = wasOn
     model.singleView = false
+    // A base picked, or the automatic one gone back to, estimates the roll's slopes again.
+    let estimates = model.rollSlopesRevision
+    model.setFilmBase(RGB(r: 0.8, g: 0.5, b: 0.3))
+    let afterPick = model.rollSlopesRevision
+    model.useAutoBase(announce: false)
+    try check(afterPick == estimates + 1 && model.rollSlopesRevision == afterPick + 1 && model.frames[0].adjustments.base == nil,
+      "a base picked, or the automatic base gone back to, estimates the roll's slopes again")
     try check(shownByRender && picked && !model.rendersGrays(model.frames[1]),
       "the frame shown alone has its gray pixels looked for by its render, not a frame with a grey picked nor one not shown (page \(model.page), step \(model.convertStep), single \(model.singleView))")
   }

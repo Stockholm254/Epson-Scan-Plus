@@ -852,7 +852,7 @@ enum MCPTools {
       return [["type": "text", "text": said]]
     case "auto_film_base":
       _ = try selected(model)
-      onMain { model.change("自动片基") { $0.base = nil; $0.basePicked = nil } }
+      onMain { model.useAutoBase(announce: false) }
       return [["type": "text", "text": "已改用自动片基。"]]
     case "choose_preset":
       guard let wanted = (arguments["name"] as? String)?.lowercased(), !wanted.isEmpty else { throw DeskError.message("需要预设名称 name。") }

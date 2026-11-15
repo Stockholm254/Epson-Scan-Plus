@@ -361,7 +361,7 @@ final class AppModel: ObservableObject {
   private var batchDPI: Int?
   /// Scans of this batch to export as positives when it ends.
   private var autoExportIDs = [UUID]()
-  private var rollSlopesRevision = 0
+  private(set) var rollSlopesRevision = 0
   private var rollPrintRevision = 0
   private var exportsRunning = 0
   /// The main window's three modules, in the order a roll goes through them: capturing it (the
@@ -4958,7 +4958,21 @@ final class AppModel: ObservableObject {
       $0.basePicked = place
     }
     status = "已取片基"
+    // The roll's slopes read each frame against its base: this one is read again (until 0.23.10 a
+    // base picked left the estimate as it was, read against the base before).
+    updateRollSlopes()
     updateThumbnails()
+  }
+  /// Back to the automatic base (the roll's from between the frames or the film's edge, else the
+  /// frame's thinnest film), the roll's slopes estimated again with it; `announce` flashes where
+  /// it is read now (`announceAutoBase`).
+  func useAutoBase(announce: Bool = true) {
+    change("自动片基") {
+      $0.base = nil
+      $0.basePicked = nil
+    }
+    updateRollSlopes()
+    if announce { announceAutoBase() }
   }
   /// The white balance's three, as Lightroom's 白平衡 menu has them (原片 / 自动 / 自定义):
   /// - 原片: the film as its conversion gives it, nothing taken from the scene: a negative by its
