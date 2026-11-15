@@ -729,6 +729,11 @@ struct FilmProfile: Codable, Identifiable, Equatable {
   var toe: RGB? = nil
   /// Calibrated presets only: where their neutral points were picked, so the frames can show them.
   var spots: [CalibrationSpot]? = nil
+  /// A built-in preset whose slopes were measured off a chart shot on the film, not read off a data
+  /// sheet (the sheet prints no curve): said so where the slopes' source is named.
+  var chartMeasured: Bool? = nil
+  /// Where the slopes of a preset that is not calibrated here come from, in a word.
+  var slopesSource: String { chartMeasured == true ? "色卡实测" : "数据表" }
   /// The preset without what calibrated it for colour film (its neutral, its toes), as a black and
   /// white negative converts with it.
   var uncalibrated: FilmProfile {
@@ -785,6 +790,17 @@ struct FilmProfile: Codable, Identifiable, Equatable {
       publication: "Kodak E-4046 · 2016 · p.4", slopes: RGB(r: 0.56, g: 0.57, b: 0.65),
       notes: approximation),
   ] + FilmDataSheets.presets + [
+    // Its sheet prints no characteristic curve: the slopes are an IT8.7/2 chart's grey scale shot on
+    // the film (2026-11-14, MONR2022.05.03, copied under the narrowband RGB light, crosstalk out),
+    // each channel's density against the steps' known reflectance over GS01–GS13. Green is far
+    // flatter than red and blue (0.365 against the 0.55 a generic film borrows), so the exposures
+    // read by green had been a third too short.
+    FilmProfile(
+      id: "phoenix2-200", name: "Harman Phoenix II 200", aliases: ["phoenix2-200", "harman phoenix ii 200", "phoenix ii"], iso: 200,
+      process: "C-41 · 日光", sourceURL: "https://www.harmanphoto.co.uk/amfile/file/download/file/1968/product/2208/",
+      publication: "IT8.7/2 色卡灰阶实测 · 2026-11-14 · 翻拍（RGB 灯，去串色）", slopes: RGB(r: 0.55, g: 0.365, b: 0.59),
+      notes: "数据表没有特性曲线：斜率是在这种胶片上拍的 IT8.7/2 色卡（MONR2022.05.03），翻拍后按灰阶 GS01–GS13 的已知反射率量出的每个通道的密度斜率。绿层比红、蓝平得多（0.365，通用的是 0.55）。没有橙色色罩，黄色、橙色转出来偏绿，饱和度偏低，按需要在调色里补。",
+      chartMeasured: true),
     FilmProfile(
       id: "generic", name: "通用彩色负片", aliases: ["generic", "通用"], iso: 0, process: "彩色负片",
       sourceURL: "", publication: "通用起点 · 未匹配文档", slopes: RGB(r: 0.55, g: 0.55, b: 0.55),

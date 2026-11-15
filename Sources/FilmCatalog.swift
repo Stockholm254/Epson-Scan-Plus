@@ -122,7 +122,7 @@ enum FilmCatalog {
     FilmStock(maker: "Kentmere", stock: "Pan 200", iso: 200, kind: .blackWhite, gauges: both, note: "2025 年新出，反差较高", aliases: ["kentmere 200"]),
     FilmStock(maker: "Kentmere", stock: "Pan 400", iso: 400, kind: .blackWhite, gauges: both, note: "实惠的传统颗粒", aliases: ["kentmere 400"]),
     FilmStock(maker: "Harman", stock: "Phoenix 200", iso: 200, kind: .colour, gauges: both, note: "没有橙色色罩，颗粒明显，饱和高", preset: "phoenix200", aliases: ["phoenix", "凤凰", "蓝凤凰"], discontinued: true),
-    FilmStock(maker: "Harman", stock: "Phoenix II 200", iso: 200, kind: .colour, gauges: both, note: "2025 年重新配方，没有橙色色罩，暖而饱和", aliases: ["phoenix", "凤凰", "蓝凤凰", "phoenix 2"]),
+    FilmStock(maker: "Harman", stock: "Phoenix II 200", iso: 200, kind: .colour, gauges: both, note: "2025 年重新配方，没有橙色色罩，暖而饱和", preset: "phoenix2-200", aliases: ["phoenix", "凤凰", "蓝凤凰", "phoenix 2"]),
     FilmStock(maker: "Harman", stock: "Red 125", iso: 125, kind: .colour, gauges: both, note: "反向曝光的红调片，整体偏红", aliases: ["redscale", "红调"]),
     FilmStock(maker: "Harman", stock: "Switch Azure 125", iso: 125, kind: .colour, gauges: both, note: "2026 年新出，红蓝两个通道互换", aliases: ["switch", "azure"]),
     // Foma, ADOX, Ferrania, ORWO, Lucky

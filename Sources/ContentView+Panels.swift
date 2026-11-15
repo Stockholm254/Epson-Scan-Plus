@@ -228,7 +228,7 @@ extension ContentView {
     func slopes(_ s: RGB) -> String { String(format: "R %.3f · G %.3f · B %.3f", s.r, s.g, s.b) }
     if film.offsets != nil { return (film.id.contains("-copy-") ? "翻拍标定" : "本机标定") + "\n" + slopes(p) }
     if let s = m.settings.rollSlopes { return "全卷斜率估计\n" + slopes(s) }
-    if film.setsChannelContrast { return "数据表" + (m.estimatesSlopes ? "" : "（全卷斜率估计关着）") + "\n" + slopes(p) }
+    if film.setsChannelContrast { return film.slopesSource + (m.estimatesSlopes ? "" : "（全卷斜率估计关着）") + "\n" + slopes(p) }
     return "通用 · 每张按自己的画面拉伸各通道"
   }
   /// Letting an assistant over MCP read and adjust the conversion, and how to connect one.

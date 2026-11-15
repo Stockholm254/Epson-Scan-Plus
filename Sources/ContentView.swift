@@ -945,7 +945,8 @@ struct ContentView: View {
   @ViewBuilder func presetSections(_ list: [FilmProfile], film: String?) -> some View {
     let sheets = list.filter { $0.offsets == nil }, calibrated = list.filter { $0.offsets != nil }
     if !sheets.isEmpty {
-      Section(film.map { "\($0) · 数据表" } ?? "数据表") { ForEach(sheets) { p in presetButton(p) } }
+      let source = sheets.allSatisfy { $0.chartMeasured == true } ? "色卡实测" : "数据表"
+      Section(film.map { "\($0) · \(source)" } ?? source) { ForEach(sheets) { p in presetButton(p) } }
     }
     if !calibrated.isEmpty {
       Section(film.map { "\($0) · 本机标定" } ?? "本机标定") { ForEach(calibrated) { p in presetButton(p) } }
