@@ -5,7 +5,7 @@
 //
 // Commands: {"cmd":"connect","save":"<folder>"} · {"cmd":"disconnect"} · {"cmd":"props"} ·
 // {"cmd":"set","name":"FNumber","value":800} · {"cmd":"live","on":true,"dir":"<folder>"} ·
-// {"cmd":"af"} · {"cmd":"nearfar","step":-3} · {"cmd":"afpoint","x":320,"y":240} ·
+// {"cmd":"af"} · {"cmd":"unlock"} · {"cmd":"nearfar","step":-3} · {"cmd":"afpoint","x":320,"y":240} ·
 // {"cmd":"shoot","mf":false} · {"cmd":"quit"}.
 // Events: ready, connected, disconnected, error, warning, props, changed, set, frame, af, shot,
 // downloaded, log.
@@ -718,7 +718,12 @@ int main(int argc, char** argv) {
       sdk::CrError err = writeProp(*byName("AF_Area_Position"), (x << 16) | y);
       emit("{\"event\":\"set\",\"name\":\"AF_Area_Position\",\"ok\":" + std::string(err ? "false" : "true") + ",\"code\":" + quote(hex(err)) + "}");
     } else if (cmd == "shoot") shoot(m);
-    else error(cmd, 0, "未知的命令");
+    else if (cmd == "unlock") {
+      // 解除锁焦: the half-press holding the focus let go, as asked; said so even when none was held,
+      // so the app's lock goes with it.
+      if (halfHeld) unlockFocus("asked");
+      else emit("{\"event\":\"unlocked\",\"why\":\"asked\"}");
+    } else error(cmd, 0, "未知的命令");
   }
   free(line);
   disconnect();

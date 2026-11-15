@@ -583,6 +583,9 @@ final class SonyPTPCamera {
       let code = write("AF_Area_Position", x << 16 | y)
       emit(["event": "set", "name": "AF_Area_Position", "ok": code == SonyWire.ok, "code": hex(code)])
     case "shoot": shoot(m)
+    case "unlock":
+      // 解除锁焦: the half-press holding the focus let go; said so even when none was held.
+      if halfHeld { unlockFocus("asked") } else { emit(["event": "unlocked", "why": "asked"]) }
     case "shift": shift((m["count"] as? NSNumber)?.intValue)
     default: error(cmd, 0, "未知的命令")
     }

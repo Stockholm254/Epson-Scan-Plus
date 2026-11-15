@@ -403,6 +403,12 @@ final class CameraController: ObservableObject {
     if magnification > 0 { command["magnify"] = magnifierValue }
     send(command)
   }
+  /// 解除锁焦: lets go of the half-press AF holds the focus with (`focusLocked`), so the shutter
+  /// focuses again as the camera's focus mode has it, until AF locks it again.
+  func unlockFocus() {
+    guard focusLocked else { return }
+    send(["cmd": "unlock"])
+  }
   /// A focus step, nearer (negative) or farther: in manual focus only, which the camera is switched
   /// to first when it is not; until its settings come back it is taken to be so.
   func step(_ size: Int) {
@@ -686,6 +692,7 @@ final class CameraController: ObservableObject {
       switch event["why"] as? String {
       case "shot": message = "焦点锁随这一张松开了：下一张前再按 AF。整卷不想每张对焦，就在锁焦后把镜头开关拨到 MF，焦点停在原处"
       case "set": message = "改设置前松开了半按，焦点锁已解除：要微调或拍摄不再对焦，再按 AF"
+      case "asked": message = "已解除锁焦，松开了半按：现在按快门，相机会先对焦一次；要再锁住，按 AF"
       default: break
       }
     case "live":

@@ -201,6 +201,13 @@ struct CameraStage: View {
             } else {
               lock.padding(.horizontal, 8).padding(.vertical, 4).background(Capsule().fill(Hardware.accent.opacity(0.35)))
             }
+            // Let go of the lock without taking a picture.
+            Button {
+              camera.unlockFocus()
+            } label: {
+              Label("解除锁焦", systemImage: "lock.open").lineLimit(1).fixedSize()
+            }.glassAction()
+              .help("松开 AF 锁焦时按住的半按：焦点不再锁住，按快门时相机会先对焦一次；要再锁住，按 AF")
           }
           let stepping = HStack(spacing: 3) {
             ForEach([-6, -3, -1], id: \.self) { s in

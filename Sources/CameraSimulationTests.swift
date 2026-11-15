@@ -158,6 +158,14 @@ enum CameraSimulationTests {
     until(4) { g.message.contains("先按 AF 锁住焦点") }
     try check(g.message.contains("先按 AF 锁住焦点") && Date().timeIntervalSince(pressed) < 3 && !g.log.contains { $0.contains("0x60003") },
       "the lock gone, a step says to press AF first, at once, without sending what the camera would refuse")
+    // Locked again, then let go by 解除锁焦 without a picture: the half-press released, said so.
+    g.autofocus()
+    until(10) { g.focusLocked }
+    let relocked = g.focusLocked
+    g.unlockFocus()
+    until(3) { !g.focusLocked }
+    try check(relocked && !g.focusLocked && g.message.contains("已解除锁焦") && lens.arrived.count == 1,
+      "解除锁焦 lets go of the half-press holding the focus without taking a picture, and says so")
 
     // The lens's switch at MF: the camera drives no lens and takes no AF; the shutter does not focus.
     let ring2 = connect("lens-at-mf", "lensmf=1,early=200,transfer=600")
