@@ -101,6 +101,9 @@ enum RollCheckTests {
     // finder the others.
     let wasOn = AppModel.findsAutoNeutrals
     model.frameFigures = [:]
+    // In ③, as the check's key left it in ②'s de-masked picture, which balances nothing.
+    model.convertStep = .grade
+    model.useTool(.select)
     model.selectedID = model.frames[0].id
     model.singleView = true
     AppModel.findsAutoNeutrals = true
@@ -111,6 +114,6 @@ enum RollCheckTests {
     AppModel.findsAutoNeutrals = wasOn
     model.singleView = false
     try check(shownByRender && picked && !model.rendersGrays(model.frames[1]),
-      "the frame shown alone has its gray pixels looked for by its render, not a frame with a grey picked nor one not shown")
+      "the frame shown alone has its gray pixels looked for by its render, not a frame with a grey picked nor one not shown (page \(model.page), step \(model.convertStep), single \(model.singleView))")
   }
 }
