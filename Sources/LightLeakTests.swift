@@ -312,6 +312,26 @@ enum LightLeakTests {
     lab.wait()
     try check(lab.params.exposure == 0.3 && lab.params.sceneMode == "night" && lab.repaired,
       "a change while a fit runs is refused, rather than lost when the fit ends")
+    // A fader dragged: one undo step, and saved once it pauses, not at each step (until 0.23.5 each
+    // step was an undo step of its own, written out and told to the roll, which updated the whole
+    // window 60 times a second).
+    let jobFile = lab.folder!.appendingPathComponent("job.json")
+    let savedBefore = try Data(contentsOf: jobFile)
+    var told = 0
+    let tellRoll = lab.kept
+    lab.kept = { told += 1; tellRoll?($0) }
+    for k in 1...5 { lab.change("曝光", step: "曝光") { $0.exposure = 0.3 + Double(k) * 0.1 } }
+    let dragging = (waiting: lab.saveWaiting, unwritten: try Data(contentsOf: jobFile) == savedBefore, told: told)
+    lab.wait()
+    RunLoop.current.run(until: Date().addingTimeInterval(LeakLab.savePause + 0.2))
+    let written = (try? JSONDecoder().decode(LeakJob.self, from: Data(contentsOf: jobFile)))?.params.exposure
+    let toldOnce = told == 1 && !lab.saveWaiting
+    undo.undo()
+    lab.wait()
+    lab.kept = tellRoll
+    try check(dragging.waiting && dragging.unwritten && dragging.told == 0 && toldOnce && written.map { abs($0 - 0.8) < 1e-9 } == true
+      && abs(lab.params.exposure - 0.3) < 1e-9,
+      "a fader dragged is saved once it pauses, not at each step, and ⌘Z takes the whole drag back")
     try check(LeakField(width: 3, height: 3, values: [0.5]).sample(0.5, 0.5) == 0, "a damaged field reads as nothing, not out of bounds")
 
     // A region drawn by hand over the leak, with a clean point of the same ground: it corrects there.

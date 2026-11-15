@@ -132,7 +132,12 @@ final class LeakLab: ObservableObject {
     self.root = root
     self.credentials = credentials
     self.preferences = preferences
+    // A fader let go just before quitting is kept too (`saveSoon`).
+    quitting = NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+      self?.save()
+    }
   }
+  private var quitting: NSObjectProtocol?
 
   var folder: URL? { job.map { root.appendingPathComponent($0.id) } }
   var hasBase: Bool { base != nil }
@@ -337,9 +342,25 @@ final class LeakLab: ObservableObject {
     kept?(j)
   }
   func save() {
+    savingSoon?.cancel()
+    savingSoon = nil
     guard persisted else { return }
     try? persist()
   }
+  /// A change of a fader being dragged, or a region moved, saved once it pauses. Saved at each
+  /// step, the job was written out 60 times a second, and each told the roll its job had changed
+  /// (`kept`, a new date), which updated the whole window with every step. Any other save, a job
+  /// opened in its place or the app quitting saves it at once.
+  private func saveSoon() {
+    savingSoon?.cancel()
+    let work = DispatchWorkItem { [weak self] in self?.save() }
+    savingSoon = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + Self.savePause, execute: work)
+  }
+  private var savingSoon: DispatchWorkItem?
+  static let savePause = 0.4
+  /// Whether a change is waiting to be saved (`saveSoon`), for the tests.
+  var saveWaiting: Bool { savingSoon != nil }
 
   // MARK: Changes
 
@@ -357,7 +378,12 @@ final class LeakLab: ObservableObject {
     edit(&next)
     guard next != params else { return }
     set(next, name: name, step: step)
-    if refit && hasReference { fit() } else { save(); preview(soon: true) }
+    if refit && hasReference {
+      fit()
+    } else {
+      if step == nil { save() } else { saveSoon() }
+      preview(soon: true)
+    }
   }
   private var lastChange: (step: String, at: Date)?
   private func set(_ next: LeakParams, name: String, step: String?) {

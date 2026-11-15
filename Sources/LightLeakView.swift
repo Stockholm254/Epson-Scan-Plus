@@ -461,7 +461,8 @@ struct LeakPanel: View {
   func fader(_ title: String, _ format: String, _ key: WritableKeyPath<LeakParams, Double>, _ range: ClosedRange<Double>) -> some View {
     let set: (Double) -> Void = { v in
       let step = range.upperBound - range.lowerBound > 10 ? 1.0 : 0.05
-      lab.change(title) { $0[keyPath: key] = (v / step).rounded() * step }
+      // One undo step for the drag, saved when it pauses (until 0.23.5 each step was one of each).
+      lab.change(title, step: title) { $0[keyPath: key] = (v / step).rounded() * step }
     }
     return VStack(spacing: 3) {
       HStack {
