@@ -184,13 +184,13 @@ enum CameraSimulationTests {
       && k.log.contains { $0.contains("拍完继续按住半按") } && !k.log.contains { $0.contains("快门被忽略") },
       "the shutter asked to keep the lock takes two pictures by S2 alone, focusing only for AF, and the lock stays (\(kept.arrived.count) pictures, \(keptRuns()) focusings)")
     // A camera that takes no S2 over the half-press: the full press, the lock let go, and why.
-    let refused = connect("keep-refused", "lensaf=1,early=200,transfer=400")
-    let q = refused.camera
+    let noS2 = connect("keep-refused", "lensaf=1,early=200,transfer=400")
+    let q = noS2.camera
     q.autofocus()
     until(10) { q.focusLocked }
     q.shoot(keepFocus: true)
-    until(8) { refused.arrived.count == 1 && !q.awaitingPicture && !q.focusLocked }
-    try check(refused.arrived.count == 1 && !q.focusLocked && q.message.contains("直连 PTP") && q.log.contains { $0.contains("不收 S2") },
+    until(8) { noS2.arrived.count == 1 && !q.awaitingPicture && !q.focusLocked }
+    try check(noS2.arrived.count == 1 && !q.focusLocked && q.message.contains("直连 PTP") && q.log.contains { $0.contains("不收 S2") },
       "where the camera takes no S2 over the half-press, the full press takes the picture, and the lock let go says why")
 
     // The lens's switch at MF: the camera drives no lens and takes no AF; the shutter does not focus.
