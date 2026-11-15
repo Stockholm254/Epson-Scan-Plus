@@ -9,6 +9,16 @@ struct EdgeBase: Codable, Equatable {
   /// Where it was read, in the picture's own file normalised from the top left: cells of a grid
   /// about a hundred across, a run of them a box.
   var areas: [NormalRect]
+  /// Read knowing the light's own colour (the blank frame the picture is divided by), so unclipped
+  /// bare light through the sprocket holes was not taken for film. Nil: read before 0.23.8, or with
+  /// no blank frame to tell it by.
+  var bareKnown: Bool? = nil
+  /// Whether `base` is of the light's own colour `bare` (within 6% of red and of blue against
+  /// green): bare light, not film, unless no film of another colour was there.
+  static func lightColoured(_ v: RGB, _ bare: RGB) -> Bool {
+    guard (v.values + bare.values).allSatisfy({ $0 > 0 }) else { return false }
+    return abs(log(v.r / v.g) - log(bare.r / bare.g)) < 0.06 && abs(log(v.b / v.g) - log(bare.b / bare.g)) < 0.06
+  }
 }
 
 /// The automatic film base marked on the single frame for a moment, as an uncropped picture comes
@@ -35,7 +45,12 @@ extension ImagePipeline {
   /// dense film there is; the copy light falls off towards the edges), and the same along the side
   /// (not grain, edge print or a sprocket's rim). Of that, the colour most of it shares, so bare
   /// light and the holder do not mix in.
-  func edgeBase(_ image: CGImage) -> EdgeBase {
+  /// `bare` is the light itself as the picture reads it where no film lies (the brightest of the
+  /// blank frame it is divided by, `FlatProfile.bareLight`): bare light that does not clip, through
+  /// the sprocket holes of a thin base (Phoenix II's let the holes read 1.8 times its own light, so
+  /// they were taken for the base, every density 0.26–0.57 D too high), is left out by its colour
+  /// where film of another colour is there to read instead.
+  func edgeBase(_ image: CGImage, bare light: RGB? = nil) -> EdgeBase {
     let s = samples(image, maxDimension: 960), w = s.width, h = s.height
     guard w > 40, h > 40 else { return EdgeBase(base: nil, areas: []) }
     // Smoothed first: the base's grain alone would break its evenness.
@@ -97,6 +112,11 @@ extension ImagePipeline {
         }
         if even { found.append(Candidate(x: x, y: y, v: v, side: side)) }
       }
+    }
+    // Not bare light of the light's own colour, where film of another colour is there.
+    if let light {
+      let film = found.filter { !EdgeBase.lightColoured($0.v, light) }
+      if film.count >= max(30, w * h / 2000) { found = film }
     }
     // The colour most of it shares, in steps of 4% of red and blue against green.
     func colour(_ v: RGB) -> (Double, Double) { (log(v.r / v.g), log(v.b / v.g)) }
@@ -166,7 +186,7 @@ extension ImagePipeline {
     let areas = runs.map {
       NormalRect(x: Double($0.x) / Double(gw), y: Double($0.y) / Double(gh), width: Double($0.length) / Double(gw), height: Double($0.rows) / Double(gh))
     }
-    return EdgeBase(base: base, areas: areas)
+    return EdgeBase(base: base, areas: areas, bareKnown: light != nil ? true : nil)
   }
   /// `s` smoothed by a 3 × 3 box.
   func smoothed(_ s: Samples) -> [RGB] {

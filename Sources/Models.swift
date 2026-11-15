@@ -107,6 +107,19 @@ struct FlatProfile: Codable, Identifiable, Equatable {
   }
   /// Each channel's darkest share, as the sensor read it: how far it falls off.
   var falloff: RGB { variant(nil).falloff }
+  /// The light itself, as a picture divided by this flat (read through `crosstalk`) reads it where
+  /// no film lies, up to the exposure: each channel's brightest cell, unmixed alike.
+  func bareLight(_ crosstalk: Crosstalk?) -> RGB? {
+    let n = gridWidth * gridHeight
+    guard n > 0, cells.count == n * 3 else { return nil }
+    var top = [0.0, 0.0, 0.0]
+    for i in 0..<n {
+      let v = RGB(r: Double(cells[i * 3]), g: Double(cells[i * 3 + 1]), b: Double(cells[i * 3 + 2]))
+      let u = crosstalk.map { $0.unmixed(v) } ?? v
+      for c in 0..<3 { top[c] = max(top[c], u.values[c]) }
+    }
+    return top.allSatisfy { $0 > 0 } ? RGB(top) : nil
+  }
 
   private enum CodingKeys: String, CodingKey {
     case id, name, date, source, sourceFrame, width, height, aperture, notes, gridWidth, gridHeight, cells

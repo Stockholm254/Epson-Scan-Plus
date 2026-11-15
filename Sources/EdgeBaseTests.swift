@@ -66,6 +66,62 @@ enum EdgeBaseTests {
     let tight = pipe.edgeBase(shot(base: nil, seed: 2))
     try check(tight.base == nil && tight.areas.isEmpty, "a picture cropped to its frame shows no base at its edges")
 
+    // 135 on a thin base (Phoenix II's): the sprocket holes in the rebate along the top and bottom
+    // are bare light that does not clip, 1.8 times as bright as the base and of the light's own
+    // colour. Knowing the light (the blank frame's), the base is the film between and beside them.
+    let light = RGB(r: 0.52, g: 0.72, b: 0.84)
+    func holed(base film: RGB, seed: UInt32) -> CGImage {
+      var px = [UInt16](repeating: 0, count: w * h * 3)
+      var noise = seed
+      func grain() -> Double {
+        noise = noise &* 1_664_525 &+ 1_013_904_223
+        return 1 + (Double(noise >> 8) / Double(1 << 24) - 0.5) * 0.04
+      }
+      // Near-normal noise for the light through a hole, as a reading's: unclipped, it does not
+      // pile at one top value the way a uniform spread does.
+      func gauss() -> Double { 1 + (grain() + grain() + grain() + grain() - 4) * 0.4 }
+      for y in 0..<h {
+        for x in 0..<w {
+          // From each edge in: edge print (rows 0–5), a narrow strip of clear rebate (6–8), a row
+          // of sprocket holes, more of it bare light than film (9–21, 27 px of every 34), edge
+          // print again (22–29), then the picture. The holes outnumber the clear film, as on the
+          // Phoenix II roll, so not knowing the light the base is read off them.
+          let rebate = y < 30 || y >= h - 30
+          let row = y < 30 ? y : h - 1 - y
+          let hole = rebate && (9..<22).contains(row) && (x % 34) < 27
+          let print = rebate && (row < 6 || row >= 22) && (x % 20) < 17
+          let v: [Double]
+          if hole { v = light.values.map { $0 * gauss() } }
+          else if print { v = film.values.map { $0 * 0.2 * grain() } }
+          else if rebate { v = film.values.map { $0 * grain() } }
+          else {
+            let d = 0.3 + 0.8 * Double((x / 24 + y / 24) % 4) / 3
+            v = [film.r * pow(10, -d * 0.8), film.g * pow(10, -d), film.b * pow(10, -d * 1.1)]
+          }
+          for c in 0..<3 { px[(y * w + x) * 3 + c] = UInt16(min(65535, max(0, v[c] * 65535))) }
+        }
+      }
+      return CGImage(
+        width: w, height: h, bitsPerComponent: 16, bitsPerPixel: 48, bytesPerRow: w * 6,
+        space: CGColorSpace(name: CGColorSpace.linearSRGB)!,
+        bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue | CGBitmapInfo.byteOrder16Little.rawValue),
+        provider: CGDataProvider(data: px.withUnsafeBufferPointer { Data(buffer: $0) } as CFData)!, decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
+    }
+    let thin = RGB(r: 0.142, g: 0.395, b: 0.292)
+    let holedShot = holed(base: thin, seed: 7)
+    let blind = pipe.edgeBase(holedShot), seeing = pipe.edgeBase(holedShot, bare: light)
+    // A clear base of the light's own colour (black and white film): no other film to take, so it stays.
+    let clear = RGB(r: 0.47, g: 0.65, b: 0.76)
+    let clearSeen = pipe.edgeBase(holed(base: clear, seed: 8), bare: light)
+    try check(close(seeing.base, thin, 0.03) && seeing.bareKnown == true && !close(blind.base, thin, 0.1) && clearSeen.base != nil,
+      String(format: "135 on a thin base: unclipped bare light through the sprocket holes is told from the base by the light's own colour, and the base read between and beside them (%@; not knowing the light, %@); a base of the light's colour still reads",
+        seeing.base.map { $0.values.map { String(format: "%.3f", $0) }.joined(separator: " ") } ?? "none",
+        blind.base.map { $0.values.map { String(format: "%.3f", $0) }.joined(separator: " ") } ?? "none"))
+    try check(EdgeBase.lightColoured(RGB(r: 0.525, g: 0.715, b: 0.849), light) && !EdgeBase.lightColoured(thin, light)
+      && FlatProfile(name: "试", date: Date(timeIntervalSince1970: 0), source: "试", sourceFrame: UUID(), width: 4, height: 2, gridWidth: 2, gridHeight: 1,
+        cells: [0.3, 0.4, 0.5, 0.6, 0.5, 0.4]).bareLight(nil).map { close($0, RGB(r: 0.6, g: 0.5, b: 0.5), 1e-6) } == true,
+      "a blank frame's light is its brightest cell in each channel; a reading of that colour is bare light, the base's is not")
+
     // A roll of three: the light balanced again before the third, the second cropped to its frame.
     let root = folder.appendingPathComponent("edge-base", isDirectory: true)
     try? FileManager.default.removeItem(at: root)

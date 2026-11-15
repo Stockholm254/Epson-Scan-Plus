@@ -2387,13 +2387,19 @@ final class AppModel: ObservableObject {
     var flat: FlatField?
     var found: EdgeBase
   }
-  /// Looks at the edges of `frames`, each read as it is now.
-  func lookAtEdges(_ frames: [FilmFrame]) -> [EdgeLook] {
+  /// Looks at the edges of `frames`, each read as it is now; `bare`, by frame, the light's own
+  /// colour where its flat comes from a blank frame (`bareLight(of:)`).
+  func lookAtEdges(_ frames: [FilmFrame], bare: [UUID: RGB] = [:]) -> [EdgeLook] {
     frames.compactMap { f in
       (try? edgeSource(for: f)).flatMap { $0 }.map {
-        EdgeLook(id: f.id, crosstalk: f.crosstalk, flat: f.flatField, found: ImagePipeline.shared.edgeBase($0))
+        EdgeLook(id: f.id, crosstalk: f.crosstalk, flat: f.flatField, found: ImagePipeline.shared.edgeBase($0, bare: bare[f.id]))
       }
     }
+  }
+  /// The light as frame `f` reads it where no film lies, when it is divided by a blank frame's flat.
+  func bareLight(of f: FilmFrame) -> RGB? {
+    guard f.flatField != nil else { return nil }
+    return flatProfile(of: f)?.bareLight(f.crosstalk)
   }
   /// Keeps what the looks found for the pictures still waiting for it, then converts with it. A look
   /// at a reading the picture no longer has is let go: with the crosstalk turned off and on again
@@ -2421,14 +2427,20 @@ final class AppModel: ObservableObject {
     let blanks = blankFrameIDs
     // Copies of the picture alone (片边 不带) have no rebate round them to read.
     guard filmEdges != .picture else { return }
+    // A base read before bare light was told from film by its colour, and of the light's colour:
+    // the sprocket holes, looked at again (a roll of Phoenix II had every frame's base off them).
+    for i in frames.indices where frames[i].edgeBase?.bareKnown != true {
+      if let b = frames[i].edgeBase?.base, let light = bareLight(of: frames[i]), EdgeBase.lightColoured(b, light) { frames[i].edgeBase = nil }
+    }
     let pending = frames.filter { $0.edgeBase == nil && isSinglePicture($0) && $0.adjustments.inputIsNegative && !blanks.contains($0.id) }
     guard !pending.isEmpty else { return }
+    let bare = Dictionary(uniqueKeysWithValues: pending.compactMap { f in bareLight(of: f).map { (f.id, $0) } })
     let project = sessionURL
     let apply = { (looks: [EdgeLook]) in
       guard self.sessionURL == project else { return }
       self.takeEdgeLooks(looks)
     }
-    if wait { apply(lookAtEdges(pending)) } else { renderQueue.async { let r = self.lookAtEdges(pending); DispatchQueue.main.async { apply(r) } } }
+    if wait { apply(lookAtEdges(pending, bare: bare)) } else { renderQueue.async { let r = self.lookAtEdges(pending, bare: bare); DispatchQueue.main.async { apply(r) } } }
   }
   /// The frames taken together as one roll: the scanned frames; each file holding several frames,
   /// an imported strip, on its own; and the pictures that are a file each, as a camera takes them,
