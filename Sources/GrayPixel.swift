@@ -50,7 +50,9 @@ enum GrayPixelNeutral {
   static func find(in image: CGImage, settings: Adjustments, profile: FilmProfile) -> Found? {
     guard settings.inputIsNegative, !settings.isSlide, !settings.isMonochrome else { return nil }
     let pipe = ImagePipeline.shared
-    let base = pipe.analyze(image, settings: settings, profile: profile).base
+    // The base the analysis takes (a picked or the roll's, else the part's own thinnest film), not
+    // the whole analysis for it: some 60 ms on a copy.
+    let base = settings.base ?? settings.rollBase ?? pipe.densities(image, settings: settings, maxDimension: 300).base
     let part = pipe.analysisPart(image, settings)
     let read = pipe.samples(part.image, maxDimension: dimension)
     let mx = Int(Double(read.width) * part.margin), my = Int(Double(read.height) * part.margin)
@@ -60,22 +62,37 @@ enum GrayPixelNeutral {
     let toe = ImagePipeline.toe(settings, profile)
     let gamma = settings.inputGamma
     let n = w * h
-    var e = [[Float]](repeating: [Float](repeating: 0, count: n), count: 3)
+    var e0 = [Float](repeating: 0, count: n), e1 = e0, e2 = e0
     var valid = [Bool](repeating: false, count: n)
-    for y in 0..<h {
-      for x in 0..<w {
-        let v = read.pixel(x + mx, y + my).values, i = y * w + x
-        var low = Double.infinity, high = 0.0
-        for c in 0..<3 {
-          let d = log10(max(1e-4, base.values[c]) / max(1e-4, v[c])) * gamma
-          low = min(low, d)
-          high = max(high, v[c])
-          e[c][i] = Float(FilmToe.exposure(d / slopes.values[c], width: toe.values[c]))
+    let baseLight = (0..<3).map { max(1e-4, base.values[$0]) }, sl = slopes.values, widths = toe.values, rw = read.width
+    // Row by row on every core, each pixel as before.
+    read.values.withUnsafeBufferPointer { v in
+      e0.withUnsafeMutableBufferPointer { p0 in
+        e1.withUnsafeMutableBufferPointer { p1 in
+          e2.withUnsafeMutableBufferPointer { p2 in
+            valid.withUnsafeMutableBufferPointer { ok in
+              DispatchQueue.concurrentPerform(iterations: h) { y in
+                for x in 0..<w {
+                  let p = ((y + my) * rw + x + mx) * 4, i = y * w + x
+                  var low = Double.infinity, high = 0.0
+                  for c in 0..<3 {
+                    let value = Double(v[p + c])
+                    let d = log10(baseLight[c] / max(1e-4, value)) * gamma
+                    low = min(low, d)
+                    high = max(high, value)
+                    let ex = Float(FilmToe.exposure(d / sl[c], width: widths[c]))
+                    if c == 0 { p0[i] = ex } else if c == 1 { p1[i] = ex } else { p2[i] = ex }
+                  }
+                  // Clear of the base (unexposed film, sprocket holes) and of clipped light.
+                  ok[i] = low > 0.03 && high < 0.98 && low.isFinite
+                }
+              }
+            }
+          }
         }
-        // Clear of the base (unexposed film, sprocket holes) and of clipped light.
-        valid[i] = low > 0.03 && high < 0.98 && low.isFinite
       }
     }
+    let e = [e0, e1, e2]
     let smooth = e.map { blur($0, w, h) }
     var u = [Float](repeating: 0, count: n), b = u, l = u
     for i in 0..<n {
@@ -122,42 +139,48 @@ enum GrayPixelNeutral {
     return Found(reading: reading, neutral: neutral, prior: prior, calibrated: calibrated, grays: grays.count, candidates: near.count)
   }
 
-  /// Gaussian of σ 1 pixel, edges held.
-  static func blur(_ a: [Float], _ w: Int, _ h: Int) -> [Float] {
-    let k: [Float] = [0.00443, 0.05400, 0.24203, 0.39905, 0.24203, 0.05400, 0.00443]
-    var t = [Float](repeating: 0, count: a.count), out = t
-    for y in 0..<h {
-      let row = y * w
-      for x in 0..<w {
-        var s: Float = 0
-        for j in -3...3 { s += k[j + 3] * a[row + min(w - 1, max(0, x + j))] }
-        t[row + x] = s
-      }
-    }
-    for y in 0..<h {
-      for x in 0..<w {
-        var s: Float = 0
-        for j in -3...3 { s += k[j + 3] * t[min(h - 1, max(0, y + j)) * w + x] }
-        out[y * w + x] = s
+  /// Each row of `out` from `a`, on every core: `row(y, a, out)` writes row y.
+  private static func rows(_ a: [Float], _ h: Int, _ row: (Int, UnsafeBufferPointer<Float>, UnsafeMutableBufferPointer<Float>) -> Void) -> [Float] {
+    var out = [Float](repeating: 0, count: a.count)
+    a.withUnsafeBufferPointer { pa in
+      out.withUnsafeMutableBufferPointer { po in
+        DispatchQueue.concurrentPerform(iterations: h) { y in row(y, pa, po) }
       }
     }
     return out
   }
+  /// Gaussian of σ 1 pixel, edges held. Rows on every core, each value summed as before (one
+  /// thread took some 15 ms a pass on a copy's 1200 pixels).
+  static func blur(_ a: [Float], _ w: Int, _ h: Int) -> [Float] {
+    let taps: [Float] = [0.00443, 0.05400, 0.24203, 0.39905, 0.24203, 0.05400, 0.00443]
+    let t = rows(a, h) { y, a, t in
+      let row = y * w
+      for x in 0..<w {
+        var s: Float = 0
+        for j in -3...3 { s += taps[j + 3] * a[row + min(w - 1, max(0, x + j))] }
+        t[row + x] = s
+      }
+    }
+    return rows(t, h) { y, t, out in
+      for x in 0..<w {
+        var s: Float = 0
+        for j in -3...3 { s += taps[j + 3] * t[min(h - 1, max(0, y + j)) * w + x] }
+        out[y * w + x] = s
+      }
+    }
+  }
   static func laplacian(_ a: [Float], _ w: Int, _ h: Int) -> [Float] {
-    var out = [Float](repeating: 0, count: a.count)
-    for y in 0..<h {
+    rows(a, h) { y, a, out in
       for x in 0..<w {
         let i = y * w + x
         out[i] = a[y * w + max(0, x - 1)] + a[y * w + min(w - 1, x + 1)] + a[max(0, y - 1) * w + x] + a[min(h - 1, y + 1) * w + x] - 4 * a[i]
       }
     }
-    return out
   }
   /// The mean over a (2r + 1)² square, edges held.
   static func box(_ a: [Float], _ w: Int, _ h: Int, radius r: Int) -> [Float] {
     let size = Float(2 * r + 1)
-    var t = [Float](repeating: 0, count: a.count), out = t
-    for y in 0..<h {
+    let t = rows(a, h) { y, a, t in
       let row = y * w
       for x in 0..<w {
         var s: Float = 0
@@ -165,20 +188,22 @@ enum GrayPixelNeutral {
         t[row + x] = s / size
       }
     }
-    for y in 0..<h {
+    return rows(t, h) { y, t, out in
       for x in 0..<w {
         var s: Float = 0
         for j in -r...r { s += t[min(h - 1, max(0, y + j)) * w + x] }
         out[y * w + x] = s / size
       }
     }
-    return out
   }
+  /// The value sorting `a` would put at `p` of the way along: picked out, not sorted (a copy's
+  /// million contrasts took some 80 ms to sort).
   static func quantile(_ a: [Float], _ p: Double) -> Float {
     guard !a.isEmpty else { return 0 }
-    let s = a.sorted()
-    return s[min(s.count - 1, Int(Double(s.count - 1) * p))]
+    return select(a, min(a.count - 1, Int(Double(a.count - 1) * p)))
   }
+  /// The `k`th smallest of `a`, as `a.sorted()[k]` (`selectKth`).
+  static func select(_ a: [Float], _ k: Int) -> Float { selectKth(a, k) }
   static func median(_ a: [Float]) -> Float { quantile(a, 0.5) }
 }
 

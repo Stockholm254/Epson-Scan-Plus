@@ -27,6 +27,41 @@ struct Samples {
   }
 }
 
+/// The `k`th smallest of `a` (0 the smallest), the value `a.sorted()[k]` holds, picked out by
+/// Hoare's selection instead of sorting: a million values took some 80 ms to sort. One for each
+/// kind, made here from the generic one: called from other files, the generic one is not made for
+/// the kind and ran at half the speed.
+func selectKth(_ a: [Double], _ k: Int) -> Double { selectKthOf(a, k) }
+func selectKth(_ a: [Float], _ k: Int) -> Float { selectKthOf(a, k) }
+@inline(__always) private func selectKthOf<T: FloatingPoint>(_ a: [T], _ k: Int) -> T {
+  // NaN orders nothing: sorted, as before.
+  if a.contains(where: { $0.isNaN }) { return a.sorted()[k] }
+  var v = a
+  return v.withUnsafeMutableBufferPointer { v -> T in
+    var lo = 0, hi = v.count - 1
+    while lo < hi {
+      // The median of three as the pivot.
+      let mid = lo + (hi - lo) / 2
+      if v[mid] < v[lo] { v.swapAt(mid, lo) }
+      if v[hi] < v[lo] { v.swapAt(hi, lo) }
+      if v[hi] < v[mid] { v.swapAt(hi, mid) }
+      let pivot = v[mid]
+      var i = lo, j = hi
+      while i <= j {
+        while v[i] < pivot { i += 1 }
+        while pivot < v[j] { j -= 1 }
+        if i <= j {
+          v.swapAt(i, j)
+          i += 1
+          j -= 1
+        }
+      }
+      if k <= j { hi = j } else if k >= i { lo = i } else { return v[k] }
+    }
+    return v[k]
+  }
+}
+
 struct ToneAnalysis: Equatable {
   var base: RGB
   var balance: RGB
@@ -299,8 +334,11 @@ final class ImagePipeline {
     guard even, (0..<3).allSatisfy({ base.values[$0] > thinnest[$0] * 0.97 }) else { return nil }
     return base
   }
+  /// The value sorting `a` would put at `p` of the way along, picked out rather than sorted
+  /// (`selectKth`): the roll's estimate takes two medians of some 200 000 edges.
   func quantile(_ a: [Double], _ p: Double) -> Double {
-    quantiles(a, [p])[0]
+    guard !a.isEmpty else { return 0 }
+    return selectKth(a, min(a.count - 1, Int(Double(a.count - 1) * p)))
   }
   /// Several quantiles of `a` from one sort.
   func quantiles(_ a: [Double], _ ps: [Double]) -> [Double] {

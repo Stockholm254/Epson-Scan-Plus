@@ -397,8 +397,19 @@ enum CanvasTests {
     for _ in 0..<40 where model.rendering { settle(0.1) }
     try check(model.preparedTaken == takenBefore + 1 && model.shownFrameID == model.frames[2].id,
       "going on to the next frame shows the picture made ahead while the one before was looked at (\(model.preparedTaken - takenBefore) taken)")
-    model.singleView = false
+    // ①'s raw picture too.
     model.page = .capture
+    model.select(model.frames[0].id)
+    for _ in 0..<40 where model.rendering { settle(0.1) }
+    model.select(model.frames[1].id)
+    for _ in 0..<40 where model.rendering { settle(0.1) }
+    settle(0.8)
+    let rawBefore = model.preparedTaken
+    model.select(model.frames[2].id)
+    for _ in 0..<40 where model.rendering { settle(0.1) }
+    try check(model.preparedTaken == rawBefore + 1 && model.shownFrameID == model.frames[2].id && model.showsOriginal,
+      "and in ①, the next raw picture is read ahead (\(model.preparedTaken - rawBefore) taken)")
+    model.singleView = false
 
     // The scan head over the frame being scanned.
     for _ in 0..<40 where model.rendering { settle(0.1) }

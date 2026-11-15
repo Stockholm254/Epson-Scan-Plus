@@ -4202,7 +4202,7 @@ final class AppModel: ObservableObject {
     singleAskedAt = (singleAskedAt.last, Date())
     var request = singleRequest(frame, token: token)
     // The frame a picture was made ahead for (`prepareAhead`): what it reads, to tell whether it holds.
-    if preparedFor == frame.id { request.ready = readyKey(request, frame) }
+    if preparedFor == frame.id { request.ready = request.original ? rawReadyKey(frame) : readyKey(request, frame) }
     wantedLock.lock()
     wantedSingle = request
     let queued = singleQueued
@@ -4256,6 +4256,12 @@ final class AppModel: ObservableObject {
     let measures: SingleMeasures
   }
   private typealias SingleMeasures = (hist: ([Double], [[Double]]), thumbnail: CGImage?, range: ToneRange?)
+  /// Module ①'s raw picture made ahead the same way: read, shown as the sensor read it, its exposure
+  /// and base read (`renderOriginal`).
+  private struct PreparedRaw {
+    let key: String, raw: CGImage, output: CGImage, exposure: ExposureReading?, balance: BaseBalance?
+  }
+  private var preparedRaw: PreparedRaw?
   /// The picture made ahead and the one being made, under `prepareLock`; made on a queue of their
   /// own, so a render asked for meanwhile never waits behind one it does not use.
   private let prepareLock = NSLock()
@@ -4630,16 +4636,18 @@ final class AppModel: ObservableObject {
     }
     let ahead = goingBack ? i - 1 : i + 1, behind = goingBack ? i + 1 : i - 1
     if frames.indices.contains(ahead) { prepareAhead(frames[ahead]) }
-    let around = [behind].filter(frames.indices.contains).map { frames[$0] }
+    let around = [behind].filter(frames.indices.contains).map { frames[$0] }, raw = showsOriginal
     renderQueue.async { [weak self] in
       for f in around {
         guard let self, self.isCurrent(token) else { return }
-        _ = try? self.source(for: f)
+        _ = raw ? try? self.dustFreeSource(for: f, full: false) : try? self.source(for: f)
       }
     }
   }
   private func prepareAhead(_ next: FilmFrame) {
-    guard !sliding, !editingSingle, !composing, !showsOriginal, !(Self.findsAutoNeutrals && Self.wantsAutoNeutral(next)) else { return }
+    guard !sliding, !editingSingle, !composing else { return }
+    if showsOriginal { return prepareRawAhead(next) }
+    guard !(Self.findsAutoNeutrals && Self.wantsAutoNeutral(next)) else { return }
     var r = singleRequest(next, token: 0)
     (r.sliding, r.grays) = (false, nil)
     let key = readyKey(r, next)
@@ -4650,7 +4658,7 @@ final class AppModel: ObservableObject {
       group.enter()
       preparing = (key, group)
       // One kept at a time: some 100 MB on a copy.
-      prepared = nil
+      (prepared, preparedRaw) = (nil, nil)
       return true
     }
     guard begun else { return }
@@ -4664,6 +4672,51 @@ final class AppModel: ObservableObject {
         }
       }
       group.leave()
+    }
+  }
+  /// What module ①'s raw picture of `frame` reads, for one made ahead to stand for it.
+  private func rawReadyKey(_ frame: FilmFrame) -> String {
+    analysisKey(frame, everything: true) + "|raw|\(String(describing: rawGains(frame)))"
+  }
+  private func prepareRawAhead(_ next: FilmFrame) {
+    let key = rawReadyKey(next), gains = rawGains(next)
+    preparedFor = next.id
+    let group = DispatchGroup()
+    let begun = prepareLock.withLock { () -> Bool in
+      guard preparedRaw?.key != key, preparing?.key != key else { return false }
+      group.enter()
+      preparing = (key, group)
+      (prepared, preparedRaw) = (nil, nil)
+      return true
+    }
+    guard begun else { return }
+    prepareQueue.async { [weak self] in
+      guard let self else { return group.leave() }
+      let wanted = { self.prepareLock.withLock { self.preparing?.key == key } }
+      var made: PreparedRaw?
+      if wanted(), let raw = try? self.dustFreeSource(for: next, full: false), wanted(),
+        let output = ImagePipeline.shared.original(raw, settings: next.adjustments, oriented: true, gains: gains)
+      {
+        made = PreparedRaw(key: key, raw: raw, output: output, exposure: ImagePipeline.shared.exposure(raw), balance: self.baseBalance(of: next, raw: raw))
+      }
+      self.prepareLock.withLock {
+        if self.preparing?.key == key {
+          self.preparing = nil
+          self.preparedRaw = made
+        }
+      }
+      group.leave()
+    }
+  }
+  /// On the render queue: ①'s raw picture made ahead for `r`, as `takePrepared`.
+  private func takePreparedRaw(_ r: SingleRender) -> PreparedRaw? {
+    guard let key = r.ready, !r.edit else { return nil }
+    let making = prepareLock.withLock { preparing?.key == key ? preparing?.done : nil }
+    if let making { _ = making.wait(timeout: .now() + 2) }
+    return prepareLock.withLock {
+      guard let ready = preparedRaw, ready.key == key else { return nil }
+      preparedRaw = nil
+      return ready
     }
   }
   /// On `prepareQueue`: `r`'s picture as `renderSingle` makes it, given up as soon as another is wanted.
@@ -4689,17 +4742,25 @@ final class AppModel: ObservableObject {
   /// how it was exposed; nothing analysed, converted or measured beside it.
   private func renderOriginal(_ r: SingleRender, started: Date) {
     let frame = r.frame, edit = r.edit, token = r.token
+    let ready = takePreparedRaw(r)
+    if r.ready != nil {
+      let id = frame.id, taken = ready != nil
+      DispatchQueue.main.async {
+        if taken { self.preparedTaken += 1 }
+        if self.preparedFor == id { self.preparedFor = nil }
+      }
+    }
     do {
       step(0.05, "读取原图", token, since: started)
-      let raw = try dustFreeSource(for: frame, full: false)
+      let raw = try ready?.raw ?? dustFreeSource(for: frame, full: false)
       let context = edit ? try contextSource(for: frame) : nil
       var shown = frame.adjustments
       if edit { (shown.angle, shown.composition) = (nil, nil) }
-      let balance = baseBalance(of: frame, raw: raw)
-      guard let output = ImagePipeline.shared.original(context?.image ?? raw, settings: shown, oriented: true, gains: rawGains(frame)) else {
+      let balance = ready.map { $0.balance } ?? baseBalance(of: frame, raw: raw)
+      guard let output = ready?.output ?? ImagePipeline.shared.original(context?.image ?? raw, settings: shown, oriented: true, gains: rawGains(frame)) else {
         throw DeskError.message("无法生成预览")
       }
-      let exposure = ImagePipeline.shared.exposure(raw)
+      let exposure = ready.map { $0.exposure } ?? ImagePipeline.shared.exposure(raw)
       DispatchQueue.main.async {
         let newest = self.revision == token
         guard token > self.shownSingle, self.singleView, self.selectedID == frame.id, edit == self.editingSingle, r.composing == self.composing, self.showsOriginal else {
@@ -4717,6 +4778,8 @@ final class AppModel: ObservableObject {
         if self.exposureReading != exposure { self.exposureReading = exposure }
         if self.baseBalance != balance { self.baseBalance = balance }
         if newest { self.rendering = false }
+        // The next raw picture read ahead, as ② and ③ make theirs.
+        if newest, !edit { self.readAhead(around: frame, token: token) }
       }
     } catch {
       DispatchQueue.main.async {
