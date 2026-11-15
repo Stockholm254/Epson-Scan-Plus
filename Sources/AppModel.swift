@@ -3735,6 +3735,14 @@ final class AppModel: ObservableObject {
   /// Also from the export's queue.
   /// A copy's exposure as if read from its EXIF, for tests.
   func setCopyExposure(_ path: String, _ value: Double?) { copyExposureLock.withLock { copyExposures[path] = value } }
+  /// The copies' exposures read ahead, all at once (`copyExposure` reads each once, as asked for:
+  /// a roll of copies opened read a dozen camera files one after another on the main thread, some
+  /// 90 ms, before the roll showed). Read off the main thread as a roll opens from the library.
+  func readCopyExposures(_ frames: [FilmFrame]) {
+    let paths = Set(frames.filter { $0.sensorRead == true && $0.sourcePath != nil }.compactMap { f in PhotoInfo.file(for: f)?.path ?? f.sourcePath })
+    let unknown = copyExposureLock.withLock { Array(paths.filter { !copyExposures.keys.contains($0) }) }
+    DispatchQueue.concurrentPerform(iterations: unknown.count) { i in _ = copyExposure(unknown[i]) }
+  }
   func copyExposure(_ path: String) -> Double? {
     if let known = copyExposureLock.withLock({ copyExposures[path] }) { return known }
     let read = PhotoInfo.exposure(URL(fileURLWithPath: path))
@@ -6459,6 +6467,7 @@ final class AppModel: ObservableObject {
       let url = entry.project, flare = overviewFlare
       DispatchQueue.global(qos: .userInitiated).async {
         let read = Result { try Self.readProject(url, flare: flare) }
+        if case .success(let r) = read { self.readCopyExposures(r.project.frames) }
         DispatchQueue.main.async {
           guard self.openingRoll == url else { return }
           self.openingRoll = nil
@@ -6531,6 +6540,8 @@ final class AppModel: ObservableObject {
     sourceSummary = ""
     overviewURL = URL(fileURLWithPath: overviewPath)
     overview = cg
+    // Known already where it opened from the library; read here, side by side, otherwise.
+    readCopyExposures(p.frames)
     frames = p.frames.map { saved in
       var f = saved
       f.scanPath = f.scanPath.map { ProjectFiles.resolve($0, relative: f.scanFile, in: folder) }
