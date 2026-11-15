@@ -542,6 +542,11 @@ struct Adjustments: Codable, Equatable {
   var reversal: Bool? = nil
   /// The roll's copies take in the film's edge or not (`PictureEdges`); nil, 自动: it is looked for.
   var filmEdges: PictureEdges? = nil
+  /// With the film's whole width taken in (`filmEdges` .rebate) by a picture a file each, the roll's
+  /// format (`FilmFormat`'s raw value), whose sizes say how much of the crop the rebate and its edge
+  /// print take across the film: the de-masking region starts inside them while it follows the
+  /// picture (`ImagePipeline.followedRegion`). Nil otherwise.
+  var filmFormat: String? = nil
   /// A slide's reading, converted as `reversal` says; never a negative's.
   var isSlide: Bool { reversal == true && !inputIsNegative }
   /// A black and white negative (Tri-X, HP5, T-Max…): one layer of silver, so its three readings

@@ -123,15 +123,21 @@ final class AppModel: ObservableObject {
   var previewShowing: Bool { scanner.previewSoFar != nil }
   @Published var showNegative = false
   @Published var tool = CanvasTool.select
-  @Published var format = FilmFormat.auto
+  @Published var format = FilmFormat.auto { didSet { if format != oldValue { stampFilmEdges() } } }
   /// Whether the roll's copies take in the film's edge (边字、齿孔): from the new-project sheet or
   /// ②'s film section; each frame's de-masking region and a copy's size follow it. Kept with the roll.
   @Published var filmEdges = PictureEdges.auto { didSet { stampFilmEdges() } }
   /// The roll's `filmEdges` on each frame, where its picture is read.
   private func stampFilmEdges() {
     let edges: PictureEdges? = filmEdges == .auto ? nil : filmEdges
-    guard frames.contains(where: { $0.adjustments.filmEdges != edges }) else { return }
-    for i in frames.indices where frames[i].adjustments.filmEdges != edges { frames[i].adjustments.filmEdges = edges }
+    // A copy's or an import's, the film's whole width in it: the format, for the rebate's share.
+    let gauge: String? = filmEdges == .rebate && ImagePipeline.rebateShare(format.rawValue, width: 1, height: 1) != nil ? format.rawValue : nil
+    func stamped(_ f: FilmFrame) -> String? { f.sourcePath == nil ? nil : gauge }
+    guard frames.contains(where: { $0.adjustments.filmEdges != edges || $0.adjustments.filmFormat != stamped($0) }) else { return }
+    for i in frames.indices where frames[i].adjustments.filmEdges != edges || frames[i].adjustments.filmFormat != stamped(frames[i]) {
+      frames[i].adjustments.filmEdges = edges
+      frames[i].adjustments.filmFormat = stamped(frames[i])
+    }
   }
   @Published var dpi = 2400
   @Published var filmName = "Kodak Portra 160"

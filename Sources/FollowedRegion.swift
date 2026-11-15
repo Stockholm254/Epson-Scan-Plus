@@ -210,6 +210,22 @@ extension ImagePipeline {
   /// while its region follows the picture, where the film's edge lies inside the crop: on each
   /// side 1.5% inside the edge, and no nearer the side than 5%. Nil where no edge reaches that far
   /// in, or the picture is a positive's: the crop is then read less its outer 5% (`analysisPart`).
+  /// With the film's whole width in a crop `width` × `height` of format `format` (`FilmFormat`'s raw
+  /// value), the share of the crop across the film its rebate takes on each side (its edge print, on
+  /// 135 its sprocket holes): (film − picture across) / 2 / film, 15.7% on 135, 4.5% on 120; and the
+  /// sides those are, [top, bottom] when the film runs across the crop, else [left, right]: the way
+  /// the crop's shape is nearer the film's (the picture's length along it by the film's width). Nil
+  /// for a format whose sizes are not known (自动, 120 of a length not given).
+  static func rebateShare(_ format: String?, width: Int, height: Int) -> (share: Double, sides: [Int])? {
+    guard let f = format.flatMap(FilmFormat.init(rawValue:)), let film = f.filmWidthMM, let short = f.shortMM, let long = f.longMM,
+      width > 0, height > 0
+    else { return nil }
+    // On 135 the picture's long side runs along the film; on 120 its 56 mm run across it.
+    let across = f == .mm135 ? short : 56, along = f == .mm135 ? long : (f == .six45 ? short : long)
+    let aspect = log(Double(width) / Double(height))
+    let sides = abs(aspect - log(along / film)) <= abs(aspect - log(film / along)) ? [0, 1] : [2, 3]
+    return ((film - across) / 2 / film, sides)
+  }
   func followedRegion(_ image: CGImage, settings: Adjustments) -> NormalRect? {
     guard settings.inputIsNegative || settings.isSlide else { return nil }
     // The roll's copies are the picture alone: no edge in them to look for.
@@ -218,7 +234,15 @@ extension ImagePipeline {
     let depths = filmEdgeDepths(
       s, slide: settings.isSlide, gamma: settings.inputGamma,
       base: settings.inputIsNegative ? settings.base ?? settings.rollBase : nil)
-    let inset = depths.map { d in max(0.05, (d ?? 0) + 0.015) }
+    // The film's whole width in the crop (带片边) of a format whose sizes are known: across the film
+    // at least its rebate and edge print, as wide as the format says, however its edge was found.
+    // Edge print, dark on the base, broke the even rebate an edge is found by, and the region kept
+    // only 5% from the crop's sides, some of the print in it.
+    var least = [0.05, 0.05, 0.05, 0.05]
+    if let rebate = Self.rebateShare(settings.filmFormat, width: image.width, height: image.height) {
+      for side in rebate.sides { least[side] = max(least[side], rebate.share + 0.015) }
+    }
+    let inset = depths.indices.map { i in max(least[i], (depths[i] ?? 0) + 0.015) }
     guard inset.contains(where: { $0 > 0.05 + 1e-9 }) else { return nil }
     // Rounded to a thousandth, so that a picture read at another size lands on the same part.
     let r = inset.map { ($0 * 1000).rounded() / 1000 }

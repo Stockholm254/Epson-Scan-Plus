@@ -303,11 +303,11 @@ enum CopyLightTests {
     flatModel.copySettings()
     flatModel.select(ids[5])
     flatModel.pasteBasePoint()
-    let readAgain = flatModel.frames[5].adjustments, expected = flatModel.baseReading(flatModel.frames[5], at: place)
+    let readAgain = flatModel.frames[5].adjustments, readThere = flatModel.baseReading(flatModel.frames[5], at: place)
     flatEdits.undo()
     flatEdits.undo()
     (flatModel.page, flatModel.convertStep) = (pageWas, stepWas)
-    try check(readAgain.basePicked == place && expected != nil && readAgain.base == expected && readAgain.base != RGB(r: 0.3, g: 0.2, b: 0.15)
+    try check(readAgain.basePicked == place && readThere != nil && readAgain.base == readThere && readAgain.base != RGB(r: 0.3, g: 0.2, b: 0.15)
       && flatModel.frames[5].adjustments.basePicked == nil,
       "粘贴片基取点 reads each frame's own base where the base was picked by hand, as one edit")
     // Kept once with the roll: frames keep only the flat's id where it reads back exactly; a frame

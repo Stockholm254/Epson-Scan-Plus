@@ -170,5 +170,19 @@ enum FollowedRegionTests {
     var positive = Adjustments()
     positive.inputIsNegative = false
     try check(pipe.followedRegion(wide120, settings: positive) == nil, "a positive file is read as before")
+    // 带片边 on 135, the crop the film's whole 35 mm across: its edge print not found as an edge (a
+    // scene to the crop's sides here), the region still starts inside the rebate, 15.7% of the
+    // crop and 1.5% more, across the film; along it as before. 120 6×4.5 runs the other way.
+    var rebate135 = known
+    (rebate135.filmEdges, rebate135.filmFormat) = (.rebate, FilmFormat.mm135.rawValue)
+    let across = picture(760, 700) { u, v in dense(scene(u, v)) }
+    let byFormat = pipe.followedRegion(across, settings: rebate135)
+    let six45 = ImagePipeline.rebateShare(FilmFormat.six45.rawValue, width: 440, height: 615)
+    let downward = ImagePipeline.rebateShare(FilmFormat.mm135.rawValue, width: 700, height: 760)
+    try check(byFormat.map { abs($0.y - 0.172) < 0.002 && abs($0.height - (1 - 2 * 0.172)) < 0.003 && abs($0.x - 0.05) < 0.002 } == true
+      && pipe.followedRegion(across, settings: known) == nil
+      && six45.map { abs($0.share - 0.0447) < 0.001 && $0.sides == [0, 1] } == true && downward?.sides == [2, 3]
+      && ImagePipeline.rebateShare(FilmFormat.medium.rawValue, width: 700, height: 615) == nil,
+      "带片边 with the format known, the region starts inside the rebate and its edge print across the film, as wide as the format says: \(byFormat.map { String(format: "%.3f %.3f", $0.y, $0.height) } ?? "none")")
   }
 }
