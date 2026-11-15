@@ -111,10 +111,19 @@ struct ContentView: View {
         }
         // The open roll's strip, under the modules that work on it; the library shows every roll.
         if m.page != .library { filmstrip.transition(.move(edge: .bottom).combined(with: .opacity)) }
-        if m.page == .leak {
-          if m.leak.busy != nil { LeakStatus(lab: m.leak) }
-        } else if footerShown {
-          footer.transition(.move(edge: .bottom).combined(with: .opacity))
+        if m.page == .leak, m.leak.busy != nil { LeakStatus(lab: m.leak) }
+      }
+      // The status line floats over the foot of the strip, a pane of glass of its own, rather than
+      // taking a row under it: as a row it slid in after nearly every change and out a few seconds
+      // later, the canvas a row shorter, then taller, each time, every picture laid out again for
+      // each step of the slide and caches kept by the canvas's size thrown away (the light table's
+      // lag in 0.23.5 was one).
+      .overlay(alignment: .bottom) {
+        if m.page != .leak, footerShown {
+          footer.glassPane(radius: 14, darken: 0.35)
+            .shadow(color: .black.opacity(0.25), radius: 8, y: 3)
+            .padding(.horizontal, 14).padding(.bottom, 8)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
         }
       }
       .animation(Liquid.flow, value: footerShown)
@@ -764,6 +773,8 @@ struct ContentView: View {
               + (grading ? "；② 去色罩的设置和去漏光的修复不动" : "；③ 的调色不动，方向、画面范围和去漏光的修复保留"))
             .disabled(frameControlsOff)
         }
+        // What the app guessed for the roll that looks wrong, with where to set it right.
+        RollCheckRow(m: m)
         // ③'s own row under the title: its looks kept by name and the frame's snapshots.
         if grading {
           HStack(spacing: 6) {
@@ -1966,7 +1977,7 @@ struct ContentView: View {
           Button("在 Finder 中显示") { NSWorkspace.shared.activateFileViewerSelecting(done.files) }
             .buttonStyle(.link).font(.system(size: 11)).help("在 Finder 中选中导出的 \(done.files.count) 个文件")
         }
-      }.frame(maxWidth: .infinity, alignment: .leading)
+      }.layoutPriority(1)
       UpdateNotice(m: m, updater: m.updater)
       // Frame by frame, with the key that stops it.
       if m.exporting && m.exportProgress.total > 0 { ExportProgressBar(m: m) }
@@ -1974,7 +1985,7 @@ struct ContentView: View {
         scanProgress
         Button("取消") { m.cancel() }.disabled(m.scanBatch.phase == .cancelling).controlSize(.small)
       }
-    }.padding(.horizontal, 18).padding(.vertical, 7)
+    }.padding(.horizontal, 16).padding(.vertical, 7)
       .animation(.snappy(duration: 0.25), value: m.exporting)
   }
   func sectionTitle(_ text: String, symbol: String) -> some View { SectionTitle(text: text, symbol: symbol) }

@@ -383,6 +383,20 @@ enum CanvasTests {
     model.mirrorRoll()
     try check(!model.contactMirrored && model.frames.allSatisfy { $0.adjustments.flipHorizontal == false }, "mirroring again undoes it")
 
+    // The next frame made ahead while one is looked at: → shows it without converting it then.
+    model.singleView = true
+    model.select(model.frames[0].id)
+    for _ in 0..<40 where model.rendering { settle(0.1) }
+    model.select(model.frames[1].id)
+    for _ in 0..<40 where model.rendering { settle(0.1) }
+    settle(0.8)
+    let takenBefore = model.preparedTaken
+    model.select(model.frames[2].id)
+    for _ in 0..<40 where model.rendering { settle(0.1) }
+    try check(model.preparedTaken == takenBefore + 1 && model.shownFrameID == model.frames[2].id,
+      "going on to the next frame shows the picture made ahead while the one before was looked at (\(model.preparedTaken - takenBefore) taken)")
+    model.singleView = false
+
     // The scan head over the frame being scanned.
     for _ in 0..<40 where model.rendering { settle(0.1) }
     model.select(model.frames[1].id)

@@ -3002,38 +3002,74 @@ final class AppModel: ObservableObject {
   /// 全卷斜率估计 on; off, clears them. They come after a calibrated preset, before the data sheet.
   /// Why the roll's slopes could not be estimated, by frame (`ImagePipeline.rollSlopeEstimate`).
   @Published private(set) var rollSlopesWhy = [UUID: String]()
+  /// What the roll's check reads of each frame, from the same pass (`RollCheck`).
+  @Published var frameFigures = [UUID: FrameFigures]()
   func updateRollSlopes(completion: (() -> Void)? = nil) {
     let snapshot = frames, film = conversionProfile, green = film.slopes.g, toe = film.toe, on = estimatesSlopes, blanks = blankFrameIDs
+    let preview = (overview.map { "\(ObjectIdentifier($0).hashValue)" } ?? "-") + "|" + (overviewURL?.path ?? "-"), rollFormat = format
     rollSlopesRevision += 1
     let token = rollSlopesRevision
-    renderQueue.async {
-      var result = [UUID: RGB?](), why = [UUID: String]()
+    estimateLock.withLock { estimateLatest = token }
+    estimateQueue.async { [weak self] in
+      guard let self else { return }
+      var result = [UUID: RGB?](), why = [UUID: String](), figures = [UUID: FrameFigures]()
+      func figure(_ f: FilmFrame, _ e: ImagePipeline.EdgeRatios) {
+        figures[f.id] = FrameFigures(darkest: e.darkest, clearer: e.clearer, own: e.own.map { RGB(r: $0.r, g: 1, b: $0.b) },
+          measuredBase: (f.adjustments.base ?? f.adjustments.rollBase) != nil)
+      }
       // Slides have no layers' contrast to estimate: their dyes are the picture.
       // Blank frames have no film on them: no layers' contrast to measure.
       let groups = Self.rollGroups(snapshot, poolPictures: true).map({ $0.filter { $0.adjustments.inputIsNegative && !blanks.contains($0.id) } })
-      // Read from their files (a roll opened the first time), the frames counted on the bar once
-      // it takes more than half a second; from memory it is too quick to show.
-      let started = Date(), total = groups.reduce(0) { $0 + $1.count }
+      let ids = Set(snapshot.map(\.id))
+      self.keptEdges = self.keptEdges.filter { ids.contains($0.key) }
+      let keys = on ? Dictionary(groups.joined().map { f in
+        (f.id, Self.edgesKey(f, flare: self.flareOffset(f), preview: preview, format: rollFormat))
+      }, uniquingKeysWith: { a, _ in a }) : [:]
+      // Read from their files (a roll opened the first time, a base shared), the frames counted on
+      // the bar once it takes more than half a second; from memory it is too quick to show.
+      let started = Date(), total = keys.filter { self.keptEdges[$0.key]?.key != $0.value }.count
       var read = 0, shown = false
+      func hideBar() {
+        guard shown else { return }
+        DispatchQueue.main.async { if self.positivesLoading?.what == "读取原图" { self.positivesLoading = nil } }
+      }
       for members in groups where !members.isEmpty {
         guard on else {
           for f in members { result[f.id] = .some(nil) }
           continue
         }
-        let inputs = members.compactMap { f -> (image: CGImage, settings: Adjustments)? in
-          defer {
-            read += 1
-            if total >= 2 && Date().timeIntervalSince(started) > 0.5 {
-              shown = true
-              let progress = LoadProgress(done: read, total: total, what: "读取原图")
-              DispatchQueue.main.async { if token == self.rollSlopesRevision { self.positivesLoading = progress } }
-            }
+        var edges = [ImagePipeline.EdgeRatios](), counted = [Adjustments]()
+        for f in members {
+          // A newer estimate wanted (another region drawn, a base picked): this one is left to it.
+          guard self.estimateLock.withLock({ self.estimateLatest == token }) else {
+            hideBar()
+            return DispatchQueue.main.async { completion?() }
           }
-          return (try? self.source(for: f, maxDimension: 600)).map { (image: $0, settings: f.adjustments) }
+          guard let key = keys[f.id] else { continue }
+          if let kept = self.keptEdges[f.id], kept.key == key {
+            edges.append(kept.edges)
+            counted.append(f.adjustments)
+            figure(f, kept.edges)
+            continue
+          }
+          let found = autoreleasepool { () -> ImagePipeline.EdgeRatios? in
+            (try? self.source(for: f, maxDimension: 600)).map { ImagePipeline.shared.edgeRatios($0, settings: f.adjustments) }
+          }
+          read += 1
+          if total >= 2 && Date().timeIntervalSince(started) > 0.5 {
+            shown = true
+            let progress = LoadProgress(done: read, total: total, what: "读取原图")
+            DispatchQueue.main.async { if token == self.rollSlopesRevision { self.positivesLoading = progress } }
+          }
+          guard let found else { continue }
+          self.keptEdges[f.id] = (key, found)
+          edges.append(found)
+          counted.append(f.adjustments)
+          figure(f, found)
         }
         // The toe only bends from a measured film base, as in the conversion.
-        let measured = inputs.allSatisfy { ($0.settings.base ?? $0.settings.rollBase) != nil }
-        let estimate = ImagePipeline.shared.rollSlopeEstimate(inputs, greenSlope: green, toe: measured ? toe : nil)
+        let measured = counted.allSatisfy { ($0.base ?? $0.rollBase) != nil }
+        let estimate = ImagePipeline.shared.rollSlopeEstimate(edges, greenSlope: green, toe: measured ? toe : nil)
         for f in members {
           result[f.id] = .some(estimate.slopes)
           if let reason = estimate.why { why[f.id] = reason }
@@ -3048,6 +3084,7 @@ final class AppModel: ObservableObject {
           return
         }
         self.rollSlopesWhy = why
+        if self.frameFigures != figures { self.frameFigures = figures }
         var changed = false
         for i in self.frames.indices {
           if let slopes = result[self.frames[i].id], self.frames[i].adjustments.rollSlopes != slopes {
@@ -3066,6 +3103,36 @@ final class AppModel: ObservableObject {
         completion?()
       }
     }
+  }
+  /// The roll's slope estimate runs on a queue of its own, not the render queue: a base picked or a
+  /// region drawn shows at once, with the slopes before, and again if they changed. Each frame's
+  /// edges are kept by what they were read from (`edgesKey`), so only the frames changed are read
+  /// again (until 0.23.8 every frame of the roll was, and the frame shown waited behind them all).
+  let estimateQueue = DispatchQueue(label: "epscan.estimate", qos: .userInitiated)
+  /// Each frame's edges as last read for the estimate; only on `estimateQueue`.
+  private var keptEdges = [UUID: (key: String, edges: ImagePipeline.EdgeRatios)]()
+  /// The estimate asked for last, read from `estimateQueue` so an older one stops early.
+  private let estimateLock = NSLock()
+  private var estimateLatest = 0
+  /// What a frame's edges for the estimate are read from: its pixels as read (files, crop, turns,
+  /// the copy light's fall-off and unmixing, dust, the scanner's levels and flare), the part read
+  /// and the base they are taken against. Not its print, balance or slopes.
+  static func edgesKey(_ frame: FilmFrame, flare: RGB?, preview: String, format: FilmFormat) -> String {
+    var f = frame
+    (f.name, f.enabled) = ("", true)
+    let flat = f.flatField.map { "\($0.width)x\($0.height)-\($0.values.reduce(0, +))" } ?? "-"
+    f.flatField = nil
+    let a = frame.adjustments
+    var kept = Adjustments()
+    (kept.inputGamma, kept.inputIsNegative, kept.reversal, kept.monochrome, kept.filmEdges) = (a.inputGamma, a.inputIsNegative, a.reversal, a.monochrome, a.filmEdges)
+    (kept.base, kept.rollBase, kept.analysisRegion) = (a.base, a.rollBase, a.analysisRegion)
+    (kept.rotation, kept.flipHorizontal, kept.angle) = (a.rotation, a.flipHorizontal, a.angle)
+    f.adjustments = kept
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = .sortedKeys
+    // Unencodable, it matches nothing.
+    let frameKey = (try? encoder.encode(f)).map { String(decoding: $0, as: UTF8.self) } ?? UUID().uuidString
+    return [frameKey, flat, flare.map { "\($0.values)" } ?? "-", preview, "\(format)"].joined(separator: "|")
   }
   /// The selected frame has others in its roll to share a white balance or levels with: a scan's
   /// frames, a strip file's; a picture that is a file each is a roll of its own.
@@ -3993,15 +4060,10 @@ final class AppModel: ObservableObject {
     let edit = editingSingle
     if !edit { editRegionLock = nil }
     rendering = true
-    // In ② the frame de-masked only, unsharpened; its strip picture not taken from it.
-    let demasked = showsDemasked || showsBefore
     singleAskedAt = (singleAskedAt.last, Date())
-    let request = SingleRender(
-      token: token, frame: demasked ? Self.demasked(frame) : sharpened(frame), profile: conversionProfile, edit: edit,
-      negative: showsNegative || tool == .base, original: showsOriginal,
-      bypassed: curvesBypassed, sharpening: demasked ? nil : preferences.sharpening, previewDPI: Int(overviewDPI),
-      analysisKey: analysisKey(asShown(frame)), overview: overview, demasked: demasked, sliding: sliding,
-      looseKey: analysisKey(asShown(frame), loose: true), composing: composing)
+    var request = singleRequest(frame, token: token)
+    // The frame a picture was made ahead for (`prepareAhead`): what it reads, to tell whether it holds.
+    if preparedFor == frame.id { request.ready = readyKey(request, frame) }
     wantedLock.lock()
     wantedSingle = request
     let queued = singleQueued
@@ -4009,6 +4071,22 @@ final class AppModel: ObservableObject {
     wantedLock.unlock()
     // At most one waits: it takes whatever was asked for last when its turn comes.
     if !queued { renderQueue.asyncAfter(deadline: .now() + 0.015) { [weak self] in self?.renderSingle() } }
+  }
+  /// The single frame's render of `frame` as the window now shows it.
+  private func singleRequest(_ frame: FilmFrame, token: Int) -> SingleRender {
+    // In ② the frame de-masked only, unsharpened; its strip picture not taken from it.
+    let demasked = showsDemasked || showsBefore
+    return SingleRender(
+      token: token, frame: demasked ? Self.demasked(frame) : sharpened(frame), profile: conversionProfile, edit: editingSingle,
+      negative: showsNegative || tool == .base, original: showsOriginal,
+      bypassed: curvesBypassed, sharpening: demasked ? nil : preferences.sharpening, previewDPI: Int(overviewDPI),
+      analysisKey: analysisKey(asShown(frame)), overview: overview, demasked: demasked, sliding: sliding,
+      looseKey: analysisKey(asShown(frame), loose: true), composing: composing, grays: demasked ? nil : graysForRender(frame))
+  }
+  /// Everything a single render of `frame` reads, as `r` asks for it: what a picture made ahead is kept by.
+  private func readyKey(_ r: SingleRender, _ frame: FilmFrame) -> String {
+    [analysisKey(asShown(frame), everything: true), "\(r.demasked) \(r.negative) \(r.edit) \(r.original) \(r.bypassed) \(r.composing)",
+     String(describing: r.sharpening)].joined(separator: "|")
   }
   /// The single frame's render, as asked for (`wantedSingle`, under `wantedLock`).
   private struct SingleRender {
@@ -4026,7 +4104,32 @@ final class AppModel: ObservableObject {
     var looseKey = ""
     /// ③'s crop under way: the picture turned in its whole box (`composing`).
     var composing = false
+    /// The frame's gray pixels to look for as it is read, kept by this (`graysForRender`).
+    var grays: String? = nil
+    /// What a picture made ahead for it must be kept by to stand for it (`readyKey`).
+    var ready: String? = nil
   }
+  /// A frame's single picture made ahead, the one → (or ←) shows next (`prepareAhead`): read,
+  /// analysed, converted, matched to the screen and measured, so that it shows as soon as it is
+  /// asked for, where it was read and converted only then (some 0.2–0.4 s on a copy).
+  private struct Prepared {
+    let key: String, overview: CGImage?, source: CGImage, analysis: ToneAnalysis, output: CGImage, screen: CGImage?
+    let measures: SingleMeasures
+  }
+  private typealias SingleMeasures = (hist: ([Double], [[Double]]), thumbnail: CGImage?, range: ToneRange?)
+  /// The picture made ahead and the one being made, under `prepareLock`; made on a queue of their
+  /// own, so a render asked for meanwhile never waits behind one it does not use.
+  private let prepareLock = NSLock()
+  private var prepared: Prepared?
+  private var preparing: (key: String, done: DispatchGroup)?
+  private let prepareQueue = DispatchQueue(label: "epscan.prepare", qos: .userInitiated)
+  /// Main thread: the frame a picture is made ahead for, and the frame last shown, for which way
+  /// the frames are being gone through.
+  private var preparedFor: UUID?
+  /// How many renders showed a picture made ahead, for the self-test.
+  private(set) var preparedTaken = 0
+  private var lastShownIndex: Int?
+  private var goingBack = false
   /// When a single render last measured its picture (histograms, range; render queue only), and
   /// how often it does while a slider is dragged.
   private var measuredAt = Date.distantPast
@@ -4141,12 +4244,34 @@ final class AppModel: ObservableObject {
     singleQueued = false
     wantedLock.unlock()
     guard let r = wanted else { return }
-    let frame = r.frame, p = r.profile, edit = r.edit, negative = r.negative, token = r.token, bypassed = r.bypassed
     let started = Date(), rollFormat = format
     if r.original {
       renderOriginal(r, started: started)
       return
     }
+    // What the analysis reads unchanged (a print control dragged): the analysis kept stands.
+    let kept = keptAnalysis.flatMap { $0.overview === r.overview ? $0 : nil }
+    let keeps = kept?.key == r.analysisKey, keepsLoosely = r.sliding && kept?.loose == r.looseKey
+    // 自动 waiting for the frame's gray pixels: looked for here, as it is read, so that it shows once,
+    // balanced by them (`rendersGrays`).
+    let ready = takePrepared(r)
+    // Asked for once: taken, or no longer what the frame reads.
+    if r.ready != nil {
+      let id = r.frame.id, taken = ready != nil
+      DispatchQueue.main.async {
+        if taken { self.preparedTaken += 1 }
+        if self.preparedFor == id { self.preparedFor = nil }
+      }
+    }
+    var looked = r.frame
+    if let key = r.grays, ready == nil, !keeps, !keepsLoosely {
+      self.step(0.05, "找灰像素", r.token, since: started)
+      let (found, read) = findGrays(looked, profile: r.profile)
+      if read { looked.adjustments.autoNeutral = found.map { Adjustments.AutoNeutral.found($0.reading) } ?? Adjustments.AutoNeutral.none }
+      let id = looked.id
+      DispatchQueue.main.async { self.keepRenderedGrays(id, found: found, read: read, key: key) }
+    }
+    let frame = looked, p = r.profile, edit = r.edit, negative = r.negative, token = r.token, bypassed = r.bypassed
       do {
         // What the analysis reads unchanged (a print control dragged), the picture read for it
         // too: some 20 ms a step on a copy, read and cropped again.
@@ -4155,9 +4280,12 @@ final class AppModel: ObservableObject {
         // While the saturation or vibrance is dragged, the analysis before, its highlights' reach
         // a step behind (some 90 ms a step on a copy); the frame is analysed again once it stops.
         var approximate = false
-        if let kept = keptAnalysis, kept.key == r.analysisKey, kept.overview === r.overview {
+        if let ready {
+          (cropped, analysis) = (ready.source, ready.analysis)
+          keptAnalysis = (r.analysisKey, r.overview, analysis, cropped, r.looseKey)
+        } else if keeps, let kept {
           (cropped, analysis) = (kept.source, kept.analysis)
-        } else if r.sliding, let kept = keptAnalysis, kept.loose == r.looseKey, kept.overview === r.overview {
+        } else if keepsLoosely, let kept {
           (cropped, analysis) = (kept.source, kept.analysis)
           approximate = true
         } else {
@@ -4180,12 +4308,19 @@ final class AppModel: ObservableObject {
         // The kernel follows the size the source was loaded at, as in source(for:) and contextSource(for:).
         let loaded = edit ? 3000 : (frame.sourcePath != nil ? 3000 : 2200)
         let sharpener = negative || r.demasked ? nil : Sharpening.sharpener(r.sharpening, frame: frame, maxDimension: loaded)
-        guard
-          let output = ImagePipeline.shared.render(
-            input, settings: shownSettings, profile: p, analysis: analysis, negative: negative,
-            sharpener: sharpener)
-        else { throw DeskError.message("无法生成预览") }
-        ScreenCopy.keep(ImagePipeline.shared.screenReady(output, space: ScreenCopy.space), of: output)
+        let output: CGImage
+        if let ready {
+          output = ready.output
+          ScreenCopy.keep(ready.screen, of: output)
+        } else {
+          guard
+            let made = ImagePipeline.shared.render(
+              input, settings: shownSettings, profile: p, analysis: analysis, negative: negative,
+              sharpener: sharpener)
+          else { throw DeskError.message("无法生成预览") }
+          output = made
+          ScreenCopy.keep(ImagePipeline.shared.screenReady(output, space: ScreenCopy.space), of: output)
+        }
         // A newer request already waiting: this picture now, histograms and range with that one.
         // While a slider is dragged they show twice a second (`catchUp`), so they are measured no
         // more often: some 50 ms a picture on a copy. Once it stops, the last picture is measured.
@@ -4208,20 +4343,13 @@ final class AppModel: ObservableObject {
         self.step(0.9, "直方图", token, since: started)
         // The histograms, the film strip's copy (no larger than it is ever shown) and the range,
         // with what shows white or black counted on the picture itself where it is only the frame.
-        func measure() -> (hist: ([Double], [[Double]]), thumbnail: CGImage?, range: ToneRange?) {
-          let hist = Self.histograms(output, curves: negative ? nil : shownSettings.curves)
+        func measure() -> SingleMeasures {
           // Not while ③'s crop is under way: that picture is the whole turned frame, and kept for the
           // strip it stayed there uncropped once the light table was gone back to.
-          let thumbnail = !edit && !negative && !bypassed && !r.demasked && !r.composing
-            ? ImagePipeline.shared.scaled(output, maxDimension: Self.thumbnailDimension) : nil
-          var range = negative ? nil : ImagePipeline.shared.toneRange(cropped, settings: frame.adjustments, profile: p, analysis: analysis)
-          if !edit, range != nil {
-            (range!.atWhite, range!.atBlack) = ImagePipeline.shared.screenShares(output)
-            range!.screen = ImagePipeline.shared.screenCounts(output)
-          }
-          return (hist, thumbnail, range)
+          measureSingle(output, cropped: cropped, frame: frame, shown: shownSettings, profile: p, analysis: analysis, negative: negative,
+            edit: edit, keepsThumbnail: !edit && !negative && !bypassed && !r.demasked && !r.composing)
         }
-        let measures = measured ? measure() : nil
+        let measures = measured ? (ready?.measures ?? measure()) : nil
         let hist = measures?.hist, thumbnail = measures?.thumbnail, range = measures?.range
         // Left unmeasured while the slider moved, and nothing newer asked for once it has stopped:
         // the last picture measured then, as it is, without making it again.
@@ -4313,6 +4441,106 @@ final class AppModel: ObservableObject {
           self.rendering = false
         }
       }
+  }
+  /// The histograms, the film strip's copy (no larger than it is ever shown) and the range of a
+  /// single picture, with what shows white or black counted on the picture itself where it is only
+  /// the frame.
+  private func measureSingle(_ output: CGImage, cropped: CGImage, frame: FilmFrame, shown: Adjustments, profile p: FilmProfile,
+    analysis: ToneAnalysis, negative: Bool, edit: Bool, keepsThumbnail: Bool) -> SingleMeasures
+  {
+    let hist = Self.histograms(output, curves: negative ? nil : shown.curves)
+    let thumbnail = keepsThumbnail ? ImagePipeline.shared.scaled(output, maxDimension: Self.thumbnailDimension) : nil
+    var range = negative ? nil : ImagePipeline.shared.toneRange(cropped, settings: frame.adjustments, profile: p, analysis: analysis)
+    if !edit, range != nil {
+      (range!.atWhite, range!.atBlack) = ImagePipeline.shared.screenShares(output)
+      range!.screen = ImagePipeline.shared.screenCounts(output)
+    }
+    return (hist, thumbnail, range)
+  }
+  /// On the render queue: the picture made ahead for `r`, if it is what `r` reads, waited for while
+  /// it is still being made (it is further on than a render begun now).
+  private func takePrepared(_ r: SingleRender) -> Prepared? {
+    guard let key = r.ready else { return nil }
+    let making = prepareLock.withLock { preparing?.key == key ? preparing?.done : nil }
+    if let making { _ = making.wait(timeout: .now() + 2) }
+    return prepareLock.withLock {
+      guard let ready = prepared, ready.key == key, ready.overview === r.overview else { return nil }
+      prepared = nil
+      return ready
+    }
+  }
+  /// After the frame shown is rendered: the next frame the way they are being gone through made
+  /// ahead (`Prepared`), the one on the other side read from its file. Not while a slider moves, a
+  /// crop or region is edited, or for a frame whose 自动 still waits for its gray pixels (the
+  /// finder's, kept by them, would not hold).
+  private func readAhead(around frame: FilmFrame, token: Int) {
+    guard singleView, let i = frames.firstIndex(where: { $0.id == frame.id }) else { return }
+    // Frames run through quickly: the one they stop at, once they have.
+    if sliding {
+      DispatchQueue.main.asyncAfter(deadline: .now() + Self.slideStep + 0.02) { [weak self] in
+        guard let self, self.revision == token, self.selectedID == frame.id, !self.sliding else { return }
+        self.readAhead(around: frame, token: token)
+      }
+      return
+    }
+    if let last = lastShownIndex, last != i { goingBack = i < last }
+    lastShownIndex = i
+    let ahead = goingBack ? i - 1 : i + 1, behind = goingBack ? i + 1 : i - 1
+    if frames.indices.contains(ahead) { prepareAhead(frames[ahead]) }
+    let around = [behind].filter(frames.indices.contains).map { frames[$0] }
+    renderQueue.async { [weak self] in
+      for f in around {
+        guard let self, self.isCurrent(token) else { return }
+        _ = try? self.source(for: f)
+      }
+    }
+  }
+  private func prepareAhead(_ next: FilmFrame) {
+    guard !sliding, !editingSingle, !composing, !showsOriginal, !(Self.findsAutoNeutrals && Self.wantsAutoNeutral(next)) else { return }
+    var r = singleRequest(next, token: 0)
+    (r.sliding, r.grays) = (false, nil)
+    let key = readyKey(r, next)
+    preparedFor = next.id
+    let group = DispatchGroup()
+    let begun = prepareLock.withLock { () -> Bool in
+      guard prepared?.key != key, preparing?.key != key else { return false }
+      group.enter()
+      preparing = (key, group)
+      // One kept at a time: some 100 MB on a copy.
+      prepared = nil
+      return true
+    }
+    guard begun else { return }
+    prepareQueue.async { [weak self] in
+      guard let self else { return group.leave() }
+      let made = self.makeAhead(r, key: key)
+      self.prepareLock.withLock {
+        if self.preparing?.key == key {
+          self.preparing = nil
+          self.prepared = made
+        }
+      }
+      group.leave()
+    }
+  }
+  /// On `prepareQueue`: `r`'s picture as `renderSingle` makes it, given up as soon as another is wanted.
+  private func makeAhead(_ r: SingleRender, key: String) -> Prepared? {
+    let wanted = { self.prepareLock.withLock { self.preparing?.key == key } }
+    let frame = r.frame, p = r.profile
+    guard wanted(), let cropped = try? source(for: frame), wanted() else { return nil }
+    let analysis = ImagePipeline.shared.analyze(cropped, settings: frame.adjustments, profile: p)
+    guard wanted() else { return nil }
+    var shown = frame.adjustments
+    if r.bypassed { shown.curves = nil }
+    let loaded = frame.sourcePath != nil ? 3000 : 2200
+    let sharpener = r.negative || r.demasked ? nil : Sharpening.sharpener(r.sharpening, frame: frame, maxDimension: loaded)
+    guard let output = ImagePipeline.shared.render(cropped, settings: shown, profile: p, analysis: analysis, negative: r.negative, sharpener: sharpener),
+      wanted()
+    else { return nil }
+    let screen = ImagePipeline.shared.screenReady(output, space: ScreenCopy.space)
+    let measures = measureSingle(output, cropped: cropped, frame: frame, shown: shown, profile: p, analysis: analysis, negative: r.negative,
+      edit: false, keepsThumbnail: !r.negative && !r.bypassed && !r.demasked)
+    return Prepared(key: key, overview: r.overview, source: cropped, analysis: analysis, output: output, screen: screen, measures: measures)
   }
   /// Module ①'s single frame: the raw picture in a linear response (`ImagePipeline.original`) and
   /// how it was exposed; nothing analysed, converted or measured beside it.
@@ -4417,19 +4645,6 @@ final class AppModel: ObservableObject {
     rawThumbnailKeys = [:]
     updateRawThumbnails()
     refresh()
-  }
-  /// The frames either side of the one shown, read from their files while it is looked at, so that
-  /// → and ← show them as soon as they are drawn: after the frame's own render, on the same queue,
-  /// the one after first. Another render wanted first, the rest is left.
-  private func readAhead(around frame: FilmFrame, token: Int) {
-    guard singleView, let i = frames.firstIndex(where: { $0.id == frame.id }) else { return }
-    let around = [i + 1, i - 1].filter(frames.indices.contains).map { frames[$0] }
-    renderQueue.async { [weak self] in
-      for f in around {
-        guard let self, self.isCurrent(token) else { return }
-        _ = try? self.source(for: f)
-      }
-    }
   }
   /// The longest side of a film strip positive: the strip, a contact sheet page and the library
   /// show them far smaller, and a 61-megapixel copy kept whole was 24 MB a frame.

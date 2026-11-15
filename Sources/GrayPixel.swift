@@ -211,9 +211,11 @@ extension AppModel {
   /// a time off the main thread, each on a copy 1200 pixels across (some 0.3 s): found, or `.none`
   /// where too few gray pixels lie near the prior, 自动 then as before. Not an edit of its own
   /// (⌘Z takes back the choice of 自动 that asked for it). Called with every refresh.
-  func resolveAutoNeutrals() {
+  /// The frame shown alone is left to its render, which looks for them as it reads it (`rendersGrays`);
+  /// `shownToo` looks for it here all the same (the assistant's 找中性 in the self-test).
+  func resolveAutoNeutrals(shownToo: Bool = false) {
     guard Self.findsAutoNeutrals, !Self.findingNeutral else { return }
-    let waiting = frames.filter(Self.wantsAutoNeutral)
+    let waiting = frames.filter { Self.wantsAutoNeutral($0) && (shownToo || !rendersGrays($0)) }
     guard let next = waiting.first(where: { $0.id == selectedID }) ?? waiting.first else { return }
     Self.findingNeutral = true
     let profile = conversionProfile, key = Self.neutralKey(next)
@@ -251,6 +253,47 @@ extension AppModel {
           self.updateThumbnails()
         }
       }
+    }
+  }
+
+  /// Whether the single frame's render looks for `f`'s gray pixels itself, as it reads the frame:
+  /// shown alone and balanced (not ①'s raw picture, ②'s de-masked one or the before), its 自动
+  /// waiting for them. It then shows once, balanced by them, where it showed by the old 自动 first
+  /// and again some 0.3 s later, when the finder had found them (until 0.23.8).
+  func rendersGrays(_ f: FilmFrame) -> Bool {
+    Self.findsAutoNeutrals && singleView && f.id == selectedID && !showsOriginal && !showsDemasked && !showsBefore
+      && Self.wantsAutoNeutral(f)
+  }
+  /// What the render keeps the gray pixels it finds by (`neutralKey`), when it is to look for them.
+  func graysForRender(_ f: FilmFrame) -> String? { rendersGrays(f) ? Self.neutralKey(f) : nil }
+  /// Off the main thread: `f`'s gray pixels, as the finder looks for them; `read` false where its
+  /// picture could not be read.
+  func findGrays(_ f: FilmFrame, profile: FilmProfile) -> (found: GrayPixelNeutral.Found?, read: Bool) {
+    var read = true
+    let found = autoreleasepool { () -> GrayPixelNeutral.Found? in
+      guard let src = try? source(for: f, maxDimension: GrayPixelNeutral.dimension) else { read = false; return nil }
+      return GrayPixelNeutral.find(in: src, settings: f.adjustments, profile: profile)
+    }
+    return (found, read)
+  }
+  /// Back on the main thread: what the render found kept for its frame, as the finder keeps it,
+  /// while the frame still waits and is read from the same picture. Not shown again: the render
+  /// already balanced by it. The finder then goes on with the frames still waiting.
+  func keepRenderedGrays(_ id: UUID, found: GrayPixelNeutral.Found?, read: Bool, key: String) {
+    defer { resolveAutoNeutrals() }
+    guard let i = frames.firstIndex(where: { $0.id == id }) else { return }
+    guard read else {
+      Self.unreadable.insert(id)
+      Self.neutralWaiters.removeValue(forKey: id)?.forEach { $0(nil) }
+      return
+    }
+    guard Self.wantsAutoNeutral(frames[i]), Self.neutralKey(frames[i]) == key else { return }
+    frames[i].adjustments.autoNeutral = found.map { Adjustments.AutoNeutral.found($0.reading) } ?? Adjustments.AutoNeutral.none
+    Self.foundNeutrals[id] = found
+    Self.neutralWaiters.removeValue(forKey: id)?.forEach { $0(found) }
+    if !frames.contains(where: Self.wantsAutoNeutral) {
+      saveProject()
+      updateThumbnails()
     }
   }
 
@@ -308,9 +351,10 @@ extension AppModel {
       Self.unreadable.remove(now.id)
       Self.neutralWaiters[now.id, default: []].append(report)
       // In the self-test the finder runs for this frame alone: started here, it stops when done.
+      // Shown alone with the finder on, the frame's render looks for them (`rendersGrays`).
       let wasOn = Self.findsAutoNeutrals
       Self.findsAutoNeutrals = true
-      resolveAutoNeutrals()
+      resolveAutoNeutrals(shownToo: !wasOn)
       Self.findsAutoNeutrals = wasOn
     }
   }

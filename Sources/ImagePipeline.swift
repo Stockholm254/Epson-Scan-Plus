@@ -473,61 +473,114 @@ final class ImagePipeline {
   /// The roll's slopes, or why there are none, as the 胶片 tab says it (until 0.22.6 every failure
   /// was 「画面太少」).
   func rollSlopeEstimate(_ frames: [(image: CGImage, settings: Adjustments)], greenSlope: Double, toe: RGB? = nil) -> (slopes: RGB?, why: String?) {
+    rollSlopeEstimate(frames.map { edgeRatios($0.image, settings: $0.settings) }, greenSlope: greenSlope, toe: toe)
+  }
+  /// The same from each frame's edges as read before (`edgeRatios`), kept by frame, so that a base
+  /// picked or a region drawn on one frame reads only that frame again.
+  func rollSlopeEstimate(_ frames: [EdgeRatios], greenSlope: Double, toe: RGB? = nil) -> (slopes: RGB?, why: String?) {
     let first = rollSlopes(frames, greenSlope: greenSlope, stretchedBy: nil)
     guard let found = first.slopes else { return first }
     guard let toe, toe.values.contains(where: { $0 > 0 }) else { return first }
     return (rollSlopes(frames, greenSlope: greenSlope, stretchedBy: (found, toe)).slopes ?? found, nil)
   }
+  /// One frame's part of the roll's slope estimate: at each edge of its picture, red's and blue's
+  /// density steps against green's, and the three densities there, for the toe's stretch, which is
+  /// weighed only once the roll's first slopes are known.
+  struct EdgeRatios {
+    var red = [Double](), blue = [Double]()
+    /// Red, green and blue density at each edge, three to an edge.
+    var density = [Double]()
+    var count: Int { red.count }
+    /// What the roll's check reads of the frame (`RollCheck`): its darkest film above the base, per
+    /// channel (the 0.5% quantile), the share of it clearer than the base, and its own ratios of
+    /// red's and blue's steps to green's (the median of its edges).
+    var darkest: RGB? = nil
+    var clearer = 0.0
+    var own: (r: Double, b: Double)? = nil
+  }
+  func edgeRatios(_ image: CGImage, settings: Adjustments) -> EdgeRatios {
+    var out = EdgeRatios()
+    let part = analysisPart(image, settings)
+    let s = samples(part.image, maxDimension: 240), w = s.width, h = s.height
+    let base = densities(s, settings: settings, margin: part.margin, base: thinnestOfCrop(image, part, settings, maxDimension: 240)).base
+    // Density per channel, smoothed by a 3×3 box against grain and noise.
+    var b = [[Double]](repeating: [Double](repeating: 0, count: w * h), count: 3)
+    for c in 0..<3 {
+      let lit = max(0.0001, base.values[c]), gamma = settings.inputGamma
+      var d = [Double](repeating: 0, count: w * h), row = [Double](repeating: 0, count: w * h)
+      for i in 0..<(w * h) { d[i] = log10(lit / max(1e-6, Double(s.values[i * 4 + c]))) * gamma }
+      for y in 0..<h {
+        for x in 0..<w {
+          let l = max(0, x - 1), r = min(w - 1, x + 1)
+          row[y * w + x] = (d[y * w + l] + d[y * w + x] + d[y * w + r]) / 3
+        }
+      }
+      for y in 0..<h {
+        let u = max(0, y - 1), v = min(h - 1, y + 1)
+        for x in 0..<w { b[c][y * w + x] = (row[u * w + x] + row[y * w + x] + row[v * w + x]) / 3 }
+      }
+    }
+    // Gradients over 2 px each way, inside the same margins as the colour statistics.
+    let margin = part.margin
+    let mx = Int(ceil(Double(w) * margin)) + 3, my = Int(ceil(Double(h) * margin)) + 3
+    guard w > 2 * mx, h > 2 * my else { return out }
+    let (red, green, blue) = (b[0], b[1], b[2])
+    // The film's darkest, and how much lies clearer than the base, inside the same margins.
+    var inner = [[Double](), [Double](), [Double]()], clearer = 0
+    for y in my..<(h - my) {
+      for x in mx..<(w - mx) {
+        let i = y * w + x
+        if red[i] < -0.05 || green[i] < -0.05 || blue[i] < -0.05 { clearer += 1 }
+        inner[0].append(red[i])
+        inner[1].append(green[i])
+        inner[2].append(blue[i])
+      }
+    }
+    if !inner[0].isEmpty {
+      out.darkest = RGB(inner.map { quantile($0, 0.005) })
+      out.clearer = Double(clearer) / Double(inner[0].count)
+    }
+    for y in my..<(h - my) {
+      for x in mx..<(w - mx) {
+        let i = y * w + x
+        // Near the base the film's toe flattens; near opaque only noise is left.
+        guard min(red[i], green[i], blue[i]) > 0.05, max(red[i], green[i], blue[i]) < 2.6 else { continue }
+        let gx = green[i + 2] - green[i - 2], gy = green[i + 2 * w] - green[i - 2 * w]
+        let m = gx * gx + gy * gy
+        guard m > 0.03 * 0.03 else { continue }
+        // Where shading changes every exposure alike, each channel's density step is its slope (over
+        // the toe's stretch there, `rollSlopes`); their ratio is the ratio of slopes.
+        out.red.append(((red[i + 2] - red[i - 2]) * gx + (red[i + 2 * w] - red[i - 2 * w]) * gy) / m)
+        out.blue.append(((blue[i + 2] - blue[i - 2]) * gx + (blue[i + 2 * w] - blue[i - 2 * w]) * gy) / m)
+        out.density.append(red[i])
+        out.density.append(green[i])
+        out.density.append(blue[i])
+      }
+    }
+    if out.count >= 200 { out.own = (quantile(out.red, 0.5), quantile(out.blue, 0.5)) }
+    return out
+  }
   private func rollSlopes(
-    _ frames: [(image: CGImage, settings: Adjustments)], greenSlope: Double, stretchedBy toe: (slopes: RGB, widths: RGB)?
+    _ frames: [EdgeRatios], greenSlope: Double, stretchedBy toe: (slopes: RGB, widths: RGB)?
   ) -> (slopes: RGB?, why: String?) {
     guard frames.count >= 2 else { return (nil, "能用来估计的画面不到 2 张") }
     var ratios = [[Double](), [Double]()]
+    let total = frames.reduce(0) { $0 + $1.count }
+    ratios[0].reserveCapacity(total)
+    ratios[1].reserveCapacity(total)
     for f in frames {
-      let part = analysisPart(f.image, f.settings)
-      let s = samples(part.image, maxDimension: 240), w = s.width, h = s.height
-      let base = densities(s, settings: f.settings, margin: part.margin, base: thinnestOfCrop(f.image, part, f.settings, maxDimension: 240)).base
-      // Density per channel, smoothed by a 3×3 box against grain and noise.
-      var b = [[Double]](repeating: [Double](repeating: 0, count: w * h), count: 3)
-      for c in 0..<3 {
-        let lit = max(0.0001, base.values[c]), gamma = f.settings.inputGamma
-        var d = [Double](repeating: 0, count: w * h), row = [Double](repeating: 0, count: w * h)
-        for i in 0..<(w * h) { d[i] = log10(lit / max(1e-6, Double(s.values[i * 4 + c]))) * gamma }
-        for y in 0..<h {
-          for x in 0..<w {
-            let l = max(0, x - 1), r = min(w - 1, x + 1)
-            row[y * w + x] = (d[y * w + l] + d[y * w + x] + d[y * w + r]) / 3
-          }
-        }
-        for y in 0..<h {
-          let u = max(0, y - 1), v = min(h - 1, y + 1)
-          for x in 0..<w { b[c][y * w + x] = (row[u * w + x] + row[y * w + x] + row[v * w + x]) / 3 }
-        }
+      guard let toe else {
+        ratios[0].append(contentsOf: f.red)
+        ratios[1].append(contentsOf: f.blue)
+        continue
       }
-      // Gradients over 2 px each way, inside the same margins as the colour statistics.
-      let margin = part.margin
-      let mx = Int(ceil(Double(w) * margin)) + 3, my = Int(ceil(Double(h) * margin)) + 3
-      guard w > 2 * mx, h > 2 * my else { continue }
-      let (red, green, blue) = (b[0], b[1], b[2])
-      for y in my..<(h - my) {
-        for x in mx..<(w - mx) {
-          let i = y * w + x
-          // Near the base the film's toe flattens; near opaque only noise is left.
-          guard min(red[i], green[i], blue[i]) > 0.05, max(red[i], green[i], blue[i]) < 2.6 else { continue }
-          let gx = green[i + 2] - green[i - 2], gy = green[i + 2 * w] - green[i - 2 * w]
-          let m = gx * gx + gy * gy
-          guard m > 0.03 * 0.03 else { continue }
-          // Where shading changes every exposure alike, each channel's density step is its slope over
-          // the toe's stretch there; dividing that out leaves the ratio of slopes.
-          var weight = (r: 1.0, b: 1.0)
-          if let toe {
-            let g = FilmToe.stretch(green[i] / toe.slopes.g, width: toe.widths.g)
-            weight = (FilmToe.stretch(red[i] / toe.slopes.r, width: toe.widths.r) / g,
-                      FilmToe.stretch(blue[i] / toe.slopes.b, width: toe.widths.b) / g)
-          }
-          ratios[0].append(((red[i + 2] - red[i - 2]) * gx + (red[i + 2 * w] - red[i - 2 * w]) * gy) / m * weight.r)
-          ratios[1].append(((blue[i + 2] - blue[i - 2]) * gx + (blue[i + 2 * w] - blue[i - 2 * w]) * gy) / m * weight.b)
-        }
+      // Each channel's density step is its slope over the toe's stretch there; dividing that out
+      // leaves the ratio of slopes.
+      for k in 0..<f.count {
+        let r = f.density[k * 3], g = f.density[k * 3 + 1], b = f.density[k * 3 + 2]
+        let stretch = FilmToe.stretch(g / toe.slopes.g, width: toe.widths.g)
+        ratios[0].append(f.red[k] * (FilmToe.stretch(r / toe.slopes.r, width: toe.widths.r) / stretch))
+        ratios[1].append(f.blue[k] * (FilmToe.stretch(b / toe.slopes.b, width: toe.widths.b) / stretch))
       }
     }
     guard ratios[0].count >= 500 else {

@@ -467,6 +467,9 @@ enum MCPTools {
         }
       }
       state["white_balance"] = balance
+      // What the roll's check finds suspect (its base, its slope estimate, 去串色 against the calibration).
+      let check = onMain { model.rollCheck.map { ["title": $0.title, "detail": $0.detail] } }
+      if !check.isEmpty { state["roll_check"] = check }
       state["levels"] = ["auto": s.autoLevels]
       state["curves"] = curvesState(s.curves)
       state["tone"] = ["exposure": s.exposure, "contrast": s.contrast, "saturation": s.saturation, "curves": s.curves != nil,
