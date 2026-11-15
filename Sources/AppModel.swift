@@ -2711,7 +2711,7 @@ final class AppModel: ObservableObject {
   /// 存为调色预设's sheet is up: the paste sheet, from the frame shown, with a name.
   @Published var savingGradingPreset = false
   /// The groups a 调色预设 may hold: ③'s but the roll's shared balance and levels, the roll's own.
-  static var presetGroups: [SettingsGroup] { SettingsGroup.of(.grading).filter { $0 != .rollShared } }
+  static var presetGroups: [SettingsGroup] { SettingsGroup.of(.grading).filter { $0 != .rollShared && !$0.optIn } }
   /// A frame's grading as a preset keeps it: without the grey picked on its own picture, which is
   /// no grey on another, so a balance picked there goes as automatic with its warmth and tint.
   static func presetGrading(_ a: Adjustments) -> Adjustments {
@@ -2754,21 +2754,70 @@ final class AppModel: ObservableObject {
   }
   /// 选择性粘贴's sheet is up.
   @Published var choosingPaste = false
-  /// What 选择性粘贴 lists for `scope`: its groups, 其他调色 only when `from` (the copied frame) has some.
-  func pasteGroups(_ scope: SettingsScope, from: Adjustments? = nil) -> [SettingsGroup] {
+  /// What 选择性粘贴 lists for `scope`: its groups, 其他调色 only when `from` (the copied frame) has
+  /// some, 画面 only when `frame` (the frame listed) is a picture a file each.
+  func pasteGroups(_ scope: SettingsScope, from: Adjustments? = nil, frame: FilmFrame? = nil) -> [SettingsGroup] {
     let copied = from ?? copiedSettings?.adjustments ?? Adjustments()
-    return SettingsGroup.of(scope).filter { $0 != .otherGrading || $0.isSet(in: copied) }
+    let source = frame ?? copiedSettings
+    return SettingsGroup.of(scope).filter {
+      ($0 != .otherGrading || $0.isSet(in: copied)) && ($0 != .frameCrop || source?.sourcePath != nil)
+        && ($0 != .basePoint || copied.basePicked != nil)
+    }
   }
-  /// The groups ticked when the sheet opens: as last time, a group not seen before ticked.
+  /// The groups ticked when the sheet opens: as last time, a group not seen before ticked, but those
+  /// given only when chosen (`SettingsGroup.optIn`, the crops), which are ticked once chosen: kept
+  /// in the same list as "+" and their name.
   var pasteChosen: Set<SettingsGroup> {
-    get { Set(SettingsGroup.allCases.filter { !preferences.pasteLeftOut.contains($0.rawValue) }) }
-    set { preferences.pasteLeftOut = Set(SettingsGroup.allCases.filter { !newValue.contains($0) }.map(\.rawValue)) }
+    get {
+      Set(SettingsGroup.allCases.filter { g in
+        g.optIn ? preferences.pasteLeftOut.contains("+" + g.rawValue) : !preferences.pasteLeftOut.contains(g.rawValue)
+      })
+    }
+    set {
+      preferences.pasteLeftOut = Set(SettingsGroup.allCases.compactMap { g in
+        g.optIn ? (newValue.contains(g) ? "+" + g.rawValue : nil) : (newValue.contains(g) ? nil : g.rawValue)
+      })
+    }
+  }
+  /// 粘贴片基取点 (in ②): the copied frame's base picked by hand, as a place, each frame's base read
+  /// again there. To the frames chosen, or the frame shown.
+  func pasteBasePoint() {
+    guard copiedSettings?.adjustments.basePicked != nil, stepScope == .demasking, !isWorking else { return }
+    pasteSettings(.demasking, only: [.basePoint])
+  }
+  /// Frame `f`'s film base read at `place` (kept in `basePickSpace`: a camera's or imported picture
+  /// whole, a scan as cropped), as a base picked there by hand is: the mean of a small window about
+  /// its middle, of the picture as read (through its crosstalk and flat field). Nil off the picture
+  /// or unreadable.
+  func baseReading(_ f: FilmFrame, at place: NormalRect) -> RGB? {
+    let picture = f.sourcePath != nil ? (try? contextSource(for: f).image) : (try? source(for: f, maxDimension: 2000))
+    guard let picture else { return nil }
+    let r = ImagePipeline.shared.samples(picture, maxDimension: 2000)
+    let x = Int((place.x + place.width / 2) * Double(r.width)), y = Int((place.y + place.height / 2) * Double(r.height))
+    guard x >= 0, y >= 0, x < r.width, y < r.height else { return nil }
+    let radius = max(1, min(3, Int(Double(min(r.width, r.height)) * 0.006)))
+    var sum = [0.0, 0.0, 0.0], n = 0.0
+    for dy in -radius...radius {
+      for dx in -radius...radius {
+        let p = r.pixel(min(max(0, x + dx), r.width - 1), min(max(0, y + dy), r.height - 1)).values
+        for c in 0..<3 { sum[c] += p[c] }
+        n += 1
+      }
+    }
+    return RGB(sum.map { $0 / n })
+  }
+  /// 粘贴裁切: the copied frame's crop alone, as its step has it: in ③ its crop and straightening, in
+  /// ② its 画面 (a picture a file each) and 去色罩区域. To the frames chosen, or the frame shown.
+  func pasteCrop() {
+    guard copiedSettings != nil, !isWorking else { return }
+    pasteSettings(stepScope, only: stepScope == .demasking ? [.frameCrop, .region] : [.crop])
   }
   /// `s`'s settings to every frame of the roll, or only to `only`, as one edit, each frame keeping
   /// how it faces, its crop's region and what was read off its own picture; of `scope`, and when
   /// `groups` are given, only those of it.
   private func give(_ s: FilmFrame, to only: Set<UUID>?, edit: String, scope: SettingsScope = .all, groups: Set<SettingsGroup>? = nil) {
     recordEdit(edit)
+    var reframed = false
     for i in frames.indices where only?.contains(frames[i].id) ?? true {
       let own = frames[i].adjustments
       frames[i].adjustments.take(scope, from: s.adjustments)
@@ -2789,8 +2838,29 @@ final class AppModel: ObservableObject {
         (frames[i].adjustments.base, frames[i].adjustments.basePicked) = (own.base, own.basePicked)
         (frames[i].adjustments.neutralSample, frames[i].adjustments.neutralPicked) = (own.neutralSample, own.neutralPicked)
       }
-      // Where each frame's de-masking reads lies on its own picture, as its crop does.
+      // Where each frame's de-masking reads lies on its own picture, as its crop does: its own
+      // unless chosen (`SettingsGroup.region`); so is ③'s crop (`.crop`). ②'s 画面, a picture a file
+      // each's crop of it, goes to another such only when chosen (`.frameCrop`).
       frames[i].adjustments.analysisRegion = own.analysisRegion
+      frames[i].adjustments.composition = own.composition
+      if let groups {
+        if groups.contains(.frameCrop), scope != .grading, frames[i].id != s.id, frames[i].sourcePath != nil, s.sourcePath != nil,
+          frames[i].rect != s.rect
+        {
+          if frames[i].initialRect == nil { frames[i].initialRect = frames[i].rect }
+          frames[i].rect = s.rect
+          reframed = true
+        }
+        if groups.contains(.region), scope != .grading { frames[i].adjustments.analysisRegion = s.adjustments.analysisRegion }
+        // The base picked by hand, read again on this frame where it was picked: its own exposure,
+        // flat field and crosstalk, not the picked frame's.
+        if groups.contains(.basePoint), scope != .grading, frames[i].id != s.id, let place = s.adjustments.basePicked,
+          let reading = baseReading(frames[i], at: place)
+        {
+          (frames[i].adjustments.base, frames[i].adjustments.basePicked) = (reading, place)
+        }
+        if groups.contains(.crop), scope != .demasking { SettingsGroup.crop.take(&frames[i].adjustments, from: s.adjustments) }
+      }
       // A light-leak repair belongs to its own picture.
       frames[i].adjustments.leakFix = own.leakFix
       // So does a neutral found in its gray pixels: one pasted from another is looked for in its own.
@@ -2798,6 +2868,7 @@ final class AppModel: ObservableObject {
         frames[i].adjustments.autoNeutral = .pending
       }
     }
+    if reframed { updateRollBase() }
     refresh()
     updateThumbnails()
     saveProject()

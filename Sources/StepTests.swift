@@ -113,10 +113,11 @@ enum StepTests {
     full.grading = ColourGrading(shadowHue: 220, shadowAmount: 0.3)
     (full.base, full.inputGamma, full.filmEdges) = (RGB(r: 0.5, g: 0.3, b: 0.2), 1.0, .rebate)
     var grouped = Adjustments(), whole = Adjustments(), rest = Adjustments()
-    for g in SettingsGroup.of(.grading) { g.take(&grouped, from: full) }
+    // The crop, given only when chosen, is not of the grading `takeGrading` gives.
+    for g in SettingsGroup.of(.grading) where !g.optIn { g.take(&grouped, from: full) }
     whole.takeGrading(from: full)
     SettingsGroup.otherGrading.take(&rest, from: full)
-    try check(grouped == whole && rest == Adjustments() && SettingsGroup.of(.grading).allSatisfy { $0 == .otherGrading || $0.isSet(in: full) }
+    try check(grouped == whole && rest == Adjustments() && SettingsGroup.of(.grading).allSatisfy { $0 == .otherGrading || $0.optIn || $0.isSet(in: full) }
       && SettingsGroup.exposure.summary(of: full) == "+0.50 EV" && SettingsGroup.whitesBlacks.summary(of: full).hasPrefix("白色 −0.10")
       && { var straight = Adjustments(); straight.curves = ToneCurves(); return !SettingsGroup.curves.isSet(in: straight) }(),
       "选择性粘贴's groups together are ③'s settings, each grading setting in a named one (其他调色 empty), each told in a few words; straight curves are none")
@@ -143,6 +144,34 @@ enum StepTests {
     try check(model.preferences.pasteLeftOut.contains("whiteBalance") && !model.preferences.pasteLeftOut.contains("exposure")
       && model.pasteChosen.contains(.exposure) && !model.pasteChosen.contains(.saturation) && !model.pasteGroups(.grading).contains(.otherGrading),
       "the sheet remembers what was left unticked, so a group added later starts ticked; 其他调色 listed only when there is some")
+    // The crops are given only when chosen: not by 粘贴, unticked until ticked once; ③'s crop and
+    // straightening by 粘贴裁切 in ③, ② 去色罩区域 by it in ②.
+    model.selectedID = ids[0]
+    model.frames[0].adjustments.composition = NormalRect(x: 0.1, y: 0.1, width: 0.7, height: 0.6)
+    (model.frames[0].adjustments.angle, model.frames[0].adjustments.analysisRegion) = (2.5, NormalRect(x: 0.2, y: 0.2, width: 0.5, height: 0.5))
+    model.copySettings()
+    model.selectedID = ids[1]
+    model.convertStep = .grade
+    model.pasteSettings(model.stepScope)
+    let plainPaste = model.frames[1].adjustments
+    edits.undo()
+    let unticked = !model.pasteChosen.contains(.crop) && !model.pasteChosen.contains(.region)
+    model.pasteCrop()
+    let cropped = model.frames[1].adjustments
+    edits.undo()
+    model.convertStep = .demask
+    model.pasteCrop()
+    let regioned = model.frames[1].adjustments
+    edits.undo()
+    model.pasteChosen = [.crop, .exposure]
+    let remembered = model.pasteChosen.contains(.crop) && !model.pasteChosen.contains(.region) && model.preferences.pasteLeftOut.contains("+crop")
+    try check(plainPaste.composition == nil && (plainPaste.angle ?? 0) == 0 && plainPaste.analysisRegion == nil && unticked
+      && cropped.composition == NormalRect(x: 0.1, y: 0.1, width: 0.7, height: 0.6) && cropped.angle == 2.5 && cropped.analysisRegion == nil
+      && regioned.analysisRegion == NormalRect(x: 0.2, y: 0.2, width: 0.5, height: 0.5) && regioned.composition == nil && remembered
+      && !model.pasteGroups(.demasking).contains(.frameCrop) && !AppModel.presetGroups.contains(.crop),
+      "粘贴 leaves each frame's crop its own; 粘贴裁切 gives ③'s crop and straightening in ③, the de-masking region in ②; the crops start unticked, and are remembered once ticked")
+    model.frames[0].adjustments.composition = nil
+    (model.frames[0].adjustments.angle, model.frames[0].adjustments.analysisRegion) = (nil, nil)
 
     // 选择性同步: the frame shown's ticked settings alone, to the roll.
     model.selectedID = ids[0]

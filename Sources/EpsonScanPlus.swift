@@ -165,6 +165,16 @@ struct EpsonScanPlusApp: App {
           .disabled(model.selected == nil || model.frames.count < 2 || model.isWorking || model.page != .convert)
         // Lightroom's: with several chosen, every edit of the frame shown goes to them all.
         Toggle("自动同步所选的画面", isOn: $model.autoSync).disabled(model.page != .convert)
+        // The copied frame's crop alone: in ② its 画面 and 去色罩区域, in ③ its crop and straightening.
+        Button((model.stepScope == .demasking ? "粘贴画面和去色罩区域" : "粘贴裁切") + (model.multiSelected ? "到所选的 \(model.selection.count) 张" : "")) {
+          model.pasteCrop()
+        }
+          .disabled(model.copiedSettings == nil || model.selected == nil || model.isWorking || model.page != .convert)
+        // ② only: the copied frame's base picked by hand, each frame's base read again there.
+        if model.stepScope == .demasking {
+          Button("粘贴片基取点" + (model.multiSelected ? "到所选的 \(model.selection.count) 张" : "")) { model.pasteBasePoint() }
+            .disabled(model.copiedSettings?.adjustments.basePicked == nil || model.selected == nil || model.isWorking || model.page != .convert)
+        }
         // Lightroom's 拷贝设置 dialog: the copied settings one by one, only those ticked pasted.
         Button(model.multiSelected ? "选择性粘贴到所选的 \(model.selection.count) 张…" : "选择性粘贴…") { model.choosingPaste = true }
           .keyboardShortcut("v", modifiers: [.command, .shift, .option])

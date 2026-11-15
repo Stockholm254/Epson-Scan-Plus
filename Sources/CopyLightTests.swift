@@ -293,6 +293,23 @@ enum CopyLightTests {
     flatEdits.undo()
     flatEdits.undo()
     flatEdits.undo()
+    // 粘贴片基取点 in ②: the base picked by hand on one frame read again on another where it was
+    // picked, its own reading rather than the picked one's.
+    let (pageWas, stepWas) = (flatModel.page, flatModel.convertStep)
+    (flatModel.page, flatModel.convertStep) = (.convert, .demask)
+    let place = NormalRect(x: 0.01, y: 0.01, width: 0.02, height: 0.02)
+    flatModel.select(ids[4])
+    flatModel.setFilmBase(RGB(r: 0.3, g: 0.2, b: 0.15), at: place)
+    flatModel.copySettings()
+    flatModel.select(ids[5])
+    flatModel.pasteBasePoint()
+    let readAgain = flatModel.frames[5].adjustments, expected = flatModel.baseReading(flatModel.frames[5], at: place)
+    flatEdits.undo()
+    flatEdits.undo()
+    (flatModel.page, flatModel.convertStep) = (pageWas, stepWas)
+    try check(readAgain.basePicked == place && expected != nil && readAgain.base == expected && readAgain.base != RGB(r: 0.3, g: 0.2, b: 0.15)
+      && flatModel.frames[5].adjustments.basePicked == nil,
+      "粘贴片基取点 reads each frame's own base where the base was picked by hand, as one edit")
     // Kept once with the roll: frames keep only the flat's id where it reads back exactly; a frame
     // whose flat is missing opens unflattened and says so.
     flatModel.saveProject()

@@ -31,7 +31,7 @@ struct PasteSheet: View {
     let a = settings
     let groups = purpose == .preset
       ? AppModel.presetGroups.filter { $0 != .otherGrading || $0.isSet(in: a) }
-      : m.pasteGroups(scope, from: a)
+      : m.pasteGroups(scope, from: a, frame: copied)
     let ticked = groups.filter(chosen.contains)
     let targets = purpose == .sync ? (m.multiSelected ? m.selection.count - 1 : max(0, m.frames.count - 1)) : m.pasteTargets.count
     let named = name.trimmingCharacters(in: .whitespacesAndNewlines)

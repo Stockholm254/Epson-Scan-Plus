@@ -905,8 +905,19 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
   case saturation, softEnds, colourNoise, curves, sharpening, rollShared, presence, mixer, grading
   /// ③'s settings none of the others names: those a newer version adds before it is listed here.
   case otherGrading
+  /// ③'s crop and straightening (`composition`, `angle`).
+  case crop
   case base, reading
+  /// ②'s 画面 (the frame's crop of its own picture, for a picture a file each, `FilmFrame.rect`) and
+  /// 去色罩区域 (`analysisRegion`).
+  case frameCrop, region
+  /// ②'s film base picked by hand, as a place: each frame's own base read again where it was
+  /// picked (`AppModel.baseReading`), not the picked frame's reading.
+  case basePoint
   var id: String { rawValue }
+  /// Given only when chosen, as Lightroom's 拷贝设置 leaves the crop unticked: not by 粘贴, nor by
+  /// 选择性粘贴 / 同步 until ticked there; a frame's crop and where its de-masking reads are its own.
+  var optIn: Bool { self == .crop || self == .frameCrop || self == .region || self == .basePoint }
   var name: String {
     switch self {
     case .whiteBalance: return "白平衡"
@@ -926,13 +937,17 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
     case .mixer: return "混色器"
     case .grading: return "色彩分级"
     case .otherGrading: return "其他调色"
+    case .crop: return "裁切（构图裁切、拉直）"
     case .base: return "片基"
     case .reading: return "负片 / 反转片、输入 Gamma"
+    case .frameCrop: return "画面（画面裁切）"
+    case .region: return "去色罩区域"
+    case .basePoint: return "片基取点（各张在同一处重新取样）"
     }
   }
   var scope: SettingsScope {
     switch self {
-    case .base, .reading: return .demasking
+    case .base, .reading, .frameCrop, .region, .basePoint: return .demasking
     default: return .grading
     }
   }
@@ -967,8 +982,12 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
       let kept = a
       a.takeGrading(from: o)
       for g in Self.allCases where g.scope == .grading && g != .otherGrading { g.take(&a, from: kept) }
+    case .crop: (a.composition, a.angle) = (o.composition, o.angle)
     case .base: (a.base, a.basePicked) = (o.base, o.basePicked)
     case .reading: (a.inputGamma, a.inputIsNegative, a.reversal) = (o.inputGamma, o.inputIsNegative, o.reversal)
+    // The frame's own box, not of its settings: given by `AppModel.give`.
+    case .frameCrop, .basePoint: break
+    case .region: a.analysisRegion = o.analysisRegion
     }
   }
   /// Whether `a` has this group otherwise than `plain` (a new frame's); curves that change nothing,
@@ -1011,6 +1030,12 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
     case .mixer: return a.mixer.map { $0.isIdentity ? "未改" : "改过" } ?? "未改"
     case .grading: return a.grading.map { $0.isIdentity ? "未改" : "改过" } ?? "未改"
     case .otherGrading: return isSet(in: a) ? "改过" : "默认"
+    case .crop:
+      return joined([a.composition != nil ? "裁过" : nil, a.angle.flatMap { abs($0) > 0.0001 ? String(format: "拉直 %+.1f°", $0) : nil }], or: "不裁切")
+    case .frameCrop: return "这张的画面范围"
+    case .region: return a.analysisRegion != nil ? "画过" : "跟随画面"
+    case .basePoint:
+      return a.basePicked.map { String(format: "在 %.0f%%, %.0f%% 处", ($0.x + $0.width / 2) * 100, ($0.y + $0.height / 2) * 100) } ?? "没有手动取点"
     case .base: return a.basePicked != nil ? "取样" : a.base != nil ? "定过" : "自动"
     case .reading: return (a.isSlide ? "反转片" : a.inputIsNegative ? "负片" : "正片") + String(format: " · Gamma %.2g", a.inputGamma)
     }
