@@ -197,7 +197,7 @@ enum CanvasTests {
     let openedByClick = model.singleView && model.frames[2].rect == cropped
     model.singleView = false
     for _ in 0..<40 where model.rendering { settle(0.1) }
-    let middle = canvas.screen(cropped.cg), grip2 = CGPoint(x: middle.midX, y: middle.midY), slid = CGPoint(x: grip2.x + 14, y: grip2.y + 4)
+    let boxShown = canvas.screen(cropped.cg), grip2 = CGPoint(x: boxShown.midX, y: boxShown.midY), slid = CGPoint(x: grip2.x + 14, y: grip2.y + 4)
     canvas.mouseDown(with: event(.leftMouseDown, grip2))
     canvas.mouseDragged(with: event(.leftMouseDragged, CGPoint(x: grip2.x + 7, y: grip2.y + 2)))
     canvas.mouseDragged(with: event(.leftMouseDragged, slid))
