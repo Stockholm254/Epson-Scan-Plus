@@ -456,6 +456,11 @@ enum MCPTools {
       // 原片 / 自动 / 自定义, as the white balance menu shows it.
       var balance: [String: Any] = ["mode": model.balanceMode.rawValue, "auto": s.autoWhiteBalance, "warmth": s.warmth, "tint": s.tint, "shadow_warmth": s.shadowWarmthAmount, "shadow_tint": s.shadowTintAmount]
       if let neutral = s.neutralSample { balance["neutral_sample"] = rgb(neutral) }
+      // As the sliders show it: where the frame stands against 原片, its 自动 or grey plus warmth / tint.
+      if let base = model.balanceBase {
+        balance["against_as_shot"] = ["warmth": base.warmth + s.warmth, "tint": base.tint + s.tint,
+          "note": "the 冷暖 and 绿 / 洋红 sliders show these: where 自动, a picked grey or 原片 puts the frame against 原片 (0, 0), plus warmth and tint, which are what the sliders add"]
+      }
       // 自动's gray pixels: found (the neutral they set), still looked for, none found (自动 as before),
       // or a frame from before them (its old 自动).
       if s.inputIsNegative && !s.isSlide && !s.isMonochrome {

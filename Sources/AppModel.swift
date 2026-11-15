@@ -5102,6 +5102,27 @@ final class AppModel: ObservableObject {
   /// 自动 is the picture's gray pixels', looked for near it (`GrayPixelNeutral`); on a frame from
   /// before 0.23.3 (`Adjustments.autoNeutral` nil) it is still that neutral, as 原片.
   var balancesByCalibration: Bool { conversionProfile.offsets != nil && settings.inputIsNegative && !settings.isSlide }
+  /// Where the selected colour negative's white balance stands against 原片, in 冷暖's and
+  /// 绿 / 洋红's own units, as the balance its 自动, grey or 原片 gives (`ToneAnalysis.balance`, against
+  /// 原片's: the calibrated neutral, or none) would read on those sliders. The sliders show this plus
+  /// what they add (the user's call, 2026-11-14: 自动 and a grey picked leave them where they put the
+  /// frame, not at 0, so the frames can be compared). Nil for a slide, black and white or a positive,
+  /// and while the frame is not yet analysed.
+  var balanceBase: (warmth: Double, tint: Double)? {
+    let s = settings
+    guard Self.balancesLayers(s), let a = toneAnalysis else { return nil }
+    let ref = conversionProfile.offsets.map { o in RGB(o.values.map { -$0 }) } ?? .zero
+    return Self.balanceReading(a.balance, against: ref, low: a.low, high: a.high)
+  }
+  /// A balance in log exposure, against `reference`, as 冷暖 and 绿 / 洋红 would shift the print to
+  /// make it (`Kernels.toned`: each 1 of 冷暖 takes red up and blue down 0.12 of the print, each 1 of
+  /// 绿 / 洋红 red and blue up 0.05 and green down 0.10), the frame's levels (`low` to `high`, its
+  /// whole print) taking log exposure to the print. What all three channels share is no colour.
+  static func balanceReading(_ balance: RGB, against reference: RGB, low: Double, high: Double) -> (warmth: Double, tint: Double) {
+    let span = max(0.05, high - low)
+    let q = (0..<3).map { (balance.values[$0] - reference.values[$0]) / span }
+    return ((q[0] - q[2]) / 0.24, (q[0] + q[2] - 2 * q[1]) / 0.30)
+  }
   /// Whether 原片 is there to choose: a colour negative's is the calibrated neutral, and without one
   /// it would balance nothing (`balanceUncalibrated`); a slide's, a black and white negative's or a
   /// positive file's is the picture as it is.
@@ -5161,9 +5182,9 @@ final class AppModel: ObservableObject {
         ($0.warmth, $0.tint, $0.slideContrast) = (0, 0, nil)
         if grays || $0.autoNeutral == nil { $0.autoNeutral = .pending }
       }
-      status = grays ? "白平衡：自动，按画面里的灰像素 · 冷暖、绿 / 洋红归零"
-        : balancesByCalibration ? "白平衡：标定预设记下的中性 · 冷暖、绿 / 洋红归零"
-        : auto ? "白平衡：自动 · 冷暖、绿 / 洋红归零"
+      status = grays ? "白平衡：自动，按画面里的灰像素 · 冷暖、绿 / 洋红回到它定下的位置"
+        : balancesByCalibration ? "白平衡：标定预设记下的中性 · 冷暖、绿 / 洋红回到它定下的位置"
+        : auto ? "白平衡：自动 · 冷暖、绿 / 洋红回到它定下的位置"
         : settings.isSlide ? "白平衡：原片，片子本来的颜色" : "白平衡：原片，只除片基，不按画面配平"
       updateThumbnails()
     }

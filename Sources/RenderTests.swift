@@ -173,6 +173,22 @@ enum RenderTests {
     try check(same(model.toneAnalysis, try fresh()) && !same(before, model.toneAnalysis!),
       "what the analysis reads (auto white balance, saturation) analyses again")
 
+    // 冷暖 and 绿 / 洋红 read against 原片 (here no calibration: no balance): where the frame's own
+    // balance puts it, as the shift the sliders would make for it; what they add goes on top.
+    for _ in 0..<80 where model.rendering { settle(0.05) }
+    if let a = model.toneAnalysis {
+      let base = model.balanceBase, expected = AppModel.balanceReading(a.balance, against: .zero, low: a.low, high: a.high)
+      let (w, t) = (0.3, -0.2), span = a.high - a.low
+      let made = AppModel.balanceReading(RGB(r: 0.1 + span * (0.12 * w + 0.05 * t), g: 0.1 - span * 0.10 * t, b: 0.1 + span * (-0.12 * w + 0.05 * t)),
+        against: .zero, low: a.low, high: a.high)
+      let none = AppModel.balanceReading(RGB(r: 0.2, g: 0.2, b: 0.2), against: .zero, low: a.low, high: a.high)
+      try check(base.map { abs($0.warmth - expected.warmth) < 1e-9 && abs($0.tint - expected.tint) < 1e-9 } == true
+        && abs(made.warmth - w) < 1e-9 && abs(made.tint - t) < 1e-9 && abs(none.warmth) < 1e-12 && abs(none.tint) < 1e-12,
+        String(format: "冷暖 and 绿 / 洋红 read where the frame's balance puts it against 原片 (%.2f, %.2f), as the shift the sliders make; a balance all channels share reads 0", base?.warmth ?? .nan, base?.tint ?? .nan))
+    } else {
+      try check(false, "the frame is analysed for its white balance reading")
+    }
+
     // The looks after the conversion (texture, clarity, dehaze, the mixer, grading) are read by no
     // analysis, so dragging one keeps it; vibrance, as the saturation, moves the highlights' reach.
     let plain = model.selected!

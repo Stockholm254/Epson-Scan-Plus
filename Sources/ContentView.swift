@@ -1410,7 +1410,7 @@ struct ContentView: View {
   var balancesByCalibration: Bool { m.balancesByCalibration }
   /// White balance: automatic or by hand, the roll as one, and the points picked on the frame.
   var balanceSection: some View {
-    PanelSection("白平衡", key: "balance", info: "自动白平衡按画面里的灰像素配平：白墙、水泥、路面、石头这类本来是灰的东西，明暗变化时三个通道一起变、颜色不变。用本机或翻拍标定的预设时只在标定记下的中性附近找（这个中性是在标定时的光下定的，比如阳光），所以阴天、树荫、室内的照片按它们自己的光配平；没有标定时在整张的平均附近找。草地、橙色的桥这类有颜色的东西上的明暗不当成灰。画面里几乎没有灰的东西时找不到，自动就按原来的办法：有标定按标定的中性，没有标定对齐各通道的黑。只看裁切以内，忽略外缘 5%（不改变导出范围），裁切里带着片边（片基、齿孔、边字）时只看片边以内；在「画面范围」里框选了去色罩区域时，只按青色框里找。每张找一次记下来（约 0.3 秒），换了去串色或平场时重找。0.23.3 以前的画面保持原来的自动（选单上写「自动（旧）」，有标定时是「标定」），重新选「自动」才改用灰像素。\n\n「阴影冷暖」「阴影色调」只动暗部（亮度 0.2 最多，0.55 以上和纯黑不动），阳光下的灰不变：晴天的阴影由蓝天照亮，本来就偏蓝，阴影冷暖往右拨把它暖回来；远处的雾气、只有蓝层曝了光的阴影常常蓝里带紫，再把阴影色调往左（绿）拨；它只去掉相反的偏色，往绿只动偏紫的暗处，草和中性的沙不变。「阴影中性」用滴管点阴影里应为灰色的地方（背光的水泥、路面、石头），两个一起按它设定，之后还能拖滑块微调；点在树林这类本身有颜色的东西上会把它也变成灰。\n\n右上角的选单和 Lightroom 的白平衡一样：「原片」是胶片转换本来的样子，不按画面配平（彩色负片用着标定时是标定的中性，反转片是片子本来的颜色）。彩色负片没有标定可用时（没标定过，或关掉了「用标定」），原片什么都不配平、会偏色，所以选单里没有它，原来设成原片的画面也按自动；「自动」按画面里的灰像素；取中性灰、拖冷暖或绿 / 洋红就是「自定义」。选原片或自动时，放弃取的中性灰，冷暖、绿 / 洋红归零，阴影冷暖、阴影色调和片基不动；⌘Z 撤销。\n\n「中性灰」用滴管点画面中应为灰色的地方，按这一点白平衡（变成自定义）；滴管也在画面上方的工具条里（N）。取过点以后旁边出现「清除取样」：放弃取样点，回到按画面估计，标定预设回到标定的中性；冷暖、绿 / 洋红和片基不动。\n\n反转片：片子本来的颜色就是画面，默认不自动白平衡，透过片子最亮处的光就是白。选「自动」时每个通道各自从最暗拉到最亮，适合褪色、偏色的片子；选「原片」回到片子本来的颜色。「中性灰」把那一点配成灰。「清除取样」放弃取样点，回到片子本来的颜色。", reset: resetKey(.balance)) {
+    PanelSection("白平衡", key: "balance", info: "自动白平衡按画面里的灰像素配平：白墙、水泥、路面、石头这类本来是灰的东西，明暗变化时三个通道一起变、颜色不变。用本机或翻拍标定的预设时只在标定记下的中性附近找（这个中性是在标定时的光下定的，比如阳光），所以阴天、树荫、室内的照片按它们自己的光配平；没有标定时在整张的平均附近找。草地、橙色的桥这类有颜色的东西上的明暗不当成灰。画面里几乎没有灰的东西时找不到，自动就按原来的办法：有标定按标定的中性，没有标定对齐各通道的黑。只看裁切以内，忽略外缘 5%（不改变导出范围），裁切里带着片边（片基、齿孔、边字）时只看片边以内；在「画面范围」里框选了去色罩区域时，只按青色框里找。每张找一次记下来（约 0.3 秒），换了去串色或平场时重找。0.23.3 以前的画面保持原来的自动（选单上写「自动（旧）」，有标定时是「标定」），重新选「自动」才改用灰像素。\n\n「阴影冷暖」「阴影色调」只动暗部（亮度 0.2 最多，0.55 以上和纯黑不动），阳光下的灰不变：晴天的阴影由蓝天照亮，本来就偏蓝，阴影冷暖往右拨把它暖回来；远处的雾气、只有蓝层曝了光的阴影常常蓝里带紫，再把阴影色调往左（绿）拨；它只去掉相反的偏色，往绿只动偏紫的暗处，草和中性的沙不变。「阴影中性」用滴管点阴影里应为灰色的地方（背光的水泥、路面、石头），两个一起按它设定，之后还能拖滑块微调；点在树林这类本身有颜色的东西上会把它也变成灰。\n\n右上角的选单和 Lightroom 的白平衡一样：「原片」是胶片转换本来的样子，不按画面配平（彩色负片用着标定时是标定的中性，反转片是片子本来的颜色）。彩色负片没有标定可用时（没标定过，或关掉了「用标定」），原片什么都不配平、会偏色，所以选单里没有它，原来设成原片的画面也按自动；「自动」按画面里的灰像素；取中性灰、拖冷暖或绿 / 洋红就是「自定义」。选原片或自动时，放弃取的中性灰，冷暖、绿 / 洋红回到它定下的位置，阴影冷暖、阴影色调和片基不动；⌘Z 撤销。\n\n「中性灰」用滴管点画面中应为灰色的地方，按这一点白平衡（变成自定义）；滴管也在画面上方的工具条里（N）。取过点以后旁边出现「清除取样」：放弃取样点，回到按画面估计，标定预设回到标定的中性；冷暖、绿 / 洋红和片基不动。\n\n反转片：片子本来的颜色就是画面，默认不自动白平衡，透过片子最亮处的光就是白。选「自动」时每个通道各自从最暗拉到最亮，适合褪色、偏色的片子；选「原片」回到片子本来的颜色。「中性灰」把那一点配成灰。「清除取样」放弃取样点，回到片子本来的颜色。", reset: resetKey(.balance)) {
       // As Lightroom's 白平衡 menu: 原片, 自动, 自定义; a grey picked or 冷暖 / 绿洋红 moved shows
       // 自定义, and 原片 or 自动 chosen sets them back to 0.
       // A narrow menu, as Lightroom's 「白平衡：原片 ▾」, so the section's name keeps its room.
@@ -1425,10 +1425,10 @@ struct ContentView: View {
       }
       .menuStyle(.borderlessButton).fixedSize().disabled(m.selected == nil)
       .help(m.balancesByCalibration
-        ? "原片：按标定预设记下的中性配平。自动：在标定的中性附近找画面里的灰像素配平（树荫、阴天、室内按它们自己的光）。自定义：取中性灰，或拖冷暖、绿 / 洋红。选原片或自动时放弃取的中性灰，冷暖、绿 / 洋红归零。⌘Z 撤销"
+        ? "原片：按标定预设记下的中性配平。自动：在标定的中性附近找画面里的灰像素配平（树荫、阴天、室内按它们自己的光）。自定义：取中性灰，或拖冷暖、绿 / 洋红。选原片或自动时放弃取的中性灰，冷暖、绿 / 洋红回到它定下的位置。⌘Z 撤销"
         : m.settings.isSlide
-          ? "原片：片子本来的颜色。自动：每个通道各自从最暗拉到最亮，适合褪色、偏色的片子。自定义：取中性灰，或拖冷暖、绿 / 洋红。选原片或自动时冷暖、绿 / 洋红归零。⌘Z 撤销"
-          : "原片：只除片基，不按画面配平。自动：按画面里的灰像素配平（在整张的平均附近找；找不到时对齐各通道的黑）。自定义：取中性灰，或拖冷暖、绿 / 洋红。选原片或自动时放弃取的中性灰，冷暖、绿 / 洋红归零；阴影冷暖、阴影色调不动。⌘Z 撤销")
+          ? "原片：片子本来的颜色。自动：每个通道各自从最暗拉到最亮，适合褪色、偏色的片子。自定义：取中性灰，或拖冷暖、绿 / 洋红。选原片或自动时冷暖、绿 / 洋红回到它定下的位置。⌘Z 撤销"
+          : "原片：只除片基，不按画面配平。自动：按画面里的灰像素配平（在整张的平均附近找；找不到时对齐各通道的黑）。自定义：取中性灰，或拖冷暖、绿 / 洋红。选原片或自动时放弃取的中性灰，冷暖、绿 / 洋红回到它定下的位置；阴影冷暖、阴影色调不动。⌘Z 撤销")
     } content: {
       VStack(alignment: .leading, spacing: 10) {
         // A picture that is a file each has no roll to share with, and a calibrated preset balances
@@ -1438,8 +1438,10 @@ struct ContentView: View {
           info: "像冲印店印一卷那样，整卷用同一个配光：白平衡按整卷所有画面一起统计，卷里每张的颜色一致，不再各自按自己的暗部去配平（比如阴影里的天光不会把一张整体拉偏）。每张的明暗照旧。\n\n只替换交给软件的部分：哪一张取了中性灰，那一张按你的来。用标定预设时，白平衡本来就按标定的中性，整卷一致。",
           off: m.selected == nil || m.isWorking)
         }
-        slider("冷暖", key: \.warmth, range: -1...1)
-        slider("绿 / 洋红", key: \.tint, range: -1...1)
+        // Read against 原片: where 自动, a grey picked or 原片 puts the frame, plus what they add.
+        let standing = m.balanceBase
+        balanceSlider("冷暖", key: \.warmth, base: standing?.warmth)
+        balanceSlider("绿 / 洋红", key: \.tint, base: standing?.tint)
         slider("阴影冷暖", key: \.shadowWarmthAmount, range: -1...1)
         slider("阴影色调", key: \.shadowTintAmount, range: -1...1)
         // The picker, latched while in use and marked once a point is picked (the same picker lies
@@ -1997,6 +1999,27 @@ struct ContentView: View {
   }
   func bool(_ key: WritableKeyPath<Adjustments, Bool>) -> Binding<Bool> {
     Binding(get: { m.settings[keyPath: key] }, set: { v in m.change { $0[keyPath: key] = v } })
+  }
+  /// 冷暖 or 绿 / 洋红 shown where the frame stands against 原片: `base` (where its 自动, grey picked
+  /// or 原片 puts it, `AppModel.balanceBase`) and what the slider adds to it. Its detent is `base`:
+  /// set back there, it adds nothing, and the white balance is 自动 or the grey again. With no base
+  /// (a slide, black and white, before the frame is analysed) it shows what it adds alone.
+  func balanceSlider(_ title: String, key: WritableKeyPath<Adjustments, Double>, base: Double?) -> some View {
+    let b = base ?? 0, range = -1.5...1.5
+    let shown = min(max(b + m.settings[keyPath: key], range.lowerBound), range.upperBound)
+    func set(_ v: Double) {
+      LiveFigure.named(title).set(v)
+      let added = v - b
+      m.change(title) { $0[keyPath: key] = abs(added) < 0.0005 ? 0 : added }
+    }
+    return VStack(spacing: 3) {
+      HStack {
+        Text(title).font(.system(size: 12)).foregroundStyle(.secondary)
+        Spacer()
+        LiveValueField(live: LiveFigure.named(title), title: title, format: "%.2f", value: shown, range: range) { set($0) }
+      }
+      Fader(title: title, value: Binding(get: { shown }, set: { set($0) }), range: range, detent: b, gradient: nil)
+    }
   }
   func slider(
     _ title: String, key: WritableKeyPath<Adjustments, Double>, range: ClosedRange<Double>,
