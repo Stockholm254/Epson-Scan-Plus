@@ -4923,8 +4923,11 @@ final class AppModel: ObservableObject {
       plain.adjustments = f.adjustments.unfaced
       return (f.id, analysisKey(plain, everything: true))
     }, uniquingKeysWith: { a, _ in a })
+    // The frame shown alone last: its own render comes first, rather than after its strip copy is
+    // converted (some 80 ms on a copy; 自动 chosen waited for it).
+    let ordered = singleView ? frames.filter { $0.id != selectedID } + frames.filter { $0.id == selectedID } : frames
     let request = ThumbnailPass(
-      token: thumbnailRevision, frames: frames, profile: conversionProfile,
+      token: thumbnailRevision, frames: ordered, profile: conversionProfile,
       keys: Dictionary(frames.map { f in
         let facing = f.adjustments.facing
         return (f.id, (unfaced[f.id] ?? "") + "|facing \(facing.rotation) \(facing.mirrored)")

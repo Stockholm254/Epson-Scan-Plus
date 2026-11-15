@@ -730,6 +730,21 @@ final class ImagePipeline {
     let toe = Self.toe(settings, profile)
     return Self.perChannel { c in density[c].map { FilmToe.exposure($0 / slopes.values[c], width: toe.values[c]) } }
   }
+  /// A frame's samples as exposures through a preset's slopes and toe, and each channel of them
+  /// sorted, kept for one analysis by the slopes and toe: 自动's reference for how light it prints
+  /// (`analyze`) read them again as the frame's own balance had, and a calibrated preset's both
+  /// again without the calibration, up to five times over (some 20 ms on a copy).
+  final class ExposureMemo {
+    private var kept = [[Double]: (e: [[Double]], sorted: [[Double]])]()
+    func exposed(_ density: [[Double]], settings: Adjustments, profile: FilmProfile, by pipe: ImagePipeline) -> (e: [[Double]], sorted: [[Double]]) {
+      let key = ImagePipeline.slopes(settings, profile).slopes.values + ImagePipeline.toe(settings, profile).values
+      if let known = kept[key] { return known }
+      let e = pipe.exposures(density, settings: settings, profile: profile)
+      let made = (e: e, sorted: ImagePipeline.perChannel { e[$0].sorted() })
+      kept[key] = made
+      return made
+    }
+  }
   /// `work` for the three channels at once, each on a core of its own, in channel order: the
   /// statistics' sorts and exposures of a frame, a third of its analysis each, side by side.
   static func perChannel<T>(_ work: (Int) -> T) -> [T] {
@@ -824,13 +839,14 @@ final class ImagePipeline {
   func analyze(
     base: RGB, density: [[Double]], settings: Adjustments, profile: FilmProfile, shortestEnds: Double = ImagePipeline.shortestEnds
   ) -> ToneAnalysis {
-    var a = balanced(base: base, density: density, settings: settings, profile: profile, shortestEnds: shortestEnds)
+    let memo = ExposureMemo()
+    var a = balanced(base: base, density: density, settings: settings, profile: profile, shortestEnds: shortestEnds, memo: memo)
     guard settings.balanceKeepsLightness, settings.balancingNeutral != nil || !settings.autoWhiteBalance
     else { return a }
     var auto = settings
     (auto.neutralSample, auto.neutralPicked, auto.autoNeutral, auto.autoWhiteBalance) = (nil, nil, nil, true)
-    let reference = balanced(base: base, density: density, settings: auto, profile: profile, shortestEnds: shortestEnds)
-    let e = exposures(density, settings: settings, profile: profile)
+    let reference = balanced(base: base, density: density, settings: auto, profile: profile, shortestEnds: shortestEnds, memo: memo)
+    let e = memo.exposed(density, settings: settings, profile: profile, by: self).e
     if let ends = Self.matched(Self.lightness(e, a), to: Self.lightness(e, reference), low: reference.low, high: reference.high) {
       (a.low, a.high) = ends
     }
@@ -853,16 +869,16 @@ final class ImagePipeline {
   static let lightWeights = [0.2126, 0.7152, 0.0722]
   /// `analyze` with the ends as the balance alone puts them.
   private func balanced(
-    base: RGB, density: [[Double]], settings: Adjustments, profile: FilmProfile, shortestEnds: Double
+    base: RGB, density: [[Double]], settings: Adjustments, profile: FilmProfile, shortestEnds: Double, memo: ExposureMemo? = nil
   ) -> ToneAnalysis {
     let calibrated = settings.autoLevels && profile.offsets != nil
-    var (a, green) = measure(base: base, density: density, settings: settings, profile: profile, shortestEnds: shortestEnds, green: calibrated)
+    var (a, green) = measure(base: base, density: density, settings: settings, profile: profile, shortestEnds: shortestEnds, green: calibrated, memo: memo)
     guard calibrated, let green else { return a }
     let film = AppModel.uncalibrated(profile, among: films)
     var plain = settings
     // The roll's estimate, made on the preset's green slope, as it is made on the film's.
     plain.rollSlopes = settings.rollSlopes.map { s in RGB(s.values.map { $0 * film.slopes.g / max(1e-6, s.g) }) }
-    let (without, plainGreen) = measure(base: base, density: density, settings: plain, profile: film, shortestEnds: shortestEnds, green: true)
+    let (without, plainGreen) = measure(base: base, density: density, settings: plain, profile: film, shortestEnds: shortestEnds, green: true, memo: memo)
     if let plainGreen, let ends = Self.matched(green, to: plainGreen, low: without.low, high: without.high) {
       (a.low, a.high) = ends
     }
@@ -892,16 +908,16 @@ final class ImagePipeline {
   /// `analyze` as the preset alone has it, and, asked for, green's readings through the balance,
   /// sample by sample, which the ends are read from.
   private func measure(
-    base: RGB, density: [[Double]], settings: Adjustments, profile: FilmProfile, shortestEnds: Double, green wanted: Bool
+    base: RGB, density: [[Double]], settings: Adjustments, profile: FilmProfile, shortestEnds: Double, green wanted: Bool,
+    memo: ExposureMemo? = nil
   ) -> (ToneAnalysis, [Double]?) {
     let (slopes, fixed) = Self.slopes(settings, profile)
     let toe = Self.toe(settings, profile)
     func exposure(_ density: Double, _ c: Int) -> Double { FilmToe.exposure(density / slopes.values[c], width: toe.values[c]) }
-    let e = exposures(density, settings: settings, profile: profile)
     // Independent robust endpoints correct color crossover, not just a single median offset.
     // They are scene statistics, not an ICC calibration; manual neutral/temperature remain available.
     // Each channel sorted once; every quantile of it below is read from that one sort.
-    let sorted = Self.perChannel { e[$0].sorted() }
+    let (e, sorted) = (memo ?? ExposureMemo()).exposed(density, settings: settings, profile: profile, by: self)
     func at(_ v: [Double], _ p: Double) -> Double { v.isEmpty ? 0 : v[min(v.count - 1, Int(Double(v.count - 1) * p))] }
     let channelLow = sorted.map { at($0, 0.01) }
     let channelHigh = sorted.map { at($0, 0.99) }
@@ -945,8 +961,9 @@ final class ImagePipeline {
     let fade = fromBlack || toe.values.contains { $0 > 0 } ? 0 : Self.unexposedFade
     func fadedIn(_ e: [Double]) -> Double { 1 - exp(-Self.fadeExposure(e[0], e[1], e[2]) / fade) }
     let fadeAtGrey = fade > 0 ? max(0.001, grey.map(fadedIn) ?? 1) : 1
+    // The same sums as `fadedIn`, without an array for every sample.
     let weight = fade > 0
-      ? (0..<e[0].count).map { i in min(1, fadedIn([e[0][i], e[1][i], e[2][i]]) / fadeAtGrey) } : nil
+      ? (0..<e[0].count).map { i in min(1, (1 - exp(-Self.fadeExposure(e[0][i], e[1][i], e[2][i]) / fade)) / fadeAtGrey) } : nil
     var lows = [Double]()
     var highs = [Double]()
     var green: [Double]?
@@ -954,7 +971,7 @@ final class ImagePipeline {
     let faded = weight.map { weight in
       Self.perChannel { c -> (q: [Double], x: [Double]) in
         let x = (0..<e[c].count).map { e[c][$0] * gain.values[c] + balance.values[c] * weight[$0] }
-        return (quantiles(x, [0.005, 0.995]), x)
+        return ([quantile(x, 0.005), quantile(x, 0.995)], x)
       }
     }
     for c in 0..<3 {
