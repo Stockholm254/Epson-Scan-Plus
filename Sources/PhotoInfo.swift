@@ -134,3 +134,47 @@ struct PhotoInfoView: View {
     }.padding(14).frame(minWidth: 260, alignment: .leading)
   }
 }
+
+/// ① 采集's right column: the selected picture's EXIF (camera, lens, exposure, when; a scan's
+/// scanner and resolution), as the single view's ⓘ shows it, read off the main thread when another
+/// picture is selected.
+struct PhotoInfoSection: View {
+  let frame: FilmFrame
+  @State private var read: (key: String, file: URL?, rows: [PhotoInfo.Row])?
+  var body: some View {
+    let key = frame.id.uuidString + "|" + (frame.sourcePath ?? frame.scanPath ?? "")
+    VStack(alignment: .leading, spacing: 6) {
+      HStack {
+        SectionTitle(text: "照片信息", symbol: "info.circle")
+        Spacer()
+        Text("第 \(frame.name) 张").font(.system(size: 11)).foregroundStyle(.secondary)
+      }
+      if let read, read.key == key {
+        if read.rows.count <= 1 {
+          Text(read.file == nil ? "这一张还没有自己的文件（扫描后才有）" : "这个文件里没有拍摄信息")
+            .font(.system(size: 11)).foregroundStyle(.secondary)
+        }
+        Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 4) {
+          ForEach(read.rows) { row in
+            GridRow {
+              Text(row.label).foregroundStyle(.secondary)
+              Text(row.value).textSelection(.enabled).lineLimit(2)
+            }
+          }
+        }.font(.system(size: 11))
+      } else {
+        ProgressView().controlSize(.small)
+      }
+    }
+    .accessibilityElement(children: .contain)
+    .accessibilityLabel("第 \(frame.name) 张的照片信息")
+    .task(id: key) {
+      let f = frame
+      let got = await Task.detached(priority: .utility) { () -> (URL?, [PhotoInfo.Row]) in
+        let file = PhotoInfo.file(for: f)
+        return (file, file.map(PhotoInfo.rows) ?? [])
+      }.value
+      read = (key, got.0, got.1)
+    }
+  }
+}

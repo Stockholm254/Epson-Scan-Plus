@@ -765,6 +765,11 @@ extension ContentView {
           FocusCheck(m: m, camera: m.camera)
           Divider()
         }
+        // The picture selected, as taken: its file's EXIF, as the single view's ⓘ has it.
+        if let f = m.selected {
+          PhotoInfoSection(frame: f)
+          Divider()
+        }
         sectionTitle("本卷", symbol: "archivebox")
         if m.sessionURL == nil {
           note("预览、扫描或导入之后，这一卷会自动放进库里。")
