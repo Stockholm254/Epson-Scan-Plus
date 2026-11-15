@@ -1605,7 +1605,9 @@ final class AppModel: ObservableObject {
     let count = frames.filter { ids.contains($0.id) }.count
     recordEdit("删除 \(count) 张画面")
     for id in ids { thumbnails[id] = nil }
+    let gone = Set(frames.filter { ids.contains($0.id) }.compactMap(\.sourcePath))
     frames.removeAll { ids.contains($0.id) }
+    picturesGone(gone)
     alsoSelected = []
     if Self.numberedInOrder(frames) { Self.renumber(&frames) }
     if let shown = selectedID, ids.contains(shown) { selectedID = frames.isEmpty ? nil : frames[min(first, frames.count - 1)].id }
@@ -1621,7 +1623,9 @@ final class AppModel: ObservableObject {
     guard let i = frames.firstIndex(where: { $0.id == id }), !isWorking else { return }
     recordEdit("删除画面")
     thumbnails[id] = nil
+    let gone = frames[i].sourcePath
     frames.remove(at: i)
+    picturesGone(Set(gone.map { [$0] } ?? []))
     // Pictures a file each are numbered again from 01, in their order; a scan's frames keep the
     // numbers of their places in the holder.
     if Self.numberedInOrder(frames) { Self.renumber(&frames) }
@@ -1630,6 +1634,27 @@ final class AppModel: ObservableObject {
     updateRollSlopes()
     refresh()
     saveProject()
+  }
+  /// After frames of pictures a file each are deleted (`paths`, their files): a picture no frame
+  /// shows any more is not shown either. The last shot's focus check and base cast go with it; the
+  /// roll's overview, its first picture (a camera's, an import's), becomes the next picture's, or
+  /// none is shown with none left. Until 0.23.7, every picture deleted, the first stayed on the
+  /// table and in 上一张, raw from the sensor and green. The files stay, and ⌘Z brings the frames back.
+  private func picturesGone(_ paths: Set<String>) {
+    guard !paths.isEmpty else { return }
+    let shown = Set(frames.compactMap(\.sourcePath))
+    if let shot = lastCapture?.path, paths.contains(shot), !shown.contains(shot) { forgetLastShot() }
+    guard let url = overviewURL, paths.contains(url.path), !shown.contains(url.path) else { return }
+    if let next = frames.first(where: { $0.sourcePath != nil }), let path = next.sourcePath {
+      overviewURL = URL(fileURLWithPath: path)
+      overview = try? ImagePipeline.shared.load(URL(fileURLWithPath: path), maxDimension: 2200)
+    } else {
+      // Kept as the project's overview to save it by; not shown, and the next picture taken or
+      // imported is the roll's first (`CameraIngest`).
+      overview = nil
+      displayed = nil
+    }
+    tablePrint = nil
   }
   /// Whether a roll's frames are numbered in their order: pictures a file each (a camera's, an
   /// import's). A scan's frames are numbered by their places in the holder.

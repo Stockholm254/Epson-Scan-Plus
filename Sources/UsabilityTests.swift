@@ -186,5 +186,36 @@ enum UsabilityTests {
       && title == "导出所选的 4 张…" && model.selectedID == ids[1] && !plain && afterPlain == ["01"] && afterSelect == ["02"]
       && model.exportSelectionTitle == "导出当前…",
       "⌘ and ⇧ choose frames to export together, the frame shown kept; a plain click or another frame lets them go (\(afterAdd), \(afterRun), \(title))")
+
+    // A camera's roll, its first picture its overview, the last shot in 上一张: deleting the first
+    // shows the next as the overview; deleting every picture leaves none shown, nor the last shot
+    // (until 0.23.7 the first stayed, raw and green, on the table and in the focus check).
+    let shots = folder.appendingPathComponent("deleted-shots", isDirectory: true)
+    try? FileManager.default.removeItem(at: shots)
+    try FileManager.default.createDirectory(at: shots, withIntermediateDirectories: true)
+    let picture = CGContext(data: nil, width: 60, height: 40, bitsPerComponent: 8, bytesPerRow: 0,
+      space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+    picture.setFillColor(CGColor(srgbRed: 0.2, green: 0.6, blue: 0.3, alpha: 1))
+    picture.fill(CGRect(x: 0, y: 0, width: 60, height: 40))
+    let files = try ["a", "b"].map { name -> URL in
+      let url = shots.appendingPathComponent(name + ".tif")
+      try ImagePipeline.shared.saveTIFF(picture.makeImage()!, to: url, dpi: 300)
+      return url
+    }
+    let camera = AppModel(libraryURL: shots)
+    camera.frames = files.enumerated().map { i, url in
+      var f = FilmFrame(name: String(format: "%02d", i + 1), rect: .full, format: "135")
+      f.sourcePath = url.path
+      return f
+    }
+    camera.overviewURL = files[0]
+    camera.overview = try ImagePipeline.shared.load(files[0], maxDimension: 2200)
+    camera.lastCapture = files[1]
+    camera.remove(camera.frames[0].id)
+    let next = camera.overviewURL == files[1] && camera.overview != nil && camera.lastCapture == files[1]
+    camera.remove(Set(camera.frames.map(\.id)))
+    try check(next && camera.frames.isEmpty && camera.overview == nil && camera.displayed == nil && camera.lastCapture == nil,
+      "deleting a camera roll's first picture shows the next as its overview; deleting them all leaves no picture shown, nor the last shot")
+    try? FileManager.default.removeItem(at: shots)
   }
 }
