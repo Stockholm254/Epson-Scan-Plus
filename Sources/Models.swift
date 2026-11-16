@@ -445,6 +445,20 @@ struct Adjustments: Codable, Equatable {
   var endsByLight: Bool { ends == 2 }
   /// The two ways as 色阶's 两端定法 and 选择性粘贴 name them.
   static let endsNames = (new: "白点按亮度、黑点按片基", old: "旧：按最亮、最暗通道")
+  /// 色阶's 两端定法 as one choice (from 0.24.1, the 自动两端 switch folded into it): the automatic
+  /// ends found the new way, the old way, or none (`autoLevels` off: a negative over a fixed range,
+  /// a slide as it lies on a light box).
+  enum EndsWay: Int { case byLight, old, none }
+  var endsWay: EndsWay {
+    get { !autoLevels ? .none : endsByLight ? .byLight : .old }
+    set {
+      switch newValue {
+      case .none: autoLevels = false
+      case .byLight: (autoLevels, ends) = (true, 2)
+      case .old: (autoLevels, ends) = (true, 1)
+      }
+    }
+  }
   /// A new frame's settings: the automatic ends as they are now found.
   static var newFrame: Adjustments { var a = Adjustments(); a.ends = 2; return a }
   var exposure = 0.0

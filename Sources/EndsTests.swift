@@ -37,6 +37,16 @@ enum EndsTests {
     var pasted = Adjustments()
     SettingsGroup.levels.take(&pasted, from: Adjustments.newFrame)
     try check(decoded.ends == nil && pasted.ends == 2, "a frame from before reads with no way of its own (made one as it opens); 色阶 pasted carries the way")
+    // 两端定法's three ways (0.24.1, the 自动两端 switch folded into it).
+    var way = Adjustments.newFrame
+    let first = way.endsWay
+    way.endsWay = .old
+    let oldWay = way.autoLevels && way.ends == 1 && way.endsWay == .old
+    way.endsWay = .none
+    let noWay = !way.autoLevels && way.endsWay == .none
+    way.endsWay = .byLight
+    try check(first == .byLight && oldWay && noWay && way.autoLevels && way.ends == 2,
+      "两端定法 sets the automatic ends' way and whether there are any as one choice: the new way, the old, or none")
     var kept = Adjustments.newFrame
     kept.ends = 1
     var slide = Adjustments.newFrame

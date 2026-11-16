@@ -67,7 +67,7 @@ enum MCPTools {
       "whites": number("旧的白色（0.24 起并进色阶，用 levels 的 rgb input_white 代替）：最亮的一端整体往下（负）或往上（正），-1 到 1", -1...1),
       "blacks": number("旧的黑色（0.24 起并进色阶，用 levels 的 rgb input_black 代替）：最暗的一端整体压深（负）或提起（正），-1 到 1", -1...1),
       "angle": number("拉直角度（度）：画面绕中心转动，正数顺时针，裁去转出的空角，-45 到 45", -45...45),
-      "auto_white_balance": ["type": "boolean", "description": "自动白平衡"], "auto_levels": ["type": "boolean", "description": "自动色阶"],
+      "auto_white_balance": ["type": "boolean", "description": "自动白平衡"], "auto_levels": ["type": "boolean", "description": "自动两端（0.24.1 起在色阶的「两端定法」菜单里：false 是「不自动」，按固定范围印）"],
       "shared_balance": ["type": "boolean", "description": "整卷同一白平衡：整卷共用一个按所有画面统计的白平衡，每张颜色一致；作用于选中画面所在的整卷"],
       "shared_levels": ["type": "boolean", "description": "整卷同一色阶：整卷共用一组黑白两端，暗的场景就是暗的，每张只按曝光微调；作用于选中画面所在的整卷"],
       "texture": number("纹理（像 Lightroom）：最细的起伏加强（正）或柔化（负），颜色不变，-1 到 1", -1...1),
