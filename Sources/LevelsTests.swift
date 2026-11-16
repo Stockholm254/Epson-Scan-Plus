@@ -131,5 +131,19 @@ enum LevelsTests {
     let old = try JSONDecoder().decode(Adjustments.self, from: JSONSerialization.data(withJSONObject: saved))
     let kept = try JSONDecoder().decode(Adjustments.self, from: JSONEncoder().encode(b))
     try check(old.levels == nil && kept.levels == raised, "a project from before 色阶 opens without levels; one with them keeps them")
+
+    // One thing takes the picture's clicks: the eyedropper and the tool bar's tools put each other down.
+    let suite = "local.epscan.levels-tests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let model = AppModel(libraryURL: folder.appendingPathComponent("levels", isDirectory: true), preferences: Preferences(defaults: defaults))
+    model.levelsPicker = .white
+    model.tool = .neutral
+    let toolWins = model.levelsPicker == nil && model.tool == .neutral
+    model.levelsPicker = .grey
+    let pickerWins = model.levelsPicker == .grey && model.tool == .select
+    model.tool = .select
+    try check(toolWins && pickerWins && model.levelsPicker == .grey,
+      "中性灰 taken up puts 色阶's white eyedropper down, so the click goes to it; an eyedropper picked up puts the tool down; 选择 leaves the eyedropper held")
   }
 }

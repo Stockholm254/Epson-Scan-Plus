@@ -123,7 +123,9 @@ final class AppModel: ObservableObject {
   /// A preview being read, or one made and not yet kept: the light table shows it, nothing else.
   var previewShowing: Bool { scanner.previewSoFar != nil || pendingPreview != nil }
   @Published var showNegative = false
-  @Published var tool = CanvasTool.select
+  @Published var tool = CanvasTool.select {
+    didSet { if tool != .select, levelsPicker != nil { levelsPicker = nil } }
+  }
   @Published var format = FilmFormat.auto { didSet { if format != oldValue { stampFilmEdges() } } }
   /// Whether the roll's copies take in the film's edge (边字、齿孔): from the new-project sheet or
   /// ②'s film section; each frame's de-masking region and a copy's size follow it. Kept with the roll.
@@ -263,7 +265,13 @@ final class AppModel: ObservableObject {
     didSet { if levelsClipping != oldValue { refresh() } }
   }
   /// 色阶's eyedropper picked up: a click on the picture sets that point (`pickLevelsPoint`).
-  @Published var levelsPicker: LevelsPicker? = nil
+  /// One thing takes the picture's clicks at a time: picked up, it puts down the tool in the tool
+  /// bar (`tool`), and a tool taken up puts it down. Until 0.23.16 both could be held, and the
+  /// eyedropper, its section scrolled out of sight, took the click meant for 中性灰 (a white wall
+  /// set as 色阶's white, red, green and blue each).
+  @Published var levelsPicker: LevelsPicker? = nil {
+    didSet { if levelsPicker != nil, tool != .select { tool = .select } }
+  }
   /// The picture before 色阶, as the levels panel draws and reads it.
   @Published private(set) var levelsHistogram: LevelsHistogram?
   /// The single picture as the canvas shows it: what 色阶 cuts while ⌥ is held on one of its points
