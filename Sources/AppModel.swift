@@ -472,7 +472,10 @@ final class AppModel: ObservableObject {
   var showsDemasked: Bool { page == .convert && convertStep == .demask }
   static func demasked(_ f: FilmFrame) -> FilmFrame {
     var d = f
+    // Its ends found its own way, as ③ finds them (`Adjustments.ends`).
+    let ends = d.adjustments.ends
     d.adjustments.takeGrading(from: Adjustments())
+    d.adjustments.ends = ends
     d.adjustments.leakFix = nil
     return d
   }
@@ -2003,7 +2006,7 @@ final class AppModel: ObservableObject {
   /// `a` with `part` as a new frame has it: a slide keeps its own colour (auto white balance off),
   /// a copy shot its colour noise reduction; everything else, the roll's switches among it, as it is.
   static func reset(_ part: AdjustmentPart, of a: Adjustments, copyShot: Bool) -> Adjustments {
-    var r = a, fresh = Adjustments()
+    var r = a, fresh = Adjustments.newFrame
     if a.isSlide { fresh.setReversal(true) }
     if a.isMonochrome { fresh.setMonochrome(true) }
     switch part {
@@ -2017,7 +2020,7 @@ final class AppModel: ObservableObject {
       (r.exposure, r.contrast, r.highlights, r.pressHighlights, r.shadows) = (fresh.exposure, fresh.contrast, nil, nil, nil)
       (r.whites, r.blacks) = (nil, nil)
     case .levels:
-      (r.autoLevels, r.levels) = (fresh.autoLevels, nil)
+      (r.autoLevels, r.levels, r.ends) = (fresh.autoLevels, nil, 2)
     case .colour:
       (r.saturation, r.softEnds, r.colourNoise) = (fresh.saturation, nil, copyShot ? 1 : nil)
       (r.texture, r.clarity, r.dehaze, r.vibrance) = (nil, nil, nil, nil)
@@ -2085,11 +2088,21 @@ final class AppModel: ObservableObject {
     updateThumbnails()
     saveProject()
   }
+  /// How a frame saved before 0.23.15 has its ends found (`Adjustments.ends`): as now (2) where
+  /// its tones were left as they came, as before (1) where any was set by hand on how it looked
+  /// then: its exposure, highlights, shadows, whites or blacks, 色阶's automatic ends or levels,
+  /// or curves. So it keeps how it looks (levels set in 0.23.14 on the old ends, on the new ones
+  /// cut half a frame to white).
+  static func endsForSaved(_ a: Adjustments) -> Int {
+    let touched = a.exposure != 0 || a.whites != nil || a.blacks != nil || a.pressHighlights != nil || a.highlights != nil
+      || a.shadows != nil || !a.autoLevels || a.levels?.normalized != nil || (a.curves.map { !$0.isIdentity } ?? false)
+    return touched ? 1 : 2
+  }
   /// A frame's settings back to a new frame's: what the picture is, how it faces, and the roll's
   /// own switches kept.
   static func resetAll(_ a: inout Adjustments) {
     let kept = a
-    a = Adjustments()
+    a = Adjustments.newFrame
     a.inputGamma = kept.inputGamma
     a.inputIsNegative = kept.inputIsNegative
     // Which film it is, not a setting: a slide comes back a slide, its own colour kept.
@@ -6602,6 +6615,9 @@ final class AppModel: ObservableObject {
       if f.sensorRead == nil, let path = f.sourcePath, f.adjustments.inputGamma == 1 { f.sensorRead = Self.readFromSensor(path) }
       // Copy shots read from the sensor have their colour noise smoothed, as new ones come in.
       if f.sensorRead == true && f.adjustments.colourNoise == nil { f.adjustments.colourNoise = 1 }
+      // From before 0.23.15: the ends as now where the frame was left as it came, as they were
+      // where its exposure or ends were set by hand.
+      if f.adjustments.ends == nil { f.adjustments.ends = Self.endsForSaved(f.adjustments) }
       return f
     }
     // Pictures a file each are numbered 01, 02, … in their order (up to 0.12.0 a deleted one left

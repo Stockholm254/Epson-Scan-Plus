@@ -89,8 +89,10 @@ enum RollPrintTests {
     let a = try (0..<3).map(analysis)
     let shared = a.dropFirst().allSatisfy { $0.balance == a[0].balance && $0.low == a[0].low && $0.high == a[0].high }
     let together = (try lightness(0), try lightness(1))
-    try check(shared && together.0 - together.1 > (apart.0 - apart.1) + 10,
-      String(format: "with one pair of ends as well, a scene two stops under comes out darker (%.0f against %.0f), where each frame alone lifted it to %.0f against %.0f",
+    // Each frame alone, its black at the base (0.23.15 on), already keeps the scene shot under
+    // darker; until then its own ends lifted it most of the way to the other.
+    try check(shared && together.0 - together.1 > 30 && together.0 - together.1 > (apart.0 - apart.1) - 3,
+      String(format: "with one pair of ends as well, a scene two stops under comes out darker (%.0f against %.0f); each frame alone %.0f against %.0f",
         together.1, together.0, apart.1, apart.0))
     // A grey picked on one frame stays that frame's own.
     model.select(model.frames[2].id)

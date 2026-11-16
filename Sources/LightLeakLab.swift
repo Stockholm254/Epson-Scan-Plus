@@ -1290,7 +1290,9 @@ extension AppModel {
     func part(_ s: Adjustments) -> Adjustments {
       var p = s
       // ③'s settings all as new, and the repair itself, which comes of this picture.
+      let ends = p.ends
       p.takeGrading(from: Adjustments())
+      p.ends = ends
       p.leakFix = nil
       return p
     }

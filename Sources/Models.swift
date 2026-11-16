@@ -434,6 +434,17 @@ struct RollPrint: Codable, Equatable {
 struct Adjustments: Codable, Equatable {
   var autoWhiteBalance = true
   var autoLevels = true
+  /// How the automatic ends are found (`ImagePipeline.measure`). 2: the white by the frame's
+  /// lightest luminance, so a blue sky's blue or a warm light's red past it no longer darkens the
+  /// frame, and the black at the film base, where the film took no light (the darkroom's least
+  /// time for the paper's full black). 1 or nil, as until 0.23.14: the white by each pixel's
+  /// brightest channel, the black by each channel's darkest. A new frame has 2 (`newFrame`); a
+  /// project from before gives 2 to its frames whose exposure and ends were left as they came, 1 to
+  /// those set by hand, so they keep how they look (`AppModel.endsForSaved`).
+  var ends: Int? = nil
+  var endsByLight: Bool { ends == 2 }
+  /// A new frame's settings: the automatic ends as they are now found.
+  static var newFrame: Adjustments { var a = Adjustments(); a.ends = 2; return a }
   var exposure = 0.0
   var warmth = 0.0
   var tint = 0.0
@@ -858,7 +869,7 @@ struct FilmFrame: Identifiable, Codable {
   var rating: Int? = nil
   var flag: Int? = nil
   var label: Int? = nil
-  var adjustments = Adjustments()
+  var adjustments = Adjustments.newFrame
   var scanPath: String? = nil
   var scanRect: NormalRect? = nil  // Physical footprint of the immutable original scan.
   var initialRect: NormalRect? = nil
@@ -920,6 +931,7 @@ extension Adjustments {
     autoLevels = o.autoLevels
     (saturation, colourNoise, softEnds) = (o.saturation, o.colourNoise, o.softEnds)
     (curves, sharpening, levels) = (o.curves, o.sharpening, o.levels)
+    ends = o.ends
   }
   /// `other`'s ② 去色罩 settings in place of these, ③ 调色's kept.
   mutating func takeDemasking(from o: Adjustments) {
@@ -1008,7 +1020,7 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
     case .contrast: a.contrast = o.contrast
     case .highlightsShadows: (a.highlights, a.shadows) = (o.highlights, o.shadows)
     case .whitesBlacks: (a.whites, a.blacks, a.pressHighlights) = (o.whites, o.blacks, o.pressHighlights)
-    case .levels: (a.autoLevels, a.levels) = (o.autoLevels, o.levels)
+    case .levels: (a.autoLevels, a.levels, a.ends) = (o.autoLevels, o.levels, o.ends)
     case .saturation: a.saturation = o.saturation
     case .softEnds: a.softEnds = o.softEnds
     case .colourNoise: a.colourNoise = o.colourNoise

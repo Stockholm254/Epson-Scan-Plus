@@ -475,7 +475,8 @@ enum MCPTools {
       // What the roll's check finds suspect (its base, its slope estimate, 去串色 against the calibration).
       let check = onMain { model.rollCheck.map { ["title": $0.title, "detail": $0.detail] } }
       if !check.isEmpty { state["roll_check"] = check }
-      var levels: [String: Any] = ["auto": s.autoLevels]
+      var levels: [String: Any] = ["auto": s.autoLevels, "auto_ends": s.endsByLight ? "white by the lightest luminance, black at the film base"
+        : "white by each pixel's brightest channel, black by each channel's darkest (a frame set by hand before 0.23.15)"]
       // Photoshop's Levels on the picture as shown, before the curves (0–255, midtone as its gamma).
       if let l = s.levels?.normalized {
         levels["photoshop_levels"] = Dictionary(uniqueKeysWithValues: zip(["rgb", "red", "green", "blue"], (0..<4).map { i -> [String: Any] in

@@ -818,6 +818,8 @@ final class ImagePipeline {
   /// Measured on the author's library, the flattest of 262 frames spans 1.25 and the middle 1.6,
   /// so none of them changes; NexFilm's 0.8 D would have reached into ordinary overcast frames.
   static let shortestEnds = 1.2
+  /// The shortest span with the black at the base (`Adjustments.ends`): 2 stops.
+  static let shortestEndsAtBase = 0.6
   /// A frame's balance and ends from its densities above `base`; `shortestEnds` as above.
   ///
   /// With a calibrated preset the automatic ends are set so the frame prints as light as it does
@@ -991,10 +993,38 @@ final class ImagePipeline {
     }
     var low = settings.autoLevels ? (lows.min() ?? 0) : 0
     var high = settings.autoLevels ? max(low + 0.05, highs.max() ?? 2) : 3.6
-    // A short scene opened about its middle to `shortestEnds`: its middle tones stay where they
-    // were, so it prints grey and soft as the film saw it, not darker (NexFilm found a floor kept
-    // from the black end darkened such frames).
-    if settings.autoLevels, high - low < shortestEnds {
+    // The ends as found from 0.23.15 (`Adjustments.ends`): the white by luminance, the channels as
+    // light added up, so a saturated colour past the lightest white goes on into the shoulder; the
+    // black at the film base, the balance as far as it has faded in where no channel took light,
+    // but never over the frame's darkest channel (its 0.5 %): a base read denser than the film
+    // that took no light (picked on a fogged rebate, or where the flat field runs off at the edge:
+    // on a Phoenix II roll up to 0.07 D in green) would cut the picture's own darks to black.
+    if settings.autoLevels, settings.endsByLight {
+      let darkest = low
+      let k = Self.lightWeights, (b0, b1, b2) = (balance.values[0], balance.values[1], balance.values[2])
+      let (g0, g1, g2) = (gain.values[0], gain.values[1], gain.values[2])
+      func luminance(_ r: Double, _ g: Double, _ b: Double) -> Double {
+        log10(max(1e-12, k[0] * pow(10, r) + k[1] * pow(10, g) + k[2] * pow(10, b)))
+      }
+      let n = e[0].count
+      var v = [Double](repeating: 0, count: n)
+      for i in 0..<n {
+        let w = weight?[i] ?? 1
+        v[i] = luminance(e[0][i] * g0 + b0 * w, e[1][i] * g1 + b1 * w, e[2][i] * g2 + b2 * w)
+      }
+      let atBase = fade > 0 ? 0.0 : 1.0
+      low = min(luminance(b0 * atBase, b1 * atBase, b2 * atBase), darkest)
+      high = max(low + 0.05, quantile(v, 0.995))
+      // A short scene's white is its own lightest, not lifted to `shortestEnds` (with the black
+      // at the base that darkened 51 of 81 frames of six rolls, the two Phoenix II rolls most,
+      // against the user's own exposures 19 levels darker on average, 3 without); only a frame
+      // whose lightest lies within `shortestEndsAtBase` of the base, near blank, is not
+      // stretched to white.
+      if high - low < Self.shortestEndsAtBase { high = low + Self.shortestEndsAtBase }
+    } else if settings.autoLevels, high - low < shortestEnds {
+      // A short scene opened about its middle to `shortestEnds`: its middle tones stay where they
+      // were, so it prints grey and soft as the film saw it, not darker (NexFilm found a floor kept
+      // from the black end darkened such frames).
       let middle = (low + high) / 2
       (low, high) = (middle - shortestEnds / 2, middle + shortestEnds / 2)
     }
