@@ -111,6 +111,15 @@ enum MCPTests {
       && midtone.isError && said(midtone).contains("已经去掉") && model.settings.warmth == 0.2,
       "adjust and set_curve take the frame by name and say which they changed; a frame not there, nothing to change, or midtone, refused")
     _ = call("undo"); _ = call("undo")
+    // The colour mixer, as its section sets it: the bands and moves given, the rest as they were.
+    let mixed = call("adjust", ["colour_mixer": ["黄": ["hue": -0.5], "green": ["hue": -1, "saturation": 0.2]]])
+    let kept = model.settings.mixer
+    let wrongBand = call("adjust", ["colour_mixer": ["粉": ["hue": 0.2]]]), wrongKind = call("adjust", ["colour_mixer": ["黄": ["chroma": 0.2]]])
+    try check(!mixed.isError && model.settings[mixer: 2, kind: 0] == -0.5 && model.settings[mixer: 3, kind: 0] == -1
+      && model.settings[mixer: 3, kind: 1] == 0.2 && model.settings[mixer: 1, kind: 0] == 0
+      && wrongBand.isError && said(wrongBand).contains("红 橙 黄") && wrongKind.isError && model.settings.mixer == kept
+      && !call("adjust", ["colour_mixer": ["黄": ["hue": 0], "绿": ["hue": 0, "saturation": 0]]]).isError && model.settings.mixer == nil,
+      "adjust sets the colour mixer by band (Chinese or English names) and move, the rest left; a band or move not there refused, nothing changed; all at 0 is no mixer")
     try check(!call("adjust", ["angle": 3]).isError && model.settings.angle == 3 && !call("undo").isError && model.settings.angle == nil,
       "adjust straightens the frame by an angle, and undo takes it back")
     let picked = call("pick_neutral", ["x": 0.5, "y": 0.5])

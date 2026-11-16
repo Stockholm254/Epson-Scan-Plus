@@ -49,7 +49,7 @@ struct LevelsPanel: View {
         case .grey:
           m.changeLevels("色阶中间调") { $0[channel].gamma = $0[channel].gamma(at: v) }
         }
-      } ended: { m.levelsClipping = nil }
+      } ended: { m.levelsClipping = nil } holding: { on in on ? m.windowGate.hold() : m.windowGate.release() }
       HStack(spacing: 6) {
         Text("输入色阶").font(.system(size: 11)).foregroundStyle(.secondary)
         Spacer()
@@ -63,11 +63,11 @@ struct LevelsPanel: View {
           m.changeLevels("色阶输入白点") { $0[channel].white = max(v / 255, $0[channel].black + 2 / 255) }
         }
       }
-      OutputPoints(channel: current, end: channel == 0 ? .white : HistogramView.colours[channel - 1]) { isBlack, v in
+      OutputPoints(channel: current, end: channel == 0 ? .white : HistogramView.colours[channel - 1], set: { isBlack, v in
         m.changeLevels(isBlack ? "色阶输出黑点" : "色阶输出白点") { l in
           if isBlack { l[channel].outBlack = v } else { l[channel].outWhite = v }
         }
-      }
+      }, holding: { on in on ? m.windowGate.hold() : m.windowGate.release() })
       HStack(spacing: 6) {
         Text("输出色阶").font(.system(size: 11)).foregroundStyle(.secondary)
         Spacer()
@@ -172,86 +172,132 @@ struct LevelsHistogramView: View {
 }
 
 /// The input's three points under the histogram: black (filled), grey and white (hollow). A press
-/// takes the nearest; with ⌥ held on black or white the picture shows what they cut.
+/// within reach of one takes it where it is (the nearest, if two are close), and it then moves as
+/// far as the hand: it doesn't jump to the pointer. The one held is drawn where the hand has it, the
+/// window's own updates held meanwhile (`holding`), as a curve's point is; with ⌥ held on black or
+/// white the picture shows what they cut. Until 0.23.17 the row was 12 points tall and the window's
+/// update every half second stopped the point under the hand.
 struct InputPoints: View {
   enum Mark { case black, grey, white }
   let channel: Levels.Channel
   var set: (Mark, Double, Bool) -> Void
   var ended: () -> Void
-  @State private var held: Mark?
+  var holding: (Bool) -> Void = { _ in }
+  @State private var held: (mark: Mark, offset: Double)?
+  @State private var shown: (mark: Mark, value: Double)?
+  /// How far from a point (in points) a press still takes it.
+  static let reach: CGFloat = 14
   var body: some View {
     GeometryReader { geo in
       let w = geo.size.width
       ZStack(alignment: .topLeading) {
         Rectangle().fill(Color.secondary.opacity(0.25)).frame(height: 1).offset(y: 1)
-        triangle(filled: .black, at: channel.black, w)
-        triangle(filled: Color(white: 0.55), at: channel.midPoint, w)
-        triangle(filled: .white, at: channel.white, w)
+        triangle(filled: .black, at: place(.black), w)
+        triangle(filled: Color(white: 0.55), at: place(.grey), w)
+        triangle(filled: .white, at: place(.white), w)
       }
+      .frame(width: w, height: geo.size.height, alignment: .topLeading)
       .contentShape(Rectangle())
       .gesture(DragGesture(minimumDistance: 0)
         .onChanged { g in
-          let v = Double(min(max(0, g.location.x), w) / max(1, w))
+          let span = Double(max(1, w))
           if held == nil {
-            let start = Double(g.startLocation.x / max(1, w))
-            held = [(Mark.black, channel.black), (.grey, channel.midPoint), (.white, channel.white)]
-              .min { abs($0.1 - start) < abs($1.1 - start) }?.0
+            let start = Double(g.startLocation.x) / span
+            let marks = [(Mark.black, channel.black), (.grey, channel.midPoint), (.white, channel.white)]
+            guard let near = marks.min(by: { abs($0.1 - start) < abs($1.1 - start) }),
+              abs(near.1 - start) * span <= Double(Self.reach) else { return }
+            held = (near.0, near.1 - start)
+            holding(true)
           }
-          if let held { set(held, v, NSEvent.modifierFlags.contains(.option) && held != .grey) }
+          guard let held else { return }
+          let v = min(1, max(0, Double(g.location.x) / span + held.offset))
+          shown = (held.mark, v)
+          holding(true)
+          set(held.mark, v, NSEvent.modifierFlags.contains(.option) && held.mark != .grey)
         }
         .onEnded { _ in
+          let was = held != nil
           held = nil
+          shown = nil
+          if was { holding(false) }
           ended()
         })
     }
-    .frame(height: 12)
+    .frame(height: 20)
     .help("拖黑、灰、白三个三角：输入黑点、中间调、输入白点；拖黑或白时按住 ⌥，画面上显示切成纯黑或纯白的地方")
     .accessibilityElement().accessibilityLabel("输入色阶")
     .accessibilityValue(String(format: "黑点 %.0f，中间调 %.2f，白点 %.0f", channel.black * 255, channel.gamma, channel.white * 255))
   }
+  /// Where a point is drawn: the one held where the hand has it, the grey between the ends as they
+  /// are drawn.
+  private func place(_ mark: Mark) -> Double {
+    if let shown, shown.mark == mark { return shown.value }
+    switch mark {
+    case .black: return channel.black
+    case .white: return channel.white
+    case .grey: return channel.midPoint
+    }
+  }
   private func triangle(filled colour: Color, at v: Double, _ w: CGFloat) -> some View {
     Triangle().fill(colour).overlay(Triangle().stroke(Color.gray, lineWidth: 0.8))
-      .frame(width: 10, height: 9)
-      .offset(x: CGFloat(min(1, max(0, v))) * w - 5, y: 2)
+      .frame(width: 12, height: 11)
+      .offset(x: CGFloat(min(1, max(0, v))) * w - 6, y: 3)
   }
 }
 
-/// The output's black and white over a gradient from black to white (the channel's colour on one).
+/// The output's black and white over a gradient from black to white (the channel's colour on one),
+/// taken and dragged as the input's are.
 struct OutputPoints: View {
   let channel: Levels.Channel
   let end: Color
   var set: (Bool, Double) -> Void
-  @State private var holdsBlack: Bool?
+  var holding: (Bool) -> Void = { _ in }
+  @State private var held: (black: Bool, offset: Double)?
+  @State private var shown: (black: Bool, value: Double)?
   var body: some View {
     GeometryReader { geo in
       let w = geo.size.width
       ZStack(alignment: .topLeading) {
         LinearGradient(colors: [.black, end], startPoint: .leading, endPoint: .trailing)
           .frame(height: 8).clipShape(RoundedRectangle(cornerRadius: 2))
-        mark(.black, at: channel.outBlack, w)
-        mark(.white, at: channel.outWhite, w)
+        mark(.black, at: shown?.black == true ? shown!.value : channel.outBlack, w)
+        mark(.white, at: shown?.black == false ? shown!.value : channel.outWhite, w)
       }
+      .frame(width: w, height: geo.size.height, alignment: .topLeading)
       .contentShape(Rectangle())
       .gesture(DragGesture(minimumDistance: 0)
         .onChanged { g in
-          let v = Double(min(max(0, g.location.x), w) / max(1, w))
-          if holdsBlack == nil {
-            let start = Double(g.startLocation.x / max(1, w))
-            holdsBlack = abs(start - channel.outBlack) <= abs(start - channel.outWhite)
+          let span = Double(max(1, w))
+          if held == nil {
+            let start = Double(g.startLocation.x) / span
+            let black = abs(start - channel.outBlack) <= abs(start - channel.outWhite)
+            let at = black ? channel.outBlack : channel.outWhite
+            guard abs(at - start) * span <= Double(InputPoints.reach) else { return }
+            held = (black, at - start)
+            holding(true)
           }
-          if let holdsBlack { set(holdsBlack, v) }
+          guard let held else { return }
+          let v = min(1, max(0, Double(g.location.x) / span + held.offset))
+          shown = (held.black, v)
+          holding(true)
+          set(held.black, v)
         }
-        .onEnded { _ in holdsBlack = nil })
+        .onEnded { _ in
+          let was = held != nil
+          held = nil
+          shown = nil
+          if was { holding(false) }
+        })
     }
-    .frame(height: 19)
+    .frame(height: 24)
     .help("拖黑、白两个三角：输出的黑和白，最暗的印成多暗、最亮的印成多亮；交叉过去画面反相")
     .accessibilityElement().accessibilityLabel("输出色阶")
     .accessibilityValue(String(format: "黑 %.0f，白 %.0f", channel.outBlack * 255, channel.outWhite * 255))
   }
   private func mark(_ colour: Color, at v: Double, _ w: CGFloat) -> some View {
     Triangle().fill(colour).overlay(Triangle().stroke(Color.gray, lineWidth: 0.8))
-      .frame(width: 10, height: 9)
-      .offset(x: CGFloat(min(1, max(0, v))) * w - 5, y: 10)
+      .frame(width: 12, height: 11)
+      .offset(x: CGFloat(min(1, max(0, v))) * w - 6, y: 10)
   }
 }
 

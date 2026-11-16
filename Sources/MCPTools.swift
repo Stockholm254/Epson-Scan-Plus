@@ -33,7 +33,10 @@ enum MCPTools {
     Tool(name: "list_frames", description: "列出本卷所有画面：编号、是否勾选、是否显示（selected）、是否和它一起选中（chosen）、是否已正式扫描及 dpi、方向、镜像、拉直、裁切、来源文件，和手动取过的片基、中性灰；stars、flag（picked / rejected）、label（red…purple）是 Lightroom 式的标记，没有就不列；light_leak 是去漏光的状态（applied / job_not_applied，没有就不列）。", properties: [:]),
     Tool(name: "list_presets", description: "列出所有胶片预设：名称、类型（内置 / V850 标定 / 翻拍标定 / 导入 / 只在卷里）、通道斜率、来源和说明，这一卷是否在用，图库里有几卷在用及是哪几卷，能否删除。「只在卷里」是已从列表删除、只有卷里还留着的预设。只读，删除和恢复在 App 的「预设…」表格里做。", properties: [:]),
     Tool(name: "list_rolls", description: "列出图库里的卷（只读）：标题、文件夹、开始时间、来源（扫描 / 翻拍 / 导入）、胶片、用的预设、画面数、全分辨率张数、已导出的文件数、备注，以及哪一卷是打开的。", properties: [:]),
-    Tool(name: "select_frame", description: "选中某张画面（按编号，如 \"09\"）。", properties: ["name": ["type": "string", "description": "画面编号"]], required: ["name"]),
+    Tool(name: "select_frame", description: "选中某张画面（按编号，如 \"09\"）；给出 roll（list_rolls 里的 folder）时先在 App 里打开图库里的那一卷，再选中。", properties: [
+      "name": ["type": "string", "description": "画面编号"],
+      "roll": ["type": "string", "description": "图库里一卷的文件夹名（list_rolls 的 folder），省略时为打开着的那一卷"],
+    ], required: ["name"]),
     Tool(name: "set_marks", description: "给画面打星级、旗标和颜色标签，像 Lightroom（App 里的 0–5、P、X、6–9）：stars 0–5（0 去掉），flag 为 picked（留用）、rejected（不要）或 none，label 为 red、yellow、green、blue、purple 或 none；没给的那一项不动。frames 是画面编号；省略时作用于 App 里选中的几张（只选了一张就是那一张）。存在工程里，可用 undo 撤销。list_frames 读得到每张的标记。", properties: [
       "frames": ["type": "array", "items": ["type": "string"], "description": "画面编号，如 [\"01\", \"04\"]；省略时为所选的"],
       "stars": ["type": "integer", "minimum": 0, "maximum": 5],
@@ -71,6 +74,7 @@ enum MCPTools {
       "clarity": number("清晰度（像 Lightroom）：中等尺度的局部反差，主要在中间调，黑白不动，-1 到 1", -1...1),
       "dehaze": number("去朦胧（像 Lightroom）：去掉（正）或加上（负）一层白雾，-1 到 1", -1...1),
       "vibrance": number("自然饱和度（像 Lightroom）：只加不太鲜艳的颜色，肤色加得少，-1 到 1", -1...1),
+      "colour_mixer": ["type": "object", "description": "混色器（像 Lightroom 的 HSL），和 App 里「混色器」一节一样：{颜色: {hue, saturation, luminance}}，颜色是 红 橙 黄 绿 浅绿 蓝 紫 洋红（或 red orange yellow green aqua blue purple magenta），各 -1 到 1，hue 1 是转 30°；只改给出的颜色和项，其余不动，设 0 就是不改。例：{\"黄\": {\"hue\": -0.5}, \"绿\": {\"hue\": -1}}"],
       "auto_whites_blacks": ["type": "boolean", "description": "自动白色、黑色（像 Lightroom 按住 Shift 双击）：设白色、黑色，让这张最亮的 0.1% 正好到白、最暗的 0.1% 正好到黑；在其他参数之后算，要单张视图里算过的影调"],
     ]),
     Tool(name: "pick_film_base", description: "在指定位置取片基（只应点在未曝光的橙色片基上，例如画面边缘的片间）；会关闭自动白平衡以保留取样。", properties: point, required: ["x", "y"]),
@@ -544,6 +548,26 @@ enum MCPTools {
       })
     case "select_frame":
       guard let wanted = arguments["name"] as? String else { throw DeskError.message("需要画面编号 name。") }
+      // Another roll of the library opened first, as a click on it in 库 opens it.
+      if let roll = arguments["roll"] {
+        guard let folder = roll as? String, !folder.isEmpty else { throw DeskError.message("roll 是 list_rolls 里的 folder，如 \"2026-11-14_195646_0553\"。") }
+        let opened: Bool = try onMain {
+          guard let entry = RollLibrary.scan(model.libraryRoots).first(where: { $0.folder.lastPathComponent == folder }) else {
+            throw DeskError.message("图库里没有文件夹为 \(folder) 的卷。可用 list_rolls 查看。")
+          }
+          func path(_ u: URL) -> String { u.resolvingSymlinksInPath().standardizedFileURL.path }
+          if model.sessionURL.map(path) == path(entry.folder) { return false }
+          guard !model.isWorking else { throw DeskError.message("App 正在忙（扫描、导出或别的长任务），做完以后再打开别的卷。") }
+          model.openRoll(entry)
+          return true
+        }
+        if opened {
+          for _ in 0..<300 {
+            if onMain({ model.frames.contains { $0.name == wanted } && !model.rendering }) { break }
+            Thread.sleep(forTimeInterval: 0.1)
+          }
+        }
+      }
       try onMain {
         guard let f = model.frames.first(where: { $0.name == wanted }) else {
           throw DeskError.message("没有编号为 \(wanted) 的画面。可用 list_frames 查看。")
@@ -634,7 +658,7 @@ enum MCPTools {
         return ["x": p.x, "y": p.y, "negative_linear": rgb(v), "density_above_base": rgb(d), "positive_srgb": rgb(out)]
       })
     case "adjust":
-      let known: Set = ["warmth", "tint", "shadow_warmth", "shadow_tint", "exposure", "contrast", "saturation", "highlights", "shadows", "whites", "blacks", "texture", "clarity", "dehaze", "vibrance", "auto_white_balance", "auto_levels", "angle", "shared_balance", "shared_levels", "auto_whites_blacks", "frame"]
+      let known: Set = ["warmth", "tint", "shadow_warmth", "shadow_tint", "exposure", "contrast", "saturation", "highlights", "shadows", "whites", "blacks", "texture", "clarity", "dehaze", "vibrance", "auto_white_balance", "auto_levels", "angle", "shared_balance", "shared_levels", "auto_whites_blacks", "frame", "colour_mixer"]
       // Taken out in 0.22 (高光 / 阴影 / 白色 / 黑色 and the curves took its place): said so, not
       // only as one not known.
       if arguments["midtone"] != nil {
@@ -656,6 +680,27 @@ enum MCPTools {
       ]
       let values = try numbers.compactMap { n in try value(n.1, n.2).map { (n.0, $0) } }
       let angle = try value("angle", -45...45)
+      // The colour mixer's moves: band, kind (hue, saturation, luminance), value.
+      var mixerMoves = [(Int, Int, Double)]()
+      if let raw = arguments["colour_mixer"] {
+        guard let bands = raw as? [String: Any] else {
+          throw DeskError.message("colour_mixer 应为 {颜色: {hue, saturation, luminance}}，如 {\"黄\": {\"hue\": -0.5}}。")
+        }
+        let english = ["red", "orange", "yellow", "green", "aqua", "blue", "purple", "magenta"]
+        for (name, moves) in bands {
+          guard let b = ColourMixer.bands.firstIndex(where: { $0.name == name }) ?? english.firstIndex(of: name.lowercased()) else {
+            throw DeskError.message("混色器里没有「\(name)」：可用 红 橙 黄 绿 浅绿 蓝 紫 洋红。")
+          }
+          guard let kinds = moves as? [String: Any] else { throw DeskError.message("colour_mixer 的「\(name)」应为 {hue, saturation, luminance}。") }
+          for (kind, v) in kinds {
+            guard let k = ["hue", "saturation", "luminance"].firstIndex(of: kind) else {
+              throw DeskError.message("混色器的项只有 hue、saturation、luminance，没有 \(kind)。")
+            }
+            guard let x = (v as? NSNumber)?.doubleValue, x.isFinite else { throw DeskError.message("colour_mixer 的「\(name)」\(kind) 应为数字。") }
+            mixerMoves.append((b, k, min(1, max(-1, x))))
+          }
+        }
+      }
       let (frameName, named) = try target(model, arguments)
       onMain {
         model.change("AI 调整", separate: true, syncing: !named) { a in
@@ -673,6 +718,7 @@ enum MCPTools {
           }
           if let b = arguments["auto_levels"] as? Bool { a.autoLevels = b }
           if let angle { a.angle = abs(angle) < 0.005 ? nil : angle }
+          for (b, k, v) in mixerMoves { a[mixer: b, kind: k] = v }
         }
         if let b = arguments["shared_balance"] as? Bool { model.setSharedBalance(b) }
         if let b = arguments["shared_levels"] as? Bool { model.setSharedLevels(b) }
