@@ -118,6 +118,13 @@ extension ImagePipeline {
       let film = found.filter { !EdgeBase.lightColoured($0.v, light) }
       if film.count >= max(30, w * h / 2000) { found = film }
     }
+    // The gaps between the frames before the rebate along the sprocket holes and the edge print,
+    // where they hold enough film to read: the gaps lie in the picture's own rows, lit as it is,
+    // while a flat field shot without the holder runs off towards the film's long edges, so there
+    // the rebate read denser than the film between the frames (a Phoenix II roll, 2026-11-15: by
+    // 0.05–0.07 D in green, the frames' darks clearer than their base and cut to black).
+    let gaps = found.filter { $0.side >= 2 }
+    if gaps.count >= max(30, w * h / 2000) { found = gaps }
     // The colour most of it shares, in steps of 4% of red and blue against green.
     func colour(_ v: RGB) -> (Double, Double) { (log(v.r / v.g), log(v.b / v.g)) }
     var counts = [String: Int]()

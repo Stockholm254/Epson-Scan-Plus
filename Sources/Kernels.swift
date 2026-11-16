@@ -227,8 +227,8 @@ enum Kernels {
   /// The conversion the `negative` kernels share, up to its final clip: the tones (`graded`) and the
   /// saturation, in one order or the other.
   private static let conversion = """
-    #define NEGATIVE_ARGS float3 base, float3 slope, float3 toe, float3 gain, float3 balance, float4 levels, float4 tone, float4 color, float4 ends, float inverted, float4 fade, float4 lights, float4 shoulder, float encode, float4 local
-    #define NEGATIVE_PASS base, slope, toe, gain, balance, levels, tone, color, ends, inverted, fade, lights, shoulder, encode, local
+    #define NEGATIVE_ARGS float3 base, float3 slope, float3 toe, float3 gain, float3 balance, float4 levels, float4 tone, float4 color, float4 ends, float inverted, float4 fade, float4 lights, float4 shoulder, float encode, float3 mr, float3 mg, float3 mb, float4 lvBlack, float4 lvWhite, float4 lvPower, float4 lvOutBlack, float4 lvOutWhite, float4 local
+    #define NEGATIVE_PASS base, slope, toe, gain, balance, levels, tone, color, ends, inverted, fade, lights, shoulder, encode, mr, mg, mb, lvBlack, lvWhite, lvPower, lvOutBlack, lvOutWhite, local
 
     // Saturation (tone.w) about each pixel's lightness, more in the shadows (ends.z); and vibrance
     // (local.z, −1 to 1), as Lightroom's: more for the colours that have little, none for those
@@ -283,9 +283,24 @@ enum Kernels {
       }
       return (s + float3(tone.x * 0.30103) - float3(levels.x)) / max(levels.y - levels.x, 0.001);
     }
+    // The film's own colour (`FilmProfile.colorMatrix`, rows mr, mg, mb, each adding up to 1) on a
+    // negative's straight line: log exposure, a neutral at one value in the three channels. Taken to
+    // light (relative to the brightest channel, so nothing overflows), through the matrix and back:
+    // a grey stays where it was, a colour turns. No channel comes out more than a stop under the
+    // pixel's darkest before it. Without a matrix (the identity) the value goes through untouched.
+    static float3 filmColoured(float3 s, float3 mr, float3 mg, float3 mb) {
+      if (all(mr == float3(1.0, 0.0, 0.0)) && all(mg == float3(0.0, 1.0, 0.0)) && all(mb == float3(0.0, 0.0, 1.0))) { return s; }
+      float top = max(s.r, max(s.g, s.b)), lowest = min(s.r, min(s.g, s.b));
+      float3 e = exp2((s - float3(top)) * 3.321928095);
+      float3 m = float3(dot(mr, e), dot(mg, e), dot(mb, e));
+      return max(float3(top) + log2(max(m, float3(0.000001))) * 0.30103, float3(lowest - 0.30103));
+    }
     static float3 toned(float4 p, bool first, float3 fa, float3 fd, NEGATIVE_ARGS) {
       float faded;
-      float3 q = printed(straight(p, fa, fd, faded, NEGATIVE_PASS), NEGATIVE_PASS);
+      float3 s = straight(p, fa, fd, faded, NEGATIVE_PASS);
+      // The film's colour as the roll chose it, on a negative's exposures, balanced.
+      if (inverted > 0.5) { s = filmColoured(s, mr, mg, mb); }
+      float3 q = printed(s, NEGATIVE_PASS);
       // levels.z to levels.w taken to 0–1: 0 and 1 (the manual black and white points are gone), but
       // for `ImagePipeline.toneRange`'s ramp, passed in 2 higher, as a positive is, and levelled from 2.
       q = (q - float3(levels.z)) / max(levels.w - levels.z, 0.01);
@@ -393,8 +408,27 @@ enum Kernels {
     // Highlights: full from 0.85 up (past white too), none under 0.45. Shadows: most about 0.25-0.3,
     // none at black or over 0.65, so the black stays. Whites: full at white and past it, none under
     // 0.5. Blacks: full at black and under it, none over 0.5. Every tone stays in order.
+    // 色阶 in the conversion (`Adjustments.printLevels`): each channel's input ends, midtone (as
+    // the power 1 / gamma) and output ends (x, y, z), then the composite's (w), as GIMP and
+    // Photoshop do them, on the print's scale, nothing cut: past the white point a value goes on
+    // past white for the shoulder to take (or comes back under it), under the black point it goes
+    // on straight. Left as it is where all of it is as a new frame has it.
+    static float3 levelled(float3 x, float3 b, float3 w, float3 g, float3 ob, float3 ow) {
+      float3 t = (x - b) / max(w - b, float3(0.0001));
+      float3 u = select(t, pow(max(t, float3(0.0)), g), t > float3(0.0));
+      return ob + u * (ow - ob);
+    }
+    static float3 printLevelled(float3 q, NEGATIVE_ARGS) {
+      if (all(lvBlack == float4(0.0)) && all(lvWhite == float4(1.0)) && all(lvPower == float4(1.0))
+          && all(lvOutBlack == float4(0.0)) && all(lvOutWhite == float4(1.0))) { return q; }
+      float3 c = levelled(q, lvBlack.rgb, lvWhite.rgb, lvPower.rgb, lvOutBlack.rgb, lvOutWhite.rgb);
+      return levelled(c, float3(lvBlack.w), float3(lvWhite.w), float3(lvPower.w), float3(lvOutBlack.w), float3(lvOutWhite.w));
+    }
     static float3 graded(float4 p, bool first, float3 fa, float3 fd, float lit, NEGATIVE_ARGS) {
-      float3 q = toned(p, first, fa, fd, NEGATIVE_PASS);
+      float3 q = printLevelled(toned(p, first, fa, fd, NEGATIVE_PASS), NEGATIVE_PASS);
+      // The local lightness the highlights, shadows and shoulder go by, through the same levels.
+      float3 litLevelled = printLevelled(float3(lit), NEGATIVE_PASS);
+      lit = max(litLevelled.r, max(litLevelled.g, litLevelled.b));
       float3 s = first ? q : saturated(q, tone, ends, local);
       float m = max(s.r, max(s.g, s.b)), n = min(s.r, min(s.g, s.b));
       float detail = fade.w > 0.0 ? clamp(m - lit, -fade.w, fade.w) : 0.0;

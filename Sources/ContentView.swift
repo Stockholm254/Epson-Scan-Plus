@@ -747,12 +747,14 @@ struct ContentView: View {
     // preset, its base, the frame's extent. A slide has no channel slopes and no mask to divide
     // by; the frame's extent is the single frame's.
     let slide = m.settings.isSlide
-    let shown = ["film"] + (slide ? [] : ["calibration", "base"]) + (m.singleView ? ["frame"] : [])
+    let shown = ["film"] + (slide ? [] : ["calibration"]) + (slide || m.chartFilm == nil || m.rollKind == .monochrome ? [] : ["chart"])
+      + (slide ? [] : ["base"]) + (m.singleView ? ["frame"] : [])
     return VStack(alignment: .leading, spacing: 16) {
       ArrangedColumn(.film, shown: shown) { key in
         switch key {
         case "film": filmSection
         case "calibration": calibrationSection
+        case "chart": chartSection
         case "base": baseSection.disabled(frameControlsOff)
         case "frame": frameSection.disabled(frameControlsOff)
         default: EmptyView()
@@ -968,6 +970,32 @@ struct ContentView: View {
   }
   /// The film: its preset, where the channel slopes come from in a line (the whole of it behind
   /// ⓘ), and the roll's switches that change how it is read.
+  /// 色卡: a chart shot on the roll's film, and the two things it measured, each chosen for the roll.
+  var chartSection: some View {
+    let chart = m.chartFilm
+    return PanelSection("色卡", key: "chart", info: "在这种胶片上拍的色卡（IT8.7/2）量出来的两样东西，每卷自己选用不用，默认都不用。\n\n用色卡斜率：各通道的反差按色卡的灰阶实测，先于全卷斜率估计（估计会随画面内容偏，蓝天、树叶多时蓝偏低）；这一卷在用翻拍标定时按标定，这个开关不起作用。\n\n用色卡颜色矩阵：按色卡的颜色拟合的 3×3 矩阵，作用在转换里、色调之前；灰不变，只把颜色往色卡的标准值转。它是按色卡斜率拟合的，不用色卡斜率时颜色会有些偏差。在色卡上它把平均色差（ΔE）从 20.5 降到 16.6，照片上效果要自己看，夕阳、红色的东西变化最大。\n\n两个开关都作用于整卷，可以 ⌘Z 撤销。") {
+      VStack(alignment: .leading, spacing: 8) {
+        if let chart {
+          Text(chart.publication).font(.system(size: 10.5)).foregroundStyle(.secondary)
+            .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+          if chart.chartMeasured == true {
+            SwitchRow("用色卡斜率", isOn: Binding(get: { m.chartSlopes }, set: { m.setChartSlopes($0) }),
+              off: m.isWorking || !m.hasProject || (m.profile.offsets != nil && m.useCalibration))
+            Text(String(format: "红 %.2f · 绿 %.2f · 蓝 %.2f", chart.slopes.r, chart.slopes.g, chart.slopes.b))
+              .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.secondary)
+            if m.profile.offsets != nil && m.useCalibration {
+              Text("这一卷用着翻拍标定，斜率按标定，这个开关现在不起作用").font(.system(size: 10.5)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+          }
+          if chart.colorMatrix != nil {
+            SwitchRow("用色卡颜色矩阵", isOn: Binding(get: { m.chartColour }, set: { m.setChartColour($0) }),
+              off: m.isWorking || !m.hasProject)
+          }
+        }
+      }
+    }
+  }
   var filmSection: some View {
     PanelSection("胶片", key: "film", info: conversionBasis) {
       VStack(alignment: .leading, spacing: 8) {
@@ -1495,7 +1523,7 @@ struct ContentView: View {
   }
   /// Exposure and the tones, over the frame's histogram against what a screen shows.
   var toneSection: some View {
-    PanelSection("影调", key: "tone", info: "曝光像放大时的印放曝光一样调整密度，在裁切前生效；−EV 可以找回高光。\n\n高光、阴影、白色、黑色和 Lightroom 的四个滑杆一样，都在剪切之前起作用：往回拉时，白点以上、黑以下的东西能拉回来。每个都给三个通道加减同样多（相当于那一处的曝光），颜色不变，明暗顺序也不会颠倒。\n\n高光、阴影看的是每处周围有多亮：大块的亮处（云、白墙、路牌）或暗处整块变暗、变亮，里面的纹理按原来的反差留着；明显的边上不出光晕。高光往左压暗亮处、找回层次，0.45 以下不动；阴影往右提亮暗处，黑本身不动。\n\n白色、黑色管两端，按每个像素自己最亮、最暗的通道：白色往左把最亮的一端整体拉下来（超出白的拉回来），往右推更多到白；黑色往左压深最暗的一端，往右提起来。\n\n以前的「压高光」已经并进白色：旧工程里压高光 p 读成白色 −p。", reset: resetKey(.tone)) {
+    PanelSection("影调", key: "tone", info: "曝光像放大时的印放曝光一样调整密度，在裁切前生效；−EV 可以找回高光。\n\n高光、阴影和 Lightroom 的这两个滑杆一样，都在剪切之前起作用：往回拉时，白点以上、黑以下的东西能拉回来。每个都给三个通道加减同样多（相当于那一处的曝光），颜色不变，明暗顺序也不会颠倒。\n\n高光、阴影看的是每处周围有多亮：大块的亮处（云、白墙、路牌）或暗处整块变暗、变亮，里面的纹理按原来的反差留着；明显的边上不出光晕。高光往左压暗亮处、找回层次，0.45 以下不动；阴影往右提亮暗处，黑本身不动。\n\n白色、黑色管两端，按每个像素自己最亮、最暗的通道：白色往左把最亮的一端整体拉下来（超出白的拉回来），往右推更多到白；黑色往左压深最暗的一端，往右提起来。\n\n以前的「压高光」已经并进白色：旧工程里压高光 p 读成白色 −p。\n\n白色、黑色和「自动白色、黑色」0.24 起并进了「色阶」：它的白三角往右拖过 255 就是以前白色往负，自动的默认算法就是以前的自动白色、黑色。", reset: resetKey(.tone)) {
       VStack(alignment: .leading, spacing: 10) {
         // In the single view, the frame's tones against what an ordinary screen shows of them.
         if let range = m.toneRange {
@@ -1510,23 +1538,14 @@ struct ContentView: View {
         slider("对比度", key: \.contrast, range: 0.5...1.6)
         slider("高光", key: \.highlightsAmount, range: -1...1, format: "%+.2f")
         slider("阴影", key: \.shadowsAmount, range: -1...1, format: "%+.2f")
-        slider("白色", key: \.whitesAmount, range: -1...1, format: "%+.2f")
-        slider("黑色", key: \.blacksAmount, range: -1...1, format: "%+.2f")
-        if m.toneRange != nil && !m.settings.isSlide {
-          HStack {
-            Spacer()
-            Button("自动白色、黑色") { m.autoWhitesBlacks() }
-              .controlSize(.small)
-              .help("像 Lightroom 里按住 Shift 双击「白色」「黑色」：把这张最亮的 0.1% 正好放到白、最暗的 0.1% 正好放到黑，不多切也不少用；只改这两个滑杆，可以 ⌘Z 撤销")
-              .disabled(m.isWorking)
-          }
-        }
+        // 白色 and 黑色 went into 色阶 in 0.24 (`Adjustments.printLevels`): a frame set by them
+        // before keeps them, shown and cleared in 色阶.
       }
     }
   }
   /// The ends: automatic, the roll as one, or set by hand.
   var levelsSection: some View {
-    PanelSection("色阶", key: "levels", info: "下面的色阶和 Photoshop 的「色阶」一样，作用在屏幕上显示的这张上、在曲线之前：直方图是色阶之前的这张，0 到 255；输入色阶的黑、灰、白三角是输入黑点、中间调（1.00 不变，大于 1 变亮）和输入白点，拖黑或白时按住 ⌥，画面上显示切成纯黑或纯白的地方；输出色阶是最暗、最亮印成多暗、多亮。RGB 是三个通道一起，也可以只调红、绿、蓝里的一个；各通道自己的色阶先起作用，再走 RGB 的。三个吸管在画面上点一处定为黑、灰、白。「自动」按它旁边的选项（滑杆图标）里的算法（增强单色对比度、增强每通道的对比度、查找深色与浅色、增强亮度和对比度）和剪切比例自动设定。「预览」关掉时画面暂时不带色阶。\n\n「自动两端」：转换时设定黑白两端，在上面这些之前。白点按画面最亮处的亮度：饱和的蓝天、暖光在某个通道里冲过白，交给柔和的肩部收，不再把整张压暗；黑点放在片基上：没曝光的片基印成最黑，暗部按它比片基多出的密度落在灰阶上，像暗房里「最短时间达到最大黑」那样印。0.23.15 以前在影调上动过手的照片（曝光、高光、阴影、白色、黑色、色阶、曲线，或关过自动）保持原来的定法（白点按最亮的通道、黑点按最暗的通道），样子不变。这张用的是哪一种，看下面的「两端定法」，也可以在那里换（只换两端，这张的色阶、曝光和曲线不动）；把「色阶」复位也改用新的，同时清掉这张的色阶。范围不到 4 档的画面（雾、霾、很平的光）：新的定法黑点仍在片基、白点就是它最亮的地方（几乎空白的画面不拉到白），旧的以中间为准撑开到 4 档，保留它本来的灰和柔；要更硬，调「对比度」或关掉自动。两端之后再用「影调」里的白色、黑色（或「自动白色、黑色」）微调，中间调用曲线。\n\n「整卷同一色阶」：整卷用同一组黑白两端，按整卷所有画面一起统计，像冲印店一卷用一个印放曝光：暗的场景就是暗的，亮的就是亮的。每张仍可以用「曝光」微调。关了自动色阶的那一张按你的来。\n\n反转片：自动把最暗的 0.5% 定为黑、最亮的 0.5% 定为白，三个通道用同一对两端，颜色不变；关掉时扫描仪的裸光是白，片子显示得和看片台上一样暗。", reset: resetKey(.levels)) {
+    PanelSection("色阶", key: "levels", info: "色阶和 Photoshop 的「色阶」一样，但作用在转换里：在白平衡、对比度和饱和度之后，高光、阴影、柔和的两端（肩部）和最后的剪切之前。0 到 255 是「自动两端」定出的黑到白；直方图右边底色深一些的一段是冲过白的部分、左边是低于黑的部分，剪切以前它们都还在。\n\n输入色阶的黑、灰、白三角是输入黑点、中间调（1.00 不变，大于 1 变亮）和输入白点：白三角往左收，更多推到白，经过肩部柔和地进入白色；往右拖过 255，把冲过白的高光拉回画面里（以前「影调」里白色往负的作用）；黑三角同理。拖黑或白时按住 ⌥，画面上显示最后切成纯黑或纯白的地方。输出色阶是最暗、最亮印成多暗、多亮。RGB 是三个通道一起，也可以只调红、绿、蓝里的一个；各通道自己的色阶先起作用，再走 RGB 的。三个吸管在画面上点一处定为黑、灰、白。「自动」按它旁边选项（滑杆图标）里的算法：默认把最亮的 0.1% 放到白、最暗的 0.1% 放到黑（以前的「自动白色、黑色」），也可以用 Photoshop 的四种。「预览」关掉时画面暂时不带色阶。\n\n0.24 以前在显示的图上调过的色阶、「影调」里调过的白色和黑色，照原来的方式继续起作用，这一节里写着「旧的色阶」「旧的白色、黑色」，点「清掉」去掉。\n\n「自动两端」：转换时设定黑白两端，在上面这些之前。白点按画面最亮处的亮度：饱和的蓝天、暖光在某个通道里冲过白，交给柔和的肩部收，不再把整张压暗；黑点放在片基上：没曝光的片基印成最黑，暗部按它比片基多出的密度落在灰阶上，像暗房里「最短时间达到最大黑」那样印。0.23.15 以前在影调上动过手的照片（曝光、高光、阴影、白色、黑色、色阶、曲线，或关过自动）保持原来的定法（白点按最亮的通道、黑点按最暗的通道），样子不变。这张用的是哪一种，看下面的「两端定法」，也可以在那里换；把「色阶」复位也改用新的，同时清掉这张的色阶。范围不到 4 档的画面（雾、霾、很平的光）：新的定法黑点仍在片基、白点就是它最亮的地方（几乎空白的画面不拉到白），旧的以中间为准撑开到 4 档，保留它本来的灰和柔；要更硬，调「对比度」或关掉自动。\n\n「整卷同一色阶」：整卷用同一组黑白两端，按整卷所有画面一起统计，像冲印店一卷用一个印放曝光：暗的场景就是暗的，亮的就是亮的。每张仍可以用「曝光」微调。关了自动色阶的那一张按你的来。\n\n反转片：自动把最暗的 0.5% 定为黑、最亮的 0.5% 定为白，三个通道用同一对两端，颜色不变；关掉时扫描仪的裸光是白，片子显示得和看片台上一样暗。", reset: resetKey(.levels)) {
       Toggle("自动两端", isOn: bool(\.autoLevels)).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
     } content: {
       VStack(alignment: .leading, spacing: 10) {
@@ -1550,7 +1569,15 @@ struct ContentView: View {
           SwitchRow("整卷同一色阶", isOn: Binding(get: { m.settings.sharedLevels == true }, set: { m.setSharedLevels($0) }),
             off: m.selected == nil || m.isWorking)
         }
-        // Photoshop's Levels on the picture as shown, in the single view where its histogram is.
+        // What a frame was set with before 0.24, still acting as it did, until cleared.
+        if m.settings.levels?.isIdentity == false {
+          oldLine("旧的色阶（0.24 以前调的，作用在显示的图上）", clear: { m.clearOldLevels() })
+        }
+        if m.settings.whites != nil || m.settings.blacks != nil || m.settings.pressHighlights != nil {
+          oldLine(String(format: "旧的白色 %+.2f、黑色 %+.2f（0.24 以前「影调」里调的）", m.settings.whitesAmount, m.settings.blacksAmount),
+            clear: { m.clearOldWhitesBlacks() })
+        }
+        // Photoshop's Levels in the conversion, in the single view where its input is read.
         if m.singleView, m.levelsHistogram != nil {
           LevelsPanel(m: m)
         }
@@ -2016,6 +2043,16 @@ struct ContentView: View {
       Text(name).font(.system(size: 12)).foregroundStyle(.secondary)
       Spacer()
       content()
+    }
+  }
+  /// A setting kept from before 0.24 that still acts, with its 清掉.
+  func oldLine(_ text: String, clear: @escaping () -> Void) -> some View {
+    HStack(spacing: 6) {
+      Image(systemName: "clock.arrow.circlepath").font(.system(size: 10)).foregroundStyle(.secondary)
+      Text(text).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+      Spacer(minLength: 4)
+      Button("清掉", action: clear).controlSize(.small).fixedSize().disabled(m.isWorking)
+        .help("去掉它，这张改由这一节的色阶管；可以 ⌘Z 撤销")
     }
   }
   func bool(_ key: WritableKeyPath<Adjustments, Bool>) -> Binding<Bool> {

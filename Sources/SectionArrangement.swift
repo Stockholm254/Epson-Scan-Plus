@@ -11,7 +11,7 @@ enum SectionColumn: String, CaseIterable {
   /// The column's sections in the app's own order, by their keys.
   var defaults: [String] {
     switch self {
-    case .film: return ["film", "calibration", "base", "frame"]
+    case .film: return ["film", "calibration", "chart", "base", "frame"]
     case .demask: return ["dust", "input"]
     case .grade: return ["balance", "tone", "levels", "colour", "mixer", "grading", "curves", "sharpening"]
     }

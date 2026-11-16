@@ -66,6 +66,7 @@ enum LevelsTests {
       return RGB(r: (20 + 180 * t) / 255, g: (40 + 180 * t) / 255, b: (60 + 180 * t) / 255)
     })
     var o = LevelsAutoOptions()
+    o.algorithm = .perChannel
     o.shadowClip = 0
     o.highlightClip = 0
     let each = Levels.auto(h, options: o)
@@ -122,9 +123,13 @@ enum LevelsTests {
     graded.takeGrading(from: b)
     var unset = Adjustments()
     unset.levels = Levels()
+    var inPrint = Adjustments(), given = Adjustments()
+    inPrint.printLevels = raised
+    SettingsGroup.levels.take(&given, from: inPrint)
     try check(a.levels == raised && graded.levels == raised && SettingsGroup.levels.isSet(in: b) && !SettingsGroup.levels.isSet(in: unset)
-      && SettingsGroup.levels.summary(of: b).contains("色阶调过"),
-      "粘贴 / 同步 with 色阶 chosen give the levels; levels that change nothing count as none")
+      && SettingsGroup.levels.summary(of: b).contains("旧的色阶") && given.printLevels == raised && SettingsGroup.levels.isSet(in: inPrint)
+      && SettingsGroup.levels.summary(of: inPrint).contains("色阶调过"),
+      "粘贴 / 同步 with 色阶 chosen give the levels, those of the conversion and the old ones; levels that change nothing count as none")
     // A project from before: no levels.
     var saved = try JSONSerialization.jsonObject(with: JSONEncoder().encode(Adjustments())) as! [String: Any]
     saved["levels"] = nil
@@ -132,6 +137,65 @@ enum LevelsTests {
     let kept = try JSONDecoder().decode(Adjustments.self, from: JSONEncoder().encode(b))
     try check(old.levels == nil && kept.levels == raised, "a project from before 色阶 opens without levels; one with them keeps them")
 
+    // 色阶 in the conversion (0.24): nothing cut at its ends, past them on.
+    var past = Levels()
+    past.rgb.white = 1.5
+    past.red.black = -0.1
+    try check(close(past.rgb.extended(1.5), 1) && past.rgb.extended(2.25) > 1.4 && close(past.rgb.extendedInput(past.rgb.extended(1.8)), 1.8, 1e-9)
+      && close(past.printValue(1.5, 1), 1) && past.printValue(-0.2, 0) < 0 && close(past.printInput(past.printValue(1.2, 0), 0), 1.2, 1e-9)
+      && Levels.Channel().extended(1.7) == 1.7,
+      "色阶 in the conversion goes on past its white point and under its black point, and back")
+    // A negative on Portra 160 whose sky runs a stop and a half past the automatic white.
+    let portra = FilmProfile.builtins.first { $0.id == "portra160" }!
+    let base = RGB(r: 0.85, g: 0.57, b: 0.38)
+    func reading(_ e: Double) -> [Double] { (0..<3).map { base.values[$0] * pow(10, -portra.slopes.values[$0] * e / 2.2) } }
+    let rampW = 200, rampH = 40
+    var samples = [UInt16](repeating: 65535, count: rampW * rampH * 4)
+    for y in 0..<rampH {
+      for x in 0..<rampW {
+        // A ramp 0.2–1.2 over most of it, the last fifth a sky at 1.7 log exposure.
+        let e = x >= rampW * 4 / 5 ? 1.7 : 0.2 + Double(x) / Double(rampW * 4 / 5)
+        let v = reading(e)
+        for c in 0..<3 { samples[(y * rampW + x) * 4 + c] = UInt16(min(1, v[c]) * 65535) }
+      }
+    }
+    let negative = CGImage(width: rampW, height: rampH, bitsPerComponent: 16, bitsPerPixel: 64, bytesPerRow: rampW * 8, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+      bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder16Little.rawValue),
+      provider: CGDataProvider(data: Data(bytes: samples, count: samples.count * 2) as CFData)!, decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
+    var skyFrame = Adjustments.newFrame
+    skyFrame.base = base
+    skyFrame.neutralSample = RGB(reading(0.7))
+    // A stop brighter: the sky, which the automatic white sits at, runs past it.
+    skyFrame.exposure = 1
+    let analysed = pipe.analyze(negative, settings: skyFrame, profile: portra)
+    guard let input = pipe.levelsInput(negative, settings: skyFrame, profile: portra, analysis: analysed, maxDimension: 200).map(PrintLevelsInput.init) else {
+      throw DeskError.message("FAIL: 色阶's input could not be read")
+    }
+    let sky = input.reading(at: CGPoint(x: 0.95, y: 0.5)), ramp = input.reading(at: CGPoint(x: 0.3, y: 0.5))
+    try check(input.shownDomain.upperBound > 1.1 && (sky.map { $0.g > 1.05 } ?? false) && (ramp.map { $0.g < 0.6 } ?? false),
+      String(format: "色阶's input is the picture before it, unclipped: its histogram runs past 255 to %.2f, the sky reads %.2f", input.shownDomain.upperBound, sky?.g ?? 0))
+    // Its 自动 by default, as 自动白色、黑色 was: the white where the sky lies, which then prints under white.
+    let auto = Levels.autoPrint(input, options: LevelsAutoOptions())
+    var levelled = skyFrame
+    levelled.printLevels = auto
+    func skyGreen(_ s: Adjustments) -> Double {
+      guard let out = pipe.render(negative, settings: s, profile: portra, analysis: analysed, negative: false) else { return -1 }
+      let r = pipe.raster(out, maxDimension: 200)
+      var sum = 0.0, n = 0
+      for y in 0..<r.height { for x in (r.width * 17 / 20)..<r.width { sum += r.pixel(x, y).g; n += 1 } }
+      return sum / Double(max(1, n))
+    }
+    let skyBefore = skyGreen(skyFrame), skyAfter = skyGreen(levelled)
+    try check(LevelsAutoOptions().algorithm == .whitesBlacks && auto.rgb.white > 1.05 && skyBefore > 0.97 && skyAfter < skyBefore - 3 / 255,
+      String(format: "色阶's 自动 puts the brightest 0.1%% at white (%.2f, past the automatic white): the sky, %.0f on screen through the shoulder, comes further under white (%.0f)",
+        auto.rgb.white, skyBefore * 255, skyAfter * 255))
+    // As a new frame has them, none: the picture as it was, to the bit.
+    var identity = skyFrame
+    identity.printLevels = Levels()
+    let o1 = pipe.render(negative, settings: skyFrame, profile: portra, analysis: analysed, negative: false)
+    let o2 = pipe.render(negative, settings: identity, profile: portra, analysis: analysed, negative: false)
+    try check(o1 != nil && o2 != nil && pipe.raster(o1!, maxDimension: 200).bytes == pipe.raster(o2!, maxDimension: 200).bytes,
+      "色阶 as a new frame has it leaves the conversion as it was, to the bit")
     // One thing takes the picture's clicks: the eyedropper and the tool bar's tools put each other down.
     let suite = "local.epscan.levels-tests.\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: suite)!
@@ -145,5 +209,7 @@ enum LevelsTests {
     model.tool = .select
     try check(toolWins && pickerWins && model.levelsPicker == .grey,
       "中性灰 taken up puts 色阶's white eyedropper down, so the click goes to it; an eyedropper picked up puts the tool down; 选择 leaves the eyedropper held")
+    model.levelsPicker = nil
+
   }
 }

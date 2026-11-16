@@ -15,7 +15,7 @@ enum EdgeBaseTests {
     // grainy rebate along the top and bottom and the gaps at the sides, and inside the picture
     // denser film with a shadow nearly as clear as the base, of its colour, away from the edges.
     let w = 360, h = 240
-    func shot(base: RGB?, seed: UInt32) -> CGImage {
+    func shot(base: RGB?, seed: UInt32, rebate: RGB? = nil) -> CGImage {
       var px = [UInt16](repeating: 0, count: w * h * 3)
       var noise = seed
       func grain() -> Double {
@@ -30,7 +30,9 @@ enum EdgeBaseTests {
           if base != nil && x < 4 {
             v = [1, 1, 1]
           } else if edge {
-            v = film.values.map { $0 * grain() }
+            // Along the top and bottom the rebate, denser than the gaps where `rebate` says so.
+            let along = (y < 11 || y >= h - 11) ? (rebate ?? film) : film
+            v = along.values.map { $0 * grain() }
           } else if (150..<200).contains(x) && (80..<140).contains(y) || base != nil && (21..<60).contains(x) && (60..<180).contains(y) {
             // Shadows nearly as clear as the base and of its colour: one in the middle, one reaching
             // into the gap at the side with no frame line between.
@@ -54,6 +56,13 @@ enum EdgeBaseTests {
       return zip(a.values, b.values).allSatisfy { abs($0 / $1 - 1) < e }
     }
     let orange = RGB(r: 0.25, g: 0.66, b: 0.41)
+    // The rebate along the holes read denser than the gaps, by 0.06 D in green and less in red and
+    // blue, as a flat field shot without the holder leaves it: the base is the gaps'.
+    let denser = RGB(r: orange.r * pow(10, -0.03), g: orange.g * pow(10, -0.06), b: orange.b * pow(10, -0.015))
+    let fromGaps = pipe.edgeBase(shot(base: orange, seed: 3, rebate: denser))
+    try check(close(fromGaps.base, orange, 0.03) && !close(fromGaps.base, denser, 0.03),
+      String(format: "with the rebate read denser than the gaps (0.06 D in green), the automatic base is the gaps' (green %.3f, the gaps %.3f, the rebate %.3f)",
+        fromGaps.base?.g ?? 0, orange.g, denser.g))
     let found = pipe.edgeBase(shot(base: orange, seed: 1))
     let shadow = CGRect(x: 150.0 / Double(w), y: 80.0 / Double(h), width: 50.0 / Double(w), height: 60.0 / Double(h))
     let reaching = CGRect(x: 21.0 / Double(w), y: 60.0 / Double(h), width: 39.0 / Double(w), height: 120.0 / Double(h))

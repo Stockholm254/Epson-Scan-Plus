@@ -142,6 +142,8 @@ final class ImagePipeline {
     var q = (top + s.exposure * stop - a.low) / max(a.high - a.low, 0.001)
     q += max(s.warmth * 0.12 + s.tint * 0.05, -s.tint * 0.10, -s.warmth * 0.12 + s.tint * 0.05)
     q = (q - 0.5) * s.contrast + 0.5
+    // Then 色阶 in the conversion (`Kernels.printLevelled`), in the channel it leaves highest.
+    if let l = s.printLevels, !l.isIdentity { q = (0..<3).map { l.printValue(q, $0) }.max() ?? q }
     // The highlights and whites move the top before the ends (`Kernels.graded`), all of each there.
     q += 0.15 * (s.highlightsAmount + s.whitesAmount)
     // The short shoulder brings 1.1 within 0.015 of white; from there to 1.25 the longer takes over.
@@ -499,7 +501,8 @@ final class ImagePipeline {
     // A positive's light has no layers' slopes: its channels' own contrast, set by two neutrals on a
     // slide, else 1 (`Kernels.straight` raises each channel's light by it).
     if !s.inputIsNegative { return (s.isSlide ? s.slideContrast ?? RGB(r: 1, g: 1, b: 1) : RGB(r: 1, g: 1, b: 1), true) }
-    if p.offsets != nil { return (p.slopes, true) }
+    // A calibration's slopes, or a chart's the roll chose (色卡), before the roll's estimate.
+    if p.offsets != nil || p.chartFirst == true { return (p.slopes, true) }
     if let roll = s.rollSlopes { return (roll, true) }
     return (p.slopes, p.setsChannelContrast)
   }
@@ -1062,6 +1065,28 @@ final class ImagePipeline {
     return result.transformed(
       by: CGAffineTransform(translationX: -result.extent.minX, y: -result.extent.minY))
   }
+  /// 色阶's input in the conversion (`PrintLevelsInput`): `image` through the conversion up to the
+  /// levels (`Conversion.range`, unclipped, on the print's scale), straightened, cut, turned and
+  /// mirrored as `output` shows it, no larger than `maxDimension`.
+  func levelsInput(_ image: CGImage, settings given: Adjustments, profile: FilmProfile, analysis a: ToneAnalysis, maxDimension: Int) -> Samples? {
+    let s = given.isMonochrome ? given.colourless : given
+    let ci = CIImage(cgImage: image, options: [.colorSpace: NSNull()])
+    guard var result = converted(.range, ci, s, s.isMonochrome ? profile.uncalibrated : profile, a) else { return nil }
+    result = Self.straightened(result, degrees: s.angle ?? 0, composition: s.composition)
+    if s.rotation % 4 != 0 { result = result.oriented(forExifOrientation: [1, 6, 3, 8][((s.rotation % 4) + 4) % 4]) }
+    if s.flipHorizontal == true { result = result.transformed(by: CGAffineTransform(scaleX: -1, y: 1)) }
+    result = result.transformed(by: CGAffineTransform(translationX: -result.extent.minX, y: -result.extent.minY))
+    let e = result.extent
+    guard e.width >= 1, e.height >= 1 else { return nil }
+    let scale = min(1, Double(maxDimension) / Double(max(e.width, e.height)))
+    let w = max(1, Int(e.width * scale)), h = max(1, Int(e.height * scale))
+    let small = result.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+    var values = [Float](repeating: 0, count: w * h * 4)
+    values.withUnsafeMutableBytes { p in
+      context.render(small, toBitmap: p.baseAddress!, rowBytes: w * 16, bounds: CGRect(x: 0, y: 0, width: w, height: h), format: .RGBAf, colorSpace: nil)
+    }
+    return Samples(width: w, height: h, values: values)
+  }
   /// Which of the conversion's kernels: the picture clipped, unclipped for a wide export, or its
   /// tones on the straight line up to the ends (`toneRange`, `pixelReach`).
   enum Conversion { case clipped, unclipped, range }
@@ -1163,10 +1188,32 @@ final class ImagePipeline {
       CIVector(x: s.shadowsAmount, y: s.highlightsAmount, z: s.whitesAmount, w: s.blacksAmount),
       Self.shoulder(s, a),
       s.inputIsNegative ? 1.0 : 1 / (s.isSlide ? Self.slideEncoding : max(s.inputGamma, 0.1)),
+    ] + Self.filmColourRows(s, profile) + Self.levelsArguments(s.printLevels) + [
       // The lift of a colour past white (`highlightLightness`); 1 in y once `converted` puts the
       // frame's local lightness in as `lit`, 0 for highlights and shadows to go by the pixel's own.
       CIVector(x: Self.highlightLightness, y: 0, z: s.vibranceAmount, w: 0),
     ]
+  }
+  /// The film's colour matrix a conversion of `s` uses (`FilmProfile.colourInUse`), its three rows
+  /// for the kernels, each scaled to add up to exactly 1 so a grey comes through to the last digit;
+  /// the identity without one, for a positive and for black and white.
+  static func filmColourRows(_ s: Adjustments, _ profile: FilmProfile) -> [CIVector] {
+    var m: [Double] = [1, 0, 0, 0, 1, 0, 0, 0, 1]
+    if s.inputIsNegative, !s.isMonochrome, let own = profile.colourInUse, own.count == 9 {
+      m = (0..<3).flatMap { r -> [Double] in
+        let row = Array(own[3 * r..<3 * r + 3]), sum = row.reduce(0, +)
+        return abs(sum) > 0.5 ? row.map { $0 / sum } : row
+      }
+    }
+    return (0..<3).map { r in CIVector(x: m[3 * r], y: m[3 * r + 1], z: m[3 * r + 2]) }
+  }
+  /// 色阶 in the conversion for the kernel (`Kernels.printLevelled`): input black, input white,
+  /// the midtone's power (1 / gamma), output black, output white, red, green and blue in x, y, z
+  /// and the composite in w; as a new frame has them where there are none.
+  static func levelsArguments(_ l: Levels?) -> [CIVector] {
+    let l = l ?? Levels()
+    func v(_ f: (Levels.Channel) -> Double) -> CIVector { CIVector(x: f(l.red), y: f(l.green), z: f(l.blue), w: f(l.rgb)) }
+    return [v(\.black), v(\.white), v { 1 / $0.gamma }, v(\.outBlack), v(\.outWhite)]
   }
   /// The power a slide's linear light is encoded with for the screen: its picture as it lies on a
   /// light box, in the output's gamma.

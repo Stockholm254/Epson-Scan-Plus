@@ -156,6 +156,10 @@ final class AppModel: ObservableObject {
   /// The roll converts with its calibrated preset's slopes, neutral and toe; off, as the film the
   /// preset was calibrated from (`conversionProfile`), the preset itself kept.
   @Published var useCalibration = true
+  /// 色阶's sibling in the film tab, 色卡: the roll's film's chart slopes before its estimate, and
+  /// its chart colour matrix, each as chosen (`DeskProject.chartSlopes`, `chartColour`).
+  @Published var chartSlopes = false
+  @Published var chartColour = false
   /// The flat fields from blank frames the roll's frames are divided by, and those made on it:
   /// copies, kept with the roll (`FilmFrame.flatID`); undone with the frames.
   @Published var rollFlats: [FlatProfile] = []
@@ -272,13 +276,14 @@ final class AppModel: ObservableObject {
   @Published var levelsPicker: LevelsPicker? = nil {
     didSet { if levelsPicker != nil, tool != .select { tool = .select } }
   }
-  /// The picture before 色阶, as the levels panel draws and reads it.
-  @Published private(set) var levelsHistogram: LevelsHistogram?
-  /// The single picture as the canvas shows it: what 色阶 cuts while ⌥ is held on one of its points
-  /// (`levelsClipping`), else with 溢出 marked when that is on.
+  /// 色阶's input, as the levels panel draws and reads it (`PrintLevelsInput`).
+  @Published private(set) var levelsHistogram: PrintLevelsInput?
+  /// The single picture as the canvas shows it: what comes out pure black or pure white while ⌥
+  /// is held on one of 色阶's points (`levelsClipping`), through the shoulder and the clip, as the
+  /// picture shows it before the curves; else with 溢出 marked when that is on.
   func canvasPicture(_ image: CGImage, _ s: Adjustments, negative: Bool) -> CGImage {
     if !negative, let clip = levelsClipping {
-      return ImagePipeline.shared.levelsClipping(image, curves: s.curves, levels: s.levels, clip)
+      return ImagePipeline.shared.levelsClipping(image, curves: s.curves, levels: nil, clip)
     }
     return showClipping ? ImagePipeline.shared.markClipping(image) : image
   }
@@ -1263,6 +1268,7 @@ final class AppModel: ObservableObject {
     filmName = FilmCalibration.film(name ?? p.name)
     profile = p
     useCalibration = true
+    (chartSlopes, chartColour) = (false, false)
     preferences.scanReversal = reversal
     startsAsSlides = reversal
     // A black and white film from the shelf: its roll read as one layer from its first picture.
@@ -1470,6 +1476,7 @@ final class AppModel: ObservableObject {
       rollNotes = ""
       rollSlopeEstimate = nil
       useCalibration = true
+      (chartSlopes, chartColour) = (false, false)
       rollFlats = []
       exportStamps = [:]
       gradeSnapshots = [:]
@@ -2028,7 +2035,7 @@ final class AppModel: ObservableObject {
       (r.exposure, r.contrast, r.highlights, r.pressHighlights, r.shadows) = (fresh.exposure, fresh.contrast, nil, nil, nil)
       (r.whites, r.blacks) = (nil, nil)
     case .levels:
-      (r.autoLevels, r.levels, r.ends) = (fresh.autoLevels, nil, 2)
+      (r.autoLevels, r.levels, r.ends, r.printLevels) = (fresh.autoLevels, nil, 2, nil)
     case .colour:
       (r.saturation, r.softEnds, r.colourNoise) = (fresh.saturation, nil, copyShot ? 1 : nil)
       (r.texture, r.clarity, r.dehaze, r.vibrance) = (nil, nil, nil, nil)
@@ -2136,11 +2143,12 @@ final class AppModel: ObservableObject {
   private struct EditState {
     var frames: [FilmFrame], selectedID: UUID?, profile: FilmProfile, filmName: String, useCalibration: Bool, rollFlats: [FlatProfile]
     var format: FilmFormat, startsAsSlides: Bool?, filmEdges: PictureEdges
+    var chartSlopes = false, chartColour = false
   }
   private var lastEdit: (key: String, at: Date)?
   private var editState: EditState { EditState(
     frames: frames, selectedID: selectedID, profile: profile, filmName: filmName, useCalibration: useCalibration,
-    rollFlats: rollFlats, format: format, startsAsSlides: startsAsSlides, filmEdges: filmEdges)
+    rollFlats: rollFlats, format: format, startsAsSlides: startsAsSlides, filmEdges: filmEdges, chartSlopes: chartSlopes, chartColour: chartColour)
   }
   /// Called before an edit. Repeats of one control within a second, a fader being dragged, are one step.
   func recordEdit(_ name: String, key: String? = nil, filmName shown: String? = nil) {
@@ -2188,6 +2196,7 @@ final class AppModel: ObservableObject {
       return f
     }
     selectedID = state.selectedID.flatMap { id in frames.contains { $0.id == id } ? id : nil } ?? frames.first?.id
+    (chartSlopes, chartColour) = (state.chartSlopes, state.chartColour)
     (profile, filmName, useCalibration, rollFlats) = (state.profile, state.filmName, state.useCalibration, state.rollFlats)
     (format, startsAsSlides, filmEdges) = (state.format, state.startsAsSlides, state.filmEdges)
     editRegionLock = nil
@@ -3113,7 +3122,41 @@ final class AppModel: ObservableObject {
   /// What the roll converts with: its preset, or with the preset's calibration switched off the
   /// film it was calibrated from (`uncalibrated`).
   var conversionProfile: FilmProfile {
-    useCalibration || profile.offsets == nil ? profile : Self.uncalibrated(profile, among: profiles)
+    var p = useCalibration || profile.offsets == nil ? profile : Self.uncalibrated(profile, among: profiles)
+    // The chart shot on the roll's film, as 色卡 chose: its slopes (where no calibration is in use)
+    // before the estimate, its colour matrix.
+    if chartSlopes || chartColour, let chart = chartFilm {
+      if chartSlopes, p.offsets == nil, chart.chartMeasured == true { (p.slopes, p.chartFirst) = (chart.slopes, true) }
+      if chartColour, let m = chart.colorMatrix { p.colourInUse = m }
+    }
+    return p
+  }
+  /// The built-in film with a chart shot on it (`FilmProfile.chartMeasured`, `colorMatrix`) the roll
+  /// is: its preset's film, or the film it was calibrated from, or the roll's film by name.
+  var chartFilm: FilmProfile? {
+    func charted(_ f: FilmProfile) -> Bool { f.offsets == nil && (f.chartMeasured == true || f.colorMatrix != nil) }
+    let root = FilmCalibration.calibratedFrom(profile), film = FilmCalibration.film(filmName)
+    return FilmProfile.builtins.first { charted($0) && ($0.id == profile.id || $0.id == root.id || $0.name == root.name || $0.name == film) }
+  }
+  /// 色卡's two switches for the roll, each a step of the undo history.
+  func setChartSlopes(_ on: Bool) {
+    guard on != chartSlopes, chartFilm?.chartMeasured == true else { return }
+    recordEdit(on ? "用色卡斜率" : "不用色卡斜率")
+    chartSlopes = on
+    status = on ? "按色卡实测的斜率转换（先于全卷斜率估计）" : "不用色卡斜率：" + (estimatesSlopes ? "按全卷斜率估计" : "按预设")
+    updateRollSlopes()
+    refresh()
+    updateThumbnails()
+    saveProject()
+  }
+  func setChartColour(_ on: Bool) {
+    guard on != chartColour, chartFilm?.colorMatrix != nil else { return }
+    recordEdit(on ? "用色卡颜色矩阵" : "不用色卡颜色矩阵")
+    chartColour = on
+    status = on ? "按色卡拟合的颜色矩阵转换：灰不变，颜色按色卡转" : "不用色卡颜色矩阵"
+    refresh()
+    updateThumbnails()
+    saveProject()
   }
   /// The film a calibrated preset was made from, as the presets hold it: its data sheet's slopes
   /// when it has one, with no neutral and no toe, so the roll's own estimate comes first again and
@@ -3296,17 +3339,12 @@ final class AppModel: ObservableObject {
   }
   /// 自动白色 / 黑色 for the selected frame (`ImagePipeline.autoEnds`): its brightest 0.1% just at
   /// white and its darkest just at black, from the tones the single view last counted; one edit.
+  /// 自动白色、黑色, as it was until 0.24, now 色阶's: the brightest 0.1 % in their brightest
+  /// channel to white and the darkest 0.1 % in their darkest to black, on its composite.
   func autoWhitesBlacks() {
-    guard let range = toneRange, selected != nil, !settings.isSlide else {
-      status = "在单张视图里打开这张负片，再点「自动白色、黑色」"
-      return
-    }
-    let ends = ImagePipeline.autoEnds(range, settings)
-    change("自动白色、黑色") {
-      $0.whitesAmount = (ends.whites * 100).rounded() / 100
-      $0.blacksAmount = (ends.blacks * 100).rounded() / 100
-    }
-    status = String(format: "自动白色 %+.2f、黑色 %+.2f：最亮的 0.1%% 到白，最暗的 0.1%% 到黑", ends.whites, ends.blacks)
+    var o = LevelsAutoOptions()
+    o.algorithm = .whitesBlacks
+    autoLevelsLikePhotoshop(o)
   }
   func setSharedLevels(_ on: Bool) {
     setShared(on ? "整卷同一色阶" : "每张单独色阶", on) { $0.sharedLevels = on ? true : nil }
@@ -4310,7 +4348,7 @@ final class AppModel: ObservableObject {
     let key: String, overview: CGImage?, source: CGImage, analysis: ToneAnalysis, output: CGImage, screen: CGImage?
     let measures: SingleMeasures
   }
-  private typealias SingleMeasures = (hist: ([Double], [[Double]]), thumbnail: CGImage?, range: ToneRange?, levels: LevelsHistogram?)
+  private typealias SingleMeasures = (hist: ([Double], [[Double]]), thumbnail: CGImage?, range: ToneRange?, levels: PrintLevelsInput?)
   /// Module ①'s raw picture made ahead the same way: read, shown as the sensor read it, its exposure
   /// and base read (`renderOriginal`).
   private struct PreparedRaw {
@@ -4351,7 +4389,7 @@ final class AppModel: ObservableObject {
     var thumbnail: CGImage?
     var histograms: ([Double], [[Double]])?
     var range: ToneRange??
-    var levelsHistogram: LevelsHistogram??
+    var levelsHistogram: PrintLevelsInput??
     var finished: Int?
   }
   private var besidePicture: BesidePicture?
@@ -4414,7 +4452,7 @@ final class AppModel: ObservableObject {
       var s = f.adjustments
       (s.exposure, s.contrast, s.warmth, s.tint, s.shadowWarmth, s.shadowTint) = (0, 1, 0, 0, nil, nil)
       (s.shadows, s.highlights, s.pressHighlights, s.colourNoise, s.sharpening, s.curves) = (nil, nil, nil, nil, nil, nil)
-      s.levels = nil
+      (s.levels, s.printLevels) = (nil, nil)
       (s.whites, s.blacks) = (nil, nil)
       // Lightroom's looks, after the conversion (`ImagePipeline.looks`): read by no analysis.
       // Vibrance is not one: it is in the conversion's saturation, whose reach the analysis measures.
@@ -4657,20 +4695,12 @@ final class AppModel: ObservableObject {
     analysis: ToneAnalysis, negative: Bool, edit: Bool, keepsThumbnail: Bool) -> SingleMeasures
   {
     let hist = Self.histograms(output, curves: negative ? nil : shown.curves)
-    // 色阶's: the picture before it, made again small without it and the curves where it changes
-    // anything (what it cuts to black or white is not in the picture shown), else read back
-    // through the curves alone.
-    var levels: LevelsHistogram?
+    // 色阶's input: the picture through the conversion up to the levels, as shown, small and
+    // unclipped (`PrintLevelsInput`), for its histogram, its eyedroppers and its 自动.
+    var levels: PrintLevelsInput?
     if !negative {
-      if let set = shown.levels?.normalized {
-        var plain = shown
-        (plain.levels, plain.curves) = (nil, nil)
-        let small = ImagePipeline.shared.scaled(cropped, maxDimension: 500)
-        levels = ImagePipeline.shared.render(small, settings: plain, profile: p, analysis: analysis, negative: false).map { LevelsHistogram($0) }
-          ?? LevelsHistogram(output, curves: shown.curves, levels: set)
-      } else {
-        levels = LevelsHistogram(output, curves: shown.curves)
-      }
+      let small = ImagePipeline.shared.scaled(cropped, maxDimension: 400)
+      levels = ImagePipeline.shared.levelsInput(small, settings: shown, profile: p, analysis: analysis, maxDimension: 400).map { PrintLevelsInput($0) }
     }
     let thumbnail = keepsThumbnail ? ImagePipeline.shared.scaled(output, maxDimension: Self.thumbnailDimension) : nil
     var range = negative ? nil : ImagePipeline.shared.toneRange(cropped, settings: frame.adjustments, profile: p, analysis: analysis)
@@ -5057,7 +5087,8 @@ final class AppModel: ObservableObject {
     }
     tableHistogramsOf = (f.id, picture, unfaced, curves)
     (histogram, channelHistograms) = Self.histograms(picture, curves: curves)
-    levelsHistogram = LevelsHistogram(picture, curves: curves, levels: f.adjustments.levels)
+    // 色阶 is the single view's: its input is read there.
+    levelsHistogram = nil
   }
   private var thumbnailsWaiting: Bool {
     wantedLock.lock()
@@ -5809,6 +5840,7 @@ final class AppModel: ObservableObject {
       rollNotes = ""
       rollSlopeEstimate = nil
       useCalibration = true
+      (chartSlopes, chartColour) = (false, false)
       rollFlats = []
       exportStamps = [:]
       gradeSnapshots = [:]
@@ -6487,6 +6519,7 @@ final class AppModel: ObservableObject {
     project.notes = rollNotes.isEmpty ? nil : rollNotes
     project.estimateSlopes = rollSlopeEstimate
     project.useCalibration = useCalibration ? nil : false
+    (project.chartSlopes, project.chartColour) = (chartSlopes ? true : nil, chartColour ? true : nil)
     project.flats = rollFlats.isEmpty ? nil : rollFlats
     project.format = format == .auto ? nil : format.rawValue
     project.edges = filmEdges == .auto ? nil : filmEdges.rawValue
@@ -6645,6 +6678,7 @@ final class AppModel: ObservableObject {
     // Saved before it was a switch of its own: single pictures measured together then.
     rollSlopeEstimate = p.estimateSlopes ?? (p.poolPictures == true ? true : nil)
     useCalibration = p.useCalibration ?? true
+    (chartSlopes, chartColour) = (p.chartSlopes == true, p.chartColour == true)
     // A frame's blank-frame flat field, kept once with the roll, read back as the frame reads; a
     // frame that kept its own grid keeps it. One whose flat is not in the roll is left unflattened.
     rollFlats = p.flats ?? []

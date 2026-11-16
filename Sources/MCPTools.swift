@@ -64,8 +64,8 @@ enum MCPTools {
       "exposure": number("曝光 EV", -2...2), "contrast": number("对比度", 0.5...1.6), "saturation": number("饱和度", 0...1.8),
       "highlights": number("高光（像 Lightroom）：亮的区域按周围的亮度整块压暗（负）或提亮（正），纹理保留，在剪切之前，往负能拉回白点以上的东西；0.45 以下不动，-1 到 1", -1...1),
       "shadows": number("阴影（像 Lightroom）：暗的区域按周围的亮度整块提亮（正）或压暗（负），纹理保留，黑不动，-1 到 1", -1...1),
-      "whites": number("白色（像 Lightroom）：最亮的一端整体往下（负，拉回白点以上的）或往上（正，更多推到白），按像素自己最亮的通道，0.5 以下不动，颜色不变，-1 到 1", -1...1),
-      "blacks": number("黑色（像 Lightroom）：最暗的一端整体压深（负）或提起（正，拉回黑以下的），按像素自己最暗的通道，0.5 以上不动，颜色不变，-1 到 1", -1...1),
+      "whites": number("旧的白色（0.24 起并进色阶，用 levels 的 rgb input_white 代替）：最亮的一端整体往下（负）或往上（正），-1 到 1", -1...1),
+      "blacks": number("旧的黑色（0.24 起并进色阶，用 levels 的 rgb input_black 代替）：最暗的一端整体压深（负）或提起（正），-1 到 1", -1...1),
       "angle": number("拉直角度（度）：画面绕中心转动，正数顺时针，裁去转出的空角，-45 到 45", -45...45),
       "auto_white_balance": ["type": "boolean", "description": "自动白平衡"], "auto_levels": ["type": "boolean", "description": "自动色阶"],
       "shared_balance": ["type": "boolean", "description": "整卷同一白平衡：整卷共用一个按所有画面统计的白平衡，每张颜色一致；作用于选中画面所在的整卷"],
@@ -74,8 +74,9 @@ enum MCPTools {
       "clarity": number("清晰度（像 Lightroom）：中等尺度的局部反差，主要在中间调，黑白不动，-1 到 1", -1...1),
       "dehaze": number("去朦胧（像 Lightroom）：去掉（正）或加上（负）一层白雾，-1 到 1", -1...1),
       "vibrance": number("自然饱和度（像 Lightroom）：只加不太鲜艳的颜色，肤色加得少，-1 到 1", -1...1),
+      "levels": ["type": "object", "description": "色阶（像 Photoshop 的色阶，0.24 起在转换里，在白平衡、对比度、饱和度之后，高光、阴影、肩部和剪切之前）：{通道: {input_black, midtone, input_white, output_black, output_white}}，通道是 rgb red green blue（各通道先起作用，再走 rgb）；输入、输出按 0–255，0 和 255 是自动两端定出的黑和白，input_white 可以大于 255（把冲过白的拉回来，以前白色往负的作用），input_black 可以小于 0；midtone 是 gamma，1 不变，大于 1 变亮。只改给出的项。例：{\"rgb\": {\"input_white\": 300}}"],
       "colour_mixer": ["type": "object", "description": "混色器（像 Lightroom 的 HSL），和 App 里「混色器」一节一样：{颜色: {hue, saturation, luminance}}，颜色是 红 橙 黄 绿 浅绿 蓝 紫 洋红（或 red orange yellow green aqua blue purple magenta），各 -1 到 1，hue 1 是转 30°；只改给出的颜色和项，其余不动，设 0 就是不改。例：{\"黄\": {\"hue\": -0.5}, \"绿\": {\"hue\": -1}}"],
-      "auto_whites_blacks": ["type": "boolean", "description": "自动白色、黑色（像 Lightroom 按住 Shift 双击）：设白色、黑色，让这张最亮的 0.1% 正好到白、最暗的 0.1% 正好到黑；在其他参数之后算，要单张视图里算过的影调"],
+      "auto_whites_blacks": ["type": "boolean", "description": "自动白色、黑色（0.24 起是色阶的自动）：色阶的 rgb 设到让这张最亮的 0.1% 正好到白、最暗的 0.1% 正好到黑，冲过白的也拉回来；要单张视图里读过这张"],
     ]),
     Tool(name: "pick_film_base", description: "在指定位置取片基（只应点在未曝光的橙色片基上，例如画面边缘的片间）；会关闭自动白平衡以保留取样。", properties: point, required: ["x", "y"]),
     Tool(name: "auto_straighten", description: "自动拉直选中的这张，像 Lightroom 裁切里的「自动」：在画面里找地平线（在本机用 macOS 的视觉框架），按它放平，③ 的裁切留在画面上；找不到清楚的地平线时不改动，说明原因。用 select_by_marks 选了几张时，每张按自己的地平线。地平线本来就该是斜的照片（有意的倾斜构图）不要用。可用 undo 撤销。", properties: [:]),
@@ -481,14 +482,19 @@ enum MCPTools {
       if !check.isEmpty { state["roll_check"] = check }
       var levels: [String: Any] = ["auto": s.autoLevels, "auto_ends": s.endsByLight ? "white by the lightest luminance, black at the film base"
         : "white by each pixel's brightest channel, black by each channel's darkest (a frame set by hand before 0.23.15)"]
-      // Photoshop's Levels on the picture as shown, before the curves (0–255, midtone as its gamma).
-      if let l = s.levels?.normalized {
-        levels["photoshop_levels"] = Dictionary(uniqueKeysWithValues: zip(["rgb", "red", "green", "blue"], (0..<4).map { i -> [String: Any] in
+      // 色阶 (Photoshop's Levels) in the conversion from 0.24, 0–255 the automatic ends' black to
+      // white and past them (midtone as its gamma); the levels set on the picture as shown before
+      // then, and 影调's old whites and blacks, while a frame keeps them.
+      func figures(_ l: Levels) -> [String: Any] {
+        Dictionary(uniqueKeysWithValues: zip(["rgb", "red", "green", "blue"], (0..<4).map { i -> [String: Any] in
           let c = l[i]
           return ["input_black": round(c.black * 255), "midtone": round(c.gamma * 100) / 100, "input_white": round(c.white * 255),
             "output_black": round(c.outBlack * 255), "output_white": round(c.outWhite * 255)]
         }))
       }
+      if let l = s.printLevels?.normalized { levels["photoshop_levels"] = figures(l) }
+      if let l = s.levels?.normalized { levels["old_levels_on_shown_picture"] = figures(l) }
+      if s.whites != nil || s.blacks != nil { levels["old_whites_blacks"] = ["whites": s.whitesAmount, "blacks": s.blacksAmount] }
       state["levels"] = levels
       state["curves"] = curvesState(s.curves)
       state["tone"] = ["exposure": s.exposure, "contrast": s.contrast, "saturation": s.saturation, "curves": s.curves != nil,
@@ -664,7 +670,7 @@ enum MCPTools {
       if arguments["midtone"] != nil {
         throw DeskError.message("midtone（中间调）0.22 起已经去掉：整体明暗用 exposure，中间调的对比用 contrast，或 set_curve 的 rgb 曲线在中间加一个点。")
       }
-      let unknown = Set(arguments.keys).subtracting(known)
+      let unknown = Set(arguments.keys).subtracting(known.union(["levels"]))
       guard unknown.isEmpty else { throw DeskError.message("不认识的参数：\(unknown.sorted().joined(separator: ", "))") }
       guard arguments.keys.contains(where: { $0 != "frame" }) else { throw DeskError.message("没有要改的参数。") }
       func value(_ key: String, _ range: ClosedRange<Double>) throws -> Double? {
@@ -680,6 +686,26 @@ enum MCPTools {
       ]
       let values = try numbers.compactMap { n in try value(n.1, n.2).map { (n.0, $0) } }
       let angle = try value("angle", -45...45)
+      // 色阶 in the conversion: channel, move, value (0–255 as the panel shows them).
+      var levelMoves = [(Int, String, Double)]()
+      if let raw = arguments["levels"] {
+        guard let channels = raw as? [String: Any] else {
+          throw DeskError.message("levels 应为 {通道: {input_black, midtone, input_white, output_black, output_white}}，如 {\"rgb\": {\"input_white\": 300}}。")
+        }
+        for (name, moves) in channels {
+          guard let c = ["rgb", "red", "green", "blue"].firstIndex(of: name.lowercased()) else {
+            throw DeskError.message("色阶没有「\(name)」通道：可用 rgb、red、green、blue。")
+          }
+          guard let kinds = moves as? [String: Any] else { throw DeskError.message("levels 的「\(name)」应为 {input_black, midtone, input_white, output_black, output_white}。") }
+          for (kind, v) in kinds {
+            guard ["input_black", "midtone", "input_white", "output_black", "output_white"].contains(kind) else {
+              throw DeskError.message("色阶的项只有 input_black、midtone、input_white、output_black、output_white，没有 \(kind)。")
+            }
+            guard let x = (v as? NSNumber)?.doubleValue, x.isFinite else { throw DeskError.message("levels 的「\(name)」\(kind) 应为数字。") }
+            levelMoves.append((c, kind, x))
+          }
+        }
+      }
       // The colour mixer's moves: band, kind (hue, saturation, luminance), value.
       var mixerMoves = [(Int, Int, Double)]()
       if let raw = arguments["colour_mixer"] {
@@ -719,6 +745,20 @@ enum MCPTools {
           if let b = arguments["auto_levels"] as? Bool { a.autoLevels = b }
           if let angle { a.angle = abs(angle) < 0.005 ? nil : angle }
           for (b, k, v) in mixerMoves { a[mixer: b, kind: k] = v }
+          if !levelMoves.isEmpty {
+            var l = a.printLevels ?? Levels()
+            let domain = Levels.printDomain
+            for (c, kind, v) in levelMoves {
+              switch kind {
+              case "input_black": l[c].black = min(max(domain.lowerBound, v / 255), l[c].white - 2 / 255)
+              case "input_white": l[c].white = max(min(domain.upperBound, v / 255), l[c].black + 2 / 255)
+              case "midtone": l[c].gamma = Levels.clampGamma(v)
+              case "output_black": l[c].outBlack = min(1, max(0, v / 255))
+              default: l[c].outWhite = min(1, max(0, v / 255))
+              }
+            }
+            a.printLevels = l.normalized
+          }
         }
         if let b = arguments["shared_balance"] as? Bool { model.setSharedBalance(b) }
         if let b = arguments["shared_levels"] as? Bool { model.setSharedLevels(b) }

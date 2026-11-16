@@ -47,7 +47,8 @@ enum GrayPixelNeutral {
 
   /// The grays' neutral in `image` (the frame as cropped, as `ImagePipeline.analyze` takes it);
   /// nil for a positive, a slide or black and white, or where too few grays lie near the prior.
-  static func find(in image: CGImage, settings: Adjustments, profile: FilmProfile) -> Found? {
+  /// `prior`, where given, in place of the calibrated neutral or the picture's average.
+  static func find(in image: CGImage, settings: Adjustments, profile: FilmProfile, prior given: (r: Double, b: Double)? = nil) -> Found? {
     guard settings.inputIsNegative, !settings.isSlide, !settings.isMonochrome else { return nil }
     let pipe = ImagePipeline.shared
     // The base the analysis takes (a picked or the roll's, else the part's own thinnest film), not
@@ -111,9 +112,11 @@ enum GrayPixelNeutral {
     for i in 0..<n where ok[i] && ll[i] <= lit { ok[i] = false }
     let grayness = box((0..<n).map { (lu[$0] * lu[$0] + lb[$0] * lb[$0]).squareRoot() / (ll[$0] + 1e-6) }, w, h, radius: 3)
     // The prior: the calibrated neutral, else the average colour, from the unsmoothed exposures.
-    let calibrated = profile.offsets != nil
+    let calibrated = given == nil && profile.offsets != nil
     let prior: (r: Double, b: Double)
-    if let o = profile.offsets {
+    if let given {
+      prior = given
+    } else if let o = profile.offsets {
       prior = (o.r - o.g, o.b - o.g)
     } else {
       var sr = 0.0, sb = 0.0, k = 0.0

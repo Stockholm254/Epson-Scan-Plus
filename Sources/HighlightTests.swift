@@ -175,8 +175,8 @@ enum HighlightTests {
       let args: [Any] = [
         image, image, one, one, none, one, none, CIVector(x: 0, y: 1, z: 0, w: 1), CIVector(x: 0, y: 1, z: 1, w: 1.6),
         CIVector(x: 0, y: 0, z: 0, w: 1), CIVector(x: 0, y: 0.9, z: 0, w: 0), 0.0, CIVector(x: 0, y: 1, z: 0, w: 0), CIVector(x: 0, y: 0, z: 0, w: 0),
-        CIVector(x: 0, y: 0, z: 0, w: 0), 1.0, CIVector(x: 0, y: 0, z: 0, w: 0),
-      ]
+        CIVector(x: 0, y: 0, z: 0, w: 0), 1.0,
+      ] + [CIVector(x: 1, y: 0, z: 0), CIVector(x: 0, y: 1, z: 0), CIVector(x: 0, y: 0, z: 1)] + ImagePipeline.levelsArguments(nil) + [CIVector(x: 0, y: 0, z: 0, w: 0)]
       guard let result = kernel?.apply(extent: image.extent, arguments: args) else { return [] }
       var px = [Float](repeating: 0, count: n * 4)
       px.withUnsafeMutableBytes { pipe.context.render(result, toBitmap: $0.baseAddress!, rowBytes: n * 16, bounds: image.extent, format: .RGBAf, colorSpace: nil) }

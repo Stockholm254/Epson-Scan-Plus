@@ -2532,12 +2532,11 @@ final class FilmCanvasView: NSView {
       if composeDrag?.hold == .move { NSCursor.closedHand.set() }
       return
     }
-    // 色阶's eyedropper: what lies under the press before the curves, set as its point.
+    // 色阶's eyedropper: what lies under the press as the levels take it in (`PrintLevelsInput`),
+    // set as its point.
     if let picker = model.levelsPicker, model.singleView {
-      if !model.showsNegative, !model.showsOriginal, let cg = shown, let colour = Self.colour(in: cg, at: shownNormal(p)) {
-        let curves = model.shownCurves
-        if pointerInverse == nil || pointerInverse?.curves != curves { pointerInverse = (curves, CurveInverse(curves)) }
-        model.pickLevelsPoint(picker, afterLevels: pointerInverse?.inverse?.input(colour) ?? colour)
+      if !model.showsNegative, !model.showsOriginal, shown != nil, let reading = model.levelsHistogram?.reading(at: shownNormal(p)) {
+        model.pickLevelsPoint(picker, reading: reading)
       }
       return
     }

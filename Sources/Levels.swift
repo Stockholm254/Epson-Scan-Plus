@@ -33,6 +33,18 @@ struct Levels: Codable, Equatable {
       let t = min(0.999, max(0.001, (x - black) / max(white - black, 1e-6)))
       return Levels.clampGamma(log(t) / log(0.5))
     }
+    /// `x` as 色阶 in the conversion takes it (`Kernels.levelled`): nothing cut, past the white
+    /// point on past white, under the black point on straight.
+    func extended(_ x: Double) -> Double {
+      let t = (x - black) / max(white - black, 1e-4)
+      return outBlack + (t > 0 ? pow(t, 1 / gamma) : t) * (outWhite - outBlack)
+    }
+    /// What gives `y` in the conversion's levels.
+    func extendedInput(_ y: Double) -> Double {
+      let span = outWhite - outBlack
+      let t = abs(span) < 1e-6 ? 0.5 : (y - outBlack) / span
+      return black + (t > 0 ? pow(t, gamma) : t) * (white - black)
+    }
   }
   var rgb = Channel()
   var red = Channel()
@@ -56,6 +68,13 @@ struct Levels: Codable, Equatable {
   /// What gives `y` in channel `c`.
   func input(_ y: Double, _ c: Int) -> Double { self[c + 1].input(rgb.input(y)) }
   static func clampGamma(_ g: Double) -> Double { min(9.99, max(0.10, g)) }
+  /// Channel `c` of `x` through 色阶 in the conversion: its own levels, then the composite's.
+  func printValue(_ x: Double, _ c: Int) -> Double { rgb.extended(self[c + 1].extended(x)) }
+  /// What gives `y` in channel `c` there.
+  func printInput(_ y: Double, _ c: Int) -> Double { self[c + 1].extendedInput(rgb.extendedInput(y)) }
+  /// How far 色阶 in the conversion reaches, on the print's scale: under the automatic black to
+  /// what the negative holds below it, past the automatic white to three times as far again.
+  static let printDomain = -0.5...3.0
   /// Nil for no change, as the frame keeps it.
   var normalized: Levels? { isIdentity ? nil : self }
 }
@@ -98,6 +117,10 @@ struct LevelsHistogram: Equatable {
 /// Photoshop's 自动颜色校正选项 for 色阶's 自动 button.
 struct LevelsAutoOptions: Codable, Equatable {
   enum Algorithm: String, Codable, CaseIterable, Identifiable {
+    /// The brightest 0.1 % in their brightest channel to white and the darkest 0.1 % in their
+    /// darkest to black, on the composite: what 影调's 自动白色、黑色 did until 0.24, the colour kept,
+    /// what ran past white brought back.
+    case whitesBlacks
     /// The three channels' darkest and lightest together, set on the composite: the colour stays.
     case monochromatic
     /// Each channel's own darkest and lightest, on the channels: casts in the ends go.
@@ -109,6 +132,7 @@ struct LevelsAutoOptions: Codable, Equatable {
     var id: String { rawValue }
     var name: String {
       switch self {
+      case .whitesBlacks: return "最亮、最暗的 0.1% 到白和黑"
       case .monochromatic: return "增强单色对比度"
       case .perChannel: return "增强每通道的对比度"
       case .darkAndLight: return "查找深色与浅色"
@@ -116,7 +140,7 @@ struct LevelsAutoOptions: Codable, Equatable {
       }
     }
   }
-  var algorithm = Algorithm.perChannel
+  var algorithm = Algorithm.whitesBlacks
   /// Clipped at each end, in percent: Photoshop's default 0.1.
   var shadowClip = 0.1
   var highlightClip = 0.1
@@ -148,7 +172,7 @@ extension Levels {
       return (b, min(1, w))
     }
     switch o.algorithm {
-    case .monochromatic:
+    case .monochromatic, .whitesBlacks:
       let all = h.shown(0)
       (l.rgb.black, l.rgb.white) = ends(quantile(all, lo), quantile(all, hi))
     case .perChannel:
@@ -202,6 +226,111 @@ extension Levels {
       ch.gamma = Levels.clampGamma(log(t) / log(out))
       self[c + 1] = ch
     }
+  }
+}
+
+/// 色阶's input in the conversion (`Adjustments.printLevels`): the frame through the conversion up
+/// to the levels (`ImagePipeline.levelsInput`), as shown, small, on the print's scale, 0 the
+/// automatic ends' black and 1 their white. Each channel counted over `Levels.printDomain` in steps
+/// of 1/256 (the panel's 0–255 inside), each pixel's brightest and darkest channel too; its values
+/// kept for the eyedroppers, which read what lies under them here, and the automatic options.
+struct PrintLevelsInput: Equatable {
+  static let stepsPerUnit = 256.0
+  static var bins: Int { Int(((Levels.printDomain.upperBound - Levels.printDomain.lowerBound) * stepsPerUnit).rounded()) }
+  /// Red, green, blue, each pixel's brightest channel, its darkest.
+  var counts: [[Double]]
+  var width: Int, height: Int
+  var values: [Float]
+  static func bin(_ v: Double) -> Int { min(bins - 1, max(0, Int(((v - Levels.printDomain.lowerBound) * stepsPerUnit).rounded(.down)))) }
+  static func value(_ i: Int) -> Double { Levels.printDomain.lowerBound + (Double(i) + 0.5) / stepsPerUnit }
+  init(_ s: Samples) {
+    (width, height, values) = (s.width, s.height, s.values)
+    var counts = [[Double]](repeating: [Double](repeating: 0, count: Self.bins), count: 5)
+    for i in stride(from: 0, to: s.values.count - 3, by: 4) {
+      let r = Double(s.values[i]), g = Double(s.values[i + 1]), b = Double(s.values[i + 2])
+      guard r.isFinite, g.isFinite, b.isFinite else { continue }
+      counts[0][Self.bin(r)] += 1
+      counts[1][Self.bin(g)] += 1
+      counts[2][Self.bin(b)] += 1
+      counts[3][Self.bin(max(r, g, b))] += 1
+      counts[4][Self.bin(min(r, g, b))] += 1
+    }
+    self.counts = counts
+  }
+  static let empty = PrintLevelsInput(Samples(width: 1, height: 1, values: [0, 0, 0, 1]))
+  /// Of the composite (channel 0): the three summed; of a channel (1–3): its own.
+  func shown(_ channel: Int) -> [Double] {
+    guard channel == 0 else { return counts[max(0, min(2, channel - 1))] }
+    return (0..<Self.bins).map { counts[0][$0] + counts[1][$0] + counts[2][$0] }
+  }
+  /// Where `p` of `counts` lies (0–1 of them), the first step holding any where it reaches it.
+  static func quantile(_ counts: [Double], _ p: Double) -> Double {
+    let total = counts.reduce(0, +)
+    guard total > 0 else { return p < 0.5 ? 0 : 1 }
+    var run = 0.0
+    for (i, v) in counts.enumerated() where v > 0 {
+      run += v
+      if run >= total * p { return value(i) }
+    }
+    return 1
+  }
+  /// The stretch of the print's scale the panel draws: 0–1 (0–255), and past it as far as the
+  /// frame goes, its darkest 0.05 % and brightest 0.05 %.
+  var shownDomain: ClosedRange<Double> {
+    let lo = min(0, Self.quantile(counts[4], 0.0005)), hi = max(1, Self.quantile(counts[3], 0.9995))
+    return max(Levels.printDomain.lowerBound, lo - (lo < 0 ? 0.02 : 0))...min(Levels.printDomain.upperBound, hi + (hi > 1 ? 0.03 : 0))
+  }
+  /// What lies at `p` (0–1 of the picture as shown, top left at 0).
+  func reading(at p: CGPoint) -> RGB? {
+    guard width > 1, height > 1 else { return nil }
+    let x = min(width - 1, max(0, Int(p.x * CGFloat(width)))), y = min(height - 1, max(0, Int(p.y * CGFloat(height))))
+    let i = (y * width + x) * 4
+    return RGB(r: Double(values[i]), g: Double(values[i + 1]), b: Double(values[i + 2]))
+  }
+  /// Every other pixel, for 查找深色与浅色, 增强亮度和对比度 and 对齐中性中间调.
+  var samples: [RGB] {
+    stride(from: 0, to: values.count - 3, by: 8).map { RGB(r: Double(values[$0]), g: Double(values[$0 + 1]), b: Double(values[$0 + 2])) }
+  }
+}
+
+extension Levels {
+  /// 色阶 in the conversion set by `options` from `h`, as Photoshop's 自动 does it, the output ends
+  /// kept: the ends may lie past the automatic ones, a white past 1 bringing back what ran past it.
+  static func autoPrint(_ h: PrintLevelsInput, options o: LevelsAutoOptions, keepingOutput from: Levels? = nil) -> Levels {
+    var l = Levels()
+    if let from { for i in 0..<4 { (l[i].outBlack, l[i].outWhite) = (from[i].outBlack, from[i].outWhite) } }
+    let lo = o.shadowClip / 100, hi = 1 - o.highlightClip / 100
+    let domain = Levels.printDomain
+    func ends(_ black: Double, _ white: Double) -> (Double, Double) {
+      let b = min(max(domain.lowerBound, black), domain.upperBound - 0.02)
+      return (b, min(domain.upperBound, max(white, b + 2 / 255)))
+    }
+    let q = PrintLevelsInput.quantile
+    switch o.algorithm {
+    case .whitesBlacks:
+      (l.rgb.black, l.rgb.white) = ends(q(h.counts[4], lo), q(h.counts[3], hi))
+    case .monochromatic:
+      let all = h.shown(0)
+      (l.rgb.black, l.rgb.white) = ends(q(all, lo), q(all, hi))
+    case .perChannel:
+      for c in 0..<3 { (l[c + 1].black, l[c + 1].white) = ends(q(h.counts[c], lo), q(h.counts[c], hi)) }
+    case .darkAndLight:
+      let sorted = h.samples.sorted { ToneCurves.brightness($0) < ToneCurves.brightness($1) }
+      guard !sorted.isEmpty else { break }
+      let n = sorted.count, k0 = max(1, Int(Double(n) * max(lo, 0.0005))), k1 = max(1, Int(Double(n) * max(1 - hi, 0.0005)))
+      func mean(_ s: ArraySlice<RGB>) -> RGB { RGB((0..<3).map { c in s.reduce(0) { $0 + $1.values[c] } / Double(s.count) }) }
+      let dark = mean(sorted.prefix(k0)), light = mean(sorted.suffix(k1))
+      for c in 0..<3 { (l[c + 1].black, l[c + 1].white) = ends(dark.values[c], light.values[c]) }
+    case .brightness:
+      var lightness = [Double](repeating: 0, count: PrintLevelsInput.bins)
+      for s in h.samples { lightness[PrintLevelsInput.bin(ToneCurves.brightness(s))] += 1 }
+      (l.rgb.black, l.rgb.white) = ends(q(lightness, lo), q(lightness, hi))
+      let median = q(lightness, 0.5)
+      let t = (median - l.rgb.black) / max(l.rgb.white - l.rgb.black, 1e-6)
+      if t > 0.02, t < 0.98 { l.rgb.gamma = clampGamma(log(t) / log(118.0 / 255)) }
+    }
+    if o.snapNeutralMidtones { l.snapNeutral(h.samples) }
+    return l
   }
 }
 

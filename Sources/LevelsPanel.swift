@@ -2,9 +2,11 @@ import AppKit
 import SwiftUI
 
 /// 色阶 as Photoshop's Levels lays it out: the channel (RGB, 红, 绿, 蓝) and the three eyedroppers
-/// over the histogram of the picture before it; under that the input's black, grey and white
-/// points to drag (⌥ held on black or white shows what they cut) with their figures; the output's
-/// black and white over a gradient with theirs; then 自动, its options and 预览.
+/// over the histogram of the picture as it takes it in; under that the input's black, grey and
+/// white points to drag (⌥ held on black or white shows what comes out pure black or white) with
+/// their figures; the output's black and white over a gradient with theirs; then 自动, its options
+/// and 预览. From 0.24 it is in the conversion (`Adjustments.printLevels`): its histogram runs past
+/// 0 and 255 as far as the frame does, and its points with it.
 struct LevelsPanel: View {
   @ObservedObject var m: AppModel
   @AppStorage("levelsChannel") private var channel = 0
@@ -15,8 +17,13 @@ struct LevelsPanel: View {
     get { (try? JSONDecoder().decode(LevelsAutoOptions.self, from: optionsData)) ?? LevelsAutoOptions() }
   }
   private func setOptions(_ o: LevelsAutoOptions) { optionsData = (try? JSONEncoder().encode(o)) ?? Data() }
-  private var levels: Levels { m.settings.levels ?? Levels() }
+  private var levels: Levels { m.settings.printLevels ?? Levels() }
   private var current: Levels.Channel { levels[channel] }
+  /// The stretch drawn: 0–255 and past it as far as the frame goes, the points always in it.
+  private var domain: ClosedRange<Double> {
+    let d = (m.levelsHistogram ?? .empty).shownDomain
+    return min(d.lowerBound, current.black)...max(d.upperBound, current.white)
+  }
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack(spacing: 4) {
@@ -37,15 +44,15 @@ struct LevelsPanel: View {
           .popover(isPresented: $showsOptions, arrowEdge: .bottom) { optionsForm }
       }
       LevelsHistogramView(counts: (m.levelsHistogram ?? .empty).shown(channel), channel: channel,
-        black: current.black, white: current.white)
-      InputPoints(channel: current) { mark, v, option in
+        black: current.black, white: current.white, domain: domain)
+      InputPoints(channel: current, domain: domain) { mark, v, option in
         switch mark {
         case .black:
           m.levelsClipping = option ? .black(channel) : nil
-          m.changeLevels("色阶输入黑点") { $0[channel].black = min(max(0, v), $0[channel].white - 2 / 255) }
+          m.changeLevels("色阶输入黑点") { $0[channel].black = min(max(Levels.printDomain.lowerBound, v), $0[channel].white - 2 / 255) }
         case .white:
           m.levelsClipping = option ? .white(channel) : nil
-          m.changeLevels("色阶输入白点") { $0[channel].white = max(min(1, v), $0[channel].black + 2 / 255) }
+          m.changeLevels("色阶输入白点") { $0[channel].white = max(min(Levels.printDomain.upperBound, v), $0[channel].black + 2 / 255) }
         case .grey:
           m.changeLevels("色阶中间调") { $0[channel].gamma = $0[channel].gamma(at: v) }
         }
@@ -53,13 +60,13 @@ struct LevelsPanel: View {
       HStack(spacing: 6) {
         Text("输入色阶").font(.system(size: 11)).foregroundStyle(.secondary)
         Spacer()
-        figure("输入黑点", current.black * 255, 0...253, "%.0f") { v in
+        figure("输入黑点", current.black * 255, Levels.printDomain.lowerBound * 255...Levels.printDomain.upperBound * 255 - 2, "%.0f") { v in
           m.changeLevels("色阶输入黑点") { $0[channel].black = min(v / 255, $0[channel].white - 2 / 255) }
         }
         figure("中间调", current.gamma, 0.10...9.99, "%.2f") { v in
           m.changeLevels("色阶中间调") { $0[channel].gamma = Levels.clampGamma(v) }
         }
-        figure("输入白点", current.white * 255, 2...255, "%.0f") { v in
+        figure("输入白点", current.white * 255, Levels.printDomain.lowerBound * 255 + 2...Levels.printDomain.upperBound * 255, "%.0f") { v in
           m.changeLevels("色阶输入白点") { $0[channel].white = max(v / 255, $0[channel].black + 2 / 255) }
         }
       }
@@ -75,9 +82,9 @@ struct LevelsPanel: View {
         figure("输出白点", current.outWhite * 255, 0...255, "%.0f") { v in m.changeLevels("色阶输出白点") { $0[channel].outWhite = v / 255 } }
       }
       HStack(spacing: 3) {
-        eyedropper(.black, "黑场", .black, "在画面上点一处定为黑：这一处的红、绿、蓝各自的输入黑点设到它，像 Photoshop 的「在图像中取样以设置黑场」")
+        eyedropper(.black, "黑场", .black, "在画面上点一处定为黑：这一处的红、绿、蓝各自的输入黑点设到它，像 Photoshop 的「在图像中取样以设置黑场」；读的是转换里色阶之前的值")
         eyedropper(.grey, "灰场", Color(white: 0.5), "在画面上点一处本来是灰的东西：红、绿、蓝各自的中间调调到让它成为中性灰，亮度不变")
-        eyedropper(.white, "白场", .white, "在画面上点一处定为白：这一处的红、绿、蓝各自的输入白点设到它")
+        eyedropper(.white, "白场", .white, "在画面上点一处定为白：这一处的红、绿、蓝各自的输入白点设到它，冲过白的也读得到")
         Spacer(minLength: 4)
         Toggle("预览", isOn: Binding(get: { !m.levelsBypassed }, set: { m.levelsBypassed = !$0 }))
           .toggleStyle(.checkbox).font(.system(size: 11)).fixedSize()
@@ -141,33 +148,45 @@ struct LevelsPanel: View {
   }
 }
 
-/// The picture before 色阶 in 256 steps, as Photoshop's Levels draws it: the composite grey, a channel
-/// in its colour, scaled to its tallest step short of the two ends (a black border or a white sky
-/// would dwarf the rest); what the input points cut to black or white dimmed.
+/// 色阶's input as Photoshop's Levels draws it, over `domain` of the print's scale: the composite
+/// grey, a channel in its colour, scaled to its tallest step short of the two ends; 0–255 on the
+/// panel's own ground, past them on a darker one; what the input points cut dimmed.
 struct LevelsHistogramView: View {
   let counts: [Double]
   let channel: Int
   let black: Double, white: Double
+  var domain: ClosedRange<Double> = 0...1
   var body: some View {
     Canvas { ctx, size in
-      let inner = counts.count > 2 ? Array(counts[1..<(counts.count - 1)]) : counts
+      let lo = domain.lowerBound, span = max(1e-6, domain.upperBound - domain.lowerBound)
+      func x(_ v: Double) -> CGFloat { size.width * CGFloat((v - lo) / span) }
+      // Past black and past white: a darker ground.
+      if lo < 0 { ctx.fill(Path(CGRect(x: 0, y: 0, width: x(0), height: size.height)), with: .color(.black.opacity(0.35))) }
+      if domain.upperBound > 1 { ctx.fill(Path(CGRect(x: x(1), y: 0, width: size.width - x(1), height: size.height)), with: .color(.black.opacity(0.35))) }
+      let first = PrintLevelsInput.bin(lo), last = PrintLevelsInput.bin(domain.upperBound)
+      let shownCounts = first <= last ? Array(counts[first...last]) : []
+      let inner = shownCounts.count > 2 ? Array(shownCounts[1..<(shownCounts.count - 1)]) : shownCounts
       let peak = max(1e-9, inner.max() ?? 1)
       let colour = channel == 0 ? Color.white.opacity(0.75) : HistogramView.colours[channel - 1].opacity(0.85)
-      let w = size.width / CGFloat(max(1, counts.count))
+      let w = max(1, size.width / CGFloat(max(1, shownCounts.count)))
       var p = Path()
-      for (i, v) in counts.enumerated() {
+      for (k, v) in shownCounts.enumerated() where v > 0 {
         let h = size.height * CGFloat(min(1, v / peak))
-        p.addRect(CGRect(x: CGFloat(i) * w, y: size.height - h, width: max(w, 1), height: h))
+        p.addRect(CGRect(x: x(PrintLevelsInput.value(first + k)) - w / 2, y: size.height - h, width: w, height: h))
       }
       ctx.fill(p, with: .color(colour))
-      ctx.fill(Path(CGRect(x: 0, y: 0, width: size.width * CGFloat(black), height: size.height)), with: .color(.black.opacity(0.45)))
-      ctx.fill(Path(CGRect(x: size.width * CGFloat(white), y: 0, width: size.width * CGFloat(1 - white), height: size.height)),
-        with: .color(.black.opacity(0.45)))
+      // 0 and 255.
+      for v in [0.0, 1.0] where v > lo && v < domain.upperBound {
+        ctx.stroke(Path { $0.move(to: CGPoint(x: x(v), y: 0)); $0.addLine(to: CGPoint(x: x(v), y: size.height)) },
+          with: .color(.white.opacity(0.35)), style: StrokeStyle(lineWidth: 0.5, dash: [2, 2]))
+      }
+      ctx.fill(Path(CGRect(x: 0, y: 0, width: max(0, x(black)), height: size.height)), with: .color(.black.opacity(0.45)))
+      ctx.fill(Path(CGRect(x: x(white), y: 0, width: max(0, size.width - x(white)), height: size.height)), with: .color(.black.opacity(0.45)))
     }
     .frame(height: 84)
     .padding(4).background(PlotScreen())
     .accessibilityElement().accessibilityLabel("色阶直方图")
-    .help("色阶之前的这张，横轴 0 到 255；暗下去的两边是输入黑点、白点切成纯黑、纯白的部分")
+    .help("色阶之前的这张，在转换里：虚线之间是 0 到 255，右边底色深的一段是冲过白的部分，左边是低于黑的部分；暗下去的两边是输入黑点、白点切掉的部分")
   }
 }
 
@@ -180,6 +199,8 @@ struct LevelsHistogramView: View {
 struct InputPoints: View {
   enum Mark { case black, grey, white }
   let channel: Levels.Channel
+  /// The stretch of the print's scale the row spans, as the histogram over it does.
+  var domain: ClosedRange<Double> = 0...1
   var set: (Mark, Double, Bool) -> Void
   var ended: () -> Void
   var holding: (Bool) -> Void = { _ in }
@@ -200,17 +221,17 @@ struct InputPoints: View {
       .contentShape(Rectangle())
       .gesture(DragGesture(minimumDistance: 0)
         .onChanged { g in
-          let span = Double(max(1, w))
+          let span = Double(max(1, w)), lo = domain.lowerBound, range = max(1e-6, domain.upperBound - domain.lowerBound)
           if held == nil {
-            let start = Double(g.startLocation.x) / span
+            let start = lo + Double(g.startLocation.x) / span * range
             let marks = [(Mark.black, channel.black), (.grey, channel.midPoint), (.white, channel.white)]
             guard let near = marks.min(by: { abs($0.1 - start) < abs($1.1 - start) }),
-              abs(near.1 - start) * span <= Double(Self.reach) else { return }
+              abs(near.1 - start) / range * span <= Double(Self.reach) else { return }
             held = (near.0, near.1 - start)
             holding(true)
           }
           guard let held else { return }
-          let v = min(1, max(0, Double(g.location.x) / span + held.offset))
+          let v = min(domain.upperBound, max(lo, lo + Double(g.location.x) / span * range + held.offset))
           shown = (held.mark, v)
           holding(true)
           set(held.mark, v, NSEvent.modifierFlags.contains(.option) && held.mark != .grey)
@@ -239,9 +260,10 @@ struct InputPoints: View {
     }
   }
   private func triangle(filled colour: Color, at v: Double, _ w: CGFloat) -> some View {
-    Triangle().fill(colour).overlay(Triangle().stroke(Color.gray, lineWidth: 0.8))
+    let t = (v - domain.lowerBound) / max(1e-6, domain.upperBound - domain.lowerBound)
+    return Triangle().fill(colour).overlay(Triangle().stroke(Color.gray, lineWidth: 0.8))
       .frame(width: 12, height: 11)
-      .offset(x: CGFloat(min(1, max(0, v))) * w - 6, y: 3)
+      .offset(x: CGFloat(min(1, max(0, t))) * w - 6, y: 3)
   }
 }
 

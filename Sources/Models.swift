@@ -673,8 +673,17 @@ struct Adjustments: Codable, Equatable {
   var sharpening: Double? = nil
   /// RGB and per-channel tone curves, applied after conversion; nil leaves tones as they are.
   var curves: ToneCurves? = nil
-  /// 色阶 as Photoshop's Levels, on the picture as shown, before the curves (`Levels`); nil none.
+  /// 色阶 as 0.23.14–0.23.18 had it, on the picture as shown, before the curves (`Levels`); nil
+  /// none. From 0.24 色阶 is in the conversion (`printLevels`): a frame set this way keeps it, as
+  /// it looked, until it is cleared (色阶's 「旧的色阶」 line).
   var levels: Levels? = nil
+  /// 色阶 from 0.24: Photoshop's Levels in the conversion, after the white balance, contrast and
+  /// saturation and before the highlights and shadows, the toe, the shoulder and the clip
+  /// (`Kernels.graded`), on the print's scale as shown, 0 the automatic ends' black and 1 their
+  /// white; past them as far as the negative goes, so a white point over 1 brings back what ran
+  /// past white and what goes past a white point under 1 rolls off through the shoulder. It took in
+  /// 影调's 白色 and 黑色 (`whites`, `blacks`, kept on frames set by them before). Nil none.
+  var printLevels: Levels? = nil
   /// Straightening, in degrees clockwise on screen, before the quarter turns: the frame turned
   /// about its middle and cut to the largest rectangle of its own shape inside. Nil is level.
   var angle: Double? = nil
@@ -749,6 +758,18 @@ struct FilmProfile: Codable, Identifiable, Equatable {
   /// A built-in preset whose slopes were measured off a chart shot on the film, not read off a data
   /// sheet (the sheet prints no curve): said so where the slopes' source is named.
   var chartMeasured: Bool? = nil
+  /// A film's own colour, fitted from a chart shot on it: a 3×3 matrix, row by row (red, green and
+  /// blue out, each from the film's red, green and blue), on each pixel's light once the slopes, the
+  /// base and the white balance have put a neutral at one exposure in the three channels, before
+  /// the print's tones (`Kernels.filmColoured`). Its rows add up to 1, so a grey stays the grey the
+  /// white balance made it and only colours move. Used only where the roll chooses it
+  /// (`DeskProject.chartColour`, `colourInUse`).
+  var colorMatrix: [Double]? = nil
+  /// The roll chose its chart's slopes (`DeskProject.chartSlopes`): they come before the roll's own
+  /// estimate, as a calibration's do. Set on the profile a roll converts with, never saved in a preset.
+  var chartFirst: Bool? = nil
+  /// The roll chose its chart's colour (`DeskProject.chartColour`): the matrix a conversion uses.
+  var colourInUse: [Double]? = nil
   /// Where the slopes of a preset that is not calibrated here come from, in a word.
   var slopesSource: String { chartMeasured == true ? "色卡实测" : "数据表" }
   /// The preset without what calibrated it for colour film (its neutral, its toes), as a black and
@@ -815,9 +836,13 @@ struct FilmProfile: Codable, Identifiable, Equatable {
     FilmProfile(
       id: "phoenix2-200", name: "Harman Phoenix II 200", aliases: ["phoenix2-200", "harman phoenix ii 200", "phoenix ii"], iso: 200,
       process: "C-41 · 日光", sourceURL: "https://www.harmanphoto.co.uk/amfile/file/download/file/1968/product/2208/",
-      publication: "IT8.7/2 色卡灰阶实测 · 2026-11-14 · 翻拍（RGB 灯，去串色）", slopes: RGB(r: 0.55, g: 0.365, b: 0.59),
+      publication: "IT8.7/2 色卡灰阶实测 · 2026-11-14 · 翻拍（RGB 灯，去串色）", slopes: RGB(r: 0.60, g: 0.40, b: 0.59),
       notes: "数据表没有特性曲线：斜率是在这种胶片上拍的 IT8.7/2 色卡（MONR2022.05.03），翻拍后按灰阶 GS01–GS13 的已知反射率量出的每个通道的密度斜率。绿层比红、蓝平得多（0.365，通用的是 0.55）。没有橙色色罩，黄色、橙色转出来偏绿，饱和度偏低，按需要在调色里补。",
-      chartMeasured: true),
+      chartMeasured: true,
+      // Fitted 2026-11-16 on the chart's 187 colour patches over L* 24, straight on their ΔE76, with
+      // the slopes above and the grey scale balanced: mean ΔE 20.5 without, 16.6 with (the first
+      // matrix, fitted on the older slopes, 17.3; it turned the Golden Gate pink). Chosen per roll.
+      colorMatrix: [0.8224, 0.2910, -0.1133, -0.2461, 1.2104, 0.0357, 0.0529, -0.1515, 1.0985]),
     FilmProfile(
       id: "generic", name: "通用彩色负片", aliases: ["generic", "通用"], iso: 0, process: "彩色负片",
       sourceURL: "", publication: "通用起点 · 未匹配文档", slopes: RGB(r: 0.55, g: 0.55, b: 0.55),
@@ -933,7 +958,7 @@ extension Adjustments {
     autoLevels = o.autoLevels
     (saturation, colourNoise, softEnds) = (o.saturation, o.colourNoise, o.softEnds)
     (curves, sharpening, levels) = (o.curves, o.sharpening, o.levels)
-    ends = o.ends
+    (ends, printLevels) = (o.ends, o.printLevels)
   }
   /// `other`'s ② 去色罩 settings in place of these, ③ 调色's kept.
   mutating func takeDemasking(from o: Adjustments) {
@@ -1022,7 +1047,7 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
     case .contrast: a.contrast = o.contrast
     case .highlightsShadows: (a.highlights, a.shadows) = (o.highlights, o.shadows)
     case .whitesBlacks: (a.whites, a.blacks, a.pressHighlights) = (o.whites, o.blacks, o.pressHighlights)
-    case .levels: (a.autoLevels, a.levels, a.ends) = (o.autoLevels, o.levels, o.ends)
+    case .levels: (a.autoLevels, a.levels, a.ends, a.printLevels) = (o.autoLevels, o.levels, o.ends, o.printLevels)
     case .saturation: a.saturation = o.saturation
     case .softEnds: a.softEnds = o.softEnds
     case .colourNoise: a.colourNoise = o.colourNoise
@@ -1049,7 +1074,10 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
   /// as the frame keeps them, are none.
   func isSet(in a: Adjustments, plain: Adjustments = Adjustments()) -> Bool {
     if self == .curves { return a.curves?.normalized != plain.curves?.normalized }
-    if self == .levels { return a.autoLevels != plain.autoLevels || a.levels?.normalized != plain.levels?.normalized }
+    if self == .levels {
+      return a.autoLevels != plain.autoLevels || a.levels?.normalized != plain.levels?.normalized
+        || a.printLevels?.normalized != plain.printLevels?.normalized
+    }
     var b = plain
     take(&b, from: a)
     return b != plain
@@ -1076,7 +1104,8 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
     case .levels:
       // A negative's automatic ends, which way they are found (`Adjustments.ends`).
       let ends = a.autoLevels && a.inputIsNegative ? "（" + (a.endsByLight ? Adjustments.endsNames.new : Adjustments.endsNames.old) + "）" : ""
-      return (a.autoLevels ? "自动" : "不自动") + ends + (a.levels?.isIdentity == false ? "，色阶调过" : "")
+      return (a.autoLevels ? "自动" : "不自动") + ends + (a.printLevels?.isIdentity == false ? "，色阶调过" : "")
+        + (a.levels?.isIdentity == false ? "，旧的色阶" : "")
     case .saturation: return String(format: "%.2f", a.saturation)
     case .softEnds: return a.softEndsOn ? "开" : "关"
     case .colourNoise: return String(format: "%.2f", a.colourNoiseAmount)
@@ -1126,6 +1155,11 @@ struct DeskProject: Codable {
   var poolPictures: Bool? = nil
   /// False: its calibrated preset converts as the film it was calibrated from; nil, with it.
   var useCalibration: Bool? = nil
+  /// The film's slopes measured off a chart shot on it (`FilmProfile.chartMeasured`) before the
+  /// roll's estimate, as chosen in 色卡; nil, the estimate first.
+  var chartSlopes: Bool? = nil
+  /// The film's colour matrix fitted from that chart (`FilmProfile.colorMatrix`), as chosen in 色卡; nil, none.
+  var chartColour: Bool? = nil
   /// The flat fields its frames are divided by (`FilmFrame.flatID`), and those made on it.
   var flats: [FlatProfile]? = nil
   /// The roll's film format as chosen (`FilmFormat`'s raw value); nil, 自动.

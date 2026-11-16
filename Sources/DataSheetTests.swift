@@ -37,9 +37,9 @@ enum DataSheetTests {
     let phoenix2 = builtins.first { $0.id == "phoenix2-200" }
     try check(FilmCatalog.stock(named: "Harman Phoenix II 200")?.preset == "phoenix2-200" && phoenix2?.chartMeasured == true
       && phoenix2?.slopesSource == "色卡实测" && FilmCatalog.stock(named: "Harman Phoenix 200")?.preset == "phoenix200"
-      && phoenix2.map { $0.slopes.g < 0.4 && $0.slopes.r > 0.5 && $0.slopes.b > 0.5 && $0.setsChannelContrast && $0.offsets == nil } == true
+      && phoenix2.map { $0.slopes.g < 0.45 && $0.slopes.r > 0.5 && $0.slopes.b > 0.5 && $0.setsChannelContrast && $0.offsets == nil } == true
       && builtins.first { $0.id == "portra160" }?.slopesSource == "数据表",
-      "Phoenix II converts with its chart-measured slopes (green 0.365 against red 0.55 and blue 0.59), named as measured, not as a data sheet")
+      "Phoenix II converts with its chart-measured slopes (green 0.40 against red 0.60 and blue 0.59), named as measured, not as a data sheet")
     let p800 = builtins.first { $0.id == "portra800" }!, p400 = builtins.first { $0.id == "portra400" }!
     try check(p800.slopes.g > p400.slopes.g && p800.slopes.b > p800.slopes.g && p800.slopes.g > p800.slopes.r && p800.setsChannelContrast,
       "Portra 800's sheet is steeper than Portra 400's, blue over green over red as on every Status M sheet, and sets each channel's contrast")
