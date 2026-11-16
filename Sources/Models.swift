@@ -443,6 +443,8 @@ struct Adjustments: Codable, Equatable {
   /// those set by hand, so they keep how they look (`AppModel.endsForSaved`).
   var ends: Int? = nil
   var endsByLight: Bool { ends == 2 }
+  /// The two ways as 色阶's 两端定法 and 选择性粘贴 name them.
+  static let endsNames = (new: "白点按亮度、黑点按片基", old: "旧：按最亮、最暗通道")
   /// A new frame's settings: the automatic ends as they are now found.
   static var newFrame: Adjustments { var a = Adjustments(); a.ends = 2; return a }
   var exposure = 0.0
@@ -1071,7 +1073,10 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
     case .whitesBlacks:
       return joined([a.whites.map { "白色 " + signed($0) }, a.blacks.map { "黑色 " + signed($0) },
         a.pressHighlights.map { "压高光 " + String(format: "%.2f", $0) }], or: "0")
-    case .levels: return (a.autoLevels ? "自动" : "不自动") + (a.levels?.isIdentity == false ? "，色阶调过" : "")
+    case .levels:
+      // A negative's automatic ends, which way they are found (`Adjustments.ends`).
+      let ends = a.autoLevels && a.inputIsNegative ? "（" + (a.endsByLight ? Adjustments.endsNames.new : Adjustments.endsNames.old) + "）" : ""
+      return (a.autoLevels ? "自动" : "不自动") + ends + (a.levels?.isIdentity == false ? "，色阶调过" : "")
     case .saturation: return String(format: "%.2f", a.saturation)
     case .softEnds: return a.softEndsOn ? "开" : "关"
     case .colourNoise: return String(format: "%.2f", a.colourNoiseAmount)

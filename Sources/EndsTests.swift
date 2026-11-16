@@ -37,6 +37,14 @@ enum EndsTests {
     var pasted = Adjustments()
     SettingsGroup.levels.take(&pasted, from: Adjustments.newFrame)
     try check(decoded.ends == nil && pasted.ends == 2, "a frame from before reads with no way of its own (made one as it opens); 色阶 pasted carries the way")
+    var kept = Adjustments.newFrame
+    kept.ends = 1
+    var slide = Adjustments.newFrame
+    slide.setReversal(true)
+    let named = [Adjustments.newFrame, kept, manual, slide].map { SettingsGroup.levels.summary(of: $0) }
+    try check(named[0].contains(Adjustments.endsNames.new) && named[1].contains(Adjustments.endsNames.old)
+      && !named[2].contains("（") && !named[3].contains("（"),
+      "选择性粘贴 names which way a negative's automatic ends are found (\(named[0]) · \(named[1])), not where they are off or on a slide")
 
     // A negative on Portra 160: a grey ramp across, from 0.3 log exposure (the darkest took light,
     // a stop over the base) to 1.3; along the bottom a band of deep blue sky, its blue 1.8, red and

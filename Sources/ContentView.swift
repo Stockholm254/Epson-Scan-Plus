@@ -1526,10 +1526,26 @@ struct ContentView: View {
   }
   /// The ends: automatic, the roll as one, or set by hand.
   var levelsSection: some View {
-    PanelSection("色阶", key: "levels", info: "下面的色阶和 Photoshop 的「色阶」一样，作用在屏幕上显示的这张上、在曲线之前：直方图是色阶之前的这张，0 到 255；输入色阶的黑、灰、白三角是输入黑点、中间调（1.00 不变，大于 1 变亮）和输入白点，拖黑或白时按住 ⌥，画面上显示切成纯黑或纯白的地方；输出色阶是最暗、最亮印成多暗、多亮。RGB 是三个通道一起，也可以只调红、绿、蓝里的一个；各通道自己的色阶先起作用，再走 RGB 的。三个吸管在画面上点一处定为黑、灰、白。「自动」按它旁边的选项（滑杆图标）里的算法（增强单色对比度、增强每通道的对比度、查找深色与浅色、增强亮度和对比度）和剪切比例自动设定。「预览」关掉时画面暂时不带色阶。\n\n「自动两端」：转换时设定黑白两端，在上面这些之前。白点按画面最亮处的亮度：饱和的蓝天、暖光在某个通道里冲过白，交给柔和的肩部收，不再把整张压暗；黑点放在片基上：没曝光的片基印成最黑，暗部按它比片基多出的密度落在灰阶上，像暗房里「最短时间达到最大黑」那样印。0.23.14 以前在影调上动过手的照片（曝光、高光、阴影、白色、黑色、色阶、曲线，或关过自动）保持原来的定法（白点按最亮的通道、黑点按最暗的通道），样子不变；把「色阶」复位就改用新的。范围不到 4 档的画面（雾、霾、很平的光）：新的定法黑点仍在片基、白点就是它最亮的地方（几乎空白的画面不拉到白），旧的以中间为准撑开到 4 档，保留它本来的灰和柔；要更硬，调「对比度」或关掉自动。两端之后再用「影调」里的白色、黑色（或「自动白色、黑色」）微调，中间调用曲线。\n\n「整卷同一色阶」：整卷用同一组黑白两端，按整卷所有画面一起统计，像冲印店一卷用一个印放曝光：暗的场景就是暗的，亮的就是亮的。每张仍可以用「曝光」微调。关了自动色阶的那一张按你的来。\n\n反转片：自动把最暗的 0.5% 定为黑、最亮的 0.5% 定为白，三个通道用同一对两端，颜色不变；关掉时扫描仪的裸光是白，片子显示得和看片台上一样暗。", reset: resetKey(.levels)) {
+    PanelSection("色阶", key: "levels", info: "下面的色阶和 Photoshop 的「色阶」一样，作用在屏幕上显示的这张上、在曲线之前：直方图是色阶之前的这张，0 到 255；输入色阶的黑、灰、白三角是输入黑点、中间调（1.00 不变，大于 1 变亮）和输入白点，拖黑或白时按住 ⌥，画面上显示切成纯黑或纯白的地方；输出色阶是最暗、最亮印成多暗、多亮。RGB 是三个通道一起，也可以只调红、绿、蓝里的一个；各通道自己的色阶先起作用，再走 RGB 的。三个吸管在画面上点一处定为黑、灰、白。「自动」按它旁边的选项（滑杆图标）里的算法（增强单色对比度、增强每通道的对比度、查找深色与浅色、增强亮度和对比度）和剪切比例自动设定。「预览」关掉时画面暂时不带色阶。\n\n「自动两端」：转换时设定黑白两端，在上面这些之前。白点按画面最亮处的亮度：饱和的蓝天、暖光在某个通道里冲过白，交给柔和的肩部收，不再把整张压暗；黑点放在片基上：没曝光的片基印成最黑，暗部按它比片基多出的密度落在灰阶上，像暗房里「最短时间达到最大黑」那样印。0.23.15 以前在影调上动过手的照片（曝光、高光、阴影、白色、黑色、色阶、曲线，或关过自动）保持原来的定法（白点按最亮的通道、黑点按最暗的通道），样子不变。这张用的是哪一种，看下面的「两端定法」，也可以在那里换（只换两端，这张的色阶、曝光和曲线不动）；把「色阶」复位也改用新的，同时清掉这张的色阶。范围不到 4 档的画面（雾、霾、很平的光）：新的定法黑点仍在片基、白点就是它最亮的地方（几乎空白的画面不拉到白），旧的以中间为准撑开到 4 档，保留它本来的灰和柔；要更硬，调「对比度」或关掉自动。两端之后再用「影调」里的白色、黑色（或「自动白色、黑色」）微调，中间调用曲线。\n\n「整卷同一色阶」：整卷用同一组黑白两端，按整卷所有画面一起统计，像冲印店一卷用一个印放曝光：暗的场景就是暗的，亮的就是亮的。每张仍可以用「曝光」微调。关了自动色阶的那一张按你的来。\n\n反转片：自动把最暗的 0.5% 定为黑、最亮的 0.5% 定为白，三个通道用同一对两端，颜色不变；关掉时扫描仪的裸光是白，片子显示得和看片台上一样暗。", reset: resetKey(.levels)) {
       Toggle("自动两端", isOn: bool(\.autoLevels)).toggleStyle(.switch).tint(Hardware.accent).font(.system(size: 11))
     } content: {
       VStack(alignment: .leading, spacing: 10) {
+        // Which way this frame's automatic ends are found (`Adjustments.ends`): a frame from before
+        // 0.23.15 set by hand keeps the old way; chosen here, the frame's own levels stay, ⌘Z
+        // brings the other way back. A slide or a positive file finds its ends its own way.
+        if m.settings.inputIsNegative, m.settings.autoLevels {
+          HStack(spacing: 6) {
+            Text("两端定法").font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+            Spacer(minLength: 4)
+            Picker("两端定法", selection: Binding(get: { m.settings.endsByLight }, set: { v in m.change("两端定法") { $0.ends = v ? 2 : 1 } })) {
+              Text(Adjustments.endsNames.new).tag(true)
+              Text(Adjustments.endsNames.old).tag(false)
+            }
+            .pickerStyle(.menu).labelsHidden().controlSize(.small).fixedSize()
+            .disabled(m.selected == nil || m.isWorking)
+            .help("这张的自动两端怎么定。白点按亮度、黑点按片基：新照片和 0.23.15 以前没在影调上动过手的照片用它；旧的：白点按最亮的通道、黑点按最暗的通道，以前调过影调的照片保持它，样子不变。在这里换只换两端，这张的色阶、曝光和曲线不动，可以 ⌘Z 撤销")
+          }
+        }
         if !m.settings.isSlide && (m.selectedSharesRoll || m.settings.sharedLevels == true) {
           SwitchRow("整卷同一色阶", isOn: Binding(get: { m.settings.sharedLevels == true }, set: { m.setSharedLevels($0) }),
             off: m.selected == nil || m.isWorking)
