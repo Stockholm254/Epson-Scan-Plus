@@ -718,7 +718,7 @@ final class LeakLab: ObservableObject {
     p.sceneInfo = nil
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-    try encoder.encode(Preset(name: "Epson Scan plus 去漏光预设", params: p, pairs: job?.pairs)).write(to: url, options: .atomic)
+    try encoder.encode(Preset(name: "Light Through 去漏光预设", params: p, pairs: job?.pairs)).write(to: url, options: .atomic)
     notice = "预设已保存到 \(url.lastPathComponent)。"
   }
   func loadPreset(from url: URL) {
@@ -727,7 +727,7 @@ final class LeakLab: ObservableObject {
     do {
       preset = try JSONDecoder().decode(Preset.self, from: Data(contentsOf: url))
     } catch {
-      errorText = "不是有效的去漏光预设（Epson Scan plus 或 FilmLightLab）：\(error.localizedDescription)"
+      errorText = "不是有效的去漏光预设（Light Through 或 FilmLightLab）：\(error.localizedDescription)"
       return
     }
     var next = preset.params
@@ -758,7 +758,7 @@ final class LeakLab: ObservableObject {
   func chooseLoadPreset() {
     let panel = NSOpenPanel()
     panel.allowedContentTypes = [.json]
-    panel.message = "选择去漏光预设（Epson Scan plus 或 FilmLightLab 导出的 JSON）。"
+    panel.message = "选择去漏光预设（Light Through 或 FilmLightLab 导出的 JSON）。"
     guard panel.runModal() == .OK, let url = panel.url else { return }
     loadPreset(from: url)
   }

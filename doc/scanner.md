@@ -1,6 +1,6 @@
 # 扫描仪接口
 
-Epson Scan plus 默认通过内置的独立采集进程驱动扫描仪：用 SANE 的 epson2 后端和 libusb 以 48-bit RGB 采集透射负片，绕过 Epson ICA 驱动只开放 24-bit 的限制。不安装或替换系统驱动，也不带 SANE 网络服务。
+Light Through 默认通过内置的独立采集进程驱动扫描仪：用 SANE 的 epson2 后端和 libusb 以 48-bit RGB 采集透射负片，绕过 Epson ICA 驱动只开放 24-bit 的限制。不安装或替换系统驱动，也不带 SANE 网络服务。
 
 ## 48-bit 接口
 

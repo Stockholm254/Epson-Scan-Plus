@@ -72,7 +72,7 @@ struct ContentView: View {
   }
   /// The roll open, as the library names it, else the app's name.
   var windowTitle: String {
-    guard let url = m.sessionURL else { return "Epson Scan plus" }
+    guard let url = m.sessionURL else { return "Light Through" }
     if !m.rollName.isEmpty { return Self.shortTitle(m.rollName) }
     return Self.shortTitle(RollLibrary.started(url.lastPathComponent).map(RollLibrary.title) ?? url.lastPathComponent)
   }

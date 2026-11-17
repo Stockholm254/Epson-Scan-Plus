@@ -126,7 +126,7 @@ struct ShotFailure: Error { let message: String }
     host.sceneBridgingOptions = [.toolbars, .title]
     let window = ShotWindow(contentViewController: host)
     window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
-    window.title = "Epson Scan plus"
+    window.title = "Light Through"
     window.appearance = NSAppearance(named: .darkAqua)
     window.setContentSize(size)
     let screen = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 2560, height: 1440)

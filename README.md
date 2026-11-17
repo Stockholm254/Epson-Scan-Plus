@@ -1,8 +1,10 @@
 <p align="center">
-  <img src="doc/images/icon.png" width="128" height="128" alt="Epson Scan plus 的图标：看片灯上一卷 135 胶卷，片头拉出来一段">
+  <img src="doc/images/icon.png" width="128" height="128" alt="Light Through 的图标：看片灯上一卷 135 胶卷，片头拉出来一段">
 </p>
 
-<h1 align="center">Epson Scan plus</h1>
+<h1 align="center">Light Through</h1>
+
+<p align="center"><sub>以前叫 Epson Scan plus</sub></p>
 
 <p align="center">
   在 macOS 上扫描、翻拍和转换彩色负片与反转片<br>
@@ -260,7 +262,7 @@ k = ln(绿亮 ÷ 绿暗) ÷ ln(这个通道亮 ÷ 这个通道暗)
 ## 安装
 
 - **要求**：Apple 芯片的 Mac，macOS 26 或更新；扫描用 Epson Perfection V800 / V850，翻拍用 Sony A7R IV（可选）。
-- **安装**：打开 `Epson-Scan-plus-<版本>.dmg`，把 App 拖进「应用程序」。
+- **安装**：打开 `Light-Through-<版本>.dmg`，把 App 拖进「应用程序」。
 - **更新**：App 自己检查更新，下载并核对签名，退出时换上；旧版本留在 `~/Library/Application Support/epscan/旧版/`。
 
 ## 快速开始
@@ -277,7 +279,7 @@ k = ln(绿亮 ÷ 绿暗) ÷ ln(这个通道亮 ÷ 这个通道暗)
 
 ```sh
 bash build.sh
-"../Epson Scan plus.app/Contents/MacOS/EpsonScanPlus" --self-test --test-output /tmp/EpsonScanPlus-tests
+"../Light Through.app/Contents/MacOS/EpsonScanPlus" --self-test --test-output /tmp/EpsonScanPlus-tests
 ```
 
 只需要 Xcode Command Line Tools，不用第三方 Swift 包。Sony 的 SDK 是可选的，不在这个仓库里。自检、发布、图标和 SDK 的放法见[构建与测试](doc/building-and-testing.md)。

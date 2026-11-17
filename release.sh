@@ -22,8 +22,8 @@ if [ -n "$(git -C "$project_dir" status --porcelain)" ]; then
   exit 1
 fi
 commit=$(git -C "$project_dir" rev-parse --short HEAD)
-archive="$feed_dir/Epson-Scan-plus-$version-$build.zip"
-image="$image_dir/Epson-Scan-plus-$version.dmg"
+archive="$feed_dir/Light-Through-$version-$build.zip"
+image="$image_dir/Light-Through-$version.dmg"
 for out in "$archive" "$image"; do
   if [ -e "$out" ]; then echo "$out exists: a published version is never replaced; raise the version in Info.plist" >&2; exit 1; fi
 done
@@ -51,7 +51,7 @@ finish() {
   rm -rf "$stage"
 }
 trap finish EXIT
-app="$stage/Epson Scan plus.app"
+app="$stage/Light Through.app"
 EPSON_SCAN_PLUS_BUILD_DIR="$build_dir" EPSON_SCAN_PLUS_APP_DIR="$app" bash "$project_dir/build.sh" >/dev/null
 codesign --verify --deep --strict "$app"
 if [ "${EPSCAN_RELEASE_SKIP_TESTS:-0}" != 1 ]; then
@@ -64,9 +64,9 @@ fi
 
 # The disk image: the app and a link to Applications to drag it onto.
 mkdir "$stage/image"
-ditto "$app" "$stage/image/Epson Scan plus.app"
+ditto "$app" "$stage/image/Light Through.app"
 ln -s /Applications "$stage/image/Applications"
-hdiutil create -quiet -volname "Epson Scan plus $version" -srcfolder "$stage/image" -fs APFS -format UDZO "$stage/image.dmg"
+hdiutil create -quiet -volname "Light Through $version" -srcfolder "$stage/image" -fs APFS -format UDZO "$stage/image.dmg"
 mkdir -p "$image_dir" "$feed_dir"
 # The update: the app zipped without extended attributes, so its signature checks strictly.
 ditto -c -k --norsrc --keepParent "$app" "$stage/update.zip"

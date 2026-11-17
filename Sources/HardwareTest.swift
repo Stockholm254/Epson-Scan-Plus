@@ -133,7 +133,7 @@ enum HardwareTest {
           }
           precision += String(format: "Aligned to preview: fit %.4f · gain R %.4f G %.4f B %.4f\n", levels.fit, levels.gain.r, levels.gain.g, levels.gain.b)
           let report =
-            "Epson Scan plus hardware integration test\nDate: \(Date())\nScanner: \(model.scanner.name)\nBackend: \(model.scanner.backendID)\nAcquisition: \(raw.bits*3)-bit RGB\n\(precision)Frames detected: \(model.frames.count)\nScan: frame \(frame.name), 2400 dpi, \(raw.width) × \(raw.height)\nTIFF: \(ti.width) × \(ti.height), \(ti.bits)-bit/channel\nJPEG: \(ji.width) × \(ji.height), \(ji.bits)-bit/channel\nDust removal: disabled\nRaw: \(path)\nTIFF: \(tif.path)\nJPEG: \(jpg.path)\nRESULT: PASS\n"
+            "Light Through hardware integration test\nDate: \(Date())\nScanner: \(model.scanner.name)\nBackend: \(model.scanner.backendID)\nAcquisition: \(raw.bits*3)-bit RGB\n\(precision)Frames detected: \(model.frames.count)\nScan: frame \(frame.name), 2400 dpi, \(raw.width) × \(raw.height)\nTIFF: \(ti.width) × \(ti.height), \(ti.bits)-bit/channel\nJPEG: \(ji.width) × \(ji.height), \(ji.bits)-bit/channel\nDust removal: disabled\nRaw: \(path)\nTIFF: \(tif.path)\nJPEG: \(jpg.path)\nRESULT: PASS\n"
           try report.write(
             to: session.appendingPathComponent("Hardware-test.txt"), atomically: true,
             encoding: .utf8)

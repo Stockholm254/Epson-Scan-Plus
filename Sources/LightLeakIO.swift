@@ -483,12 +483,12 @@ final class LeakKeychain {
     return data
   }
   func save(_ data: Data) throws {
-    if let answer = helper(["save", service, account, "Epson Scan plus · OpenAI API"], input: data) {
+    if let answer = helper(["save", service, account, "Light Through · OpenAI API"], input: data) {
       guard answer.status == 0 else { throw failure(answer) }
       return
     }
     Self.lastWay = "here"
-    let attributes: [String: Any] = [kSecValueData as String: data, kSecAttrLabel as String: "Epson Scan plus · OpenAI API"]
+    let attributes: [String: Any] = [kSecValueData as String: data, kSecAttrLabel as String: "Light Through · OpenAI API"]
     var status = SecItemUpdate(query() as CFDictionary, attributes as CFDictionary)
     if status == errSecItemNotFound {
       var q = query()

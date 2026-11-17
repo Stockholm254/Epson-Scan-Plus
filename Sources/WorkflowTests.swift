@@ -219,10 +219,10 @@ enum WorkflowTests {
       try? FileManager.default.removeItem(at: url)
       try pipe.export(
         plain, settings: straight, profile: FilmProfile.builtins[0], url: url, format: format, dpi: 2400,
-        metadata: ExportMetadata(title: "t", description: "d", keywords: [], scanner: nil, scanned: nil, software: "Epson Scan plus"))
+        metadata: ExportMetadata(title: "t", description: "d", keywords: [], scanner: nil, scanned: nil, software: "Light Through"))
       let props = CGImageSourceCopyPropertiesAtIndex(CGImageSourceCreateWithURL(url as CFURL, nil)!, 0, nil) as? [CFString: Any] ?? [:]
       let tiff = props[kCGImagePropertyTIFFDictionary] as? [CFString: Any] ?? [:]
-      if tiff[kCGImagePropertyTIFFSoftware] as? String == "Epson Scan plus" { compression[format] = tiff[kCGImagePropertyTIFFCompression] as? Int }
+      if tiff[kCGImagePropertyTIFFSoftware] as? String == "Light Through" { compression[format] = tiff[kCGImagePropertyTIFFCompression] as? Int }
     }
     try check(compression == [.tiff: 1, .tiff8: 5],
       "16-bit TIFF is written uncompressed (LZW only makes scans bigger), 8-bit with LZW, with the metadata either way: \(compression)")
@@ -233,14 +233,14 @@ enum WorkflowTests {
       plain, settings: straight, profile: FilmProfile.builtins[0], url: tagged, format: .jpeg, dpi: 2400,
       metadata: ExportMetadata(
         title: "Kodak Portra 160 · 09", description: "Kodak Portra 160 · 第 09 张 · 2400 dpi", keywords: ["Kodak Portra 160", "135"],
-        scanner: ("EPSON", "Perfection V800/V850"), scanned: Date(timeIntervalSince1970: 1_793_000_000), software: "Epson Scan plus 0.4.8",
+        scanner: ("EPSON", "Perfection V800/V850"), scanned: Date(timeIntervalSince1970: 1_793_000_000), software: "Light Through 0.4.8",
         artist: " 摄影者 ", copyright: "© 2026 摄影者"))
     let props = CGImageSourceCopyPropertiesAtIndex(CGImageSourceCreateWithURL(tagged as CFURL, nil)!, 0, nil) as? [CFString: Any] ?? [:]
     let tiff = props[kCGImagePropertyTIFFDictionary] as? [CFString: Any] ?? [:]
     let exif = props[kCGImagePropertyExifDictionary] as? [CFString: Any] ?? [:]
     let iptc = props[kCGImagePropertyIPTCDictionary] as? [CFString: Any] ?? [:]
     try check(tiff[kCGImagePropertyTIFFMake] as? String == "EPSON" && (tiff[kCGImagePropertyTIFFModel] as? String)?.contains("V850") == true
-      && (tiff[kCGImagePropertyTIFFSoftware] as? String)?.hasPrefix("Epson Scan plus") == true, "exports name the scanner and the app")
+      && (tiff[kCGImagePropertyTIFFSoftware] as? String)?.hasPrefix("Light Through") == true, "exports name the scanner and the app")
     try check((exif[kCGImagePropertyExifDateTimeDigitized] as? String)?.hasPrefix("2026:") == true && exif[kCGImagePropertyExifDateTimeOriginal] == nil,
       "and the scan date, but not a capture date they cannot know")
     try check(tiff[kCGImagePropertyTIFFArtist] as? String == "摄影者" && tiff[kCGImagePropertyTIFFCopyright] as? String == "© 2026 摄影者"

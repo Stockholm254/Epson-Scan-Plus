@@ -69,6 +69,31 @@ final class Updater: ObservableObject {
     return applications.contains(parent) && FileManager.default.isWritableFile(atPath: parent)
   }
   static func onDiskImage(_ bundle: URL) -> Bool { bundle.standardizedFileURL.path.hasPrefix("/Volumes/") }
+  /// The app's file under its name until 0.25, and now. An update is put where the copy it
+  /// replaces was, under that copy's name, so an old copy updated is still called the old way.
+  static let oldBundleName = "Epson Scan plus.app", bundleName = "Light Through.app"
+  /// Where `bundle` goes under the new name: a copy in Applications this app may change, still
+  /// called by the old name, with no Light Through beside it; else nil.
+  static func renamed(_ bundle: URL) -> URL? {
+    let b = bundle.standardizedFileURL
+    guard b.lastPathComponent == oldBundleName, updatesItself(b) else { return nil }
+    let target = b.deletingLastPathComponent().appendingPathComponent(bundleName)
+    return FileManager.default.fileExists(atPath: target.path) ? nil : target
+  }
+  /// At launch: an old-named copy renamed (`renamed`), and opened again from its new place once
+  /// this process has ended, a few tries as the installer does (Launch Services can still count
+  /// the old one as running). True when it was: the caller then ends, before any window.
+  static func takeNewName(_ bundle: URL = Bundle.main.bundleURL) -> Bool {
+    guard let target = renamed(bundle) else { return false }
+    do { try FileManager.default.moveItem(at: bundle, to: target) } catch { return false }
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/bin/bash")
+    p.arguments = ["-c", "nohup /bin/bash -c 'while kill -0 \"$0\" 2>/dev/null; do sleep 0.2; done; for i in 1 2 3 4 5 6 7 8 9 10; do /usr/bin/open \"$1\" && exit 0; sleep 1; done' \"$0\" \"$1\" >/dev/null 2>&1 &",
+      String(getpid()), target.path]
+    try? p.run()
+    p.waitUntilExit()
+    return true
+  }
   var updatesItself: Bool { Self.updatesItself(bundleURL) }
   var automatic: Bool {
     get { preferences?.autoUpdate ?? false }
@@ -202,7 +227,7 @@ final class Updater: ObservableObject {
   static func check(_ app: URL, as release: UpdateRelease) throws {
     let info = NSDictionary(contentsOf: app.appendingPathComponent("Contents/Info.plist")) as? [String: Any] ?? [:]
     guard info["CFBundleIdentifier"] as? String == UpdateFeed.bundleID else {
-      throw DeskError.message("更新包里的不是 Epson Scan plus（\(info["CFBundleIdentifier"] as? String ?? "没有标识")）")
+      throw DeskError.message("更新包里的不是 Light Through（\(info["CFBundleIdentifier"] as? String ?? "没有标识")）")
     }
     guard info["CFBundleShortVersionString"] as? String == release.version,
       (info["CFBundleVersion"] as? String).flatMap(Int.init) == release.build
@@ -238,7 +263,7 @@ final class Updater: ObservableObject {
   }
   /// Where the copy replaced goes: named by its version, never over one kept before.
   func parkedURL(version: String, build: Int) -> URL {
-    let name = "Epson Scan plus \(version) (\(build))"
+    let name = "Light Through \(version) (\(build))"
     let plain = parkRoot.appendingPathComponent(name + ".app")
     guard FileManager.default.fileExists(atPath: plain.path) else { return plain }
     let stamp = DateFormatter()
@@ -299,7 +324,7 @@ final class Updater: ObservableObject {
     let target = URL(fileURLWithPath: "/Applications").appendingPathComponent(bundleURL.lastPathComponent)
     let old = NSDictionary(contentsOf: target.appendingPathComponent("Contents/Info.plist")) as? [String: Any]
     let alert = NSAlert()
-    alert.messageText = "把 Epson Scan plus 拷到「应用程序」文件夹？"
+    alert.messageText = "把 Light Through 拷到「应用程序」文件夹？"
     alert.informativeText = "它现在是从磁盘映像打开的。拷到「应用程序」里以后从那里打开，以后会自动更新。"
       + (old.map { "「应用程序」里已有的 \($0["CFBundleShortVersionString"] as? String ?? "") 会移到 \(parkRoot.path)。" } ?? "")
     alert.addButton(withTitle: "拷过去并打开")
@@ -335,7 +360,7 @@ final class Updater: ObservableObject {
     var result: Result<Data, Error> = .failure(DeskError.message("没有回应"))
     let done = DispatchSemaphore(value: 0)
     var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 60)
-    request.setValue("Epson Scan plus", forHTTPHeaderField: "User-Agent")
+    request.setValue("Light Through", forHTTPHeaderField: "User-Agent")
     URLSession.shared.dataTask(with: request) { data, response, error in
       if let error {
         result = .failure(error)

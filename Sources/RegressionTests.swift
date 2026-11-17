@@ -81,9 +81,9 @@ enum RegressionTests {
       print("PASS: " + label)
     }
     try check(
-      Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String == "Epson Scan plus"
+      Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String == "Light Through"
         && Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
-          == "Epson Scan plus"
+          == "Light Through"
         && Bundle.main.executableURL?.lastPathComponent == "EpsonScanPlus",
       "renamed application has matching display name and executable")
     func makeImage(_ width: Int, _ height: Int, _ sample: (Int, Int) -> RGB) -> CGImage {

@@ -1,4 +1,4 @@
-// Epson Scan plus's camera process: drives a Sony camera (the A7R IV on the copy stand) over
+// Light Through's camera process: drives a Sony camera (the A7R IV on the copy stand) over
 // Sony's Camera Remote SDK, and talks to the app in JSON lines, a command per line on stdin and an
 // event per line on stdout. It is a process of its own, as the scanner's is: the SDK owns USB while
 // it runs, cannot be started again after it is released, and a crash in it never takes the app.

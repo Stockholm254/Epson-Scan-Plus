@@ -1964,9 +1964,9 @@ struct ExportMetadata {
     if let date { exif[kCGImagePropertyExifDateTimeDigitized] = date }
     var iptc: [CFString: Any] = [
       kCGImagePropertyIPTCObjectName: title, kCGImagePropertyIPTCCaptionAbstract: description,
-      kCGImagePropertyIPTCKeywords: keywords, kCGImagePropertyIPTCOriginatingProgram: "Epson Scan plus",
-      kCGImagePropertyIPTCProgramVersion: software.replacingOccurrences(of: "Epson Scan plus ", with: ""),
-      kCGImagePropertyIPTCSource: scanner.map { "\($0.make) \($0.model)" } ?? "Epson Scan plus",
+      kCGImagePropertyIPTCKeywords: keywords, kCGImagePropertyIPTCOriginatingProgram: "Light Through",
+      kCGImagePropertyIPTCProgramVersion: software.replacingOccurrences(of: "Light Through ", with: ""),
+      kCGImagePropertyIPTCSource: scanner.map { "\($0.make) \($0.model)" } ?? "Light Through",
     ]
     var png: [CFString: Any] = [
       kCGImagePropertyPNGTitle: title, kCGImagePropertyPNGDescription: description,

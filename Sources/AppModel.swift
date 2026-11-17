@@ -1183,7 +1183,7 @@ final class AppModel: ObservableObject {
     }
   }
   /// How an assistant starts this app's MCP server.
-  var mcpCommand: String { Bundle.main.executablePath ?? "/Applications/Epson Scan plus.app/Contents/MacOS/EpsonScanPlus" }
+  var mcpCommand: String { Bundle.main.executablePath ?? "/Applications/Light Through.app/Contents/MacOS/EpsonScanPlus" }
   /// Changes where new projects go. The open project and existing ones stay where they are.
   func setLibrary(_ url: URL) {
     libraryURL = url
@@ -6284,7 +6284,7 @@ final class AppModel: ObservableObject {
               + (f.sourcePath == nil ? " · EPSON Perfection V800/V850" : ""),
             keywords: [filmTitle, f.format] + (rollFormat.map { [$0] } ?? []) + ["胶片扫描"],
             scanner: f.sourcePath == nil ? ("EPSON", "Perfection V800/V850") : nil, scanned: scanned,
-            software: "Epson Scan plus" + (version.map { " " + $0 } ?? ""), artist: artist, copyright: copyright)
+            software: "Light Through" + (version.map { " " + $0 } ?? ""), artist: artist, copyright: copyright)
           try ImagePipeline.shared.export(
             image, settings: f.adjustments, profile: film, url: url, format: format, dpi: dpi,
             quality: quality, sharpener: sharpener, colorSpace: space, metadata: metadata, analysis: analysis, longEdge: longEdge)

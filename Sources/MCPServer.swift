@@ -194,7 +194,7 @@ enum MCPBridge {
         reply([
           "protocolVersion": asked.flatMap { protocolVersions.contains($0) ? $0 : nil } ?? protocolVersions[0],
           "capabilities": ["tools": ["listChanged": false]],
-          "serverInfo": ["name": "epscan", "title": "Epson Scan plus", "version": version],
+          "serverInfo": ["name": "epscan", "title": "Light Through", "version": version],
           "instructions": MCPTools.instructions,
         ])
       case "ping":
@@ -207,7 +207,7 @@ enum MCPBridge {
         if let answer = forward(name, params["arguments"] as? [String: Any] ?? [:]) {
           reply(["content": answer["content"] ?? [], "isError": answer["isError"] ?? false])
         } else {
-          reply(["content": [["type": "text", "text": "Epson Scan plus 没有在运行，或没有开启 AI 助手（工具栏的「AI 助手」→「允许 AI 助手读取和调整转换」）。请先打开 App 并开启后再试。"]], "isError": true])
+          reply(["content": [["type": "text", "text": "Light Through 没有在运行，或没有开启 AI 助手（工具栏的「AI 助手」→「允许 AI 助手读取和调整转换」）。请先打开 App 并开启后再试。"]], "isError": true])
         }
       default:
         fail(-32601, "Method not found: \(method)")

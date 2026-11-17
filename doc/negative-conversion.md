@@ -1,4 +1,4 @@
-# 去色罩原理：Epson Scan plus 如何把彩色负片转成正片
+# 去色罩原理：Light Through 如何把彩色负片转成正片
 
 2026-10-28。在线版本（可评论）：[Claude Docs](https://claude.ai/artifact/TBUhFeVsNFsXem9558cLmu)。
 

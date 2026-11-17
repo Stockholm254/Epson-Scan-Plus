@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>CFBundleName</key><string>Epson Scan plus</string>
-<key>CFBundleDisplayName</key><string>Epson Scan plus</string>
+<key>CFBundleName</key><string>Light Through</string>
+<key>CFBundleDisplayName</key><string>Light Through</string>
 <key>CFBundleExecutable</key><string>EpsonScanPlus</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundleIconName</key><string>AppIcon</string>
@@ -12,6 +12,6 @@
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>LSMinimumSystemVersion</key><string>26.0</string>
 <key>NSHighResolutionCapable</key><true/>
-<key>NSCameraUsageDescription</key><string>Epson Scan plus 需要访问连接的扫描仪来预览和扫描胶片。</string>
+<key>NSCameraUsageDescription</key><string>Light Through 需要访问连接的扫描仪来预览和扫描胶片。</string>
 <key>NSPrincipalClass</key><string>NSApplication</string>
 </dict></plist>

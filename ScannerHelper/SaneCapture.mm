@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
-// Epson Scan plus experimental USB capture helper. SANE stays in this process.
+// Light Through's experimental USB capture helper. SANE stays in this process.
 #import <Foundation/Foundation.h>
 #import <ImageIO/ImageIO.h>
 #include <sane/sane.h>
@@ -152,7 +152,7 @@ static void writeTIFF(NSString *output, const std::vector<uint8_t>& data, const 
     (__bridge NSString *)kCGImagePropertyOrientation:@1,
     (__bridge NSString *)kCGImagePropertyTIFFDictionary:@{
       (__bridge NSString *)kCGImagePropertyTIFFCompression:@1,
-      (__bridge NSString *)kCGImagePropertyTIFFSoftware:@"Epson Scan plus · epson2 RGB48 · identity gamma · no CCT",
+      (__bridge NSString *)kCGImagePropertyTIFFSoftware:@"Light Through · epson2 RGB48 · identity gamma · no CCT",
       (__bridge NSString *)kCGImagePropertyTIFFImageDescription:@"Uninverted RGB16/channel, identity scanner LUT, input gamma 1.0. Linear RGB encoding tag is not a calibrated scanner ICC profile."}};
   CGImageDestinationAddImage(dest, image, (__bridge CFDictionaryRef)properties);
   bool success = CGImageDestinationFinalize(dest);

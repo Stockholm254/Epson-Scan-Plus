@@ -93,7 +93,7 @@ extension MCPTools {
       "angle": number("拉直角度（度），正数顺时针", -45...45),
     ], required: ["x", "y", "w", "h"]),
     Tool(name: "leak_clear_correction", description: "停用参考校正：只剩基础调整和局部区域；参考图留着，leak_start 可免费重新应用。可用 ⌘Z 或 undo 撤销。", properties: [:]),
-    Tool(name: "leak_load_preset", description: "载入去漏光预设（Epson Scan plus 或 FilmLightLab 保存的 JSON）：参数、区域和对应点；方向或裁切不同时按预设重建。可用 ⌘Z 或 undo 撤销。", properties: [
+    Tool(name: "leak_load_preset", description: "载入去漏光预设（Light Through 或 FilmLightLab 保存的 JSON）：参数、区域和对应点；方向或裁切不同时按预设重建。可用 ⌘Z 或 undo 撤销。", properties: [
       "path": fileField,
     ], required: ["path"]),
     Tool(name: "leak_save_preset", description: "请用户保存去漏光预设：只在 App 里打开保存窗口，由用户选位置；本工具自己不写文件。", properties: [:]),

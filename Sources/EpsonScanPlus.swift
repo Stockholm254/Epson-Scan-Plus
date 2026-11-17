@@ -23,6 +23,10 @@ struct EpsonScanPlusApp: App {
     if args.contains("--sony-ptp-camera") { SonyPTPCamera.runProcess() }
     if args.contains("--self-test") { SmokeTests.run() }
     if args.contains("--sane-hardware-test") { HardwareTest.run() }
+    // Called Epson Scan plus until 0.25: a copy in Applications still named so takes the new name
+    // and opens again from there. Only an ordinary launch: one with options of its own (a project
+    // to open, a library) opens as it is.
+    if !args.dropFirst().contains(where: { $0.hasPrefix("--") }), Updater.takeNewName() { exit(0) }
     let preferences = Preferences(defaults: .standard)
     let library: URL
     if let i = args.firstIndex(of: "--library"), args.count > i + 1 {
@@ -34,7 +38,7 @@ struct EpsonScanPlusApp: App {
       wrappedValue: AppModel(libraryURL: library, scanner: SaneScannerController(), preferences: preferences))
   }
   var body: some Scene {
-    WindowGroup("Epson Scan plus") {
+    WindowGroup("Light Through") {
       ContentView(m: model).onAppear {
         delegate.model = model
         model.start()

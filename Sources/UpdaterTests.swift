@@ -76,7 +76,7 @@ enum UpdaterTests {
     mislabelled.signature = try key.signature(for: Data(mislabelled.signedText.utf8)).base64EncodedString()
     let refused = [tampered, unsigned, foreign, mislabelled].map(refusal)
     try check(refused[0]?.contains("校验值") == true && refused[1]?.contains("签名不对") == true
-      && refused[2]?.contains("不是 Epson Scan plus") == true && refused[3]?.contains("版本") == true,
+      && refused[2]?.contains("不是 Light Through") == true && refused[3]?.contains("版本") == true,
       "it refuses an archive changed after publishing, one signed with another key, another app, and a version that is not what the feed says")
 
     // Fetched, checked, and put in place once the app has ended.
@@ -96,7 +96,7 @@ enum UpdaterTests {
     finished(26)
     let now = NSDictionary(contentsOf: installed.appendingPathComponent("Contents/Info.plist"))?["CFBundleVersion"] as? String
     let kept = NSDictionary(contentsOf: parked.appendingPathComponent("Contents/Info.plist"))?["CFBundleVersion"] as? String
-    try check(now == "26" && kept == "25" && parked.lastPathComponent == "Epson Scan plus 0.7.0 (25).app"
+    try check(now == "26" && kept == "25" && parked.lastPathComponent == "Light Through 0.7.0 (25).app"
       && !FileManager.default.fileExists(atPath: staged.path)
       && (try? Updater.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", installed.path])) != nil,
       "once the app has ended, 0.7.1 is where 0.7.0 was, its signature whole, and 0.7.0 is kept by its version")
@@ -149,6 +149,16 @@ enum UpdaterTests {
       && Updater.onDiskImage(URL(fileURLWithPath: "/Volumes/Epson Scan plus/Epson Scan plus.app"))
       && Updater.updatesItself(URL(fileURLWithPath: "/Applications/Epson Scan plus.app")) == FileManager.default.isWritableFile(atPath: "/Applications"),
       "only a copy in Applications updates itself; a trial elsewhere or the disk image does not")
+    // Called Epson Scan plus until 0.25: a copy in Applications still so named takes the new name
+    // (where it may, and none is there already); one named anew, or elsewhere, stays.
+    let systemApps = URL(fileURLWithPath: "/Applications")
+    let mayRename = FileManager.default.isWritableFile(atPath: "/Applications")
+      && !FileManager.default.fileExists(atPath: "/Applications/Light Through.app")
+    try check(Updater.renamed(systemApps.appendingPathComponent("Light Through.app")) == nil
+      && Updater.renamed(home.appendingPathComponent("Documents/Epson-Scan-plus-试用/Epson Scan plus.app")) == nil
+      && Updater.renamed(URL(fileURLWithPath: "/Volumes/Epson Scan plus/Epson Scan plus.app")) == nil
+      && (Updater.renamed(systemApps.appendingPathComponent("Epson Scan plus.app"))?.path == "/Applications/Light Through.app") == mayRename,
+      "a copy in Applications still called Epson Scan plus is renamed Light Through at launch; others stay as they are")
     for b in 30..<37 { _ = try app(in: made("kept-\(b)"), version: "0.9.\(b)", build: b) }
     let shelf = root.appendingPathComponent("shelf", isDirectory: true)
     try FileManager.default.createDirectory(at: shelf, withIntermediateDirectories: true)

@@ -3,11 +3,11 @@
 
 ## 构建
 
-安装 Xcode Command Line Tools 后，在仓库根目录执行（App 默认输出到上一级目录的 `Epson Scan plus.app`）：
+安装 Xcode Command Line Tools 后，在仓库根目录执行（App 默认输出到上一级目录的 `Light Through.app`）：
 
 ```sh
 bash build.sh
-"../Epson Scan plus.app/Contents/MacOS/EpsonScanPlus" --self-test --test-output /tmp/EpsonScanPlus-tests
+"../Light Through.app/Contents/MacOS/EpsonScanPlus" --self-test --test-output /tmp/EpsonScanPlus-tests
 ```
 
 可指定 `EPSON_SCAN_PLUS_BUILD_DIR` 与 `EPSON_SCAN_PLUS_APP_DIR`。当前构建目标为 arm64；无 npm、Python 或第三方 Swift 包依赖。图像转换用的 Core Image 内核用 Metal 写（`Sources/Kernels.swift`），App 运行时才编译，所以构建不需要 Metal 工具链。系统会缓存编译结果，只有内核改过以后第一次运行时，每个内核多等约 0.3 秒。每个内核单独编译：同一个库里放两个内核时，Core Image 会在同一个渲染环境里把先渲染的那个也用在另一个上（macOS 27.2 上见到）。
@@ -15,7 +15,7 @@ bash build.sh
 自测可追加 `--overview /absolute/path/overview.png` 验证本次 18 格。下面的硬件测试会**实际驱动扫描仪**，以 48-bit 读取预览并扫描第 9 格（不足 9 格时取末格），检查采集精度、导出和整批结束后自动导出的正片，并报告全卷斜率估计。它使用独立的临时设置，结束后删除：
 
 ```sh
-"../Epson Scan plus.app/Contents/MacOS/EpsonScanPlus" --sane-hardware-test --library /absolute/output/directory
+"../Light Through.app/Contents/MacOS/EpsonScanPlus" --sane-hardware-test --library /absolute/output/directory
 ```
 
 正常启动支持 `--library PATH`、`--project FILE` 或 `--image FILE`。
@@ -58,8 +58,8 @@ bash release.sh
 2. 版本已经发过（更新列表里有，或磁盘映像已经存在）时也停下。已发布的版本从不替换。
 3. 从提交构建 App，校验代码签名，跑全部自检。
 4. 输出两样东西：
-   - 磁盘映像 `../Epson-Scan-plus-<版本>.dmg`，里面有 App 和指向「应用程序」的链接，用来手动安装。
-   - 更新包 `Epson-Scan-plus-<版本>-<构建号>.zip`，放进更新列表的目录。
+   - 磁盘映像 `../Light-Through-<版本>.dmg`，里面有 App 和指向「应用程序」的链接，用来手动安装。
+   - 更新包 `Light-Through-<版本>-<构建号>.zip`，放进更新列表的目录。
 5. 用发布密钥签名，加进 `appcast.json`。列表里每个版本的说明是更新记录里那一节各条的标题。
 
 **各个位置：**
@@ -75,9 +75,10 @@ bash release.sh
 - **哪一份会更新**：只有放在 `/Applications` 或 `~/Applications`、而且能被替换的那一份。
 - **检查**：打开约 5 秒后和之后每六小时读一次更新列表，取比自己构建号新、而且这台系统能运行的最新版本。
 - **核对**：下载后核对大小、SHA-256、Ed25519 签名（签名覆盖 App 标识、版本、构建号、校验值和最低系统）、包里 App 的标识和版本，以及 `codesign --verify --deep --strict`。
-- **替换**：App 退出后，一个独立的脚本把旧版本移到 `~/Library/Application Support/epscan/旧版/Epson Scan plus <版本> (<构建号>).app`，再把新版本放回原处。新版本放不进去时，把旧版本放回去。日志在 `~/Library/Application Support/epscan/Updates/install.log`。
+- **替换**：App 退出后，一个独立的脚本把旧版本移到 `~/Library/Application Support/epscan/旧版/Light Through <版本> (<构建号>).app`，再把新版本放回原处。新版本放不进去时，把旧版本放回去。日志在 `~/Library/Application Support/epscan/Updates/install.log`。
   - 结果写在同一目录的 `install-result` 里。没换上的那个版本，下次打开时只显示原因，不再自动下载；在「检查更新…」里点检查会再试。
 - **换更新列表**：用 `defaults write local.epscan.mac updateFeed <URL>`，https 地址也行，签名照样核对。
+- **改名**：App 在 0.25.0 从 Epson Scan plus 改名为 Light Through。更新包放回旧版本原来的位置和文件名，所以「应用程序」里的 `Epson Scan plus.app` 更新到 0.25.0 以后，第一次打开时会把自己改名为 `Light Through.app`，从那里重新打开（`Updater.takeNewName`；旁边已经有 `Light Through.app` 或没有权限时不改）。没有改的：可执行文件 `EpsonScanPlus`、bundle id `local.epscan.mac`、数据目录 `~/Library/Application Support/epscan` 和 `~/Pictures/epscan`、钥匙串里的 Key、签名证书「Epson Scan plus Signing」，所以设置、图库和 Key 都照常。AI 助手（MCP）的命令路径要改成 `/Applications/Light Through.app/Contents/MacOS/EpsonScanPlus`。
 - **签名方式**：`build.sh` 在这台 Mac 有代码签名身份「Epson Scan plus Signing」时用它签名（0.18.1 起的发布都是），没有时退回临时签名（ad-hoc）；名字可以用环境变量 `EPSON_SCAN_PLUS_SIGNING_IDENTITY` 换。都没有 Apple 公证。
   - **为什么要固定证书**：临时签名的身份是这一份构建的散列，每个版本对 macOS 都是新 App，钥匙串里的 OpenAI Key 每次更新后都要再问一次。用同一张证书签名，各个版本就是同一个 App，「始终允许」一直有效。
   - **建证书**：「钥匙串访问」→「证书助理」→「创建证书…」，名称 `Epson Scan plus Signing`，身份类型「自签名根证书」，证书类型「代码签名」，放在登录钥匙串里，不用设成信任。默认一年有效，换证书的那一版钥匙串会再问一次。第一次用它签名时 macOS 问 codesign 能否使用这把密钥，选「始终允许」。
