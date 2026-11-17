@@ -1,7 +1,8 @@
 #!/bin/bash
 # Compiles the app icon. AppIcon.icon is an Icon Composer document (open it in Icon Composer,
-# which comes with Xcode, to change it): a 135 cassette and its film leader as glass layers, which
-# the system lights and renders for the light, dark, clear and tinted looks. actool, which only
+# which comes with Xcode): the shelf's 3D 135 cassette with its leader, rendered, over a light
+# table's glow; Tools/render-icon.sh draws the two pictures again. The system renders it for the
+# light, dark, clear and tinted looks. actool, which only
 # Xcode has, turns it into Assets.car (the layered icon) and AppIcon.icns (a flat copy for
 # what cannot read the layers). Both are committed, so build.sh needs only the Command Line Tools;
 # run this after changing the icon, then commit the two files with it.

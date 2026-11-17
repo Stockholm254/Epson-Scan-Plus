@@ -31,9 +31,11 @@ bash build.sh
 - **钥匙串的辅助程序**：读 OpenAI Key 的 `EpsonScanKey` 按源码编一次、签一次，存在 `~/Library/Application Support/epscan-release/key-helper/`，之后每次构建原样拷进 App，钥匙串的「始终允许」在更新后仍然有效（`KeyHelper/build-key.sh`）。改了它的源码会编出新的一份，钥匙串会再问一次。
 ## 图标
 
-App 图标是 Icon Composer 文档 `Icon/AppIcon.icon`：`icon.json` 加 `Assets/` 里的几层 SVG（暗盒的标签、片口、上下盖、筒身，和胶片片头）。
+App 图标是 Icon Composer 文档 `Icon/AppIcon.icon`：`icon.json` 加 `Assets/` 里的两张图，放在看片灯一样的浅色渐变上。
+- `cassette.png`：新建工程「胶片架」里那个 3D 的 135 暗盒，带拉出来的片头，1024 像素，透明底。印的是专业彩色负片那样的黑底、黄色 NOTES 条、「100」、C-41 和 DX 方格，但不带任何厂家和胶片的名字。
+- `glow.png`：看片灯的光，中间白，往四角渐渐发灰。
 
-- **修改**：用 Xcode 附带的 Icon Composer（`/Applications/Xcode.app/Contents/Applications/Icon Composer.app`）打开它，或者直接改 SVG 和 `icon.json`。
+- **修改**：两张图由 `Tools/IconRender.swift` 画出，`bash Tools/render-icon.sh` 把它和 App 的 `Sources` 一起编译、运行，写进 `Icon/AppIcon.icon/Assets`，要几分钟。印刷、角度和光在 `IconRender.swift` 里改；背景渐变、大小和图层在 `icon.json` 里改，也可以用 Xcode 附带的 Icon Composer（`/Applications/Xcode.app/Contents/Applications/Icon Composer.app`）打开。
 - **预览**：`ictool` 可以不开 Icon Composer 就画出各种外观，例如：
   ```sh
   "/Applications/Xcode.app/Contents/Applications/Icon Composer.app/Contents/Executables/ictool" Icon/AppIcon.icon --export-image --output-file /tmp/icon.png --platform macOS --rendition Dark --width 512 --height 512 --scale 2

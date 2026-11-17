@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="doc/images/icon.png" width="128" height="128" alt="Epson Scan plus 的图标：一卷胶卷和拉出来的一段底片">
+  <img src="doc/images/icon.png" width="128" height="128" alt="Epson Scan plus 的图标：看片灯上一卷 135 胶卷，片头拉出来一段">
 </p>
 
 <h1 align="center">Epson Scan plus</h1>

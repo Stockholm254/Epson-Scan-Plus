@@ -1,33 +1,22 @@
 {
   "fill": {
     "linear-gradient": [
-      "display-p3:0.12000,0.42000,0.70000,1.00000",
-      "display-p3:0.03000,0.15000,0.38000,1.00000"
+      "display-p3:0.98000,0.98000,0.97000,1.00000",
+      "display-p3:0.80000,0.80000,0.79000,1.00000"
     ]
   },
   "groups": [
     {
-      "name": "Canister",
+      "name": "Cassette",
       "layers": [
         {
-          "name": "label",
-          "image-name": "label.svg",
-          "glass": true
-        },
-        {
-          "name": "lip",
-          "image-name": "lip.svg",
-          "glass": true
-        },
-        {
-          "name": "caps",
-          "image-name": "caps.svg",
-          "glass": true
-        },
-        {
-          "name": "body",
-          "image-name": "body.svg",
-          "glass": true
+          "name": "cassette",
+          "image-name": "cassette.png",
+          "glass": false,
+          "position": {
+            "scale": 0.82,
+            "translation-in-points": [0, 0]
+          }
         }
       ],
       "shadow": {
@@ -35,31 +24,29 @@
         "opacity": 0.5
       },
       "translucency": {
-        "enabled": true,
-        "value": 0.1
+        "enabled": false,
+        "value": 0
       },
-      "specular": true,
-      "lighting": "individual"
+      "specular": false
     },
     {
-      "name": "Film",
+      "name": "Light table",
       "layers": [
         {
-          "name": "film",
-          "image-name": "film.svg",
-          "glass": true
+          "name": "glow",
+          "image-name": "glow.png",
+          "glass": false
         }
       ],
       "shadow": {
-        "kind": "layer-color",
-        "opacity": 0.5
+        "kind": "none",
+        "opacity": 0
       },
       "translucency": {
-        "enabled": true,
-        "value": 0.35
+        "enabled": false,
+        "value": 0
       },
-      "blur-material": 0.5,
-      "specular": true
+      "specular": false
     }
   ],
   "supported-platforms": {
