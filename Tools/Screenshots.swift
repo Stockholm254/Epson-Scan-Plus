@@ -32,8 +32,11 @@ struct ShotFailure: Error { let message: String }
   /// and sky. No roll with people in it is shown anywhere (the user keeps those out of the README):
   /// not the sea roll the V850 scanned, nor the cross-processed Portra.
   static let roll = "2026-11-07_132152_9EA1"
-  /// Its frame on the light table under the loupe, in the single view and on the leak page.
+  /// Its frame in the single view and on the leak page.
   static let frame = "06"
+  /// The frame the loupe lies on in the contact view: in the top row, clear of the table's right
+  /// edge, so all of its middle-field lens is in the picture.
+  static let loupeFrame = "03"
   /// The library's sleeves: the copy rolls with no people in them (Phoenix II 6×6, Portra 160,
   /// CineStill 800T and Ektar 100 frames of bridges, hills, beaches, cliffs, dunes and test charts),
   /// so the films on their labels differ. A roll no longer in the library is left out of the shot.
@@ -206,7 +209,11 @@ struct ShotFailure: Error { let message: String }
       converting += 0.5
     }
     settle(2)
-    select(frame)
+    select(loupeFrame)
+    // The contact view, the loupe at its middle field over the chosen frame: the table round it
+    // still shown (the roll opens in the single view it was left in, where the lens fills the frame).
+    model.showSingle(false)
+    model.preferences.loupeField = .medium
     model.toggleLoupe(true)
     settle(2)
     freshStatus()
@@ -241,8 +248,9 @@ struct ShotFailure: Error { let message: String }
     calibrationFolded()
     standard.set(false, forKey: "convertSidebarShown")
 
-    // The single view, the same frame.
+    // The single view, the roll's frame.
     model.toggleLoupe(false)
+    select(frame)
     model.showSingle(true)
     settle(2)
     try save(try Picture.capture(window, work: work), "single-view.jpg", width: 1600)
