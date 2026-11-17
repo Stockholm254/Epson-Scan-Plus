@@ -2,7 +2,7 @@
 
 最新的在最前。各版本开头「打开 `Epson-Scan-plus-v0.4.x/…`」指作者本机的发布目录；0.3.1 及以前的名称是 Film Desk。
 
-## 下一版
+## 0.25.0 改名 Light Through
 
 - **改名为 Light Through**：Epson Scan plus 改叫 Light Through：扫描和翻拍都是让光穿过底片、记下来，再把色罩去掉变回正片，名字说的就是这一路；也不再借用 Epson 的名字。窗口标题、菜单、程序坞、导出照片里写的软件名、磁盘映像和更新包的名字都换了。
   - 「应用程序」里的 Epson Scan plus 更新以后，第一次打开会把自己改名为 Light Through.app，再从那里重新打开一次。设置、图库、预设和钥匙串里的 Key 都照常，不用重新设。
